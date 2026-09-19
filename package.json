@@ -1,0 +1,53 @@
+{
+  "name": "offtangent",
+  "version": "0.29.0",
+  "description": "Self-hosted agent backend with captures, strands and a router. Talk first, the system sorts.",
+  "private": true,
+  "type": "module",
+  "workspaces": [
+    "packages/*"
+  ],
+  "scripts": {
+    "build": "npm run build --workspaces",
+    "dev": "node scripts/dev.mjs",
+    "dev:all": "node scripts/dev.mjs",
+    "dev:backend": "npm run dev --workspace=packages/web-backend",
+    "dev:frontend": "npm run dev --workspace=packages/web-frontend",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "lint": "eslint packages/",
+    "fallow": "fallow",
+    "fallow:health": "fallow health",
+    "fallow:dead-code": "fallow dead-code",
+    "fallow:dupes": "fallow dupes",
+    "fallow:audit": "fallow audit",
+    "fallow:fix": "fallow fix --dry-run",
+    "baseline:unit": "vitest run packages/core/src packages/telegram/src packages/web-frontend/app",
+    "baseline:api": "vitest run packages/web-backend/src",
+    "baseline:smoke": "vitest run packages/web-backend/src/app.test.ts --testNamePattern=\"health endpoint|auth flow|chat history API|memory API|settings API|providers API\"",
+    "verify:critical-flows": "npm run baseline:smoke && vitest run packages/web-backend/src/api/modules/tasks/route.test.ts packages/web-backend/src/cronjobs.test.ts",
+    "baseline:parity": "npm run lint && npm run baseline:unit && npm run baseline:api && npm run verify:critical-flows",
+    "smoke:agent": "tsx packages/core/test-agent.ts",
+    "clean": "rm -rf packages/*/dist packages/*/*.tsbuildinfo",
+    "docs:dev": "vitepress dev docs",
+    "docs:build": "vitepress build docs",
+    "docs:preview": "vitepress preview docs"
+  },
+  "devDependencies": {
+    "@eslint/js": "^9.0.0",
+    "@types/node": "^22.0.0",
+    "@vitejs/plugin-vue": "^6.0.9",
+    "eslint": "^9.0.0",
+    "fallow": "^2.60.0",
+    "playwright": "^1.63.0",
+    "tsx": "^4.21.0",
+    "typescript": "^5.7.0",
+    "typescript-eslint": "^8.0.0",
+    "vitepress": "^1.6.4",
+    "vitest": "^3.1.0",
+    "vue-tsc": "^3.2.5"
+  },
+  "engines": {
+    "node": "22.x"
+  }
+}

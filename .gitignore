@@ -1,0 +1,52 @@
+# Dependencies
+node_modules/
+
+# Build output
+dist/
+*.tsbuildinfo
+
+# IDE
+.idea/
+
+# Pi agent
+.pi/
+
+# OS files
+.DS_Store
+
+# Environment
+.env
+.env.local
+
+# Local app data
+.data/
+
+# Test artifacts
+coverage/
+
+# Nuxt
+.nuxt/
+.output/
+
+packages/web-frontend/dist
+
+# VitePress
+docs/.vitepress/cache/
+docs/.vitepress/dist/
+.fallow/
+
+# Offtangent: never commit runtime data or secrets
+/data/
+/secrets/
+*.db
+*.db-wal
+*.db-shm
+.env.*
+!.env.example
+
+# Site-specific compose override (copy docker-compose.override.example.yml)
+docker-compose.override.yml
+
+# Gate output belongs in the pull request, not in the tree
+.merge-notes/
+*.log

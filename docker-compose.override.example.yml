@@ -1,0 +1,21 @@
+# Site-specific additions (not upstream-relevant).
+#
+# Kept separate from docker-compose.yml so that merges from the
+# meteyou/axiom upstream do not collide with local infrastructure.
+#
+# Copy this file to docker-compose.override.yml (gitignored) and adjust the
+# paths. Docker Compose picks up docker-compose.override.yml automatically.
+#
+# Example: a NAS share mounted on the Docker host and passed into the
+# container as a bind mount, e.g.
+#   NAS <nas-host>:/<share>/<folder>
+#     -> Docker host   /mnt/<share>          (fstab, NFS)
+#     -> Container     /mnt/<share>          (this bind mount)
+#
+# Purpose: /workspace and /data share one disk with the agent database.
+# Large or cold data (DB backups, artifacts, dumps) belongs on the share so
+# that a full workspace does not take the database down with it.
+services:
+  axiom:
+    volumes:
+      - /mnt/<share>:/mnt/<share>

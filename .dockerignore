@@ -1,0 +1,48 @@
+# Keep the Docker build context lean. Files listed here are NOT shipped into
+# the image. Source code, package.json, docs/, agent_docs/, README.md and
+# entrypoint.sh are intentionally INCLUDED — the runtime agent reads docs/
+# and README.md from /app/ at runtime.
+
+# Dependencies — re-installed inside the image
+node_modules/
+**/node_modules/
+
+# Build output — rebuilt inside the image
+dist/
+**/dist/
+*.tsbuildinfo
+
+# IDE / editor
+.idea/
+.vscode/
+
+# OS files
+.DS_Store
+
+# Local environment & data
+.env
+.env.local
+.data/
+
+# Test artifacts
+coverage/
+
+# Nuxt
+.nuxt/
+.output/
+
+# VitePress (docs are sources only — built site is not needed in the image)
+docs/.vitepress/cache/
+docs/.vitepress/dist/
+
+# Git internals
+.git/
+.github/
+
+# Pi agent / claude code
+.pi/
+
+# Local app data (the runtime container uses the named volume, not this dir).
+# We ONLY keep data/skills_agent — the Dockerfile copies it to
+# /app/skills_agent_defaults to seed built-in skills on first run.
+.data/

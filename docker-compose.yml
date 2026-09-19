@@ -1,0 +1,73 @@
+services:
+  axiom:
+    build: .
+    image: ${IMAGE_NAME:-offtangent}:local
+    container_name: ${CONTAINER_NAME:-offtangent}
+    restart: unless-stopped
+    ports:
+      - "${HOST_PORT:-3000}:3000"
+    volumes:
+      - axiom-data:/data
+      - axiom-workspace:/workspace
+    environment:
+      # Seeds the default agent timezone (system prompt, memory, heartbeat
+      # scheduling) and the container's OS clock. Overridable at runtime via
+      # Settings → Agent → Timezone.
+      - TZ=${TZ:-Europe/Berlin}
+      - NODE_ENV=production
+      - DATA_DIR=/data
+      - WORKSPACE_DIR=/workspace
+      - PORT=3000
+      - HOST=0.0.0.0
+      - ADMIN_USERNAME=${ADMIN_USERNAME:-admin}
+      - ADMIN_PASSWORD=${ADMIN_PASSWORD:?ADMIN_PASSWORD must be set}
+      - JWT_SECRET=${JWT_SECRET:?JWT_SECRET must be set}
+      - ENCRYPTION_KEY=${ENCRYPTION_KEY:-}
+      # Push notifications for the companion app (docs/reference/push-api.md).
+      # Path INSIDE the container to a Firebase service account JSON. No file
+      # there means the sender is off and every doorbell is a no-op. The file
+      # must never live in the image or the repository: put it on the data
+      # volume (the default path below) or bind mount it through
+      # docker-compose.override.yml.
+      - FCM_SERVICE_ACCOUNT_FILE=${FCM_SERVICE_ACCOUNT_FILE:-/data/secrets/firebase/service-account.json}
+      # off (default) | turn | all - whether an open WebSocket of the same
+      # user suppresses a doorbell. See docs/reference/env-vars.md.
+      - PUSH_SUPPRESS_WHEN_CLIENT_ONLINE=${PUSH_SUPPRESS_WHEN_CLIENT_ONLINE:-off}
+      # 0 (default) means a doorbell carries no message content at all. A
+      # positive number lets a finished turn carry the strand title and that
+      # many characters of the answer, which then travels through Google.
+      - PUSH_PREVIEW_CHARS=${PUSH_PREVIEW_CHARS:-0}
+
+  # Uncomment to enable local Whisper for speech-to-text
+  # whisper:
+  #   image: fedirz/faster-whisper-server:latest-cpu
+  #   container_name: axiom-whisper
+  #   restart: unless-stopped
+  #   ports:
+  #     - "8000:8000"
+  #   environment:
+  #     - WHISPER__MODEL=Systran/faster-whisper-large-v3
+
+  # Uncomment to enable local Ollama for running local LLM models
+  # ollama:
+  #   image: ollama/ollama:latest
+  #   container_name: axiom-ollama
+  #   restart: unless-stopped
+  #   ports:
+  #     - "11434:11434"
+  #   volumes:
+  #     - ollama-data:/root/.ollama
+  #   # Uncomment for GPU support (NVIDIA)
+  #   # deploy:
+  #   #   resources:
+  #   #     reservations:
+  #   #       devices:
+  #   #         - driver: nvidia
+  #   #           count: all
+  #   #           capabilities: [gpu]
+
+volumes:
+  axiom-data:
+  axiom-workspace:
+  # ollama-data:
+  # whisper-data:
