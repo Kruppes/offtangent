@@ -127,6 +127,13 @@ if [ "${PUBLISH_CONFIRM:-}" != "yes" ]; then
 fi
 
 git push "$PUBLISH_URL" "$snap:refs/heads/$PUBLISH_BRANCH"
-pushed=$(git ls-remote "$PUBLISH_URL" "refs/heads/$PUBLISH_BRANCH" | cut -f1)
-[ "$pushed" = "$snap" ] || die "remote $PUBLISH_BRANCH is $pushed, expected $snap"
+# GitHub's ssh front end occasionally rejects a second connection right after a
+# push; the push itself is already acknowledged, so retry the read-back.
+pushed=""
+for attempt in 1 2 3 4 5; do
+  pushed=$(git ls-remote "$PUBLISH_URL" "refs/heads/$PUBLISH_BRANCH" 2>/dev/null | cut -f1 || true)
+  [ -n "$pushed" ] && break
+  sleep $((attempt * 2))
+done
+[ "$pushed" = "$snap" ] || die "remote $PUBLISH_BRANCH is '${pushed:-unreadable}', expected $snap"
 log "published: $PUBLISH_URL $PUBLISH_BRANCH = $snap (source $src_sha)"
