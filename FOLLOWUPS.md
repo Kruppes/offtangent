@@ -3,6 +3,58 @@
 Known holes that were found while building something else, written down
 instead of built. Newest first.
 
+## From the OAuth 401 retry and the model indicator (2026-09-24)
+
+Incident 24.09. 11:49 UTC: a turn on `claude-fable-5-1` died with
+`401 authentication_error "invalid x-api-key"` and `cause=non_retryable`,
+while the strand header named `gpt-6-astra`, the model that had just become
+the global default. Two independent bugs, both fixed on
+`fix/oauth-401-retry-and-model-indicator`. What was found next to them and
+deliberately not built:
+
+* **The 401 classification is textual.** `isAuthError()` in
+  `packages/core/src/turn-retry.ts` matches the error string pi-ai hands up
+  (401, `authentication_error`, `invalid x-api-key`, `invalid_token`). pi-ai
+  does not expose a structured status code on the chunk, so a provider that
+  words its auth failure differently still ends the turn terminally. A typed
+  error channel from pi-ai would make this exact.
+* **A deferred global swap is dropped when the persona never takes another
+  turn.** The pending provider is kept in memory and applied at the start of
+  the next turn of that persona; a restart before that loses it, and the next
+  turn then resolves the model from the settings anyway. Good enough, but it
+  means "the global model change applied everywhere" is only true after every
+  persona has taken one turn.
+* **A provider fallback (`mode:fallback`) is deferred the same way.** A persona
+  that is mid turn when the primary provider dies keeps the primary for the
+  rest of that turn. That turn is already failing over inside the runner, so
+  nothing was built to force the swap earlier.
+* **The recovery is per provider id, not per credential.** Forced refreshes
+  are throttled to one per provider per 60 s
+  (`FORCED_OAUTH_REFRESH_MIN_INTERVAL_MS`). Two personas on the same provider
+  share that window: the second turn retries with whatever the first refresh
+  produced instead of asking again. That is intentional (a rotated refresh
+  token must never be presented twice), but it means a burst of turns can see
+  one stale retry.
+* **`recoverOAuthAfterAuthFailure` returns true even when the refresh throws.**
+  A refresh failure is not proof that the stored token is bad, and the incident
+  showed a 401 on a credential that worked a minute later. Cost: one wasted
+  extra call per turn in the genuinely-revoked case.
+* **No metric or audit row for the recovery.** It only logs
+  (`[axiom] Provider <id> rejected the access token ...`). How often the retry
+  saves a turn is not answerable from the database.
+* **`runningTurnModel` is only on `GET /api/strands/:id`.** The strand list,
+  the WebSocket frames and the chat view do not carry it, so the header re-reads
+  the strand when a turn starts or ends instead of being pushed the model. A
+  `turn_start` frame carrying the frozen model would remove that round trip.
+* **The companion app still shows the effective model.** It lives in its own
+  repo and was not touched; its strand header has the same
+  display-versus-reality gap until it reads the new field.
+* **Turns started outside the web composition root have no frozen model.**
+  `resolveStartModel` is wired in `runtime-composition.ts`. A standalone
+  `ws-chat.ts` runner (tests, embedded use) and the Telegram bot's own runner
+  fall back to the explicit per-turn pin, so `runningTurnModel` stays null
+  there.
+
 ## From model policy roles (2026-09-19)
 
 `GET/PUT /api/model-policy` + `GET /api/model-policy/resolve` ship, the five

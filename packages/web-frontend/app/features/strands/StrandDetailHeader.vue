@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onMounted, ref } from 'vue'
+import { computed, onMounted, ref, watch } from 'vue'
 import type { Thread, Project } from '@axiom/core'
 import { useModelsApi, type ModelSelection, type SelectableModel } from '~/api/models'
 import { useProjectsApi } from '~/api/projects'
@@ -26,6 +26,26 @@ const modelLoading = ref(false)
 const modelError = ref<string | null>(null)
 const models = ref<SelectableModel[]>([])
 const projectName = computed(() => projects.value.find(p => p.id === strand.value?.projectId)?.name ?? strand.value?.projectId)
+
+/*
+ * Model indicator (incident 2026-09-24): while a turn streams, the strand must
+ * name the model that is producing THAT answer, not the one a meanwhile
+ * changed global selection would use next. The backend reports the model
+ * frozen at turn start as `runningTurnModel`; it only exists while the turn
+ * runs, so the detail is re-read whenever this strand enters or leaves a turn.
+ */
+const { sessionActivity } = useChat()
+const turnActive = computed(() => Boolean(sessionActivity.value[props.strandId]))
+const runningModel = computed(() => strand.value?.runningTurnModel ?? null)
+const displayedModel = computed(() => runningModel.value ?? strand.value?.effectiveModel ?? null)
+/** Only worth spelling out when the running model is NOT what the header would show otherwise. */
+const modelDiffers = computed(() => {
+  const running = runningModel.value
+  const effective = strand.value?.effectiveModel
+  if (!running) return false
+  return running.providerId !== effective?.providerId || running.modelId !== effective?.modelId
+})
+watch(turnActive, () => { void load() })
 function update(patch: Partial<StrandDetail>) {
   if (!strand.value) return
   strand.value = { ...strand.value, ...patch }
@@ -104,7 +124,8 @@ onMounted(() => { void load(); void loadProjects() })
       <div class="mt-2 flex flex-wrap items-center gap-2 text-sm [overflow-wrap:anywhere]">
         <span class="rounded-md bg-muted px-2 py-1">{{ projectName || t('strandDetail.noProject') }}</span>
         <span v-for="tag in strand.tags" :key="tag" class="rounded-md border border-border px-2 py-1">#{{ tag }}</span>
-        <Button class="min-h-11 max-w-full whitespace-normal break-all" variant="ghost" :disabled="saving" @click="openModels">{{ t('strandDetail.model') }}: {{ strand.effectiveModel?.modelId || t('strandDetail.defaultModel') }}</Button>
+        <Button class="min-h-11 max-w-full whitespace-normal break-all" variant="ghost" :disabled="saving" @click="openModels">{{ t('strandDetail.model') }}: {{ displayedModel?.modelId || t('strandDetail.defaultModel') }}</Button>
+        <span v-if="modelDiffers" role="status" class="rounded-md bg-muted px-2 py-1 text-muted-foreground [overflow-wrap:anywhere]">{{ t('strandDetail.answeringWith', { model: runningModel!.modelId, next: strand.effectiveModel?.modelId || t('strandDetail.defaultModel') }) }}</span>
         <Button v-if="strand.pinnedModel" class="min-h-11" variant="ghost" :disabled="saving" @click="chooseModel(null)">{{ t('strandDetail.resetModel') }}</Button>
         <Button class="min-h-11" variant="ghost" :disabled="saving" :aria-pressed="strand.pinned" @click="mutate(() => api.patch(strandId, { pinned: !strand!.pinned }))">{{ t(strand.pinned ? 'strandDetail.unpin' : 'strandDetail.pin') }}</Button>
       </div>

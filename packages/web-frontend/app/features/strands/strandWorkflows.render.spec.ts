@@ -84,11 +84,17 @@ afterEach(() => {
 
 
 
-function setup() {
+/**
+ * Per-session turn state, the same shape `useChat` keeps. The header watches it
+ * so the model indicator is re-read when a turn starts or ends.
+ */
+function setup(activity: Record<string, { state: 'running' | 'queued' }> = {}) {
   const apiFetch = vi.fn()
+  const sessionActivity = Vue.ref(activity)
   vi.stubGlobal('useApi', () => ({ apiFetch }))
+  vi.stubGlobal('useChat', () => ({ sessionActivity }))
   vi.stubGlobal('useI18n', () => ({ t: (key: string, params?: unknown) => key + (params ? JSON.stringify(params) : '') }))
-  return apiFetch
+  return Object.assign(apiFetch, { sessionActivity })
 }
 async function click(root: Node, label: string) {
   const button = all(root).find(n => n.tag === 'button' && text(n).includes(label))!
@@ -147,6 +153,29 @@ describe('strand mutation workflows', () => {
     expect(text(root)).toContain('Fetched directly')
     expect(api.mock.calls).toEqual([['/api/strands/beyond-first-page'], ['/api/strands/beyond-first-page']])
   })
+  /**
+   * Incident 2026-09-24: the header showed gpt-6-astra (the freshly selected
+   * global model) while claude-fable-5-1 was still streaming the answer, so a
+   * provider error looked like it came from the wrong provider.
+   */
+  it('names the model of the running turn and re-reads the strand when the turn ends', async () => {
+    const base = { id: 's', title: 'Live turn', tags: [], projectId: null, pinned: false }
+    const api = setup({ s: { state: 'running' } })
+    api.mockResolvedValueOnce({ strand: { ...base, effectiveModel: { providerId: 'openai-codex', modelId: 'gpt-6-astra', source: 'global' }, runningTurnModel: { providerId: 'anthropic', modelId: 'claude-fable-5-1', source: 'global' } } })
+    const { root } = mount(Header, { strandId: 's' }); await flush()
+    expect(text(root)).toContain('claude-fable-5-1')
+    expect(text(root)).toContain('strandDetail.answeringWith')
+    expect(text(root)).not.toContain('strandDetail.model: gpt-6-astra')
+
+    api.mockResolvedValueOnce({ strand: { ...base, effectiveModel: { providerId: 'openai-codex', modelId: 'gpt-6-astra', source: 'global' }, runningTurnModel: null } })
+    delete api.sessionActivity.value.s
+    api.sessionActivity.value = { ...api.sessionActivity.value }
+    await flush()
+    expect(api.mock.calls).toEqual([['/api/strands/s'], ['/api/strands/s']])
+    expect(text(root)).toContain('gpt-6-astra')
+    expect(text(root)).not.toContain('strandDetail.answeringWith')
+  })
+
   it.each(['accept', 'dismiss'])('only %ss a project suggestion after explicit action', async action => {
     const strand = { id: 's', title: 'Real title', tags: [], projectId: null, pinned: false, projectSuggestion: { projectId: 'p', projectName: 'Proposal', reason: 'Reason' } }
     const api = setup().mockResolvedValueOnce({ strand }).mockResolvedValueOnce({ strand: { ...strand, projectSuggestion: null, projectId: action === 'accept' ? 'p' : null } })

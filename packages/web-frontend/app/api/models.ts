@@ -16,7 +16,16 @@ export interface SelectableModel extends ModelSelection {
 }
 export interface StrandModelDetail {
   pinnedModel: ModelSelection | null
+  /** What the NEXT turn will use (pin, else persona/global/fallback). */
   effectiveModel: EffectiveModel | null
+  /**
+   * The model that is answering right now, frozen when the running turn
+   * started, or null when no turn runs. Present on `GET /api/strands/:id`
+   * only; `PATCH .../model` answers about the configuration, not a live turn.
+   * Incident 2026-09-24: a global model switch during a running turn made the
+   * header claim the new model was producing the answer.
+   */
+  runningTurnModel?: EffectiveModel | null
 }
 
 export function useModelsApi() {

@@ -163,4 +163,77 @@ describe('AgentCore per-strand model pin integration', () => {
     await drain(core.sendMessage('1', 'now it is free', 'web', undefined, 'main', intruder.id))
     expect(swaps).toEqual([{ providerId: 'pinned', modelId: 'model-b' }])
   })
+
+  /**
+   * Incident 2026-09-24 11:49 UTC (session cb5fba90): a second strand of the
+   * same persona moved the GLOBAL model to an OpenAI Codex one while a Claude
+   * turn was inside its tool loop. pi-agent freezes `config.model` at run
+   * start but re-resolves the API key before every LLM call, so the running
+   * Anthropic request went out with the Codex access token and Anthropic
+   * answered `401 authentication_error "invalid x-api-key"`. A global swap
+   * must therefore wait for the running turn and land on the next one.
+   */
+  it('defers a global provider swap that arrives while a turn is streaming', async () => {
+    let currentProvider = providers.default!
+    let currentModel = model('default-model')
+    let currentApiKey = 'key-default'
+    let messages: unknown[] = []
+    const swaps: Array<{ providerId: string; modelId: string; apiKey: string }> = []
+    let runningSessionId: string | null = null
+    let release!: () => void
+    const midTurn = new Promise<void>(resolve => { release = resolve })
+    const credentialDuringTurn: string[] = []
+    const runtime = {
+      swapProvider(provider: ProviderConfig, apiKey: string, modelId?: string) {
+        currentProvider = provider
+        currentApiKey = apiKey
+        currentModel = model(modelId ?? provider.enabledModels?.[0] ?? '')
+        swaps.push({ providerId: provider.id, modelId: currentModel.id, apiKey })
+      },
+      getRunningSessionId: () => runningSessionId,
+      getCurrentProvider: () => currentProvider,
+      getCurrentModel: () => currentModel,
+      getCurrentApiKey: () => currentApiKey,
+      getCurrentTimeContext: () => 'time',
+      refreshSystemPrompt: vi.fn(),
+      getMessages: () => messages,
+      setMessages: (next: unknown[]) => { messages = next },
+      clearMessages: () => { messages = [] },
+      getStateSnapshot: () => ({ modelId: currentModel.id, toolNames: [], messageCount: messages.length }),
+      setProviderManager: vi.fn(),
+      getProviderManager: () => undefined,
+      setThinkingLevel: vi.fn(),
+      async *streamPrompt(_text: string, sessionId: string): AsyncIterable<ResponseChunk> {
+        runningSessionId = sessionId
+        credentialDuringTurn.push(currentApiKey)
+        // Stand-in for the provider call the tool loop is waiting on.
+        await midTurn
+        // What the NEXT LLM call of the same run would authenticate with.
+        credentialDuringTurn.push(currentApiKey)
+        runningSessionId = null
+        yield { type: 'done' }
+      },
+    } as unknown as AgentRuntimeBoundary
+
+    // No `resolveTurnModel` here: the deferred swap has to apply on its own.
+    const core = new AgentCore({
+      model: model('default-model'), apiKey: 'key-default', db, tools: [], providerConfig: providers.default,
+      runtimeFactory: () => runtime,
+    })
+    const strand = core.getSessionManager().createThread('1', 'main', 'Streaming')
+    const turn = drain(core.sendMessage('1', 'long answer', 'web', undefined, 'main', strand.id))
+    for (let i = 0; i < 50 && runningSessionId === null; i++) await new Promise(r => setTimeout(r, 2))
+    expect(runningSessionId).toBe(strand.id)
+
+    core.swapProvider(providers.pinned!, 'key-pinned', 'model-a')
+    expect(swaps).toEqual([])
+
+    release()
+    await turn
+    // Both LLM calls of the running turn saw the credential it started with.
+    expect(credentialDuringTurn).toEqual(['key-default', 'key-default'])
+
+    await drain(core.sendMessage('1', 'next turn', 'web', undefined, 'main', strand.id))
+    expect(swaps).toEqual([{ providerId: 'pinned', modelId: 'model-a', apiKey: 'key-pinned' }])
+  })
 })

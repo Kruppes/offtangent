@@ -81,6 +81,35 @@ export function isAbortError(errorMessage: string): boolean {
   return /\boperation was aborted\b|\baborterror\b|\baborted a request\b/i.test(errorMessage)
 }
 
+/**
+ * Recognize a provider response that rejected the CREDENTIAL, not the request
+ * (HTTP 401 / `authentication_error` / `invalid x-api-key` / `invalid_token`).
+ * pi-ai's classifier rates these as permanent, which is right for a wrong
+ * static API key but wrong for an OAuth provider: an access token can be stale
+ * in this process (or spuriously rejected by the provider edge) while a fresh
+ * one is one refresh away. Incident 2026-09-24: a single
+ * `401 {"type":"error","error":{"type":"authentication_error","message":"invalid
+ * x-api-key"}}` killed a turn as `non_retryable` even though the very next
+ * call on the same stored credential succeeded.
+ *
+ * Deliberately narrow: no bare `4xx`, and `429` (rate limit) must not match,
+ * it is already handled as a retryable provider error.
+ */
+export function isAuthError(errorMessage: string): boolean {
+  return /(^|[^0-9])401([^0-9]|$)|authentication_error|invalid[ _-]?x-api-key|invalid[_ -]api[_ -]?key|invalid_token|token[_ ]expired|expired[_ ]token|\bunauthorized\b/i
+    .test(errorMessage)
+}
+
+/**
+ * Body of the `retry_scheduled` chunk of the one credential-recovery retry.
+ * Separate from {@link formatRetryScheduledContent} because this retry has no
+ * backoff (the credential was just re-resolved) and does not consume the
+ * configured retry budget.
+ */
+export function formatAuthRetryContent(): string {
+  return '\u{1F504} Provider rejected the credentials \u2014 refreshed and retrying once\u2026'
+}
+
 /** Exponential backoff for a 1-indexed attempt: `base * 2^(attempt-1)`. */
 export function retryDelayMs(policy: RetryPolicy, attempt: number): number {
   return policy.baseDelayMs * 2 ** (attempt - 1)

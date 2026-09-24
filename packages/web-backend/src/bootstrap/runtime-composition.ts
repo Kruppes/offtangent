@@ -1,4 +1,4 @@
-import { parseTurnModelSelection } from '../model-selection.js'
+import { effectiveModelForStrand, parseTurnModelSelection } from '../model-selection.js'
 import {
   AgentCore,
   backfillMemoryEmbeddings,
@@ -50,6 +50,7 @@ import {
   removeCronjobTool,
   TaskEventBus,
   TurnRunner,
+  recoverOAuthAfterAuthFailure,
   resolveEffectiveModel,
 } from '@axiom/core'
 import type {
@@ -719,6 +720,25 @@ export async function createRuntimeComposition(options: RuntimeCompositionOption
   const turnRunner = new TurnRunner({
     db,
     getAgent: () => agentCore,
+    /**
+     * Incident 2026-09-24: Anthropic answered a turn with
+     * `401 authentication_error "invalid x-api-key"` and the turn died as
+     * `non_retryable`, although the stored OAuth credential worked one minute
+     * later. For an OAuth provider the credential is re-resolved here (which
+     * also picks up a token another process already rotated) and the turn gets
+     * exactly one more attempt. A static API key returns false: a wrong key
+     * stays wrong.
+     */
+    recoverAuth: async ({ providerId }) => {
+      if (!providerId) return false
+      return recoverOAuthAfterAuthFailure(providerId)
+    },
+    /**
+     * The model the turn will actually talk to, frozen at turn start. Read
+     * back by the strands service so the model indicator names the model that
+     * is answering, not the one a mid-turn global switch made effective.
+     */
+    resolveStartModel: ({ sessionId, turnOverride }) => effectiveModelForStrand(db, sessionId, turnOverride),
     onTurnStart: () => runtimeMetrics.startRequest(),
     onTurnEnd: turn => {
       runtimeMetrics.endRequest()

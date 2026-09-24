@@ -23,8 +23,10 @@ import {
 import type { StallThresholds } from './provider-stall.js'
 import type { ModelSelection } from './model-resolution.js'
 import {
+  formatAuthRetryContent,
   formatRetryScheduledContent,
   isAbortError,
+  isAuthError,
   isRetryableTurnError,
   loadRetryPolicy,
   retryDelayMs,
@@ -230,6 +232,32 @@ export interface TurnRunnerOptions {
    * messages and rebuilds them from the replay, so no duplicates appear.
    */
   completedTurnRetentionMs?: number
+  /**
+   * Re-resolve the credentials of the provider a turn is talking to after it
+   * answered with an authentication error, and report whether retrying the
+   * call makes sense. OAuth providers return true (the access token was
+   * refreshed / re-read from disk), static API keys return false so a wrong
+   * key still fails fast. Called at most once per turn.
+   */
+  recoverAuth?: (context: {
+    agentId: string
+    sessionId: string
+    providerId: string | null
+    error: string
+  }) => Promise<boolean>
+  /**
+   * The model a starting turn will actually talk to, resolved once at start
+   * and frozen for the turn's lifetime. Read back through
+   * {@link TurnRunner.getRunningTurnModel} so the UI shows the model that is
+   * answering instead of the globally effective one, which may change (global
+   * model switch, persona pin) while the turn still streams.
+   */
+  resolveStartModel?: (context: {
+    userId: number | null
+    sessionId: string
+    agentId: string
+    turnOverride: ModelSelection | null
+  }) => TurnStartModel | null
   onTurnStart?: (turn: TurnInfo) => void
   onTurnEnd?: (turn: TurnInfo) => void
   /**
@@ -240,8 +268,21 @@ export interface TurnRunnerOptions {
   onTurnFailed?: (failure: { turn: TurnInfo; error: TurnErrorInfo }) => void
 }
 
+/**
+ * The model a running turn is bound to. A superset of {@link ModelSelection}
+ * so callers can pass the resolved `EffectiveModel` (with its `source`)
+ * straight through to the UI.
+ */
+export interface TurnStartModel extends ModelSelection {
+  /** Where the selection came from when it was frozen ('turn', 'global', ...). */
+  source?: string
+  degradedReason?: string
+}
+
 interface TurnState {
   turnModelOverride?: ModelSelection | null
+  /** Model frozen at turn start (see `resolveStartModel`). */
+  startModel?: TurnStartModel | null
   id: string
   /** Subscription/queue key — see {@link TurnInfo.agentUserId}. */
   key: string
@@ -267,7 +308,14 @@ interface TurnState {
 type AttemptResult =
   | { status: 'completed' }
   | { status: 'aborted' }
-  | { status: 'failed'; error: string; retryable: boolean; willRetry: boolean }
+  | {
+    status: 'failed'
+    error: string
+    retryable: boolean
+    willRetry: boolean
+    /** The retry is the one-shot credential recovery, not a policy retry. */
+    authRetry?: boolean
+  }
 
 const DEFAULT_WATCHDOG_INTERVAL_MS = 5_000
 const DEFAULT_COMPLETED_TURN_RETENTION_MS = 60_000
@@ -344,6 +392,8 @@ export class TurnRunner {
   private readonly onTurnStart?: (turn: TurnInfo) => void
   private readonly onTurnEnd?: (turn: TurnInfo) => void
   private readonly onTurnFailed?: (failure: { turn: TurnInfo; error: TurnErrorInfo }) => void
+  private readonly recoverAuth?: TurnRunnerOptions['recoverAuth']
+  private readonly resolveStartModel?: TurnRunnerOptions['resolveStartModel']
 
   private readonly subscribers = new Map<string, Set<TurnSubscriber>>()
   /** Turns that are queued or streaming, per user. */
@@ -372,6 +422,8 @@ export class TurnRunner {
     this.onTurnStart = options.onTurnStart
     this.onTurnEnd = options.onTurnEnd
     this.onTurnFailed = options.onTurnFailed
+    this.recoverAuth = options.recoverAuth
+    this.resolveStartModel = options.resolveStartModel
   }
 
   /**
@@ -477,6 +529,25 @@ export class TurnRunner {
   }
 
   /**
+   * The model the live turn of this strand is actually talking to, frozen at
+   * turn start (explicit per-turn pin, else whatever was effective then), or
+   * null when no turn is running. The strand's model indicator reads this
+   * first: a global model switch mid-turn must not claim the running answer
+   * comes from the new model (incident 2026-09-24).
+   */
+  // Consumed cross-workspace (web-backend strands service); Fallow cannot
+  // resolve the @axiom/core exports map.
+  // fallow-ignore-next-line unused-class-member
+  getRunningTurnModel(user: number | string, sessionId: string): TurnStartModel | null {
+    for (const turn of this.liveTurns.get(String(user)) ?? []) {
+      if (!turn.ended && turn.sessionId === sessionId && turn.startModel) {
+        return { ...turn.startModel }
+      }
+    }
+    return null
+  }
+
+  /**
    * True while ANY user has a queued or streaming turn of this persona.
    * Archiving or deleting a persona refuses with `persona_busy` on this
    * signal (SPEC 13.5), mirroring the `strand_busy` guard one level up: the
@@ -502,9 +573,27 @@ export class TurnRunner {
    */
   startTurn(input: StartTurnInput): TurnInfo {
     const key = input.agentUserId ?? String(input.userId)
+    const agentId = input.agentId ?? 'main'
+    const turnOverride = input.turnModelOverride ?? null
+    // Frozen here, before the turn is queued: everything that follows (the
+    // provider swap inside the agent, the UI asking who is answering) must
+    // agree on one model even when the global selection changes meanwhile.
+    let startModel: TurnStartModel | null = null
+    try {
+      startModel = this.resolveStartModel?.({
+        userId: input.userId,
+        sessionId: input.sessionId,
+        agentId,
+        turnOverride,
+      }) ?? null
+    } catch (err) {
+      console.warn('[turn-runner] Could not resolve the start model:', err)
+      startModel = turnOverride
+    }
     const turn: TurnState = {
       id: randomUUID(),
       turnModelOverride: input.turnModelOverride,
+      startModel: startModel ?? turnOverride,
       key,
       userId: input.userId,
       sessionId: input.sessionId,
@@ -676,10 +765,27 @@ export class TurnRunner {
     const thresholds = this.resolveStallThresholds()
     const policy = this.resolveRetryPolicy()
     let attempt = 0
+    // The credential recovery fires at most once per turn: a second
+    // authentication error after a fresh credential is a real verdict.
+    let authRecoveryUsed = false
 
     for (;;) {
-      const result = await this.runAttempt(turn, input, agent, thresholds, policy, attempt)
+      const result = await this.runAttempt(turn, input, agent, thresholds, policy, attempt, !authRecoveryUsed)
       if (result.status !== 'failed') break
+
+      if (result.authRetry) {
+        authRecoveryUsed = true
+        attempt++
+        const retry: RetryInfo = { attempt, maxRetries: policy.maxRetries, delayMs: 0, error: result.error }
+        console.warn(
+          `[turn-runner] Provider rejected the credentials (user=${turn.userId}, session=${turn.sessionId}): `
+          + `${result.error} \u2014 credentials re-resolved, retrying once.`,
+        )
+        turn.buffer = turn.buffer.filter(event => event.type === 'turn_start')
+        this.emitChunk(turn, { type: 'retry_scheduled', text: formatAuthRetryContent(), retry })
+        if (turn.abortController.signal.aborted) break
+        continue
+      }
 
       if (!result.willRetry) {
         this.failTurn(turn, {
@@ -735,6 +841,7 @@ export class TurnRunner {
     thresholds: StallThresholds,
     policy: RetryPolicy,
     attempt: number,
+    allowAuthRecovery = false,
   ): Promise<AttemptResult> {
     turn.attemptController = new AbortController()
     const transcript = new TurnTranscript(this.db, turn.sessionId, turn.userId, turn.agentId)
@@ -825,14 +932,23 @@ export class TurnRunner {
       return { status: 'completed' }
     }
 
-    const willRetry = policy.enabled && attempt < policy.maxRetries && failure.retryable
+    // An authentication error is not retryable by policy (a wrong static key
+    // stays wrong), but an OAuth access token can be stale in this process or
+    // spuriously rejected. Ask the owner of the credentials once; only if it
+    // says the credential was re-resolved does the attempt get repeated.
+    const authRetry = allowAuthRecovery
+      && !failure.retryable
+      && isAuthError(failure.error)
+      && await this.tryRecoverAuth(turn, failure.error)
+
+    const willRetry = authRetry || (policy.enabled && attempt < policy.maxRetries && failure.retryable)
     // Discarding keeps the transcript free of half-written answers from the
     // attempt that is about to be replaced; a terminal failure keeps whatever
     // the provider managed to produce.
     if (willRetry) transcript.discard()
     else this.commitTranscript(transcript)
 
-    return { status: 'failed', error: failure.error, retryable: failure.retryable, willRetry }
+    return { status: 'failed', error: failure.error, retryable: failure.retryable, willRetry, authRetry }
   }
 
   /**
@@ -906,6 +1022,26 @@ export class TurnRunner {
    * (incident 2026-09-15). A user `/stop` always sets `abortController`, so it
    * never reaches this path.
    */
+  /**
+   * Hand an authentication failure to the credential owner. Never throws: a
+   * refresh that itself fails leaves the turn exactly where it was (terminal
+   * error), it must not replace the provider's verdict with a stack trace.
+   */
+  private async tryRecoverAuth(turn: TurnState, error: string): Promise<boolean> {
+    if (!this.recoverAuth) return false
+    try {
+      return await this.recoverAuth({
+        agentId: turn.agentId,
+        sessionId: turn.sessionId,
+        providerId: turn.startModel?.providerId ?? null,
+        error,
+      })
+    } catch (err) {
+      console.error('[turn-runner] Credential recovery failed:', err)
+      return false
+    }
+  }
+
   private isRetryableFailure(turn: TurnState, error: string): boolean {
     if (isAbortError(error) && !this.isAttemptAborted(turn)) return true
     return isRetryableTurnError(error)

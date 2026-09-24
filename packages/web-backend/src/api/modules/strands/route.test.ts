@@ -26,6 +26,8 @@ let previousDataDir: string | undefined
 let events: ChatEvent[] = []
 let evicted: Array<{ userId: string; agentId: string; sessionId: string }> = []
 let busySessions: string[] = []
+/** What the stubbed runner reports as the model of a live turn, per session. */
+let runningTurnModels: Record<string, { providerId: string; modelId: string; source?: string }> = {}
 /** Stands in for the `offtangent.nowSetMax` setting. */
 let nowSetMax = 4
 
@@ -57,6 +59,7 @@ beforeAll(async () => {
     chatEventBus: bus,
     getTurnRunner: () => ({
       hasActiveTurnInSession: (_user: number | string, sessionId: string) => busySessions.includes(sessionId),
+      getRunningTurnModel: (_user: number | string, sessionId: string) => runningTurnModels[sessionId] ?? null,
     }),
     getNowSetMax: () => nowSetMax,
     // This suite is about the curated set; the auto ranking has its own tests.
@@ -87,6 +90,7 @@ beforeEach(() => {
   events = []
   evicted = []
   busySessions = []
+  runningTurnModels = {}
   nowSetMax = 4
   saveProviders({
     providers: [
@@ -139,6 +143,29 @@ describe('strand model selection', () => {
 
     const unpinned = await api('PATCH', `/api/strands/${strand.id}/model`, { providerId: null, modelId: null })
     expect(unpinned.body).toMatchObject({ pinnedModel: null, effectiveModel: { modelId: 'default-model', source: 'global' } })
+  })
+
+  /**
+   * Incident 2026-09-24: while a turn was streaming from claude-fable-5-1 the
+   * header showed gpt-6-astra, because the global selection had changed in the
+   * meantime and the header renders `effectiveModel`. The strand now reports
+   * the model that is answering separately.
+   */
+  it('reports the model of the running turn next to the effective one', async () => {
+    const strand = sessionManager.createThread('1', 'main', 'Running turn')
+    const idle = await api('GET', `/api/strands/${strand.id}`)
+    expect((idle.body.strand as Record<string, unknown>).runningTurnModel).toBeNull()
+    expect(idle.body.strand).toMatchObject({ effectiveModel: { modelId: 'default-model', source: 'global' } })
+
+    runningTurnModels[strand.id] = { providerId: 'openai', modelId: 'pinned-model', source: 'global' }
+    const live = await api('GET', `/api/strands/${strand.id}`)
+    expect(live.body.strand).toMatchObject({
+      runningTurnModel: { providerId: 'openai', modelId: 'pinned-model', source: 'global' },
+      effectiveModel: { modelId: 'default-model', source: 'global' },
+    })
+
+    delete runningTurnModels[strand.id]
+    expect(((await api('GET', `/api/strands/${strand.id}`)).body.strand as Record<string, unknown>).runningTurnModel).toBeNull()
   })
 
   it('rejects disabled/error models and foreign strands', async () => {

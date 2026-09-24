@@ -32,6 +32,7 @@ import {
   presetSupportsTextVerbosity,
   presetSupportsTransport,
   refreshOAuthCredentialsLocked,
+  recoverOAuthAfterAuthFailure,
   resolvePromptProfileOptions,
 } from './provider-config.js'
 import { SYSTEM_PROMPT_CACHE_MARKER } from './prompt-cache.js'
@@ -1973,5 +1974,70 @@ describe('syncNewCatalogModels', () => {
     const saved = loadProviders().providers[0]
     expect(saved.knownModels).toBeUndefined()
     expect(saved.enabledModels).toEqual(['qwen3:30b'])
+  })
+})
+
+/**
+ * Credential recovery after an authentication error (incident 2026-09-24).
+ */
+describe('OAuth recovery after an authentication failure', () => {
+  const originalDataDir = process.env.DATA_DIR
+  afterEach(() => {
+    if (originalDataDir === undefined) delete process.env.DATA_DIR
+    else process.env.DATA_DIR = originalDataDir
+  })
+
+  /**
+   * Incident 2026-09-24: Anthropic answered `401 authentication_error
+   * "invalid x-api-key"` for a token whose stored `expires` was still hours
+   * away, so the normal expiry gate would refuse to refresh. A forced refresh
+   * exists for exactly that case and must still honour the coalescing lock.
+   */
+  it('forces an OAuth refresh for a credential that has not expired on paper, once', async () => {
+    process.env.DATA_DIR = path.join(os.tmpdir(), `axiom-oauth-force-${Date.now()}`)
+    const valid = { type: 'oauth' as const, access: 'live', refresh: 'live-r', expires: Date.now() + 3_600_000 }
+    const refresh = vi.fn(async (c: { expires: number }) => {
+      await new Promise(r => setTimeout(r, 20))
+      return { ...c, type: 'oauth' as const, access: 'rotated', refresh: 'rotated-r', expires: Date.now() + 3_600_000 }
+    })
+    const mockAuth = { name: 'test', refresh, toAuth: async () => ({ apiKey: 'x' }), login: async () => valid } as never
+
+    // Without `force` the unexpired credential is handed back untouched.
+    expect((await refreshOAuthCredentialsLocked('force-id', mockAuth, valid)).access).toBe('live')
+    expect(refresh).not.toHaveBeenCalled()
+
+    const [a, b] = await Promise.all([
+      refreshOAuthCredentialsLocked('force-id', mockAuth, valid, { force: true }),
+      refreshOAuthCredentialsLocked('force-id', mockAuth, valid, { force: true }),
+    ])
+    expect(refresh).toHaveBeenCalledTimes(1)
+    expect(a.access).toBe('rotated')
+    expect(b.access).toBe('rotated')
+  })
+
+  it('recoverOAuthAfterAuthFailure refuses to retry a static API key and accepts an OAuth provider', async () => {
+    const dir = path.join(os.tmpdir(), `axiom-oauth-recover-${Date.now()}`)
+    fs.mkdirSync(path.join(dir, 'config'), { recursive: true })
+    process.env.DATA_DIR = dir
+    fs.writeFileSync(path.join(dir, 'config', 'providers.json'), JSON.stringify({
+      providers: [
+        {
+          id: 'keyed', name: 'Keyed', type: 'openai-completions', providerType: 'openai', provider: 'openai',
+          baseUrl: 'https://example.invalid', apiKey: 'sk-static', enabledModels: ['gpt-4o'],
+        },
+        {
+          // `openai-compatible` has no pi-ai OAuth provider, so nothing is
+          // rotated here; the point is that the turn is still allowed one more
+          // attempt because the credential may have been refreshed elsewhere.
+          id: 'oauthish', name: 'OAuthish', type: 'openai-completions', providerType: 'openai-compatible',
+          provider: 'openai', baseUrl: 'https://example.invalid', apiKey: '', enabledModels: ['m'],
+          authMethod: 'oauth',
+          oauthCredentials: { access: 'a', refresh: 'r', expires: Date.now() + 3_600_000 },
+        },
+      ],
+    }, null, 2), 'utf-8')
+    expect(await recoverOAuthAfterAuthFailure('keyed')).toBe(false)
+    expect(await recoverOAuthAfterAuthFailure('does-not-exist')).toBe(false)
+    expect(await recoverOAuthAfterAuthFailure('oauthish')).toBe(true)
   })
 })

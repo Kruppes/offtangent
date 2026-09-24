@@ -3,7 +3,7 @@
  * (interactive session) plus tags, now rank and link count; the session
  * manager already renders those fields, this service adds the writes.
  */
-import type { AgentCore, ModelSelection, Database, NowSetMode, StrandDeletePreview, StrandDeleteResult, StrandReadState, StrandTaskTree, Tag, Thread, ResurfaceItem } from '@axiom/core'
+import type { AgentCore, EffectiveModel, ModelSelection, Database, NowSetMode, StrandDeletePreview, StrandDeleteResult, StrandReadState, StrandTaskTree, Tag, Thread, ResurfaceItem } from '@axiom/core'
 import {
   EMPTY_STRAND_READ_STATE,
   InvalidInputError,
@@ -46,6 +46,14 @@ export class StrandServiceError extends Error {
  */
 export interface StrandTurnGuard {
   getTurnModelOverride?: (user: number | string, sessionId: string) => ModelSelection | null
+  /**
+   * The model a live turn of this strand was bound to at its start, or null
+   * when no turn runs. Feeds `runningTurnModel` (incident 2026-09-24: the
+   * header showed the globally effective model while an older model was still
+   * answering).
+   */
+  getRunningTurnModel?: (user: number | string, sessionId: string) =>
+  (ModelSelection & { source?: string; degradedReason?: string }) | null
   hasActiveTurnInSession?: (user: number | string, sessionId: string) => boolean
 }
 
@@ -187,12 +195,36 @@ export function createStrandsService(options: StrandsServiceOptions) {
         : null,
       effectiveModel: effectiveModelForStrand(db, strandId, options.getTurnRunner?.()?.getTurnModelOverride?.(userId, strandId)),
       /**
+       * The model that is answering RIGHT NOW, frozen when the running turn
+       * started, or null when the strand is idle. `effectiveModel` answers
+       * "what will the next turn use" and changes the moment the global
+       * selection changes; it must not be presented as the source of an answer
+       * that is still streaming from another model (incident 2026-09-24).
+       */
+      runningTurnModel: runningTurnModelOf(userId, strandId),
+      /**
        * A turn of this strand that is enqueued but has not started yet (plan
        * 2026-09-19, D5), else null. A client that missed the live
        * `turn_queued` event (reload, second device) reads the same wait state
        * here instead of showing an idle strand that is in fact waiting.
        */
       pendingTurn: describePendingTurn(db, options.getAgentCore(), userId, strand.agentId, strandId),
+    }
+  }
+
+  /**
+   * Normalize the runner's frozen turn model into the same shape the clients
+   * already parse for `effectiveModel`. `source` defaults to `turn` because a
+   * running turn IS the strongest binding, whatever made it effective.
+   */
+  function runningTurnModelOf(userId: number, strandId: string): EffectiveModel | null {
+    const running = options.getTurnRunner?.()?.getRunningTurnModel?.(userId, strandId)
+    if (!running) return null
+    return {
+      providerId: running.providerId,
+      modelId: running.modelId,
+      source: (running.source as EffectiveModel['source'] | undefined) ?? 'turn',
+      ...(running.degradedReason ? { degradedReason: running.degradedReason } : {}),
     }
   }
 

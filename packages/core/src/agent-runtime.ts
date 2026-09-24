@@ -734,25 +734,11 @@ class PiAgentRuntime implements AgentRuntimeBoundary, AgentRuntimePiAgentAccess 
     // be resolved fresh from the provider config on every call. Without this, cross-persona
     // calls hit the provider with an empty key and fail silently.
     const runtimeAgentId = this.agentId
-    const providerConfigRef = this.providerConfig
     const askAgentTools: AgentTool[] = loadMultiPersonaSettings().enabled
       ? [createAskAgentTool({
           getCurrentAgentId: () => runtimeAgentId,
           getModel: () => this.model,
-          getApiKey: providerConfigRef?.authMethod === 'oauth'
-            ? async () => {
-                try {
-                  const file = loadProvidersDecrypted()
-                  const freshProvider = file.providers.find(p => p.id === providerConfigRef.id)
-                  if (freshProvider) {
-                    return await getApiKeyForProvider(freshProvider)
-                  }
-                } catch (err) {
-                  console.error('[ask_agent] OAuth token refresh failed:', err)
-                }
-                return this.apiKey
-              }
-            : () => this.apiKey,
+          getApiKey: () => this.resolveApiKey('ask_agent'),
         })]
       : []
 
@@ -810,23 +796,36 @@ class PiAgentRuntime implements AgentRuntimeBoundary, AgentRuntimePiAgentAccess 
       },
       ...(this.providerConfig?.transport && this.providerConfig.transport !== 'sse'
         && { transport: this.providerConfig.transport }),
-      getApiKey: this.providerConfig?.authMethod === 'oauth'
-        ? async () => {
-            try {
-              // Reload provider config to get latest OAuth credentials
-              const { loadProvidersDecrypted } = await import('./provider-config.js')
-              const file = loadProvidersDecrypted()
-              const freshProvider = file.providers.find(p => p.id === this.providerConfig!.id)
-              if (freshProvider) {
-                return await getApiKeyForProvider(freshProvider)
-              }
-            } catch (err) {
-              console.error('OAuth token refresh failed:', err)
-            }
-            return this.apiKey
-          }
-        : () => this.apiKey,
+      getApiKey: () => this.resolveApiKey('agent-runtime'),
     })
+  }
+
+  /**
+   * The credential for the CURRENT provider, resolved per call.
+   *
+   * Deliberately not decided once at construction: `swapProvider` replaces the
+   * provider of a live runtime (per-strand/per-persona model selection), so a
+   * runtime built on an API-key provider and later swapped to an OAuth one
+   * would otherwise keep serving the access token frozen at swap time and
+   * never see a refreshed one — a guaranteed 401 in a process that outlives
+   * the token lifetime. Resolving here also means a credential refreshed after
+   * an authentication failure is picked up by the very next call.
+   *
+   * OAuth resolution failures fall back to the cached key instead of throwing:
+   * the request then fails with the provider's own error, which is what the
+   * turn runner classifies.
+   */
+  private async resolveApiKey(logScope: string): Promise<string> {
+    const provider = this.providerConfig
+    if (provider?.authMethod !== 'oauth') return this.apiKey
+    try {
+      const file = loadProvidersDecrypted()
+      const freshProvider = file.providers.find(p => p.id === provider.id)
+      if (freshProvider) return await getApiKeyForProvider(freshProvider)
+    } catch (err) {
+      console.error(`[${logScope}] OAuth token refresh failed:`, err)
+    }
+    return this.apiKey
   }
 
   streamPrompt(text: string, sessionId: string, images?: ImageContent[]): AsyncIterable<ResponseChunk> {

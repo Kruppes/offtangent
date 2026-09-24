@@ -1671,6 +1671,7 @@
     "noProject": "Kein Projekt",
     "model": "Modell",
     "defaultModel": "Standardmodell",
+    "answeringWith": "Antwortet gerade mit {model}; nächster Turn: {next}",
     "pin": "Anheften",
     "unpin": "Loslösen",
     "suggestion": "Projektvorschlag",

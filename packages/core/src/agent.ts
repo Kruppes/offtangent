@@ -177,6 +177,11 @@ export class AgentCore {
    */
   private pinnedProviderAgents: Set<string> = new Set()
   /**
+   * Global provider swaps that arrived while a persona was mid turn, kept per
+   * persona and applied before its next turn. See `swapProvider`.
+   */
+  private deferredProviderSwaps = new Map<string, { provider: ProviderConfig; apiKey: string; modelId?: string }>()
+  /**
    * Per-persona thread transcripts (Offtangent Stufe 1). There is exactly ONE
    * runtime per persona, so the model context of a thread that is not running
    * is parked here and swapped back in before the next turn on that thread.
@@ -466,8 +471,38 @@ export class AgentCore {
     for (const [agentId, runtime] of this.runtimes) {
       // Personas pinned to their own model keep it across global swaps.
       if (this.pinnedProviderAgents.has(agentId)) continue
+      // A live turn keeps BOTH the model and the credential it started with.
+      // pi-agent freezes `config.model` when the run starts but re-resolves
+      // the API key before every LLM call of the tool loop
+      // (pi-agent-core/agent-loop `streamAssistantResponse`), so swapping here
+      // hands the still running Anthropic call the next provider's token and
+      // the provider answers `401 invalid x-api-key` (incident 2026-09-24
+      // 11:49 UTC: a second strand of the same persona moved the global model
+      // to an OpenAI Codex one while a Claude turn was in its tool loop).
+      // The swap is therefore deferred to the persona's next turn.
+      if (runtime.getRunningSessionId?.()) {
+        this.deferredProviderSwaps.set(agentId, { provider, apiKey, modelId })
+        console.warn(`[agent] Deferring global provider swap for ${agentId}: a turn is still running`)
+        continue
+      }
+      this.deferredProviderSwaps.delete(agentId)
       runtime.swapProvider(provider, apiKey, modelId)
     }
+  }
+
+  /**
+   * Apply a global swap that was deferred because the persona was mid turn.
+   * Called at the start of a turn, before the per-turn model resolution, so a
+   * composition without `resolveTurnModel` still lands on the new provider.
+   */
+  private applyDeferredProviderSwap(agentId: string, runtime: AgentRuntimeBoundary): void {
+    const pending = this.deferredProviderSwaps.get(agentId)
+    if (!pending || this.pinnedProviderAgents.has(agentId)) {
+      this.deferredProviderSwaps.delete(agentId)
+      return
+    }
+    this.deferredProviderSwaps.delete(agentId)
+    runtime.swapProvider(pending.provider, pending.apiKey, pending.modelId)
   }
 
   /**
@@ -704,6 +739,7 @@ export class AgentCore {
     // would let another strand change the shared persona runtime in between.
     // (The lock is per persona, and so is the runtime it protects — plan D1.)
     const runtime = this.getOrCreateRuntime(agentId)
+    this.applyDeferredProviderSwap(agentId, runtime)
     const resolvedModel = await this.runtimeOptions.resolveTurnModel?.({
       sessionId,
       agentId,

@@ -1925,6 +1925,7 @@ export async function refreshOAuthCredentialsLocked(
   providerId: string,
   oauthAuth: OAuthAuth,
   fallbackCreds: OAuthCredential,
+  options?: { force?: boolean },
 ): Promise<OAuthCredential> {
   const existing = inFlightOAuthRefresh.get(providerId)
   if (existing) return existing
@@ -1943,7 +1944,15 @@ export async function refreshOAuthCredentialsLocked(
     } catch {
       // fall back to the caller's credential
     }
-    if (Date.now() < base.expires) return base
+    // `force` (the provider rejected the token before it expired on paper)
+    // skips the expiry gate — but only if nobody else rotated in the
+    // meantime. A credential that differs from the caller's is already the
+    // fresh one, and rotating again would burn a refresh token for nothing.
+    if (options?.force) {
+      if (base.access !== fallbackCreds.access) return base
+    } else if (Date.now() < base.expires) {
+      return base
+    }
 
     // pi-ai 0.84.1: OAuthAuth.refresh(credential, signal) requires an AbortSignal.
     // 30s cap mirrors upstream pi-oauth.ts; a hung refresh must not wedge the turn.
@@ -1956,6 +1965,64 @@ export async function refreshOAuthCredentialsLocked(
   inFlightOAuthRefresh.set(providerId, run)
   void run.finally(() => inFlightOAuthRefresh.delete(providerId)).catch(() => {})
   return run
+}
+
+/**
+ * Forced refreshes per provider id, so a burst of authentication failures
+ * (several turns hitting the same rejecting provider) rotates the token once
+ * instead of once per turn.
+ */
+const lastForcedOAuthRefresh = new Map<string, number>()
+export const FORCED_OAUTH_REFRESH_MIN_INTERVAL_MS = 60_000
+
+/**
+ * Recover from a provider that answered an authentication error: for an OAuth
+ * provider the stored credential is refreshed out of band (outside the normal
+ * `expires` gate, since the provider just declared the token invalid) and the
+ * caller is told that retrying the call is worthwhile.
+ *
+ * Returns false for API-key providers — a wrong static key stays wrong, and
+ * retrying it only doubles the failure.
+ *
+ * Never throws: a failed refresh still returns true for OAuth providers,
+ * because the stored token may be perfectly valid and the 401 spurious
+ * (incident 2026-09-24: the very same credential worked one second earlier and
+ * one minute later).
+ */
+export async function recoverOAuthAfterAuthFailure(
+  providerId: string,
+  now: number = Date.now(),
+): Promise<boolean> {
+  let provider: ProviderConfig | undefined
+  try {
+    provider = loadProvidersDecrypted().providers.find(p => p.id === providerId)
+  } catch (err) {
+    console.warn(`[axiom] Could not read providers while recovering ${providerId}: ${(err as Error).message}`)
+    return false
+  }
+  if (!provider || provider.authMethod !== 'oauth' || !provider.oauthCredentials) return false
+
+  const last = lastForcedOAuthRefresh.get(providerId) ?? 0
+  if (now - last < FORCED_OAUTH_REFRESH_MIN_INTERVAL_MS) return true
+  lastForcedOAuthRefresh.set(providerId, now)
+
+  const preset = PROVIDER_TYPE_PRESETS[provider.providerType]
+  const oauthAuth = preset?.oauthProviderId ? getPiOAuthAuth(preset.oauthProviderId) : null
+  if (!oauthAuth) return true
+
+  try {
+    const creds: OAuthCredential = { type: 'oauth', ...storedToOAuthCredentials(provider.oauthCredentials) }
+    const refreshed = await refreshOAuthCredentialsLocked(provider.id, oauthAuth, creds, { force: true })
+    // Never log token material, only the new lifetime.
+    console.warn(
+      `[axiom] Provider ${providerId} rejected the access token; OAuth credentials re-resolved `
+      + `(valid until ${new Date(refreshed.expires).toISOString()}).`,
+    )
+  } catch (err) {
+    // A failed refresh is not a verdict about the stored token: retry anyway.
+    console.error(`[axiom] Forced OAuth refresh for ${providerId} failed: ${(err as Error).message}`)
+  }
+  return true
 }
 
 /**
