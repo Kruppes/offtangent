@@ -22,7 +22,7 @@ export {
 export type { UploadDescriptor, SaveUploadInput, SaveUploadFromFileInput, UploadSettings } from './uploads.js'
 export { buildAttachmentContext } from './attachment-context.js'
 export type { AttachmentContext } from './attachment-context.js'
-export { loadConfig, warnConfigReadFailed, getConfigDir, ensureConfigTemplates, getDefaultTimezone, getProjectRootDir, getReadmePath, getDocsPath, getAgentDocsPath, loadMultiPersonaSettings } from './config.js'
+export { loadConfig, warnConfigReadFailed, getConfigDir, ensureConfigTemplates, getDefaultTimezone, getProjectRootDir, getReadmePath, getDocsPath, getAgentDocsPath, loadMultiPersonaSettings, loadCaptureModeSettings } from './config.js'
 export type { MultiPersonaSettings } from './config.js'
 export { loadPersona, clearPersonaCache, invalidatePersonaCache, seedPersonaFiles, getPersonaDir, listPersonaIds } from './persona-loader.js'
 export type { PersonaContext } from './persona-loader.js'
@@ -380,6 +380,8 @@ export type {
   StartTurnInput,
   TurnPreambleToolCall,
 } from './turn-runner.js'
+export { hasTurnRuntimeOverrides } from './turn-overrides.js'
+export type { TurnRuntimeOverrides } from './turn-overrides.js'
 export { createAgentRuntime, createBaseAgentTools } from './agent-runtime.js'
 export type { AgentRuntimeBoundary, AgentRuntimeOptions, AgentRuntimePiAgentAccess, BaseAgentToolsOptions } from './agent-runtime.js'
 export type {
@@ -916,19 +918,31 @@ export {
   loadTtsSettings,
   loadTtsDeepgramApiKey,
   synthesizeOpenAi,
+  synthesizeOpenAiStream,
   synthesizeMistral,
   synthesizeGemini,
   synthesizeTts,
+  synthesizeTtsStream,
+  shouldStreamTts,
+  formatFromAccept,
+  isOfficialOpenAiBaseUrl,
   chunkTextForTts,
   composeGeminiPrompt,
   resolveTtsFormat,
   TtsFormatError,
+  TtsUpstreamError,
   TTS_PROVIDER_FORMATS,
+  TTS_STREAMABLE_FORMATS,
+  TTS_FALLBACK_MODEL,
+  TTS_FIRST_BYTE_TIMEOUT_MS,
+  TTS_BLOCK_TIMEOUT_MS,
+  ttsHeaderTimeoutMs,
 } from './tts.js'
 export type {
   TtsSettings,
   SynthesizeOptions,
   SynthesizeResult,
+  TtsStreamResult,
 } from './tts.js'
 export {
   resamplePcm,
@@ -1037,6 +1051,9 @@ export type {
 export { ensureOfftangentTables } from './offtangent-schema.js'
 export {
   NOW_SET_MAX,
+  NOW_SET_RANKING_WINDOW_DAYS,
+  NOW_SET_RANKING_HALF_LIFE_DAYS,
+  rankStrandsByActivity,
   TAG_NAME_MAX_LENGTH,
   NowSetTooLargeError,
   isNowSetTooLargeError,
@@ -1066,6 +1083,10 @@ export {
   insertDecision,
   getDecision,
   getCurrentDecision,
+  getCurrentDecisionForPart,
+  listCurrentDecisions,
+  listAllCurrentDecisions,
+  capturePartCount,
   listDecisionsForCaptures,
   updateDecision,
   snoozeStrand,
@@ -1092,6 +1113,7 @@ export type {
   DeleteStrandOptions,
 } from './strand-delete.js'
 export type {
+  RankStrandsByActivityOptions,
   Tag,
   StrandLinkKind,
   CaptureKind,
@@ -1141,6 +1163,43 @@ export {
   captureLanguage,
   runRouter,
 } from './capture-router.js'
+export {
+  SPLIT_MIN,
+  DEFAULT_SPLIT_MIN_CHARS,
+  SPLIT_MIN_SENTENCES_PER_TOPIC,
+  SPLIT_REPAIR_ATTEMPTS,
+  SPLIT_TITLE_MAX,
+  STAGE1_SYSTEM_PROMPT,
+  STAGE2_SYSTEM_PROMPT,
+  loadCaptureSplitSettings,
+  isSplitEligible,
+  segmentSentences,
+  parseStage1Answer,
+  buildStage1UserPrompt,
+  buildStage1RepairPrompt,
+  splitCapture,
+  mergeTinyTopics,
+  buildStage2UserPrompt,
+  consolidatePart,
+  singlePartSplit,
+  runCaptureSplit,
+  capturePartContextLine,
+  withCapturePartPrefix,
+  parseCapturePartRef,
+} from './capture-split.js'
+export type {
+  CaptureSplitSettings,
+  CaptureSplitOptions,
+  CaptureSplit,
+  CapturePart,
+  CapturePartRef,
+  SplitCompletion,
+  SplitTopic,
+  SplitUncertainty,
+  Stage1Answer,
+  Stage1Outcome,
+  ParseStage1Result,
+} from './capture-split.js'
 export { deriveStrandTitle, DERIVED_TITLE_MAX } from './strand-title.js'
 export { isSilenceTranscript, SILENCE_GUARD_MARKER } from './silence-guard.js'
 export {

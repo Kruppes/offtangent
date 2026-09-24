@@ -198,6 +198,11 @@ export interface ListThreadsOptions {
   projectId?: string | null
   /** Offtangent strands (SPEC 6.2): only strands carrying this tag name. */
   tag?: string
+  /**
+   * Restrict to this explicit list of strand ids (the computed now set, whose
+   * order is applied by the caller). An empty list matches nothing.
+   */
+  ids?: string[]
   /** Only strands in the now set, ordered by rank. */
   nowOnly?: boolean
 }
@@ -1581,6 +1586,10 @@ export class SessionManager {
     if (options.nowOnly) {
       const now = getNowSet(this.db, userId)
       idFilter = idFilter ? idFilter.filter(id => now.includes(id)) : now
+    }
+    if (options.ids) {
+      const wanted = options.ids
+      idFilter = idFilter ? idFilter.filter(id => wanted.includes(id)) : [...wanted]
     }
     if (idFilter) {
       if (idFilter.length === 0) return []

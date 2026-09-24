@@ -288,6 +288,106 @@ export function addToNowSetIfRoom(db: Database, userId: string, strandId: string
 }
 
 /**
+ * Window the activity ranking looks back over. Older activity contributes
+ * nothing at all. With a one-day half-life anything past ten days scores below
+ * a thousandth of today, so fourteen days is the point where the window stops
+ * changing the answer and only bounds the query.
+ */
+export const NOW_SET_RANKING_WINDOW_DAYS = 14
+
+/**
+ * Half-life of one active day, in days: a day's contribution halves every day.
+ *
+ * Measured against the live database on 23.09.2026 with the previous value of
+ * five days: places 1 to 8 of the set were 52 to 124 hours old while every
+ * strand of that day sat at place 9 and below — a thread that ran on four days
+ * of the previous week outscored everything current. The product owner's words:
+ * "total verwahrlost, nicht mehr im aktuellen Verlauf".
+ *
+ * One day keeps returning to something a real signal (today + yesterday +
+ * the day before = 1.75 still beats a single fresh day = 1.0) while making
+ * recency the dominant term, which is what the set is for.
+ */
+export const NOW_SET_RANKING_HALF_LIFE_DAYS = 1
+
+export interface RankStrandsByActivityOptions {
+  /** How many ids to return at most (the effective `offtangent.nowSetMax`). */
+  max: number
+  /** Reference point for the age of a message. Explicit so tests are deterministic. */
+  now?: Date
+  windowDays?: number
+  halfLifeDays?: number
+}
+
+/** `YYYY-MM-DD HH:MM:SS` in UTC — the format `chat_messages.timestamp` carries. */
+function toSqliteUtc(date: Date): string {
+  return date.toISOString().replace('T', ' ').slice(0, 19)
+}
+
+/**
+ * The now set, computed from what the user actually did (`offtangent.nowSetMode
+ * = 'auto'`).
+ *
+ * Score of a strand = sum over the DISTINCT calendar days (UTC) it saw a user
+ * message inside the window of `0.5 ^ (ageOfThatDay / halfLife)`, where the
+ * day's age is that of its most recent user message.
+ *
+ * Distinct days instead of message count on purpose: a bench thread with 92
+ * messages in two days must not outrank a strand the product owner came back
+ * to on five separate days — returning to something is the signal, typing a
+ * lot in one sitting is not. Only `role = 'user'` rows count, so cron runs,
+ * task reports and system injections can never pull a strand into the set.
+ *
+ * Order: pinned strands first (among themselves by score), then the rest by
+ * score, tie-broken by the most recent user activity and finally by id so the
+ * list is stable between two reads. A strand without any score is only
+ * included when it is pinned; a short (even empty) now set is a valid answer.
+ */
+export function rankStrandsByActivity(
+  db: Database,
+  userId: string,
+  options: RankStrandsByActivityOptions,
+): string[] {
+  const max = Math.trunc(options.max)
+  if (!Number.isFinite(max) || max <= 0) return []
+  const windowDays = options.windowDays ?? NOW_SET_RANKING_WINDOW_DAYS
+  const halfLifeDays = options.halfLifeDays ?? NOW_SET_RANKING_HALF_LIFE_DAYS
+  const now = options.now ?? new Date()
+  const nowStamp = toSqliteUtc(now)
+  const windowStart = toSqliteUtc(new Date(now.getTime() - windowDays * 86_400_000))
+
+  const rows = db.prepare(
+    `WITH days AS (
+       SELECT session_id,
+              date(timestamp) AS d,
+              min(julianday(?) - julianday(timestamp)) AS age
+       FROM chat_messages
+       WHERE role = 'user' AND timestamp > ?
+       GROUP BY session_id, d
+     ),
+     sc AS (
+       SELECT session_id, sum(pow(0.5, age / ?)) AS score, min(age) AS rec
+       FROM days GROUP BY session_id
+     )
+     SELECT s.id AS id, s.pinned AS pinned, sc.score AS score, sc.rec AS rec
+     FROM sessions s LEFT JOIN sc ON sc.session_id = s.id
+     WHERE (s.session_user = ? OR CAST(s.user_id AS TEXT) = ?)
+       AND s.type = 'interactive'
+       AND s.archived = 0
+       AND s.title IS NOT NULL AND trim(s.title) <> ''
+       AND (sc.score IS NOT NULL OR s.pinned = 1)
+     ORDER BY s.pinned DESC, score DESC, rec ASC, s.id ASC
+     LIMIT ?`,
+  ).all(nowStamp, windowStart, halfLifeDays, userId, userId, max) as {
+    id: string
+    pinned: number
+    score: number | null
+    rec: number | null
+  }[]
+  return rows.map(row => row.id)
+}
+
+/**
  * Removal never enforces the size limit: a set that is over the current limit
  * (because the setting was lowered under it) has to stay removable, and
  * shrinking it must never fail.
@@ -386,6 +486,18 @@ export interface Decision {
   /** Proposal for the target strand of an `append`/`link`, never applied. */
   projectSuggestion: ProjectSuggestion | null
   alternatives: DecisionAlternative[]
+  /**
+   * Topic part of the capture this decision belongs to (split-on-intake).
+   * A capture that was not split has exactly one decision with `partIndex 0`
+   * and `partCount 1`, and `partText` null: the part IS the capture text.
+   */
+  partIndex: number
+  partCount: number
+  /** Consolidated text of this part, null for a single part capture. */
+  partText: string | null
+  partTitle: string | null
+  /** 1-based sentence numbers of the capture this part was built from. */
+  sentenceIds: number[]
   state: DecisionState
   model: string | null
   latencyMs: number | null
@@ -432,10 +544,15 @@ interface DecisionRow {
   created_at: string
   applied_at: string | null
   resolved_at: string | null
+  part_index: number
+  part_count: number
+  part_text: string | null
+  part_title: string | null
+  sentence_ids: string | null
 }
 
 const CAPTURE_COLUMNS = 'id, user_id, agent_id, client_message_id, text, kind, source, attachments, status, strand_id, message_id, created_at, filed_at'
-const DECISION_COLUMNS = 'id, capture_id, action, target_strand_id, secondary_strand_id, created_strand_id, intent, confidence, alternatives, tags, rationale, new_strand_title, new_strand_persona, new_strand_project, project_suggestion, model, latency_ms, state, created_at, applied_at, resolved_at'
+const DECISION_COLUMNS = 'id, capture_id, action, target_strand_id, secondary_strand_id, created_strand_id, intent, confidence, alternatives, tags, rationale, new_strand_title, new_strand_persona, new_strand_project, project_suggestion, model, latency_ms, state, created_at, applied_at, resolved_at, part_index, part_count, part_text, part_title, sentence_ids'
 
 /** A stored project suggestion; anything unreadable counts as absent. */
 function parseProjectSuggestion(raw: string | null | undefined): ProjectSuggestion | null {
@@ -487,6 +604,11 @@ function toDecision(row: DecisionRow): Decision {
     projectId: row.new_strand_project ?? null,
     projectSuggestion: parseProjectSuggestion(row.project_suggestion),
     alternatives: parseJsonArray<DecisionAlternative>(row.alternatives),
+    partIndex: row.part_index ?? 0,
+    partCount: row.part_count ?? 1,
+    partText: row.part_text ?? null,
+    partTitle: row.part_title ?? null,
+    sentenceIds: parseJsonArray<number>(row.sentence_ids),
     state: row.state as DecisionState,
     model: row.model ?? null,
     latencyMs: row.latency_ms ?? null,
@@ -604,6 +726,12 @@ export interface InsertDecisionInput {
   model: string | null
   latencyMs: number | null
   state: DecisionState
+  /** Split-on-intake: omitted means the single part every capture had before. */
+  partIndex?: number
+  partCount?: number
+  partText?: string | null
+  partTitle?: string | null
+  sentenceIds?: number[]
 }
 
 export function insertDecision(db: Database, input: InsertDecisionInput): Decision {
@@ -612,8 +740,8 @@ export function insertDecision(db: Database, input: InsertDecisionInput): Decisi
     `INSERT INTO router_decisions
        (id, capture_id, action, target_strand_id, secondary_strand_id, created_strand_id, intent, confidence,
         alternatives, tags, rationale, new_strand_title, new_strand_persona, new_strand_project, project_suggestion,
-        model, latency_ms, state, applied_at)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        model, latency_ms, state, applied_at, part_index, part_count, part_text, part_title, sentence_ids)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
   ).run(
     id,
     input.captureId,
@@ -634,6 +762,11 @@ export function insertDecision(db: Database, input: InsertDecisionInput): Decisi
     input.latencyMs,
     input.state,
     input.state === 'applied' ? new Date().toISOString().replace('T', ' ').slice(0, 19) : null,
+    input.partIndex ?? 0,
+    input.partCount ?? 1,
+    input.partText ?? null,
+    input.partTitle ?? null,
+    input.sentenceIds && input.sentenceIds.length > 0 ? JSON.stringify(input.sentenceIds) : null,
   )
   return getDecision(db, id)!
 }
@@ -643,19 +776,61 @@ export function getDecision(db: Database, id: string): Decision | null {
   return row ? toDecision(row) : null
 }
 
-/** The current decision of a capture: the newest row (undone rows are superseded by the row written on undo). */
+/**
+ * The current decision of a capture: the newest row of its FIRST part (undone
+ * rows are superseded by the row written on undo).
+ *
+ * Scoped to part 0 since split-on-intake: a capture split into parts has one
+ * decision per part, and every caller that asks for "the" decision means the
+ * one the clients show at the top level. The other parts are read through
+ * {@link getCurrentDecisionForPart} or {@link listCurrentDecisions}. For a
+ * capture that was never split this is the same row as before, because all of
+ * its decisions carry `part_index 0`.
+ */
 export function getCurrentDecision(db: Database, captureId: string): Decision | null {
+  return getCurrentDecisionForPart(db, captureId, 0)
+}
+
+/** The newest decision row of one part of a capture. */
+export function getCurrentDecisionForPart(db: Database, captureId: string, partIndex: number): Decision | null {
   const row = db.prepare(
-    `SELECT ${DECISION_COLUMNS} FROM router_decisions WHERE capture_id = ? ORDER BY created_at DESC, rowid DESC LIMIT 1`,
-  ).get(captureId) as DecisionRow | undefined
+    `SELECT ${DECISION_COLUMNS} FROM router_decisions WHERE capture_id = ? AND part_index = ?
+     ORDER BY created_at DESC, rowid DESC LIMIT 1`,
+  ).get(captureId, partIndex) as DecisionRow | undefined
   return row ? toDecision(row) : null
+}
+
+/** The newest decision row per part of one capture, by part index. */
+export function listCurrentDecisions(db: Database, captureId: string): Decision[] {
+  const rows = db.prepare(
+    `SELECT ${DECISION_COLUMNS} FROM router_decisions WHERE capture_id = ?
+     ORDER BY part_index ASC, created_at DESC, rowid DESC`,
+  ).all(captureId) as DecisionRow[]
+  const seen = new Set<number>()
+  const out: Decision[] = []
+  for (const row of rows) {
+    const index = row.part_index ?? 0
+    if (seen.has(index)) continue
+    seen.add(index)
+    out.push(toDecision(row))
+  }
+  return out
+}
+
+/** How many parts a capture currently has, from its part 0 decision. */
+export function capturePartCount(db: Database, captureId: string): number {
+  const row = db.prepare(
+    `SELECT part_count FROM router_decisions WHERE capture_id = ? AND part_index = 0
+     ORDER BY created_at DESC, rowid DESC LIMIT 1`,
+  ).get(captureId) as { part_count: number } | undefined
+  return row?.part_count ?? 1
 }
 
 export function listDecisionsForCaptures(db: Database, captureIds: string[]): Decision[] {
   if (captureIds.length === 0) return []
   const placeholders = captureIds.map(() => '?').join(', ')
   const rows = db.prepare(
-    `SELECT ${DECISION_COLUMNS} FROM router_decisions WHERE capture_id IN (${placeholders})
+    `SELECT ${DECISION_COLUMNS} FROM router_decisions WHERE capture_id IN (${placeholders}) AND part_index = 0
      ORDER BY capture_id, created_at DESC, rowid DESC`,
   ).all(...captureIds) as DecisionRow[]
   const seen = new Set<string>()
@@ -663,6 +838,25 @@ export function listDecisionsForCaptures(db: Database, captureIds: string[]): De
   for (const row of rows) {
     if (seen.has(row.capture_id)) continue
     seen.add(row.capture_id)
+    out.push(toDecision(row))
+  }
+  return out
+}
+
+/** The newest decision row per part for several captures, part order kept. */
+export function listAllCurrentDecisions(db: Database, captureIds: string[]): Decision[] {
+  if (captureIds.length === 0) return []
+  const placeholders = captureIds.map(() => '?').join(', ')
+  const rows = db.prepare(
+    `SELECT ${DECISION_COLUMNS} FROM router_decisions WHERE capture_id IN (${placeholders})
+     ORDER BY capture_id, part_index ASC, created_at DESC, rowid DESC`,
+  ).all(...captureIds) as DecisionRow[]
+  const seen = new Set<string>()
+  const out: Decision[] = []
+  for (const row of rows) {
+    const key = `${row.capture_id}\u0000${row.part_index ?? 0}`
+    if (seen.has(key)) continue
+    seen.add(key)
     out.push(toDecision(row))
   }
   return out

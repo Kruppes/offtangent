@@ -1,13 +1,17 @@
 import {
   DEFAULT_HEALTH_MONITOR_NOTIFICATION_TOGGLES,
   DEFAULT_NOW_SET_MAX,
+  DEFAULT_NOW_SET_MODE,
   DEFAULT_RETRY_SETTINGS,
   DEFAULT_TTS_GEMINI_MODEL,
   DEFAULT_TTS_GEMINI_VOICE,
   DEFAULT_WATCHDOG_SETTINGS,
   getDefaultTimezone,
   maskApiKey,
+  normalizeSettingsContract,
+  parseNowSetMode,
 } from '@axiom/core'
+import type { SettingsContract } from '@axiom/core'
 import type { HealthMonitorNotificationToggles, SettingsData, TelegramData } from './types.js'
 
 const DEFAULT_NOTIFICATIONS: HealthMonitorNotificationToggles = {
@@ -147,7 +151,16 @@ function buildOfftangentResponse(settingsRaw: Record<string, unknown>) {
   const offtangent = (settingsRaw.offtangent ?? {}) as Record<string, unknown>
   return {
     nowSetMax: typeof offtangent.nowSetMax === 'number' ? offtangent.nowSetMax : DEFAULT_NOW_SET_MAX,
+    nowSetMode: parseNowSetMode(offtangent.nowSetMode) ?? DEFAULT_NOW_SET_MODE,
   }
+}
+
+function buildCaptureModesResponse(settingsRaw: Record<string, unknown>) {
+  return normalizeSettingsContract(settingsRaw as Partial<SettingsContract>).captureModes
+}
+
+function buildCaptureSourcesResponse(settingsRaw: Record<string, unknown>) {
+  return normalizeSettingsContract(settingsRaw as Partial<SettingsContract>).captureSources
 }
 
 function buildInstanceIdentityResponse(settingsRaw: Record<string, unknown>) {
@@ -238,6 +251,8 @@ export function mapSettingsResponse(context: SettingsResponseContext) {
     tts: buildTtsResponse(settingsRaw),
     stt: buildSttResponse(settingsRaw),
     offtangent: buildOfftangentResponse(settingsRaw),
+    captureModes: buildCaptureModesResponse(settingsRaw),
+    captureSources: buildCaptureSourcesResponse(settingsRaw),
     instanceIdentity: buildInstanceIdentityResponse(settingsRaw),
   }
 }

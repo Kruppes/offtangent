@@ -28,7 +28,7 @@
  */
 
 import type { AgentMessage } from '@earendil-works/pi-agent-core'
-import { estimateMessageTokens, trimMessagesToBudget } from './strand-context.js'
+import { estimateMessageTokens, leadingSystemMessage, trimMessagesToBudget } from './strand-context.js'
 import { formatMessageDigest, RECALLED_MARKER } from './message-digest.js'
 import { sanitizeHistoryBoundaries } from './message-history.js'
 
@@ -180,6 +180,17 @@ export class TranscriptCompactor {
    * Returns the input unchanged while everything still fits the budget.
    */
   compact(messages: readonly AgentMessage[]): AgentMessage[] {
+    // The leading system message (pi-agent-core ≥ 0.87: prompt + tool
+    // declarations) is pinned in front of whatever the window shows. The cut
+    // position, the digest and the budget all refer to the body behind it.
+    const head = leadingSystemMessage(messages)
+    if (head) {
+      return [head, ...this.compactBody(messages.slice(1))]
+    }
+    return this.compactBody(messages)
+  }
+
+  private compactBody(messages: readonly AgentMessage[]): AgentMessage[] {
     // A transcript that got shorter than our cut position was reset or
     // replaced — start over rather than hide the wrong messages.
     if (messages.length < this.lastSeenLength || this.cut > messages.length) {

@@ -1,6 +1,12 @@
-import type { Thread, Project } from '@axiom/core'
+import type { Thread, Project, NowSetMode } from '@axiom/core'
 export type NowStrand = Thread
-export interface NowSet { strands: NowStrand[]; max: number }
+/**
+ * `mode` says who fills the set: `auto` ranks it from the user's activity
+ * (read only — `PUT /api/now` answers 409), `manual` is the curated set. A
+ * backend that predates the setting omits it; treat a missing value as
+ * `manual`, which is exactly how it behaved before.
+ */
+export interface NowSet { strands: NowStrand[]; max: number; mode?: NowSetMode }
 export function useNowApi() {
   const { apiFetch } = useApi()
   return {

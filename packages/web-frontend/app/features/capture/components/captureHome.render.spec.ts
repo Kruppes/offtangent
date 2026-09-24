@@ -84,10 +84,12 @@ let nowIds: string[] = []
 let failLoad = false
 let holdLoad = false
 let saved = false
+/** `undefined` = a backend without the setting, i.e. the curated set. */
+let nowMode: 'auto' | 'manual' | undefined
 let request: ReturnType<typeof vi.fn>
 function result(state = status) { return { capture: { id: 'c1', text: 'Roof note', createdAt: '2026-01-01T12:00:00Z', status: state, strandId: state === 'unsorted' ? null : 's1', attachments: [] }, decision: { id: 'd1', createdAt: '2026-01-01T12:00:01Z', captureId: 'c1', title: 'Roof', action: 'new_strand', confidence: state === 'filed' ? 0.9 : state === 'needs_review' ? 0.55 : 0.2, rationale: 'Related topic', state: state === 'unsorted' ? 'proposed' : 'applied', alternatives: [{ action: 'append', strandId: 's2', title: 'House', confidence: 0.3, reason: 'Possible match' }] } } }
 beforeEach(() => {
- status = 'filed'; max = 7; nowIds = []; failLoad = false; holdLoad = false; saved = false
+ status = 'filed'; max = 7; nowIds = []; nowMode = undefined; failLoad = false; holdLoad = false; saved = false
  setupFetch()
  request = vi.fn(async (url: string, _options?: RequestInit) => {
   const path = url.replace('https://test.example', '')
@@ -98,7 +100,7 @@ beforeEach(() => {
   else if (path === '/api/personas/client') data = { personas: [{ id: 'public', displayName: 'Public persona' }] }
   else if (path === '/api/projects') data = { projects: [] }
   else if (path.startsWith('/api/strands/')) data = { strand: { id: path.split('/').pop(), title: 'Resolved destination' } }
-  else if (path === '/api/now') { if (_options?.method === 'PUT') nowIds = JSON.parse(_options.body as string).strandIds; data = { strands: nowIds.map(id => ({ id, title: id })), max } }
+  else if (path === '/api/now') { if (_options?.method === 'PUT') nowIds = JSON.parse(_options.body as string).strandIds; data = { strands: nowIds.map(id => ({ id, title: id })), max, ...(nowMode ? { mode: nowMode } : {}) } }
   else if (path.startsWith('/api/strands?')) data = { strands: [{ id: 's2', title: 'House' }] }
   else if (path === '/api/captures') { data = result(); saved = true }
   else if (path.endsWith('/undo')) { status = 'unsorted'; data = result() }
@@ -164,6 +166,25 @@ describe('Capture Home rendered', () => {
   expect(button(root, 'capture.updateNow').props.disabled).toBe(false)
   await click(root, 'capture.updateNow'); expect(nowIds).toEqual(['s2'])
   await click(root, 'capture.clearNow'); expect(nowIds).toEqual([])
+ })
+ it('hides every now control in auto mode and explains where the list comes from', async () => {
+  nowMode = 'auto'; max = 1; nowIds = ['s1']
+  const { root } = mount(Home); await flush()
+  expect(text(root)).toContain('capture.nowAutoHint')
+  // No writing controls: PUT /api/now answers 409 in this mode.
+  for (const label of ['capture.updateNow', 'capture.clearNow', 'capture.remove']) {
+    expect(all(root).some(n => n.tag === 'button' && text(n).includes(label))).toBe(false)
+  }
+  // The "now is full" line belongs to the curated set only.
+  expect(text(root)).not.toContain('capture.nowFull')
+  expect(text(root)).toContain('s1')
+ })
+ it('keeps the manual controls when the backend reports manual', async () => {
+  nowMode = 'manual'; max = 1; nowIds = ['s1']
+  const { root } = mount(Home); await flush()
+  expect(text(root)).not.toContain('capture.nowAutoHint')
+  expect(all(root).some(n => n.tag === 'button' && text(n).includes('capture.updateNow'))).toBe(true)
+  expect(text(root)).toContain('capture.nowFull')
  })
  it('renders loading, error with working retry, and empty states', async () => {
   holdLoad = true

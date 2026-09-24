@@ -2,6 +2,15 @@ import { EventEmitter } from 'node:events'
 import type { Capture, Decision, FeedItem, RetryInfo, StallInfo, StrandProjectSuggestion, TurnErrorInfo, UploadDescriptor } from '@axiom/core'
 import type { ChatActionMessage } from './chat-actions.js'
 
+/** One part of a split capture as the routed frame carries it. */
+export interface CapturePartFrame {
+  index: number
+  title: string | null
+  text: string
+  sentenceIds: number[]
+  decision: Decision
+}
+
 /**
  * A chat event emitted when messages flow through any channel (web, telegram).
  * Used to synchronize chat state across connected clients.
@@ -148,6 +157,15 @@ export interface ChatEvent {
   /** Offtangent (SPEC 6.6): the capture and its decision for `capture_routed` / `capture_needs_review`. */
   capture?: Capture
   decision?: Decision
+  /**
+   * Split-on-intake: every topic part of the capture, part 0 first, in the
+   * shape of `GET /api/captures/:id` (the part's text, sentence ids and its
+   * own decision). `decision` above stays the decision of part 0, so a client
+   * that knows nothing about parts reads the frame exactly as before.
+   * `partCount` is 1 for every capture that was not split.
+   */
+  parts?: CapturePartFrame[]
+  partCount?: number
   /** Offtangent: the now set after a change, ordered by rank (for `now_set_changed`). */
   strandIds?: string[]
   /** Offtangent (SPEC 2.9, 6.6): the feed item that was just appended (for `feed_item`). */

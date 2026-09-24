@@ -26,8 +26,16 @@
  *   - anything that does not parse stays text, it never throws
  */
 
-/** Every block kind the SPEC reserves. */
-export const INTERACTION_BLOCK_KINDS = ['choice', 'multi', 'confirm', 'handover', 'schedule'] as const
+/**
+ * Every block kind the SPEC reserves.
+ *
+ * `draft` (W1 of the puck assist waves) is the odd one out: it carries no
+ * question and no options, only the plain text the user wants to TYPE
+ * somewhere (a mail, a message). It exists so a screenless device can send
+ * exactly that text over a BLE keyboard without guessing which part of an
+ * answer was prose and which part was the draft.
+ */
+export const INTERACTION_BLOCK_KINDS = ['choice', 'multi', 'confirm', 'handover', 'schedule', 'draft'] as const
 export type InteractionBlockKind = typeof INTERACTION_BLOCK_KINDS[number]
 
 /**
@@ -47,7 +55,8 @@ export const RENDERED_INTERACTION_BLOCK_KINDS: readonly InteractionBlockKind[] =
  * answer back. Declaring a kind in the contract and then answering 404 for it
  * is a broken contract; this constant is what keeps the two in step.
  */
-export const ANSWERABLE_INTERACTION_BLOCK_KINDS: readonly InteractionBlockKind[] = INTERACTION_BLOCK_KINDS
+export const ANSWERABLE_INTERACTION_BLOCK_KINDS: readonly InteractionBlockKind[] =
+  INTERACTION_BLOCK_KINDS.filter(kind => kind !== 'draft')
 
 /** Restraint: a decision with a closed set of at most five sensible options. */
 export const INTERACTION_BLOCK_MAX_OPTIONS = 5
@@ -55,6 +64,13 @@ export const INTERACTION_BLOCK_MAX_OPTIONS = 5
 export const INTERACTION_BLOCK_MAX_MULTI_OPTIONS = 8
 /** At most one card per message; the rest of the deck degrades to text. */
 export const INTERACTION_BLOCKS_PER_MESSAGE = 1
+
+/**
+ * Upper bound for a `draft` text. Four thousand characters is roughly two
+ * screens of mail — long enough for anything a person dictates at a device,
+ * short enough that typing it over a BLE keyboard stays a bounded operation.
+ */
+export const INTERACTION_DRAFT_TEXT_MAX = 4000
 
 const ID_MAX = 64
 const LABEL_MAX = 120
@@ -76,6 +92,11 @@ export interface InteractionBlock {
   options: InteractionBlockOption[]
   /** `confirm` variant that paints the affirmative option red. */
   destructive: boolean
+  /**
+   * `draft` only: the plain text to be typed verbatim. Never markdown, never
+   * a fence — see {@link parseInteractionBlockPayload}.
+   */
+  text?: string
   /** ISO timestamp after which answering returns 410 `stale`. */
   expiresAt?: string
   /** False for kinds that are reserved but not rendered as a card yet. */
@@ -144,6 +165,8 @@ export function parseInteractionBlockPayload(payload: unknown): InteractionBlock
   const kind = INTERACTION_BLOCK_KINDS.find(candidate => candidate === rawKind)
   if (!kind) return null
 
+  if (kind === 'draft') return parseDraftPayload(payload)
+
   const id = readString(payload.id, ID_MAX)
   const question = readString(payload.question, QUESTION_MAX)
   if (!id || !question) return null
@@ -165,6 +188,36 @@ export function parseInteractionBlockPayload(payload: unknown): InteractionBlock
     destructive: payload.destructive === true,
     ...(expiresAt ? { expiresAt } : {}),
     supported: RENDERED_INTERACTION_BLOCK_KINDS.includes(kind),
+  }
+}
+
+/**
+ * A `draft` block: `{ "block": "draft", "text": "…" }`.
+ *
+ * Deliberately strict, because the text is typed into a foreign program
+ * verbatim and there is no second chance to sanitize it:
+ *   - `text` is required, a string, 1..{@link INTERACTION_DRAFT_TEXT_MAX}
+ *     characters after trimming the outer whitespace; `\n` inside is kept.
+ *   - a markdown fence (```) inside the text is rejected. It cannot survive
+ *     the transport (the fence scanner would close on it) and it is never
+ *     something a person wants typed into a mail.
+ *   - `question` and `options` carry no meaning here and are ignored; `id` is
+ *     optional and defaults to `draft`, because nothing answers a draft.
+ */
+function parseDraftPayload(payload: Record<string, unknown>): InteractionBlock | null {
+  if (typeof payload.text !== 'string') return null
+  const text = payload.text.trim()
+  if (!text || text.length > INTERACTION_DRAFT_TEXT_MAX) return null
+  if (text.includes('```')) return null
+
+  return {
+    kind: 'draft',
+    id: readString(payload.id, ID_MAX) ?? 'draft',
+    question: '',
+    options: [],
+    destructive: false,
+    text,
+    supported: RENDERED_INTERACTION_BLOCK_KINDS.includes('draft'),
   }
 }
 
@@ -309,6 +362,15 @@ export function parseInteractionMessage(content: string): InteractionSegment[] {
  * that carry meaning are written, so the JSON stays readable in every
  * degradation path.
  */
+/**
+ * The fence form of a draft, the counterpart of {@link extractDraftText}.
+ * Used by tests and by any server-side producer of a draft; hand-rolling the
+ * JSON elsewhere would be a second format by accident.
+ */
+export function formatDraftFence(text: string): string {
+  return ['```' + FENCE_LANGUAGE, JSON.stringify({ block: 'draft', text }), '```'].join('\n')
+}
+
 export function formatInteractionBlockFence(block: {
   kind: InteractionBlockKind
   id: string
@@ -370,6 +432,10 @@ export function extractAnswerableInteractionBlocks(content: string): Interaction
     } catch {
       block = null
     }
+    // A `draft` is output, not a question: there is nothing to answer, so it
+    // is invisible here and `POST /api/interactions` replies 404 unknown_block
+    // for it — the same answer an id that does not exist gets.
+    if (block && !ANSWERABLE_INTERACTION_BLOCK_KINDS.includes(block.kind)) continue
     // First block of an id wins, same as the renderer, so a duplicated id
     // cannot make the answered block ambiguous.
     if (!block || seen.has(block.id)) continue
@@ -391,6 +457,9 @@ export function findAnswerableInteractionBlock(content: string, blockId: string)
  * never the only path.
  */
 export function formatInteractionBlockAsText(block: InteractionBlock): string {
+  // A draft degrades to exactly its own text: it IS the readable form, and a
+  // numbered list of zero options would be nonsense.
+  if (block.kind === 'draft') return block.text ?? ''
   const lines = [block.question]
   block.options.forEach((option, index) => {
     lines.push(`${index + 1}. ${option.label}`)
@@ -418,6 +487,30 @@ export function renderInteractionMessageAsText(content: string): string {
 /** True when the message carries at least one renderable card. */
 export function hasInteractionBlock(content: string): boolean {
   return extractInteractionBlocks(content).length > 0
+}
+
+/**
+ * The draft text of a message, or null when it carries none.
+ *
+ * Independent of the rendering restraint on purpose: a draft is DATA a device
+ * fetches (`GET /api/chat/history` exposes it as the `draft` field), not a
+ * card competing for the one card slot of a message. The first well-formed
+ * draft wins, so a persona that writes two of them cannot make the typed text
+ * ambiguous.
+ */
+export function extractDraftText(content: string): string | null {
+  if (!content || !content.includes(FENCE_LANGUAGE)) return null
+  for (const fence of findFences(content)) {
+    if (!fence.closed) continue
+    let block: InteractionBlock | null = null
+    try {
+      block = parseInteractionBlockPayload(JSON.parse(fence.body) as unknown)
+    } catch {
+      block = null
+    }
+    if (block?.kind === 'draft' && block.text) return block.text
+  }
+  return null
 }
 
 /* ------------------------------------------------------------------ *

@@ -34,6 +34,7 @@ import { loadHeuristics } from './heuristics.js'
 import { consumePendingTaskNotices } from './task-agent-notice.js'
 import { assembleStrandContextWithStats, trimMessagesToBudget, stripStrandContextFromLastUserMessage } from './strand-context.js'
 import type { EffectiveModel, ModelSelection } from './model-resolution.js'
+import type { TurnRuntimeOverrides } from './turn-overrides.js'
 
 export type { ResponseChunk } from './agent-runtime-types.js'
 export { createYoloTools, isRetryablePreStreamError } from './agent-runtime.js'
@@ -519,7 +520,7 @@ export class AgentCore {
    * Send a message and get back an async iterable of response chunks.
    * All messages are queued and processed sequentially to prevent collisions.
    */
-  async *sendMessage(userId: string, text: string, source: string = 'web', attachments?: UploadDescriptor[], agentId: string = 'main', sessionId?: string, turnModelOverride?: ModelSelection | null): AsyncIterable<TurnStreamChunk> {
+  async *sendMessage(userId: string, text: string, source: string = 'web', attachments?: UploadDescriptor[], agentId: string = 'main', sessionId?: string, turnModelOverride?: ModelSelection | null, turnOverrides?: TurnRuntimeOverrides | null): AsyncIterable<TurnStreamChunk> {
     const uploads = attachments
     const pending = this.queueFor(agentId).enqueue<ResponseChunk>(
       'user_message',
@@ -527,7 +528,7 @@ export class AgentCore {
       text,
       source,
       (msg) => {
-        return this.processUserMessage(msg.payload.userId, msg.payload.text, msg.payload.source, uploads, agentId, false, sessionId, turnModelOverride)
+        return this.processUserMessage(msg.payload.userId, msg.payload.text, msg.payload.source, uploads, agentId, false, sessionId, turnModelOverride, turnOverrides)
       },
       { agentId, sessionId: sessionId ?? null },
     )
@@ -551,6 +552,7 @@ export class AgentCore {
     agentId: string = 'main',
     sessionId?: string,
     turnModelOverride?: ModelSelection | null,
+    turnOverrides?: TurnRuntimeOverrides | null,
   ): AsyncIterable<TurnStreamChunk> {
     const uploads = attachments
     const pending = this.queueFor(agentId).enqueue<ResponseChunk>(
@@ -560,7 +562,7 @@ export class AgentCore {
       source,
       (msg) => {
         // Persona-aware retry: route to the same persona runtime and set retry=true.
-        return this.processUserMessage(msg.payload.userId, msg.payload.text, msg.payload.source, uploads, agentId, true, sessionId, turnModelOverride)
+        return this.processUserMessage(msg.payload.userId, msg.payload.text, msg.payload.source, uploads, agentId, true, sessionId, turnModelOverride, turnOverrides)
       },
       { agentId, sessionId: sessionId ?? null },
     )
@@ -624,7 +626,7 @@ export class AgentCore {
   // Merge (upstream 0.27.0 + fork multi-persona): keep BOTH the persona
   // `agentId` (routes to the per-persona runtime + fact/session scope) AND the
   // `retry` flag (manual retry continues the transcript instead of re-sending).
-  private async *processUserMessage(userId: string, text: string, source: string, attachments?: UploadDescriptor[], agentId: string = 'main', retry: boolean = false, explicitSessionId?: string, turnModelOverride?: ModelSelection | null): AsyncIterable<ResponseChunk> {
+  private async *processUserMessage(userId: string, text: string, source: string, attachments?: UploadDescriptor[], agentId: string = 'main', retry: boolean = false, explicitSessionId?: string, turnModelOverride?: ModelSelection | null, turnOverrides?: TurnRuntimeOverrides | null): AsyncIterable<ResponseChunk> {
     // Explicit thread selection (Offtangent Stufe 1) beats every heuristic:
     // the caller named a session, so no topic-shift detection runs and the
     // named session becomes the active one. Without it, behaviour is exactly
@@ -747,10 +749,25 @@ export class AgentCore {
 
     const timeContext = runtime.getCurrentTimeContext()
     const baseText = fileHints.length > 0 ? `${text}\n\n${fileHints.join('\n')}` : text
-    const enrichedText = `${baseText}\n\n${timeContext}`
+    // Turn-local style instruction (quick capture mode): part of the prompt of
+    // this one turn, never of the persisted transcript. It sits after the
+    // user's text and before the time block so the model reads the request
+    // first and the delivery constraint second.
+    const styleHint = (turnOverrides?.styleHint ?? '').trim()
+    const styledText = styleHint ? `${baseText}\n\n<turn_style>\n${styleHint}\n</turn_style>` : baseText
+    const enrichedText = `${styledText}\n\n${timeContext}`
     const parsedUserId = Number.parseInt(userId, 10)
     const turn = { sessionId, userId: Number.isFinite(parsedUserId) ? parsedUserId : undefined, agentId }
 
+    // Turn-local thinking level: the runtime is shared by every channel of this
+    // persona, so the previous level is captured here and restored in the
+    // `finally` even when the stream throws. Safe against concurrency because
+    // the persona's MessageQueue serializes turns on exactly this runtime.
+    const requestedThinking = turnOverrides?.thinkingLevel
+    const previousThinking = requestedThinking !== undefined ? runtime.getThinkingLevel?.() : undefined
+    if (requestedThinking !== undefined && previousThinking !== undefined && previousThinking !== requestedThinking) {
+      runtime.setThinkingLevel?.(requestedThinking)
+    }
     try {
       // Merge: retry/stream run on the SAME per-persona runtime the turn was
       // routed to (NOT a singular this.runtime), so a manual retry replays under
@@ -761,6 +778,9 @@ export class AgentCore {
       yield* this.bindToolTurn(stream, turn)
     } finally {
       if (strandContext) this.dropStrandContextFromTranscript(runtime)
+      if (requestedThinking !== undefined && previousThinking !== undefined && previousThinking !== requestedThinking) {
+        runtime.setThinkingLevel?.(previousThinking)
+      }
     }
 
     // Count the agent response as a message too

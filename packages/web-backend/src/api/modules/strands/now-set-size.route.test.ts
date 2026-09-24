@@ -67,6 +67,10 @@ describe('now set size setting end to end', () => {
   it('raises the limit, keeps an oversized set after lowering it, and never clamps silently', async () => {
     const ids = [1, 2, 3, 4, 5, 6].map(i => sessionManager.createThread('1', 'main', `S${i}`).id)
 
+    // The size only has a visible effect on the curated set; the default mode
+    // computes the set and refuses writes (see now-auto.route.test.ts).
+    expect((await api('PUT', '/api/settings', { offtangent: { nowSetMode: 'manual' } })).status).toBe(200)
+
     expect((await api('GET', '/api/now')).body.max).toBe(4)
     expect((await api('PUT', '/api/now', { strandIds: ids.slice(0, 5) })).status).toBe(400)
 

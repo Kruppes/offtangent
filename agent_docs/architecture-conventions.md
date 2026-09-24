@@ -191,3 +191,30 @@ unchanged), rewrites all FK references across `chat_messages`, `token_usage`,
 - Boundary linting is passing.
 - Unit/API/Critical-Flow baseline is passing.
 - No unintended functional behavior changes (Behavior Parity).
+
+## 9) Split on Intake
+
+A capture that mixes unrelated matters is cut into topic parts **before** the
+router runs (`core/src/capture-split.ts`). The rules that must survive
+refactoring:
+
+- The split is a **core** concern (two model calls plus deterministic post
+  processing); the captures service only orchestrates. `capture-split.ts` must
+  stay free of web-backend imports, like the rest of `packages/core`.
+- The model proposes, the **code decides**: the sentence assignment is
+  validated (every id exactly once) with up to three repair rounds, topics
+  below two sentences are folded into their neighbour, and a split whose
+  `splitConfidence` is under `SPLIT_MIN` is discarded. Never move those gates
+  into the prompt.
+- One part is the identity case: `parts[0].text` is the ORIGINAL capture text,
+  no consolidation runs, and nothing about the stored rows or the emitted
+  frames changes. `split-single-part.test.ts` pins that against the behaviour
+  recorded on `main`.
+- Every part gets its OWN `router_decisions` row (`part_index`, `part_count`,
+  `part_text`, `part_title`, `sentence_ids`) and its own `chat_messages` row
+  (`part_index`, `metadata.capturePart`). `captures.strand_id`/`message_id`
+  stay bound to part 0 so the tray and the home screen keep reading one strand
+  per capture.
+- Clients that know nothing about parts must keep working: `decision` in every
+  response and every WebSocket frame is the decision of part 0, `parts` and
+  `partCount` are additive.

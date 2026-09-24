@@ -111,6 +111,34 @@ are refused until the set fits again. `GET /api/now` reports the value in force
 as `max`, so clients do not have to guess it — see
 [Strands API → Now set](../reference/strands-api#now-set).
 
+## Now set mode
+
+Who fills the now set. Default: `"auto"`.
+
+```json
+{
+  "offtangent": {
+    "nowSetMode": "auto"
+  }
+}
+```
+
+- `"auto"` — the set is computed on every request from your own activity: a
+  strand scores for each distinct calendar day you wrote in it during the last
+  14 days, weighted with a 1-day half-life; pinned strands come first, the list
+  is cut at `nowSetMax`. Only your own messages count, so cron jobs and task
+  reports never push a strand in. `PUT /api/now` answers **409**
+  `now_set_auto`, and the web UI hides the now-set controls.
+- `"manual"` — the curated set: you decide via `PUT /api/now`, and a filed
+  capture pulls its strand in when there is room (the behaviour before the
+  automatic mode).
+
+The value is read per request. The curated `now_set` table is never touched in
+`auto`, so switching back to `"manual"` returns exactly the set you had. Any
+other value is rejected by `PUT /api/settings` with **400**
+`offtangent.nowSetMode must be "auto" or "manual"`; a hand-edited invalid value
+falls back to `auto` at read time.
+
 ## Upload limits
 
 Attachments are not filtered by type — photos, videos, archives, binaries, anything. The only limits are the ones that keep the host alive, and they are environment variables, not settings:

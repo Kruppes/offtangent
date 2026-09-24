@@ -1,3 +1,4 @@
+import { pipeline } from 'node:stream/promises'
 import type { Response } from 'express'
 import type { AuthenticatedRequest } from '../../../auth.js'
 import { parseSpeechSummaryBody } from './schema.js'
@@ -39,16 +40,35 @@ export function createSpeechController(service: SpeechService): SpeechController
         return
       }
       try {
-        const result = await service.audio(req.user!.userId, parsed.value)
+        const result = await service.audio(req.user!.userId, parsed.value, {
+          accept: req.get('accept'),
+        })
         res.setHeader('Content-Type', result.contentType)
-        res.setHeader('Content-Length', String(result.audio.length))
         res.setHeader('X-Speech-Language', result.language)
         res.setHeader('X-Speech-Summary-Chars', String(result.summaryChars))
-        // So a browser client can read the two headers above at all.
-        res.setHeader('Access-Control-Expose-Headers', 'X-Speech-Language, X-Speech-Summary-Chars')
+        if (result.source) res.setHeader('X-Tts-Source', result.source)
+        // So a browser client can read the headers above at all.
+        res.setHeader(
+          'Access-Control-Expose-Headers',
+          'X-Speech-Language, X-Speech-Summary-Chars, X-Tts-Source',
+        )
         res.setHeader('Cache-Control', 'no-store')
+        if (result.stream) {
+          // No Content-Length: the length is unknown while the voice is still
+          // speaking, and waiting for it would undo the streaming.
+          res.status(200)
+          res.flushHeaders()
+          await pipeline(result.stream, res)
+          return
+        }
+        res.setHeader('Content-Length', String(result.audio!.length))
         res.status(200).send(result.audio)
       } catch (err) {
+        if (res.headersSent) {
+          console.warn('[speech-audio] stream aborted after headers:', err)
+          res.destroy()
+          return
+        }
         if (err instanceof SpeechServiceError) {
           res.status(err.status).json({ error: err.code })
           return

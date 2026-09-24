@@ -16,6 +16,7 @@
 
 import type { AgentMessage } from '@earendil-works/pi-agent-core'
 import type { Database } from './database.js'
+import { parseCapturePartRef, withCapturePartPrefix } from './capture-split.js'
 import { estimateTokens, extractTopicTags } from './session-store.js'
 import { formatMessageDigest, RECALLED_MARKER } from './message-digest.js'
 import type { DigestableMessage } from './message-digest.js'
@@ -69,9 +70,27 @@ export interface TrimResult {
  * then repairs the cut so no tool result is left without its call
  * (`sanitizeHistoryBoundaries`) and the window starts on a user message
  * when one exists inside the kept range.
+ *
+ * A leading system message is pinned: since pi-agent-core 0.87 the system
+ * prompt and the tool declarations live in `messages[0]` (role 'system'), and
+ * `state.messages = …` does not put it back. Trimming it away sent the model a
+ * turn without its task and without tools (2026-09-24: every background task
+ * ended with a thinking-only message right after its first trim). The pinned
+ * message is not charged against the budget: the budget describes the
+ * conversation window, the prompt is a fixed cost on top, as it was before.
  */
 export function trimMessagesToBudget(messages: readonly AgentMessage[], budgetTokens: number): TrimResult {
   if (messages.length === 0) return { messages: [], droppedCount: 0, keptTokens: 0, startIndex: 0 }
+  const head = leadingSystemMessage(messages)
+  if (head) {
+    const body = trimMessagesToBudget(messages.slice(1), budgetTokens)
+    return {
+      messages: [head, ...body.messages],
+      droppedCount: body.droppedCount,
+      keptTokens: body.keptTokens,
+      startIndex: body.startIndex + 1,
+    }
+  }
   let tokens = 0
   let start = messages.length
   for (let i = messages.length - 1; i >= 0; i--) {
@@ -99,6 +118,12 @@ export function trimMessagesToBudget(messages: readonly AgentMessage[], budgetTo
   }
 }
 
+/** The pinned system message when the transcript starts with one (pi-agent-core ≥ 0.87). */
+export function leadingSystemMessage(messages: readonly AgentMessage[]): AgentMessage | undefined {
+  const first = messages[0]
+  return first && (first as { role?: string }).role === 'system' ? first : undefined
+}
+
 /** Number of user turns in an in memory transcript. */
 export function countUserTurns(messages: readonly AgentMessage[]): number {
   let n = 0
@@ -112,11 +137,21 @@ export function countUserTurns(messages: readonly AgentMessage[]): number {
  * answered right now (already persisted by the transport before the turn).
  */
 export function loadStrandRows(db: Database, sessionId: string, currentUserText?: string): StrandRow[] {
-  const rows = db.prepare(
-    `SELECT id, role, content FROM chat_messages
+  const raw = db.prepare(
+    `SELECT id, role, content, metadata FROM chat_messages
      WHERE session_id = ? AND role IN ('user','assistant') AND content != ''
      ORDER BY id ASC`,
-  ).all(sessionId) as StrandRow[]
+  ).all(sessionId) as Array<StrandRow & { metadata: string | null }>
+  // A message that is one part of a split voice note says so in the context.
+  // Without the line the persona reads a fragment as the whole utterance and
+  // answers a question the user only asked about one of several matters. The
+  // line is never stored, it exists only here and in the turn text.
+  const rows: StrandRow[] = raw.map(row => {
+    const part = parseCapturePartRef(row.metadata)
+    return part
+      ? { id: row.id, role: row.role, content: withCapturePartPrefix(row.content, part) }
+      : { id: row.id, role: row.role, content: row.content }
+  })
   const last = rows[rows.length - 1]
   if (last && last.role === 'user' && currentUserText !== undefined && last.content === currentUserText) {
     rows.pop()

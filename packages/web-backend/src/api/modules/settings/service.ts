@@ -9,6 +9,8 @@ import {
   mergeHealthMonitor,
   mergeInstanceIdentity,
   mergeMultiPersona,
+  mergeCaptureModes,
+  mergeCaptureSources,
   mergeOfftangent,
   mergeRetry,
   mergeStt,
@@ -150,6 +152,12 @@ export function createSettingsService(options: SettingsRouterOptions = {}): Sett
 
     const offtangentMerge = mergeOfftangent(body, settingsRaw)
     if (offtangentMerge.error) throw new SettingsValidationError(offtangentMerge.error)
+
+    const captureModesMerge = mergeCaptureModes(body, settingsRaw)
+    if (captureModesMerge.error) throw new SettingsValidationError(captureModesMerge.error)
+
+    const captureSourcesMerge = mergeCaptureSources(body, settingsRaw)
+    if (captureSourcesMerge.error) throw new SettingsValidationError(captureSourcesMerge.error)
 
     const instanceIdentityMerge = mergeInstanceIdentity(body, settingsRaw)
     if (instanceIdentityMerge.error) throw new SettingsValidationError(instanceIdentityMerge.error)

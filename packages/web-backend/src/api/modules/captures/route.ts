@@ -3,9 +3,11 @@
  *
  *   POST /api/captures                 { text, clientMessageId?, agentId?, strandId?, kind?, source?, attachments?, intent? }
  *                                      -> 201 { capture, decision } | 200 on a known clientMessageId
- *   GET  /api/captures?status=&limit=&offset=  -> { captures, decisions }
- *   POST /api/captures/:id/apply       { decisionId?, action?, strandId?, title?, personaId? } -> { capture, decision }
- *   POST /api/captures/:id/undo        { strandId? } -> { capture, decision }
+ *   GET  /api/captures?status=&limit=&offset=  -> { captures, decisions, parts }
+ *   GET  /api/captures/:id             -> { capture, decision, parts, partCount, split }
+ *   POST /api/captures/:id/apply       { decisionId?, action?, strandId?, title?, personaId?, partIndex? } -> { capture, decision }
+ *   POST /api/captures/:id/undo        { strandId?, partIndex? } -> { capture, decision }   (no partIndex undoes every part)
+ *   POST /api/captures/:id/keep-as-one {} -> { capture, decision }   (undo every part, route the original text as one)
  *   POST /api/captures/:id/dismiss     {} -> { capture, decision }   (tray card thrown away, undo restores)
  *   POST /api/router/preview           { text, agentId? } -> { decision }   (admin, no writes)
  */
@@ -26,6 +28,11 @@ export interface CapturesRouterOptions {
   sendDoorbell?: CapturesServiceOptions['sendDoorbell']
   routerChain?: () => ResolvedRouterModel[] | undefined
   routerComplete?: RouterCompletion
+  /** Test hook for the two split stages, same role as `routerComplete`. */
+  splitComplete?: CapturesServiceOptions['splitComplete']
+  /** Now-set size / fill mode, injectable for tests (default: `settings.json`). */
+  getNowSetMax?: CapturesServiceOptions['getNowSetMax']
+  getNowSetMode?: CapturesServiceOptions['getNowSetMode']
 }
 
 export function createCapturesRouters(
@@ -38,8 +45,10 @@ export function createCapturesRouters(
   captures.use(jwtMiddleware)
   captures.post('/', controller.create)
   captures.get('/', controller.list)
+  captures.get('/:id', controller.get)
   captures.post('/:id/apply', controller.apply)
   captures.post('/:id/undo', controller.undo)
+  captures.post('/:id/keep-as-one', controller.keepAsOne)
   captures.post('/:id/dismiss', controller.dismiss)
 
   const router = Router()

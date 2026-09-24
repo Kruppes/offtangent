@@ -146,6 +146,7 @@ export default defineConfig({
             { text: 'Feed API', link: '/reference/feed-api' },
             { text: 'Uploads API', link: '/reference/uploads-api' },
             { text: 'Artifacts API', link: '/reference/artifacts-api' },
+            { text: 'Interaction blocks', link: '/reference/interaction-blocks' },
             { text: 'Voice API', link: '/reference/voice-api' },
             { text: 'Push API', link: '/reference/push-api' },
             { text: 'Model Policy API', link: '/reference/model-policy-api' },

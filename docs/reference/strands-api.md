@@ -103,27 +103,44 @@ The strands that are currently in play. The size is the setting
 `offtangent.nowSetMax` (integer, `1`–`12`, default `4`) — see
 [Agent → Now set size](../settings/agent#now-set-size).
 
-- `GET /api/now` -> `{ "strands": Strand[], "max": number }` ordered by rank.
+How it is filled is the setting `offtangent.nowSetMode` (`auto` by default,
+`manual` for the curated set) — see
+[Settings → offtangent.nowSetMode](settings#offtangent).
+
+- `GET /api/now` -> `{ "strands": Strand[], "max": number, "mode": "auto" | "manual" }`
+  ordered by rank. In `auto` the list is computed from the user's activity on
+  every request (`nowRank` = position in that list); in `manual` it is the
+  curated `now_set` table.
 - `PUT /api/now` `{ "strandIds": ["...", "..."] }` ->
-  `{ "strands": Strand[], "max": number }`. The order of the ids is the rank.
-  **400** `now_set_too_large` for more ids than `max` (the message names the
-  value in force, e.g. `The now set holds at most 6 strands`), **400**
-  `strand_not_found` for an unknown, foreign or archived id, **400**
+  `{ "strands": Strand[], "max": number, "mode": "manual" }`. The order of the
+  ids is the rank. **409** `now_set_auto` while the mode is `auto` (nothing is
+  written), **400** `now_set_too_large` for more ids than `max` (the message
+  names the value in force, e.g. `The now set holds at most 6 strands`),
+  **400** `strand_not_found` for an unknown, foreign or archived id, **400**
   `invalid_strand_ids` for a malformed body.
 
 | Field | Notes |
 |---|---|
 | `strands` | the now set, ordered by rank |
 | `max` | the size in force right now, so clients do not have to hardcode it |
+| `mode` | `auto` (computed, read only) or `manual` (curated) |
+
+In `auto` the ranking counts the distinct calendar days on which the user
+wrote in a strand (last 14 days, 1-day half-life, pinned strands first, other
+roles ignored); see
+[Captures and strands → The now-set](../concepts/captures-and-strands#the-now-set).
 
 Lowering `offtangent.nowSetMax` never drops a strand: a set that is larger than
 the new value keeps every strand and `GET /api/now` still returns all of them
 (`strands.length` can therefore exceed `max`); only adding more is refused
 until the set fits again. Removing strands from an oversized set always works.
 
-A capture filed into a strand pulls that strand into the now set when there is
-room; the set is never auto evicted. Every change is pushed as
-`{ "type": "now_set_changed", "strandIds": [...] }` on `/ws/chat`.
+In `manual` a capture filed into a strand pulls that strand into the now set
+when there is room; the set is never auto evicted. In `auto` nothing is
+written at all — the list is recomputed after a filing and after a user
+message. Every change is pushed as
+`{ "type": "now_set_changed", "strandIds": [...] }` on `/ws/chat`; in `auto`
+only when the computed list really changed.
 
 ## Resurface
 

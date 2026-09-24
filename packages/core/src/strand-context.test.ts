@@ -46,6 +46,25 @@ describe('trimMessagesToBudget', () => {
     expect(r.droppedCount).toBe(2)
   })
 
+  it('pins a leading system message (pi-agent-core 0.87 keeps the prompt in messages[0])', () => {
+    const system = { role: 'system', content: 'You are the persona.', timestamp: 0 } as unknown as AgentMessage
+    const msgs = [system, user('x'.repeat(400)), assistant('y'.repeat(400)), user('z'.repeat(400)), assistant('w'.repeat(400))]
+    const r = trimMessagesToBudget(msgs, 250)
+    expect(r.messages.map(m => (m as { role: string }).role)).toEqual(['system', 'user', 'assistant'])
+    expect(r.messages[0]).toBe(system)
+    expect((r.messages[1] as { content: Array<{ text: string }> }).content[0].text.startsWith('z')).toBe(true)
+    expect(r.droppedCount).toBe(2)
+    expect(r.startIndex).toBe(3)
+  })
+
+  it('keeps a leading system message even when it alone is over budget', () => {
+    const system = { role: 'system', content: 's'.repeat(4000), timestamp: 0 } as unknown as AgentMessage
+    const msgs = [system, user('x'.repeat(400)), assistant('y'.repeat(400))]
+    const r = trimMessagesToBudget(msgs, 250)
+    expect((r.messages[0] as { role: string }).role).toBe('system')
+    expect(r.messages.length).toBeGreaterThanOrEqual(2)
+  })
+
   it('never splits a tool call from its result at the cut', () => {
     const msgs = [
       user('old question'),

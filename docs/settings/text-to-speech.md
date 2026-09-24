@@ -18,7 +18,7 @@ Which backend generates the audio. Both options reference an entry you already c
 
 | Value      | Notes                                                                                                                                                                              |
 |------------|------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
-| `openai`   | Uses an OpenAI API-Key provider from `providers.json`. Calls its `/v1/audio/speech` endpoint with one of OpenAI's TTS models.                                                      |
+| `openai`   | Uses an OpenAI API-Key provider from `providers.json`. Calls its `/v1/audio/speech` endpoint with one of OpenAI's TTS models. Also the type for any **self-hosted OpenAI-compatible** speech server (a provider whose base URL is not `api.openai.com`): that one streams and has a fallback, see [Streaming and fallback](#streaming-and-fallback-openai-compatible-endpoints). |
 | `mistral`  | Uses a Mistral API-Key provider from `providers.json`. Synthesises with Mistral's Voxtral voices.                                                                                  |
 | `deepgram` | Hosted Deepgram Aura voices. Standalone — does **not** use a provider entry. Uses the API key configured directly in the **Deepgram** card below (stored in `tts.deepgramApiKey`). |
 | `gemini`   | Google Gemini TTS via the Interactions API. Uses a **Google** provider from `providers.json` (a Gemini API key). Speaks German natively and takes plain-language stage directions. |
@@ -44,6 +44,69 @@ Shown when provider is `openai`. The model is sent to the selected provider's `/
 ```json
 { "tts": { "openaiModel": "gpt-4o-mini-tts" } }
 ```
+
+When the selected provider is a **self-hosted** OpenAI-compatible endpoint the
+field is free text instead of this list, because such a server names its own
+models. It is still validated in shape: letters, digits, `. _ : / -`, at most 80
+characters (`TTS_MODEL_ID_PATTERN`), so a typo is a 400 and no URL or prose
+ends up in the field.
+
+### Streaming and fallback (OpenAI-compatible endpoints)
+
+A device that starts playing on the first chunk gains nothing from a server
+that buffers the whole clip. For the `openai` provider type the backend
+therefore has two paths (`shouldStreamTts` in `packages/core/src/tts.ts`):
+
+| Requested format | Path | Why |
+|---|---|---|
+| `wav`, `pcm` | **streamed**: response headers go out before the first sample exists, every chunk the endpoint produces leaves immediately (`Transfer-Encoding: chunked`, no `Content-Length`) | a later chunk never rewrites an earlier byte |
+| `mp3`, `opus`, `flac` | **buffered** as before | frames and Ogg pages are muxed after the last sample |
+
+`pcm` is raw 16 bit little endian mono without a container, `Content-Type:
+audio/pcm`; it exists only on this provider type and only because a chunked
+stream of headerless samples is the cheapest thing a small device can play
+while it is still arriving. `sampleRate` is forwarded to the endpoint as
+`sample_rate` when the endpoint is **self-hosted** (hosted OpenAI answers 400 to
+the field, so it is never sent there) and echoed as `X-Tts-Sample-Rate` on the
+primary path only.
+
+Streaming applies to `POST /api/tts` and to `POST /api/speech/audio`; the web
+chat keeps its saved format (usually `mp3` or `opus`) and is unaffected. Note
+that an error after the headers have left cannot become a JSON error any more:
+the connection is torn down and a warning `[tts] stream aborted after headers`
+is logged.
+
+**Fallback to hosted OpenAI.** When the configured endpoint does not answer,
+the request is repeated against the hosted OpenAI API instead of failing with
+a 500:
+
+- *What counts as "does not answer":* a transport failure (refused connection,
+  DNS, abort), no response **headers** within the budget, or a **5xx**. A 4xx
+  is a wrong request and is not retried elsewhere, because repeating it would
+  only hide the configuration error; an unsupported format is a 400 as well.
+- *Header budget:* **3 s** for `wav`/`pcm` (`TTS_FIRST_BYTE_TIMEOUT_MS`, a
+  streaming endpoint sends headers early and then speaks for half a minute)
+  and **120 s** for `mp3`/`opus`/`flac` (`TTS_BLOCK_TIMEOUT_MS`, those
+  containers are muxed after the last sample, so the headers arrive only when
+  the whole text is spoken). A dead box is still noticed at once, a refused
+  connection does not wait for the timer.
+- *Which provider:* the first configured provider of type `openai` whose base
+  URL really is `api.openai.com` and that carries a key, excluding the primary
+  itself. Without one the original error is thrown and a warning names the
+  primary.
+- *What it asks for:* model **`gpt-4o-mini-tts`** (`TTS_FALLBACK_MODEL`), the
+  configured voice if OpenAI knows it, otherwise **`nova`**
+  (`TTS_FALLBACK_VOICE`), the same instructions and the same format. The
+  requested `sampleRate` is **not** forwarded and not claimed: hosted OpenAI
+  answers in its own rate.
+- *What the client sees:* audio, in the format it asked for, plus the header
+  **`X-Tts-Source: primary | fallback`** (exposed to browsers via
+  `Access-Control-Expose-Headers`). The switch and its reason are logged as
+  `[tts] primary voice "<name>" failed (…); falling back to OpenAI
+  gpt-4o-mini-tts via "<name>"`.
+
+The fallback exists only on the `openai` provider type. `mistral`, `deepgram`
+and `gemini` fail with the provider's error as before.
 
 ## OpenAI voice
 

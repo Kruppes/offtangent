@@ -60,6 +60,73 @@ recorded in is the container that is stored.
 `urlPath` is served by `/api/uploads`, which sits behind
 `jwtHeaderOrQueryMiddleware`: a Bearer header or `?token=`, otherwise 401.
 
+## `POST /api/stt/transcribe-raw`
+
+JWT protected, same provider and same language resolution as
+`POST /api/stt/transcribe`. The body is **raw PCM**: 16 bit signed little
+endian, mono, 16000 Hz by default, `Content-Type: application/octet-stream`,
+sent with `Transfer-Encoding: chunked`.
+
+```
+POST /api/stt/transcribe-raw?rate=16000
+Authorization: Bearer <access token>
+Content-Type: application/octet-stream
+Transfer-Encoding: chunked
+
+<pcm samples, streamed while they are still being recorded>
+```
+
+```json
+{ "transcript": "the spoken words" }
+```
+
+### Why it exists next to `/transcribe`
+
+The multipart route needs a complete file, a complete file needs a WAV header,
+and a WAV header needs the length of a recording that is still running — both
+size fields sit in the first 44 bytes. A device would therefore have to stop
+recording before the first byte can leave. Here the samples travel while they
+are spoken and **the server writes the header** once the stream ends, where the
+length is finally known (`buildWavHeader` in
+`packages/web-backend/src/routes/stt.ts`).
+
+The route is additive: firmware that finds a **404** here (an older backend
+without the route) falls back to the full multipart upload on
+`POST /api/stt/transcribe`. Nothing else changes for it, the answer shape of
+both routes starts with the same `transcript` field.
+
+### Parameters and limits
+
+| Item | Value |
+|---|---|
+| `rate` (query) | Integer sample rate, 8000 to 48000. Anything missing, unparseable or out of range falls back to **16000** — it is not an error. |
+| Minimum body | **8000 bytes** (a quarter second of 16 kHz PCM). Below that: 400. |
+| Maximum body | 100 MB (`MAX_TRANSCRIBE_BYTES`), enforced by the body parser. |
+| Channels / sample format | Fixed: mono, 16 bit signed little endian. Not configurable, it is the one format the device produces. |
+| Odd byte count | The trailing byte is dropped, because it would shift every following sample by one byte. |
+
+The WAV header written in front of the samples is canonical 44 byte RIFF/PCM:
+`channels = 1`, `bitsPerSample = 16`, `byteRate = rate * 2`, `blockAlign = 2`.
+The transcription provider sees it as `stream.wav`.
+
+### Status codes
+
+| Status | When |
+|---|---|
+| **200** | `{ "transcript": "…" }` |
+| **400** | Body shorter than 8000 bytes (`Raw audio too short: …`) or no body at all. |
+| **401** | No or invalid Bearer token (`jwtMiddleware`, same as every other route). |
+| **403** | STT is switched off — the provider error message contains `not enabled`. |
+| **500** | Any other provider or transport failure, message passed through. |
+
+**Nothing is stored.** This route has no `keepAudio`: there is no upload
+descriptor, no file on disk and no `rewritten` field, only the transcript. A
+caller that wants the recording kept has to use the multipart route.
+
+Send the body as `application/octet-stream`. The route itself accepts any
+content type, but the global `express.json()` parser runs first, so a body
+announced as `application/json` never reaches it.
+
 ## Attaching a kept recording to a message
 
 `POST /api/chat/message` (see [Threads API](./threads-api)) accepts an
@@ -137,12 +204,19 @@ global setting is Opus, while the web UI keeps the saved format.
 
 ### Which provider can deliver what
 
-| Provider | `mp3` | `wav` | `opus` | `flac` | `sampleRate` |
-|---|---|---|---|---|---|
-| `openai` | yes | yes | yes | yes | ignored |
-| `mistral` | yes | yes | yes | yes | ignored |
-| `deepgram` | yes | yes (from `linear16` PCM) | yes | yes | applied for `wav` |
-| `gemini` | no | yes (PCM wrapped in a WAV header) | yes (Ogg/Opus) | no | applied for `wav` |
+| Provider | `mp3` | `wav` | `opus` | `flac` | `pcm` | `sampleRate` |
+|---|---|---|---|---|---|---|
+| `openai` | yes | yes (streamed) | yes | yes | yes (streamed, `audio/pcm`) | forwarded as `sample_rate` to a self-hosted endpoint only |
+| `mistral` | yes | yes | yes | yes | no | ignored |
+| `deepgram` | yes | yes (from `linear16` PCM) | yes | yes | no | applied for `wav` |
+| `gemini` | no | yes (PCM wrapped in a WAV header) | yes (Ogg/Opus) | no | no | applied for `wav` |
+
+`wav` and `pcm` from the `openai` provider type leave the server chunk by chunk
+while the endpoint is still speaking (no `Content-Length`), and an unreachable
+self-hosted endpoint is answered by hosted OpenAI instead of a 500; the response
+carries `X-Tts-Source: primary | fallback`. `Accept: audio/pcm` (or
+`audio/l16`) picks `pcm`. Details in
+[Text-to-Speech settings](../settings/text-to-speech#streaming-and-fallback-openai-compatible-endpoints).
 
 An unsupported pair is a **400** with a message naming the supported formats.
 There is no silent fallback: a client that asked for WAV cannot play the Opus

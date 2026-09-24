@@ -16,6 +16,8 @@ import {
   type AgentHeartbeatNightModeContract,
   type TelegramSettingsContract,
   type OfftangentSettingsContract,
+  type CaptureModesSettingsContract,
+  type CaptureSourcesSettingsContract,
 } from '@axiom/core/contracts'
 import { useSettingsApi } from '~/api/settings'
 
@@ -33,6 +35,8 @@ export type WatchdogSettings = WatchdogSettingsContract
 export type RetrySettings = RetrySettingsContract
 export type TelegramSettings = TelegramSettingsContract
 export type OfftangentSettings = OfftangentSettingsContract
+export type CaptureModesSettings = CaptureModesSettingsContract
+export type CaptureSourcesSettings = CaptureSourcesSettingsContract
 export type Settings = SettingsContract
 
 export function useSettings() {

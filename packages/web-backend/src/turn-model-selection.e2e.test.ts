@@ -24,6 +24,14 @@ vi.mock('../../core/src/config.js', () => ({
   loadMultiPersonaSettings: vi.fn(() => ({ enabled: false, defaultAgentId: 'main' })),
   ensureConfigTemplates: vi.fn(), loadConfig: vi.fn(() => ({})),
   getConfigDir: vi.fn(() => `${process.env.DATA_DIR}/config`),
+  // The capture path reads the capture mode settings for every turn it starts
+  // (U10a), so the stubbed config module has to answer that too. Neutral
+  // values on purpose: this test posts from the web, never from the puck, and
+  // never in quick mode, so the modes must not touch its model selection.
+  loadCaptureModeSettings: vi.fn(() => ({
+    captureModes: { quick: { providerId: '', modelId: '', thinkingLevel: 'off', styleHint: '', strandTitle: 'Kurzfragen' } },
+    captureSources: { puck: { styleHint: '' } },
+  })),
 }))
 
 let db: Database

@@ -2114,6 +2114,57 @@ describe('TaskRunner', () => {
       expect(updated.errorMessage).toContain('0 tokens')
     })
 
+    // 2026-09-24: after pi-ai 0.87.1 every task lost its system prompt and
+    // tools on the first transcript trim and ended with a thinking-only turn
+    // (stopReason 'stop', tokens > 0, no text). That was recorded as an empty
+    // "completed". A run whose last turn carries no text is never a result.
+    it('marks task failed when the last turn is thinking-only (tokens > 0, no text)', async () => {
+      const { Agent } = await import('@earendil-works/pi-agent-core')
+      const MockAgent = Agent as unknown as ReturnType<typeof vi.fn>
+
+      MockAgent.mockImplementationOnce(() => {
+        let subscribeFn: ((event: unknown) => void) | null = null
+        const messages: unknown[] = []
+        return {
+          subscribe: vi.fn((fn: (event: unknown) => void) => {
+            subscribeFn = fn
+            return () => { subscribeFn = null }
+          }),
+          prompt: vi.fn(async () => {
+            const thinkingOnly = {
+              role: 'assistant',
+              content: [{ type: 'thinking', thinking: 'Now I want to find where the docs list models.' }],
+              stopReason: 'stop',
+              provider: 'test-provider',
+              model: 'test-model',
+              usage: { input: 1000, output: 40, cacheRead: 0, cacheWrite: 0, cost: { total: 0.01 } },
+            }
+            if (subscribeFn) subscribeFn({ type: 'message_end', message: thinkingOnly })
+            messages.push(thinkingOnly)
+          }),
+          abort: vi.fn(),
+          state: { get messages() { return messages } },
+        }
+      })
+
+      const task = store.create({
+        name: 'Thinking Only Task',
+        prompt: 'Do work',
+        triggerType: 'agent',
+      })
+
+      await runner.startTask(task, mockProvider)
+      await new Promise(resolve => setTimeout(resolve, 100))
+
+      const updated = store.getById(task.id)!
+      expect(updated.status).toBe('failed')
+      expect(updated.resultStatus).toBe('failed')
+      expect(updated.completionTokens).toBe(40)
+      expect(updated.errorMessage).toMatch(/without a final message/i)
+      expect(onTaskCompleteCalls).toHaveLength(1)
+      expect(onTaskCompleteCalls[0].injection).toContain('status="failed"')
+    })
+
     it('passes through the real provider errorMessage when stopReason is error', async () => {
       const { Agent } = await import('@earendil-works/pi-agent-core')
       const MockAgent = Agent as unknown as ReturnType<typeof vi.fn>

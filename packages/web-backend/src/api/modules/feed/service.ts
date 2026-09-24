@@ -118,6 +118,9 @@ export function createFeedService(options: FeedServiceOptions) {
       source: 'feed',
       attachments: [],
       intent: 'ask',
+      // A feed question goes through the router like a typed one; the quick
+      // mode belongs to devices that cannot show a strand picker.
+      mode: 'work',
     })
     // Asking about an item is a stronger signal than opening it.
     markFeedItemRead(db, String(userId), id)

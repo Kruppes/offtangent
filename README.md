@@ -14,6 +14,10 @@ Offtangent is a self-hosted agent backend for people whose thoughts do not arriv
 
 The full product contract (`docs/offtangent/SPEC.md`) is still being merged into `main` chapter by chapter and is not part of the published tree yet. Until it lands, [`docs/`](docs/) is the authoritative description of what the code does.
 
+## Status
+
+Early and in daily use, but by one person on one instance. Nobody has yet set it up from the quickstart alone, breaking changes land on `main` without a deprecation period, and there is no release versioning yet. Treat it as a beta: worth trying if you want to run your own instance and report what breaks, not something to depend on. The public repository receives snapshot commits of the internal `main`; issues and questions are welcome here.
+
 **New here?** [What it is for](docs/guide/use-cases.md) · [Models and providers](docs/guide/models.md) · [Android companion app](docs/guide/companion-app.md) · [Quickstart](#quickstart)
 
 ## Origin
@@ -120,7 +124,7 @@ Read [`AGENTS.md`](AGENTS.md) before changing anything; it is the working contra
 ## Documentation
 
 - [`docs/`](docs/) is the user-facing documentation and is also shipped into the image, so the running agent can answer questions about its own configuration from the same pages. The pages were inherited from Axiom and now describe Offtangent; where an identifier still reads `axiom` (the `@axiom/core` package, `AXIOM_*` variables, the `axiom-data` volume, the `<axiom_docs>` prompt block) that is the name the running code uses, not a leftover in the prose.
-- [`docs/offtangent/`](docs/offtangent/) (branch `feat/offtangent-spec`) holds the product spec, the gap analysis against the current code, the model policy and the transport ADRs.
+- `docs/offtangent/` (branch `feat/offtangent-spec`, not on `main` yet) holds the product spec, the gap analysis against the current code, the model policy and the transport ADRs.
 - [`agent_docs/`](agent_docs/) is for contributors: architecture, session id design, skill versioning.
 
 ## License

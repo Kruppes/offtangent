@@ -8,10 +8,10 @@
  * API rejects an invalid value on write (`PUT /api/settings` -> 400), so a
  * bad value can only reach the file through a hand edit.
  */
-import { loadConfig, NOW_SET_MAX, NOW_SET_MAX_RANGE } from '@axiom/core'
+import { DEFAULT_NOW_SET_MODE, loadConfig, NOW_SET_MAX, NOW_SET_MAX_RANGE, parseNowSetMode, type NowSetMode } from '@axiom/core'
 
 export interface NowSetLimitSettings {
-  offtangent?: { nowSetMax?: unknown }
+  offtangent?: { nowSetMax?: unknown; nowSetMode?: unknown }
 }
 
 export type LoadNowSetLimitSettings = () => NowSetLimitSettings
@@ -35,4 +35,21 @@ export function resolveNowSetMax(loadSettings: LoadNowSetLimitSettings = default
     return NOW_SET_MAX
   }
   return raw
+}
+
+/**
+ * How the now set is filled (`offtangent.nowSetMode`, default `auto`): the
+ * computed activity ranking or the hand-curated `now_set` table. Read with
+ * the same forgiving rule as the size above — anything but the two known
+ * values falls back to the default, and `PUT /api/settings` is what rejects a
+ * bad value (400).
+ */
+export function resolveNowSetMode(loadSettings: LoadNowSetLimitSettings = defaultLoadSettings): NowSetMode {
+  let raw: unknown
+  try {
+    raw = loadSettings().offtangent?.nowSetMode
+  } catch {
+    return DEFAULT_NOW_SET_MODE
+  }
+  return parseNowSetMode(raw) ?? DEFAULT_NOW_SET_MODE
 }

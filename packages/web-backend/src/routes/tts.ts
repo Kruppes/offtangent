@@ -1,10 +1,14 @@
 import { Router } from 'express'
+import { pipeline } from 'node:stream/promises'
 import {
+  formatFromAccept,
   getApiKeyForProvider,
   loadProviders,
   loadProvidersDecrypted,
   loadTtsSettings,
+  shouldStreamTts,
   synthesizeTts,
+  synthesizeTtsStream,
   TtsFormatError,
   TTS_PROVIDER_FORMATS,
   PCM_MIN_SAMPLE_RATE,
@@ -32,47 +36,10 @@ interface TtsRequestBody {
   sampleRate?: unknown
 }
 
-/**
- * Media types a client may ask for when it cannot set a body field. The puck
- * firmware sends `Accept: audio/wav, audio/*;q=0.9`, so the header has to be
- * enough to pick a container; `audio/*` and `*\/*` stay unopinionated and
- * leave the saved setting in charge.
- */
-const ACCEPT_FORMATS: Record<string, TtsResponseFormat> = {
-  'audio/wav': 'wav',
-  'audio/x-wav': 'wav',
-  'audio/wave': 'wav',
-  'audio/vnd.wave': 'wav',
-  'audio/ogg': 'opus',
-  'audio/opus': 'opus',
-  'audio/mpeg': 'mp3',
-  'audio/mp3': 'mp3',
-  'audio/flac': 'flac',
-}
-
-/**
- * Pick an audio format from an `Accept` header, or `null` when the header
- * expresses no usable preference. The highest q value wins; the first listed
- * type wins a tie; `q=0` rejects a type instead of selecting it.
- */
-export function formatFromAccept(header: string | undefined | null): TtsResponseFormat | null {
-  if (!header) return null
-  let best: { format: TtsResponseFormat; q: number } | null = null
-  for (const part of header.split(',')) {
-    const segments = part.split(';')
-    const type = (segments[0] ?? '').trim().toLowerCase()
-    const format = ACCEPT_FORMATS[type]
-    if (!format) continue
-    let q = 1
-    for (const segment of segments.slice(1)) {
-      const match = /^\s*q\s*=\s*([0-9.]+)\s*$/i.exec(segment)
-      if (match) q = Number(match[1])
-    }
-    if (!Number.isFinite(q) || q <= 0) continue
-    if (!best || q > best.q) best = { format, q }
-  }
-  return best?.format ?? null
-}
+// The `Accept` parsing lives in core next to the format table, so the puck
+// route, the app route and the synthesizer cannot drift apart. Re-exported
+// here because this module is where callers used to find it.
+export { formatFromAccept }
 
 type FormatParse =
   | { ok: true; format?: TtsResponseFormat; sampleRate?: number }
@@ -135,6 +102,9 @@ export function parsePreviewSettings(raw: unknown): PreviewSettingsParse {
 /** Provider-config types that can back a TTS provider. */
 const ACCOUNT_TYPE_TO_TTS: Record<string, TtsProvider> = {
   openai: 'openai',
+  // A self-hosted endpoint that speaks the OpenAI speech API is a valid TTS
+  // account, so it has to be selectable in the settings UI.
+  'openai-compatible': 'openai',
   mistral: 'mistral',
   deepgram: 'deepgram',
   google: 'gemini',
@@ -246,7 +216,33 @@ export function createTtsRouter(): Router {
       return
     }
 
+    const wantedFormat = audioOptions.format ?? ttsSettings.responseFormat
     try {
+      // Streaming path: headers go out before the first sample exists, and
+      // every chunk the endpoint produces leaves immediately. That is the
+      // whole point for a device that starts playing on chunk one.
+      if (shouldStreamTts(ttsSettings.provider, wantedFormat)) {
+        const stream = await synthesizeTtsStream(cleanText, {
+          voice: body.voice,
+          format: audioOptions.format,
+          sampleRate: audioOptions.sampleRate,
+        })
+        if (stream) {
+          res.setHeader('Content-Type', stream.contentType)
+          res.setHeader('Content-Disposition', `inline; filename="speech.${stream.extension}"`)
+          if (stream.sampleRate) res.setHeader('X-Tts-Sample-Rate', String(stream.sampleRate))
+          res.setHeader('X-Tts-Source', stream.source)
+          res.setHeader('Cache-Control', 'no-store')
+          res.setHeader(
+            'Access-Control-Expose-Headers',
+            'Content-Disposition, X-Tts-Sample-Rate, X-Tts-Source',
+          )
+          res.flushHeaders()
+          await pipeline(stream.stream, res)
+          return
+        }
+      }
+
       const result = await synthesizeTts(cleanText, {
         voice: body.voice,
         format: audioOptions.format,
@@ -256,9 +252,17 @@ export function createTtsRouter(): Router {
       res.setHeader('Content-Length', result.audio.length)
       res.setHeader('Content-Disposition', `inline; filename="speech.${result.extension}"`)
       if (result.sampleRate) res.setHeader('X-Tts-Sample-Rate', String(result.sampleRate))
-      res.setHeader('Access-Control-Expose-Headers', 'Content-Disposition, X-Tts-Sample-Rate')
+      if (result.source) res.setHeader('X-Tts-Source', result.source)
+      res.setHeader('Access-Control-Expose-Headers', 'Content-Disposition, X-Tts-Sample-Rate, X-Tts-Source')
       res.send(result.audio)
     } catch (err) {
+      if (res.headersSent) {
+        // A stream that dies after the headers cannot become a JSON error.
+        // Tearing the connection down is the only honest signal left.
+        console.warn(`[tts] stream aborted after headers: ${(err as Error).message}`)
+        res.destroy()
+        return
+      }
       if (err instanceof TtsFormatError) {
         res.status(400).json({ error: err.message })
         return

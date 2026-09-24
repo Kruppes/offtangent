@@ -115,3 +115,14 @@ Follow [Semantic Versioning](https://semver.org/) (while < 1.0.0, minor = breaki
 - The version bump commit should be the **last commit** before tagging.
 - Always push the tag — the web UI displays the version from `package.json`.
 - Use `--generate-notes` to auto-generate the changelog from commit messages.
+
+## Publishing to the public mirror
+
+The GitHub repository is a **public, history-less mirror**. It only ever receives snapshot commits (`offtangent snapshot <sha>`) whose tree equals a commit on `main`; the internal history with its commit messages, branches and tags never goes there. The only sanctioned path is
+
+```
+scripts/publish-snapshot.sh                    # dry run: scans and builds the commit
+PUBLISH_CONFIRM=yes scripts/publish-snapshot.sh
+```
+
+It runs gitleaks and a blocklist kept outside the repository over the exported tree and aborts on any hit. Do not add a `github` remote to a working copy and never push a branch there directly; the `pre-push` hook refuses non-snapshot commits, and a task or agent that needs to publish asks the owner first.

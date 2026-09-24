@@ -9,6 +9,32 @@ const CAPTURE_STATUSES: Array<CaptureStatus | 'all'> = ['pending', 'filed', 'nee
 const CAPTURE_TEXT_MAX = 20000
 const SOURCE_PATTERN = /^[a-z][a-z0-9_-]{0,31}$/
 
+/**
+ * Capture modes a client may ask for (U10a).
+ *
+ * The two names come from the device that sends them: puck firmware 0.9.0
+ * writes `mode: "work"` or `mode: "quick"` into every capture body
+ * (`cfg_mode_key`, log line `PUCK|CAPTURE|MODE`). `work` is the behaviour that
+ * always shipped — router, strand choice, the persona's own model — and is
+ * therefore also what a missing field means, so every older client keeps
+ * working unchanged.
+ *
+ * `quick` says: this is a short spoken question. It changes HOW the turn is
+ * run (configured model, turn-local thinking level, spoken-answer style) and,
+ * when no strand is named, WHERE it goes (one strand per source instead of a
+ * router call). The mode is a request, not a privilege — everything it does is
+ * either the user's own setting or a strand the server itself created.
+ *
+ * `assist` (puck assist waves, W1) says: the answer contains something I want
+ * to TYPE somewhere. It changes only the style instruction of the turn — short
+ * prose, at most one question, the typable text in exactly one `draft` block —
+ * and nothing else: no model pin, no thinking level, and above all no fixed
+ * strand, because an assisted request is ordinary work that the router files
+ * like any other capture.
+ */
+export const CAPTURE_MODES = ['work', 'quick', 'assist'] as const
+export type CaptureMode = (typeof CAPTURE_MODES)[number]
+
 export interface CreateCaptureBody {
   text: string
   clientMessageId: string | null
@@ -18,6 +44,7 @@ export interface CreateCaptureBody {
   source: string
   attachments: UploadDescriptor[]
   intent: RouterIntent | null
+  mode: CaptureMode
   turnOverride?: ModelSelection
 }
 
@@ -70,12 +97,17 @@ export function parseCreateCaptureBody(body: unknown): ParseResult<CreateCapture
     intent = b.intent
   }
 
+  const mode = b.mode === undefined || b.mode === null || b.mode === '' ? 'work' : b.mode
+  if (typeof mode !== 'string' || !(CAPTURE_MODES as readonly string[]).includes(mode)) {
+    return { ok: false, error: `mode must be one of ${CAPTURE_MODES.join(', ')}`, code: 'invalid_mode' }
+  }
+
   const selection = parseTurnModelSelection(b)
   if (!selection.ok) return selection
 
   return {
     ok: true,
-    value: { turnOverride: selection.value, text, clientMessageId: clientMessageId ?? null, agentId, strandId: strandId ?? null, kind: kind as CaptureKind, source, attachments, intent },
+    value: { turnOverride: selection.value, text, clientMessageId: clientMessageId ?? null, agentId, strandId: strandId ?? null, kind: kind as CaptureKind, source, attachments, intent, mode: mode as CaptureMode },
   }
 }
 
@@ -101,6 +133,12 @@ export interface ApplyCaptureBody {
   strandId: string | null
   title: string | null
   personaId: string | null
+  /**
+   * Topic part of a split capture (split-on-intake). Absent means part 0,
+   * which is the whole capture for everything that was not split, so a client
+   * that never sends the field keeps its old behaviour.
+   */
+  partIndex: number | null
 }
 
 export function parseApplyCaptureBody(body: unknown): ParseResult<ApplyCaptureBody> {
@@ -122,18 +160,39 @@ export function parseApplyCaptureBody(body: unknown): ParseResult<ApplyCaptureBo
   }
   if (action === 'append' && !strandId) return { ok: false, error: 'append requires strandId', code: 'invalid_strand' }
   if (action === 'link' && !strandId) return { ok: false, error: 'link requires strandId', code: 'invalid_strand' }
-  return { ok: true, value: { decisionId, action, strandId: strandId ?? null, title: title || null, personaId } }
+  const partIndex = parsePartIndex(b.partIndex)
+  if (partIndex === undefined) return { ok: false, error: 'partIndex must be a non-negative integer', code: 'invalid_part_index' }
+  return { ok: true, value: { decisionId, action, strandId: strandId ?? null, title: title || null, personaId, partIndex } }
+}
+
+/**
+ * A `partIndex` field: a non-negative integer, or null when it is absent.
+ * `undefined` means the value was there but unusable.
+ */
+function parsePartIndex(raw: unknown): number | null | undefined {
+  if (raw === undefined || raw === null || raw === '') return null
+  const value = typeof raw === 'number' ? raw : Number(raw)
+  if (!Number.isInteger(value) || value < 0) return undefined
+  return value
 }
 
 export interface UndoCaptureBody {
   strandId: string | null
+  /**
+   * Which part to undo. Absent on a split capture undoes EVERY part and puts
+   * the whole capture back in the tray, which is what the undo button of the
+   * card means.
+   */
+  partIndex: number | null
 }
 
 export function parseUndoCaptureBody(body: unknown): ParseResult<UndoCaptureBody> {
   const b = (typeof body === 'object' && body !== null ? body : {}) as Record<string, unknown>
   const strandId = normalizeSessionId(b.strandId)
   if (strandId === null) return { ok: false, error: 'Invalid strandId', code: 'invalid_strand' }
-  return { ok: true, value: { strandId: strandId ?? null } }
+  const partIndex = parsePartIndex(b.partIndex)
+  if (partIndex === undefined) return { ok: false, error: 'partIndex must be a non-negative integer', code: 'invalid_part_index' }
+  return { ok: true, value: { strandId: strandId ?? null, partIndex } }
 }
 
 export interface RouterPreviewBody {

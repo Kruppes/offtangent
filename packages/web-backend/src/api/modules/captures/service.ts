@@ -5,7 +5,7 @@
  * frame is sent, so a client that reconnects sees the same picture as one
  * that stayed online.
  */
-import type { AgentCore, Capture, CaptureLanguage, Database, ModelSelection, Decision, DecisionAlternative, RouterProposal, RouterAction, RouterIntent, ResolvedRouterModel, RouterCompletion, Thread, UploadDescriptor } from '@axiom/core'
+import type { AgentCore, Capture, CaptureLanguage, CaptureSplit, Database, ModelSelection, Decision, DecisionAlternative, NowSetMode, RouterInput, RouterProposal, RouterAction, RouterIntent, ResolvedRouterModel, RouterCompletion, SplitCompletion, Thread, TurnRuntimeOverrides, UploadDescriptor } from '@axiom/core'
 import {
   addStrandTags,
   formatInteractionBlockFence,
@@ -23,10 +23,20 @@ import {
   getCapture,
   getCaptureByClientKey,
   getCurrentDecision,
+  getCurrentDecisionForPart,
   getDecision,
+  capturePartCount,
   insertCapture,
   insertDecision,
+  isSplitEligible,
+  listCurrentDecisions,
+  listAllCurrentDecisions,
+  runCaptureSplit,
+  segmentSentences,
+  singlePartSplit,
+  withCapturePartPrefix,
   isFillerCapture,
+  rankStrandsByActivity,
   isSessionAccessError,
   isSilenceTranscript,
   listCaptures,
@@ -44,8 +54,9 @@ import { parseTurnModelSelection } from '../../../model-selection.js'
 import type { ChatEvent, ChatEventBus } from '../../../chat-event-bus.js'
 import { describeQueuedTurn, emitTurnQueued } from '../../../turn-queue.js'
 import type { QueuedTurnInfo } from '../../../turn-queue.js'
-import { resolveNowSetMax } from '../../../now-set-limit.js'
-import type { CreateCaptureBody, ApplyCaptureBody, UndoCaptureBody, RouterPreviewBody } from './schema.js'
+import { resolveNowSetMax, resolveNowSetMode } from '../../../now-set-limit.js'
+import type { CaptureMode, CreateCaptureBody, ApplyCaptureBody, UndoCaptureBody, RouterPreviewBody } from './schema.js'
+import { findQuickStrand, planAssistMode, planQuickMode, planSourceStyle, QUICK_MODE_MODEL, QUICK_MODE_RATIONALE } from './quick-mode.js'
 
 /**
  * Marker written into the rationale of a decision whose `note` the guard below
@@ -213,6 +224,7 @@ export interface CaptureTurnStarter {
     agentId: string
     explicitSessionId: string
     turnModelOverride?: ModelSelection
+    turnOverrides?: TurnRuntimeOverrides
   }) => unknown
 }
 
@@ -229,15 +241,77 @@ export interface CapturesServiceOptions {
   sendDoorbell?: (input: { userId: number; strandId: string; agentId: string; messageId: number | null }) => void
   /** Effective now-set size, read per call so a settings save applies at once. */
   getNowSetMax?: () => number
+  /**
+   * How the now set is filled (`offtangent.nowSetMode`). In `auto` a filing
+   * never writes the `now_set` table; it only broadcasts when the computed
+   * ranking changed because of the message it just wrote.
+   */
+  getNowSetMode?: () => NowSetMode
   /** Test hooks: pin the router chain or the completion function. */
   routerChain?: () => ResolvedRouterModel[] | undefined
   routerComplete?: RouterCompletion
+  /** Test hook for the two split stages, same role as `routerComplete`. */
+  splitComplete?: SplitCompletion
 }
+
+/** The decision shape `POST /api/router/preview` returns (nothing is stored). */
+export type PreviewDecision =
+  Omit<Decision, 'id' | 'captureId' | 'state' | 'createdAt' | 'appliedAt' | 'resolvedAt'>
+  & { newStrand: RouterProposal['newStrand']; notes: string[] }
+
+export interface RouterPreviewPart {
+  index: number
+  title: string | null
+  text: string
+  sentenceIds: number[]
+  decision: PreviewDecision
+}
+
+export interface RouterPreviewResult {
+  /** The decision of part 0, unchanged for every client that knows no parts. */
+  decision: PreviewDecision
+  parts: RouterPreviewPart[]
+  partCount: number
+  split: SplitInfo
+}
+
+/** One part of a capture as the API delivers it. */
+export interface CapturePartView {
+  index: number
+  title: string | null
+  text: string
+  sentenceIds: number[]
+  decision: Decision
+}
+
+/** What the split decided about a capture (`null` when it never ran). */
+export interface SplitInfo {
+  confidence: number | null
+  rationale: string | null
+  gated: boolean
+}
+
+/** Which topic part of a capture a write belongs to (split-on-intake). */
+export interface PartRef {
+  index: number
+  count: number
+}
+
+export const SINGLE_PART: PartRef = { index: 0, count: 1 }
 
 export interface CaptureResult {
   capture: Capture
   decision: Decision
   created: boolean
+  /**
+   * Every current part of the capture, in part order, the same shape as
+   * `GET /api/captures/:id` and the routed frame. Set on every result that
+   * leaves the service (create, apply, undo, dismiss, keep-as-one), so a client
+   * that changed one part does not have to read the capture back to learn the
+   * state of the others. One entry for a capture that was not split.
+   */
+  parts?: CapturePartView[]
+  partCount?: number
   /**
    * Wait state of the turn this capture started (plan 2026-09-19, D5), or null
    * when no turn was started (filed as a silent note, low band, dismissed) or
@@ -264,9 +338,67 @@ function defaultPersona(): string {
 export function createCapturesService(options: CapturesServiceOptions) {
   const { db } = options
 
-  function rememberSelection(capture: Capture, selection?: ModelSelection): void {
-    if (selection) db.prepare('UPDATE captures SET metadata = ? WHERE id = ?')
-      .run(JSON.stringify({ turnOverride: selection }), capture.id)
+  function rememberSelection(capture: Capture, selection?: ModelSelection, mode: CaptureMode = 'work'): void {
+    const metadata: Record<string, unknown> = {}
+    if (selection) metadata.turnOverride = selection
+    // Only a non-default mode is stored (`work` is the default). The column is read back by every turn
+    // this capture starts (including one a later confirmation starts), so the
+    // style and thinking level of a quick capture survive the request that
+    // created it without a second table.
+    if (mode !== 'work') metadata.mode = mode
+    if (Object.keys(metadata).length === 0) return
+    db.prepare('UPDATE captures SET metadata = ? WHERE id = ?').run(JSON.stringify(metadata), capture.id)
+  }
+
+  /** The mode a capture was created with, as stored in `captures.metadata`. */
+  function modeOf(capture: Capture): CaptureMode {
+    const row = db.prepare('SELECT metadata FROM captures WHERE id = ?').get(capture.id) as { metadata: string | null } | undefined
+    if (!row?.metadata) return 'work'
+    try {
+      const parsed = JSON.parse(row.metadata) as { mode?: string }
+      if (parsed.mode === 'quick') return 'quick'
+      if (parsed.mode === 'assist') return 'assist'
+      return 'work'
+    } catch {
+      return 'work'
+    }
+  }
+
+  /**
+   * Turn-local thinking level and style instruction of a capture, read from
+   * the settings again at turn start. Recomputed instead of remembered on
+   * purpose: the hint is prompt text, and the text the product owner has
+   * configured NOW is the right one, also for a confirmation that starts the
+   * turn minutes after the capture arrived.
+   *
+   * A quick capture gets both (mode hint plus device hint plus the mode's
+   * thinking level), a working capture only what its SOURCE demands — the puck
+   * reads every answer out loud, also the long one it asked for in work mode.
+   * An assist capture gets the draft instruction plus the device hint, but
+   * keeps the persona's model and thinking level.
+   */
+  function turnOverridesFor(capture: Capture): TurnRuntimeOverrides | undefined {
+    const mode = modeOf(capture)
+    if (mode === 'quick') return planQuickMode(capture.source).turnOverrides
+    if (mode === 'assist') return planAssistMode(capture.source)
+    return planSourceStyle(capture.source)
+  }
+
+  /**
+   * Model for a turn this capture starts: an explicit client pin first, the
+   * quick mode's configured model second, the persona's own model last.
+   *
+   * The second step matters for the puck's follow-up question, which names a
+   * strand AND asks for the quick mode: the strand decides where the answer
+   * goes, the mode still decides which model writes it.
+   */
+  function modelForTurn(capture: Capture): ModelSelection | undefined {
+    const pinned = selectionFor(capture)
+    if (pinned) return pinned
+    if (modeOf(capture) !== 'quick') return undefined
+    const plan = planQuickMode(capture.source)
+    if (plan.modelNote) console.warn(`[captures] quick mode: ${plan.modelNote}`)
+    return plan.turnOverride
   }
 
   function selectionFor(capture: Capture): ModelSelection | undefined {
@@ -284,6 +416,7 @@ export function createCapturesService(options: CapturesServiceOptions) {
     }
   }
   const nowSetMax = options.getNowSetMax ?? (() => resolveNowSetMax())
+  const nowSetMode = options.getNowSetMode ?? (() => resolveNowSetMode())
 
   /**
    * Captures whose answer is already on its way. {@link answerExists} cannot
@@ -297,6 +430,8 @@ export function createCapturesService(options: CapturesServiceOptions) {
    * have remembered is gone and running it again is the right move.
    */
   const answering = new Set<string>()
+  /** keep-as-one runs per capture; a second call while one runs joins it. */
+  const keepingAsOne = new Map<string, Promise<CaptureResult>>()
 
   function manager() {
     const core = options.getAgentCore()
@@ -489,13 +624,84 @@ export function createCapturesService(options: CapturesServiceOptions) {
     return !!row
   }
 
-  function writeMessage(userId: number, capture: Capture, strand: Thread, text: string): number {
-    const metadata = capture.attachments.length > 0 ? serializeUploadsMetadata(capture.attachments) : null
+  /**
+   * The part of a capture a filing belongs to. `count` 1 is every capture that
+   * was not split, and then nothing about the write changes: no `part_index`
+   * other than 0, no `capturePart` metadata, no fragment line in the context.
+   */
+  function writeMessage(userId: number, capture: Capture, strand: Thread, text: string, part: PartRef = SINGLE_PART): number {
+    const uploads = capture.attachments.length > 0 ? { files: capture.attachments } : null
+    const partMeta = part.count > 1 ? { capturePart: { index: part.index, count: part.count, captureId: capture.id } } : null
+    const merged = uploads && !partMeta
+      ? serializeUploadsMetadata(capture.attachments)
+      : uploads || partMeta ? JSON.stringify({ ...(uploads ?? {}), ...(partMeta ?? {}) }) : null
     const result = db.prepare(
-      `INSERT INTO chat_messages (session_id, user_id, role, content, metadata, agent_id, capture_id)
-       VALUES (?, ?, 'user', ?, ?, ?, ?)`,
-    ).run(strand.id, userId, text, metadata, strand.agentId, capture.id)
+      `INSERT INTO chat_messages (session_id, user_id, role, content, metadata, agent_id, capture_id, part_index)
+       VALUES (?, ?, 'user', ?, ?, ?, ?, ?)`,
+    ).run(strand.id, userId, text, merged, strand.agentId, capture.id, part.index)
     return Number(result.lastInsertRowid)
+  }
+
+  /** The `chat_messages` row one part of a capture was filed into, if any. */
+  function partFiling(captureId: string, partIndex: number): { strandId: string; messageId: number } | null {
+    const row = db.prepare(
+      `SELECT id, session_id FROM chat_messages WHERE capture_id = ? AND part_index = ? AND role = 'user'
+       ORDER BY id DESC LIMIT 1`,
+    ).get(captureId, partIndex) as { id: number; session_id: string } | undefined
+    return row ? { strandId: row.session_id, messageId: row.id } : null
+  }
+
+  /**
+   * The capture as ONE of its parts: the part's consolidated text and the
+   * strand and message row of that part's own filing. A capture that was not
+   * split is returned unchanged, so every path below behaves exactly as it did
+   * before parts existed.
+   */
+  function partView(capture: Capture, decision: Decision): Capture {
+    if (decision.partCount < 2) return capture
+    const filing = partFiling(capture.id, decision.partIndex)
+    return {
+      ...capture,
+      text: decision.partText ?? capture.text,
+      strandId: filing?.strandId ?? null,
+      messageId: filing?.messageId ?? null,
+    }
+  }
+
+  /**
+   * The capture status a multi part capture has after its parts were filed:
+   * `filed` when every part is applied and none is reviewable, `needs_review`
+   * while any part still waits for the user, and the tray status when nothing
+   * is filed at all.
+   *
+   * Deliberately NOT `pending`: `pending` is the status of a capture before it
+   * was routed, and the tray reads `unsorted`/`failed`. A capture whose parts
+   * were all undone has to be reachable again, which is the same status a
+   * single part undo has always written.
+   */
+  function syncCaptureStatus(userId: number, captureId: string): Capture | null {
+    const decisions = listCurrentDecisions(db, captureId)
+    if (decisions.length === 0) return getCapture(db, String(userId), captureId)
+    const capture = getCapture(db, String(userId), captureId)
+    if (!capture || capture.status === 'dismissed' || capture.status === 'moved') return capture
+    const applied = decisions.filter(d => d.state === 'applied' || d.state === 'confirmed')
+    let status: Capture['status']
+    if (applied.length === 0) {
+      status = decisions.every(d => d.model === 'synthetic') ? 'failed' : 'unsorted'
+    } else if (applied.length < decisions.length) {
+      status = 'needs_review'
+    } else {
+      const reviewable = applied.some(d => confidenceBand(d.confidence) !== 'high' && d.state === 'applied')
+      status = reviewable ? 'needs_review' : 'filed'
+    }
+    const first = partFiling(captureId, 0)
+    updateCapture(db, captureId, {
+      status,
+      strandId: first?.strandId ?? null,
+      messageId: first?.messageId ?? null,
+      ...(applied.length === 0 ? { filedAt: null } : {}),
+    })
+    return getCapture(db, String(userId), captureId)
   }
 
   /**
@@ -521,6 +727,7 @@ export function createCapturesService(options: CapturesServiceOptions) {
   }
 
   function startTurn(userId: number, capture: Capture, strand: Thread, text: string): void {
+    const overrides = turnOverridesFor(capture)
     const runner = options.getTurnRunner?.()
     if (!runner) {
       console.warn(`[captures] No turn runner available, capture ${capture.id} was filed without an answer`)
@@ -547,7 +754,8 @@ export function createCapturesService(options: CapturesServiceOptions) {
       attachments: capture.attachments.length > 0 ? capture.attachments : undefined,
       agentId: strand.agentId,
       explicitSessionId: strand.id,
-      turnModelOverride: selectionFor(capture),
+      turnModelOverride: modelForTurn(capture),
+      ...(overrides ? { turnOverrides: overrides } : {}),
     })
   }
 
@@ -668,8 +876,12 @@ export function createCapturesService(options: CapturesServiceOptions) {
     status: 'filed' | 'needs_review' | 'moved',
     runTurn: boolean,
     text: string = capture.text,
+    part: PartRef = SINGLE_PART,
   ): Capture {
     selectionFor(capture)
+    // Auto mode: the ranking BEFORE this filing writes its user message, so
+    // the broadcast below only fires when the filing actually moved the set.
+    const rankedBefore = nowSetMode() === 'auto' ? rankedNowIds(userId) : null
     if (proposal.action !== 'new_strand') {
       ownStrand(userId, proposal.strandId!)
       requireIdle(userId, proposal.strandId!)
@@ -681,8 +893,14 @@ export function createCapturesService(options: CapturesServiceOptions) {
     }
     if (proposal.tags.length > 0) addStrandTags(db, String(userId), strand.id, proposal.tags, 'router')
 
-    const messageId = writeMessage(userId, capture, strand, text)
-    updateCapture(db, capture.id, { status, strandId: strand.id, messageId, filedAt: 'now' })
+    const messageId = writeMessage(userId, capture, strand, text, part)
+    // Only the first part binds the capture row: `captures.strand_id` and
+    // `captures.message_id` are what the tray, the home screen and
+    // `GET /api/captures` read, and they expect one strand per capture. The
+    // other parts are reachable through their decision rows and their
+    // `chat_messages.part_index`.
+    if (part.index === 0) updateCapture(db, capture.id, { status, strandId: strand.id, messageId, filedAt: 'now' })
+    else updateCapture(db, capture.id, { status, filedAt: 'now' })
     updateDecision(db, decisionId, { state: 'applied', createdStrandId, strandId: strand.id, appliedAt: 'now' })
 
     const turn = runTurn && proposal.intent === 'ask'
@@ -690,17 +908,29 @@ export function createCapturesService(options: CapturesServiceOptions) {
       // Only a filing that is still open for review can be confirmed into a
       // second turn, so that is the only one worth remembering.
       if (status === 'needs_review') answering.add(capture.id)
-      startTurn(userId, capture, strand, text)
+      startTurn(userId, capture, strand, withCapturePartPrefix(text, { ...part, captureId: capture.id }))
     } else {
       bumpStrandActivity(userId, strand, 1)
     }
-    if (addToNowSetIfRoom(db, String(userId), strand.id, nowSetMax())) {
+    if (rankedBefore) {
+      // Computed set: never write `now_set` (manual mode and the rollback keep
+      // their table), only tell the clients when the order or content changed.
+      const rankedAfter = rankedNowIds(userId)
+      if (rankedAfter.join('\u0000') !== rankedBefore.join('\u0000')) {
+        broadcast(userId, { type: 'now_set_changed', source: 'web', strandIds: rankedAfter })
+      }
+    } else if (addToNowSetIfRoom(db, String(userId), strand.id, nowSetMax())) {
       broadcast(userId, { type: 'now_set_changed', source: 'web', strandIds: nowSetIds(userId) })
     }
     broadcast(userId, {
       type: 'user_message', source: 'web', sessionId: strand.id, agentId: strand.agentId, text,
     })
     return getCapture(db, String(userId), capture.id)!
+  }
+
+  /** The computed now set (auto mode), same ranking the API returns. */
+  function rankedNowIds(userId: number): string[] {
+    return rankStrandsByActivity(db, String(userId), { max: nowSetMax() })
   }
 
   function nowSetIds(userId: number): string[] {
@@ -737,8 +967,14 @@ export function createCapturesService(options: CapturesServiceOptions) {
     captureId: string,
     proposal: RouterProposal,
     extra: { model: string; latencyMs: number | null; confidence?: number; rationale?: string },
+    part?: { index: number; count: number; text: string | null; title: string | null; sentenceIds: number[] },
   ): Decision {
     return insertDecision(db, {
+      partIndex: part?.index ?? 0,
+      partCount: part?.count ?? 1,
+      partText: part?.text ?? null,
+      partTitle: part?.title ?? null,
+      sentenceIds: part?.sentenceIds ?? [],
       captureId,
       action: proposal.action,
       strandId: proposal.strandId,
@@ -760,7 +996,16 @@ export function createCapturesService(options: CapturesServiceOptions) {
     })
   }
 
+  /**
+   * The routed frame. `decision` stays the decision of part 0 and the
+   * top-level fields keep their meaning, so the Android app 0.16.x and the web
+   * client read a split capture exactly like a single one; `parts` and
+   * `partCount` are additive and only interesting to a client that knows them.
+   * One frame per capture, never one per part: a second frame with the same
+   * capture id would show up as a second card in every older client.
+   */
   function emitRouted(userId: number, capture: Capture, decision: Decision): void {
+    const parts = currentParts(capture, decision)
     broadcast(userId, {
       type: capture.status === 'needs_review' ? 'capture_needs_review' : 'capture_routed',
       source: 'web',
@@ -768,6 +1013,8 @@ export function createCapturesService(options: CapturesServiceOptions) {
       agentId: capture.agentId ?? undefined,
       capture,
       decision,
+      parts,
+      partCount: parts.length,
     })
   }
 
@@ -818,7 +1065,9 @@ export function createCapturesService(options: CapturesServiceOptions) {
         userId: userKey, agentId: strand.agentId, clientMessageId: body.clientMessageId, text: body.text,
         kind: body.kind, source: body.source, attachments: body.attachments, strandId: strand.id,
       })
-      rememberSelection(capture, selection.value)
+      // The mode travels with the capture even on the explicit path: the strand
+      // decides where the answer goes, the mode still decides how it sounds.
+      rememberSelection(capture, selection.value, body.mode)
       // No router runs on this path, so the text backstop is the only thing
       // between a sentence that clearly addresses the persona and a silent
       // filing. Two marker classes or more get an `ask` and therefore a turn;
@@ -867,74 +1116,230 @@ export function createCapturesService(options: CapturesServiceOptions) {
     // belong to, which is exactly the case this gate covers.
     if (isFillerCapture(body.text)) return dismissWithoutRouting(userId, body, FILLER_GUARD_MARKER, 'filler-guard')
 
+    // Capture mode „Kurzfrage" (U10a): a question asked into a device without a
+    // screen. No router call (its latency is the whole point), one strand per
+    // user and source, `ask` intent, and the mode's own model, thinking level
+    // and spoken-answer style.
+    //
+    // A quick capture that DOES name a strand is not handled here: the puck
+    // sends `strandId` plus `intent: 'ask'` for a follow-up question, and an
+    // explicit target outranks the mode's own strand (SPEC 4.1). Such a
+    // capture takes the normal explicit path below and only keeps the mode's
+    // delivery settings (see `rememberSelection(..., body.mode)` there).
+    //
+    // Deliberately AFTER both guards: a silent recording and a bare "Danke"
+    // are not questions, and the mode buys no exemption from the two rules
+    // that exist to keep pointless turns from running at all.
+    if (body.mode === 'quick' && !body.strandId) return createQuick(userId, body)
+
     const capture = insertCapture(db, {
       userId: userKey, agentId: body.agentId, clientMessageId: body.clientMessageId, text: body.text,
       kind: body.kind, source: body.source, attachments: body.attachments,
     })
-    rememberSelection(capture, selection.value)
+    // The mode travels with the capture on the router path too. Only `assist`
+    // can arrive here (a quick capture is handled above, with or without a
+    // strand), and it needs to survive the request: the turn that writes the
+    // draft starts after the router answered, and a later turn in the same
+    // capture must sound the same.
+    rememberSelection(capture, selection.value, body.mode)
     // Where did the previous capture of this same client go? For a device that
     // sends one utterance per capture that is the conversation it is in the
     // middle of, and without it every sentence is routed stone cold (six
     // strands from six consecutive Puck captures in one night).
     const deviceHint = findDeviceAffinity(db, userKey, { source: capture.source, excludeCaptureId: capture.id })
+    // Candidates are selected ONCE, from the whole capture, and reused for
+    // every part: the parts of one dictation compete for the same strands, and
+    // a second selection per part would only cost reads.
     const input = buildRouterInput(db, userKey, {
       id: capture.id, text: capture.text, kind: capture.kind, personaHint: capture.agentId, createdAt: capture.createdAt,
     }, { personas: personaList(), defaultPersona: capture.agentId ?? defaultPersona(), deviceHint })
 
-    const result = await runRouter(input, { chain: options.routerChain?.(), complete: options.routerComplete })
-    for (const note of result.notes) console.warn(`[router] capture ${capture.id}: ${note}`)
-    // Explicit beats heuristic (SPEC 4.1): an intent the client states itself
-    // is taken as it is, the guards only correct the router's own verdict.
-    const guarded = body.intent
-      ? { proposal: { ...result.proposal, intent: body.intent }, doubtful: false }
-      : guardAddressedNote(guardNoteIntoLiveDialog(result.proposal), capture.text)
-    let proposal = guarded.proposal
-    const band = confidenceBand(proposal.confidence)
-    // The doubt band only exists where there is a strand to ask in. A low band
-    // capture is not filed at all, it waits in the inbox with the user looking
-    // at it, so neither the marker nor the question is written — that keeps the
-    // marker count equal to the number of questions asked.
-    const doubtful = guarded.doubtful && band !== 'low'
-    if (doubtful) proposal = markDoubtful(proposal)
+    const split = await splitForIntake(capture, body)
+    if (split.model !== 'none') rememberSplit(capture.id, split)
+    return routeParts(userId, capture, body, input, split)
+  }
 
-    const decision = persistProposal(capture.id, proposal, { model: result.model, latencyMs: result.latencyMs })
+  /**
+   * Split a capture into topic parts before it is routed, or return the single
+   * part that is the capture itself.
+   *
+   * Never for `assist`: an assist capture asks for ONE draft the user is about
+   * to paste somewhere, and two parallel drafts out of one dictation is not a
+   * thing the client can render (quick mode never reaches this point, it has
+   * its own path above).
+   */
+  async function splitForIntake(capture: Capture, body: CreateCaptureBody): Promise<CaptureSplit> {
+    if (body.mode === 'assist') return singlePartSplit(capture.text, 'assist mode files as one')
+    if (!isSplitEligible({ kind: capture.kind, text: capture.text })) {
+      return singlePartSplit(capture.text, 'not eligible for a split')
+    }
+    const chain = options.routerChain?.()
+    const split = await runCaptureSplit(capture.text, {
+      ...(chain ? { chain } : {}),
+      ...(options.splitComplete ? { complete: options.splitComplete } : {}),
+    })
+    for (const note of split.notes) console.warn(`[split] capture ${capture.id}: ${note}`)
+    if (split.parts.length > 1) {
+      console.log(`[split] capture ${capture.id}: ${split.parts.length} parts (${split.splitConfidence.toFixed(2)}) ${split.parts.map(part => part.title).join(' | ')}`)
+    }
+    return split
+  }
 
-    let filed: Capture
-    if (band === 'low') {
-      updateCapture(db, capture.id, { status: result.model === 'synthetic' ? 'failed' : 'unsorted' })
-      filed = getCapture(db, userKey, capture.id)!
-    } else {
-      // Two independent questions, and only one of them belongs to the band:
-      // WHERE the capture goes is uncertain below 0.70 and stays reviewable,
-      // WHETHER an answer is owed is the intent's business alone. Coupling the
-      // second to the first is what left the product owner's questions sitting
-      // silently in `needs_review`.
-      //
-      // Safe because `guardLowConfidenceAppend` has already turned every
-      // sub-0.70 `append`/`link` into a `new_strand`: a medium band filing
-      // lands in a strand this very capture opened, never in a foreign
-      // history. The `new_strand` test keeps that guarantee checkable from
-      // here instead of trusting a guard two packages away.
-      const answers = band === 'high' || proposal.action === 'new_strand'
-      filed = file(userId, capture, proposal, decision.id, band === 'high' ? 'filed' : 'needs_review', answers)
-      // Only the doubt band asks. `doubtful` already carries every condition
-      // that may produce a card — intent `note`, no stated intent from the
-      // client, exactly one address marker in the text, a band that files
-      // somewhere — so this is the whole rule and not a second one next to it.
-      //
-      // A note WITHOUT any marker is filed in silence on purpose. It was
-      // briefly the other way round ("every note the router decided ends in a
-      // card"), and the measurement of that week is the reason it is not:
-      // eleven of twelve cards fired on machine written test notes, none on a
-      // sentence addressed to anyone.
-      if (doubtful && filed.strandId) {
-        const strand = manager().getThread(userKey, filed.strandId)
-        if (strand) askBack(userId, filed, strand, true)
+  /**
+   * Route every part of a capture: one router call, one decision row and one
+   * filing per part, then the aggregate status of the capture. With a single
+   * part this is the path captures have always taken, step for step.
+   */
+  async function routeParts(
+    userId: number,
+    capture: Capture,
+    body: CreateCaptureBody,
+    input: RouterInput,
+    split: CaptureSplit,
+  ): Promise<CaptureResult> {
+    const userKey = String(userId)
+    const count = split.parts.length
+    let firstDecisionId: string | null = null
+    let filed: Capture = capture
+
+    for (const part of split.parts) {
+      const partInput: RouterInput = count > 1
+        ? { ...input, capture: { ...input.capture, text: part.text } }
+        : input
+      const result = await runRouter(partInput, { chain: options.routerChain?.(), complete: options.routerComplete })
+      for (const note of result.notes) console.warn(`[router] capture ${capture.id} part ${part.index}: ${note}`)
+      // Explicit beats heuristic (SPEC 4.1): an intent the client states itself
+      // is taken as it is, the guards only correct the router's own verdict.
+      const guarded = body.intent
+        ? { proposal: { ...result.proposal, intent: body.intent }, doubtful: false }
+        : guardAddressedNote(guardNoteIntoLiveDialog(result.proposal), part.text)
+      let proposal = guarded.proposal
+      const band = confidenceBand(proposal.confidence)
+      // The doubt band only exists where there is a strand to ask in. A low band
+      // capture is not filed at all, it waits in the inbox with the user looking
+      // at it, so neither the marker nor the question is written — that keeps the
+      // marker count equal to the number of questions asked.
+      const doubtful = guarded.doubtful && band !== 'low'
+      if (doubtful) proposal = markDoubtful(proposal)
+
+      const decision = persistProposal(capture.id, proposal, { model: result.model, latencyMs: result.latencyMs }, {
+        index: part.index,
+        count,
+        text: count > 1 ? part.text : null,
+        title: part.title || null,
+        sentenceIds: part.sentenceIds,
+      })
+      if (part.index === 0) firstDecisionId = decision.id
+
+      if (band === 'low') {
+        if (count === 1) updateCapture(db, capture.id, { status: result.model === 'synthetic' ? 'failed' : 'unsorted' })
+        filed = getCapture(db, userKey, capture.id)!
+      } else {
+        // Two independent questions, and only one of them belongs to the band:
+        // WHERE the capture goes is uncertain below 0.70 and stays reviewable,
+        // WHETHER an answer is owed is the intent's business alone. Coupling the
+        // second to the first is what left the product owner's questions sitting
+        // silently in `needs_review`.
+        //
+        // Safe because `guardLowConfidenceAppend` has already turned every
+        // sub-0.70 `append`/`link` into a `new_strand`: a medium band filing
+        // lands in a strand this very capture opened, never in a foreign
+        // history. The `new_strand` test keeps that guarantee checkable from
+        // here instead of trusting a guard two packages away.
+        const answers = band === 'high' || proposal.action === 'new_strand'
+        filed = file(
+          userId, capture, proposal, decision.id, band === 'high' ? 'filed' : 'needs_review', answers,
+          part.text, { index: part.index, count },
+        )
+        // Only the doubt band asks. `doubtful` already carries every condition
+        // that may produce a card — intent `note`, no stated intent from the
+        // client, exactly one address marker in the text, a band that files
+        // somewhere — so this is the whole rule and not a second one next to it.
+        //
+        // A note WITHOUT any marker is filed in silence on purpose. It was
+        // briefly the other way round ("every note the router decided ends in a
+        // card"), and the measurement of that week is the reason it is not:
+        // eleven of twelve cards fired on machine written test notes, none on a
+        // sentence addressed to anyone.
+        const cardStrandId = count > 1 ? decision.strandId ?? partFiling(capture.id, part.index)?.strandId ?? null : filed.strandId
+        if (doubtful && cardStrandId) {
+          const strand = manager().getThread(userKey, cardStrandId)
+          if (strand) askBack(userId, filed, strand, true)
+        }
       }
     }
+
+    if (count > 1) filed = syncCaptureStatus(userId, capture.id) ?? filed
+    const current = getDecision(db, firstDecisionId!)!
+    emitRouted(userId, filed, current)
+    return { capture: filed, decision: current, created: true, turn: takeTurn(filed.id) }
+
+  }
+
+  /**
+   * The quick path: file into the mode's strand and answer at once.
+   *
+   * What it does NOT do is as important as what it does. No router runs, so
+   * nothing can be filed into a strand the user is having a different
+   * conversation in; the only strand it ever touches is one a previous quick
+   * capture of this same source created (proved by
+   * `router_decisions.created_strand_id`, the same evidence the explicit-target
+   * guard trusts) or one it creates itself. The decision row says
+   * `model: 'quick-mode'` so quick filings stay countable next to router ones
+   * and never claim a confidence the server did not compute.
+   */
+  function createQuick(userId: number, body: CreateCaptureBody): CaptureResult {
+    const userKey = String(userId)
+    const plan = planQuickMode(body.source)
+    if (plan.modelNote) console.warn(`[captures] quick mode: ${plan.modelNote}`)
+    const agentId = body.agentId ?? defaultPersona()
+    // An explicit pin from the client outranks the mode's configured model
+    // (SPEC 4.1, explicit beats heuristic): the caller named a model, the
+    // setting only says what to use when nobody did.
+    const selection = body.turnOverride ?? plan.turnOverride
+
+    const existing = findQuickStrand(db, userKey, body.source)
+    const strandId = existing && strandStillThere(userId, existing) ? existing : null
+    if (strandId) requireIdle(userId, strandId)
+
+    const capture = insertCapture(db, {
+      userId: userKey, agentId, clientMessageId: body.clientMessageId, text: body.text,
+      kind: body.kind, source: body.source, attachments: body.attachments,
+    })
+    rememberSelection(capture, selection, 'quick')
+
+    const proposal: RouterProposal = strandId
+      ? {
+        action: 'append', strandId, secondaryStrandId: null, newStrand: null, intent: 'ask',
+        confidence: 1, tags: [], rationale: `${QUICK_MODE_RATIONALE} (${body.source})`,
+        alternatives: [], projectSuggestion: null,
+      }
+      : {
+        action: 'new_strand', strandId: null, secondaryStrandId: null, intent: 'ask',
+        newStrand: { title: plan.strandTitle, personaId: agentId, tags: [], projectId: null },
+        confidence: 1, tags: [], rationale: `${QUICK_MODE_RATIONALE} (${body.source})`,
+        alternatives: [], projectSuggestion: null,
+      }
+    const decision = persistProposal(capture.id, proposal, { model: QUICK_MODE_MODEL, latencyMs: 0 })
+    const filed = file(userId, capture, proposal, decision.id, 'filed', true)
     const current = getDecision(db, decision.id)!
     emitRouted(userId, filed, current)
     return { capture: filed, decision: current, created: true, turn: takeTurn(filed.id) }
+  }
+
+  /**
+   * Is this strand still readable for the user? `findQuickStrand` already
+   * filters archived rows in SQL, but the strand can also have been deleted or
+   * handed to another persona between two utterances, and appending to a row
+   * the session manager refuses would turn a question into a 400 instead of an
+   * answer. A missing strand simply means the next quick capture opens one.
+   */
+  function strandStillThere(userId: number, strandId: string): boolean {
+    try {
+      return manager().getThread(String(userId), strandId) !== null
+    } catch {
+      return false
+    }
   }
 
   /**
@@ -987,7 +1392,9 @@ export function createCapturesService(options: CapturesServiceOptions) {
     // no transcript to evict and no turn to lose a race against. The fields
     // are cleared anyway: a later restore must start from a clean row.
     answering.delete(capture.id)
-    if (current.state === 'proposed') updateDecision(db, current.id, { state: 'superseded', resolvedAt: 'now' })
+    for (const part of listCurrentDecisions(db, capture.id)) {
+      if (part.state === 'proposed') updateDecision(db, part.id, { state: 'superseded', resolvedAt: 'now' })
+    }
     updateCapture(db, capture.id, { status: 'dismissed', strandId: null, messageId: null, filedAt: null })
     const stored = getCapture(db, String(userId), capture.id)!
     const decision = getDecision(db, current.id)!
@@ -997,7 +1404,9 @@ export function createCapturesService(options: CapturesServiceOptions) {
 
   /** Undo of a discard: the card comes back with its proposal intact. */
   function restore(userId: number, capture: Capture, current: Decision): CaptureResult {
-    if (current.state === 'superseded') updateDecision(db, current.id, { state: 'proposed', resolvedAt: null })
+    for (const part of listCurrentDecisions(db, capture.id)) {
+      if (part.state === 'superseded') updateDecision(db, part.id, { state: 'proposed', resolvedAt: null })
+    }
     updateCapture(db, capture.id, { status: 'unsorted', strandId: null, messageId: null, filedAt: null })
     const stored = getCapture(db, String(userId), capture.id)!
     const decision = getDecision(db, current.id)!
@@ -1005,10 +1414,102 @@ export function createCapturesService(options: CapturesServiceOptions) {
     return { capture: stored, decision, created: false }
   }
 
+  /**
+   * The tray listing. `decisions` keeps exactly one entry per capture (the
+   * decision of part 0), which is what every client built before parts reads;
+   * `parts` carries every part of every capture in the same response.
+   */
   function list(userId: number, query: { status: Capture['status'] | 'all'; limit: number; offset: number }) {
     const captures = listCaptures(db, String(userId), query)
-    const decisions = listDecisionsForCaptures(db, captures.map(c => c.id))
-    return { captures, decisions }
+    const ids = captures.map(c => c.id)
+    const decisions = listDecisionsForCaptures(db, ids)
+    const all = listAllCurrentDecisions(db, ids)
+    const parts: Record<string, CapturePartView[]> = {}
+    for (const capture of captures) {
+      parts[capture.id] = describeParts(capture, all.filter(d => d.captureId === capture.id))
+    }
+    return { captures, decisions, parts }
+  }
+
+  /** One capture with its parts, the shape `GET /api/captures/:id` returns. */
+  function get(userId: number, captureId: string) {
+    const capture = requireCapture(userId, captureId)
+    const decisions = listCurrentDecisions(db, capture.id)
+    const decision = decisions.find(d => d.partIndex === 0) ?? decisions[0] ?? null
+    if (!decision) throw new CaptureServiceError(500, 'decision_missing', 'Capture has no routing decision')
+    return {
+      capture,
+      decision,
+      parts: describeParts(capture, decisions),
+      partCount: decision.partCount,
+      split: splitInfo(capture.id),
+      // The sentences exactly as the split numbered them (1-based in
+      // `sentenceIds`), so a client can mark a part inside the original
+      // without re-implementing the segmentation. Only worth sending when
+      // there is more than one part to mark.
+      sentences: decision.partCount > 1 ? segmentSentences(capture.text) : [],
+    }
+  }
+
+  /**
+   * The current parts of a capture, one shape for the frame, the detail view
+   * and every write response. A single part capture is answered from the
+   * decision in hand, a split one is read back so every part is current.
+   */
+  function currentParts(capture: Capture, decision: Decision): CapturePartView[] {
+    const decisions = decision.partCount > 1 ? listCurrentDecisions(db, capture.id) : [decision]
+    return describeParts(capture, decisions)
+  }
+
+  /** The result as it leaves the service: with the parts the write left behind. */
+  function withParts(result: CaptureResult): CaptureResult {
+    const parts = currentParts(result.capture, result.decision)
+    return { ...result, parts, partCount: parts.length }
+  }
+
+  /**
+   * The parts of a capture as the API delivers them: the consolidated text of
+   * each part, the sentences it was built from and its own decision. A capture
+   * that was not split has exactly one part whose text IS the capture text.
+   */
+  function describeParts(capture: Capture, decisions: Decision[]): CapturePartView[] {
+    return decisions.map(decision => ({
+      index: decision.partIndex,
+      title: decision.partTitle,
+      text: decision.partText ?? capture.text,
+      sentenceIds: decision.sentenceIds,
+      decision,
+    }))
+  }
+
+  /**
+   * What the split decided, read back from `captures.metadata`. Null for every
+   * capture that was never looked at (too short, setting off, assist mode).
+   */
+  function splitInfo(captureId: string): SplitInfo {
+    const row = db.prepare('SELECT metadata FROM captures WHERE id = ?').get(captureId) as { metadata: string | null } | undefined
+    if (!row?.metadata) return { confidence: null, rationale: null, gated: false }
+    try {
+      const parsed = JSON.parse(row.metadata) as { split?: { confidence?: number; rationale?: string; gated?: boolean } }
+      const split = parsed.split
+      if (!split) return { confidence: null, rationale: null, gated: false }
+      return {
+        confidence: typeof split.confidence === 'number' ? split.confidence : null,
+        rationale: typeof split.rationale === 'string' ? split.rationale : null,
+        gated: split.gated === true,
+      }
+    } catch {
+      return { confidence: null, rationale: null, gated: false }
+    }
+  }
+
+  /** Keep what the split decided with the capture, next to mode and model pin. */
+  function rememberSplit(captureId: string, split: CaptureSplit): void {
+    const row = db.prepare('SELECT metadata FROM captures WHERE id = ?').get(captureId) as { metadata: string | null } | undefined
+    let metadata: Record<string, unknown> = {}
+    try { metadata = row?.metadata ? JSON.parse(row.metadata) as Record<string, unknown> : {} } catch { metadata = {} }
+    metadata.split = { confidence: split.splitConfidence, rationale: split.rationale, gated: split.gated, parts: split.parts.length }
+    db.prepare('UPDATE captures SET metadata = ? WHERE id = ?').run(JSON.stringify(metadata), captureId)
   }
 
   function manualProposal(capture: Capture, body: ApplyCaptureBody, base: Decision): RouterProposal {
@@ -1032,9 +1533,25 @@ export function createCapturesService(options: CapturesServiceOptions) {
     }
   }
 
+  /**
+   * Apply one part of a capture (part 0 by default, which is the whole capture
+   * for everything that was not split).
+   */
   function apply(userId: number, captureId: string, body: ApplyCaptureBody): CaptureResult {
-    const capture = requireCapture(userId, captureId)
-    const current = requireDecision(capture)
+    const stored = requireCapture(userId, captureId)
+    const partIndex = body.partIndex ?? 0
+    const current = getCurrentDecisionForPart(db, stored.id, partIndex)
+    if (!current) throw new CaptureServiceError(404, 'part_not_found', `Capture has no part ${partIndex}`)
+    const result = applyPart(userId, partView(stored, current), current, body)
+    if (current.partCount < 2) return result
+    const fresh = syncCaptureStatus(userId, stored.id) ?? result.capture
+    const decision = getCurrentDecision(db, stored.id) ?? result.decision
+    emitRouted(userId, fresh, decision)
+    return { ...result, capture: fresh, decision }
+  }
+
+  function applyPart(userId: number, capture: Capture, current: Decision, body: ApplyCaptureBody): CaptureResult {
+    const part: PartRef = { index: current.partIndex, count: current.partCount }
     if (body.decisionId && body.decisionId !== current.id) {
       throw new CaptureServiceError(409, 'decision_superseded', 'That decision is no longer current')
     }
@@ -1071,7 +1588,7 @@ export function createCapturesService(options: CapturesServiceOptions) {
     if (applied) {
       // A different target for an already filed capture is a move: same
       // mechanics as undo with a target (SPEC 4.5).
-      return move(userId, capture, current, manualProposal(capture, body, current), alternative)
+      return move(userId, capture, current, manualProposal(capture, body, current), alternative, part)
     }
 
     // Unsorted (or failed) capture: apply the proposal, an alternative, or a manual choice.
@@ -1087,9 +1604,11 @@ export function createCapturesService(options: CapturesServiceOptions) {
     let decisionId = current.id
     if (!isConfirm) {
       updateDecision(db, current.id, { state: 'superseded', resolvedAt: 'now' })
-      decisionId = persistProposal(capture.id, proposal, { model: 'user', latencyMs: null, confidence: alternative?.confidence ?? 1 }).id
+      decisionId = persistProposal(capture.id, proposal, { model: 'user', latencyMs: null, confidence: alternative?.confidence ?? 1 }, {
+        index: part.index, count: part.count, text: current.partText, title: current.partTitle, sentenceIds: current.sentenceIds,
+      }).id
     }
-    const filed = file(userId, capture, proposal, decisionId, 'filed', true)
+    const filed = file(userId, capture, proposal, decisionId, 'filed', true, capture.text, part)
     const decision = getDecision(db, decisionId)!
     if (decision.state === 'applied' && isConfirm) updateDecision(db, decisionId, { state: 'confirmed', resolvedAt: 'now' })
     const finalDecision = getDecision(db, decisionId)!
@@ -1103,8 +1622,44 @@ export function createCapturesService(options: CapturesServiceOptions) {
    * happened, badged `misfiled`, and the text is re-filed as a fresh capture.
    */
   function undo(userId: number, captureId: string, body: UndoCaptureBody): CaptureResult {
-    const capture = requireCapture(userId, captureId)
-    const current = requireDecision(capture)
+    const stored = requireCapture(userId, captureId)
+    const count = capturePartCount(db, stored.id)
+    if (count > 1 && body.partIndex === null) return undoAllParts(userId, stored, body)
+    const partIndex = body.partIndex ?? 0
+    const current = getCurrentDecisionForPart(db, stored.id, partIndex)
+    if (!current) throw new CaptureServiceError(404, 'part_not_found', `Capture has no part ${partIndex}`)
+    const result = undoPart(userId, partView(stored, current), current, body)
+    if (current.partCount < 2) return result
+    const fresh = syncCaptureStatus(userId, stored.id) ?? result.capture
+    const decision = getCurrentDecision(db, stored.id) ?? result.decision
+    emitRouted(userId, fresh, decision)
+    return { ...result, capture: fresh, decision }
+  }
+
+  /**
+   * Undo of a whole split capture: every part goes back, the capture lands in
+   * the tray. Highest part first so part 0 (the part the capture row is bound
+   * to) is the last binding that is cleared.
+   */
+  function undoAllParts(userId: number, stored: Capture, body: UndoCaptureBody): CaptureResult {
+    const decisions = listCurrentDecisions(db, stored.id)
+    for (const decision of [...decisions].reverse()) {
+      undoPart(userId, partView(stored, decision), decision, { strandId: null, partIndex: decision.partIndex }, false)
+    }
+    const fresh = syncCaptureStatus(userId, stored.id) ?? stored
+    const decision = getCurrentDecision(db, stored.id)!
+    emitRouted(userId, fresh, decision)
+    return { capture: fresh, decision, created: false, turn: body.strandId ? takeTurn(stored.id) : null }
+  }
+
+  function undoPart(
+    userId: number,
+    capture: Capture,
+    current: Decision,
+    body: UndoCaptureBody,
+    emit = true,
+  ): CaptureResult {
+    const part: PartRef = { index: current.partIndex, count: current.partCount }
     // A discard is undone through the same door as a filing: one undo path for
     // the client, whatever the last action was.
     if (capture.status === 'dismissed') return restore(userId, capture, current)
@@ -1119,7 +1674,7 @@ export function createCapturesService(options: CapturesServiceOptions) {
         confidence: 1, tags: [], rationale: 'Moved by the user', alternatives: [], projectSuggestion: null,
       }
       : null
-    return move(userId, capture, current, proposal, undefined)
+    return move(userId, capture, current, proposal, undefined, part, emit)
   }
 
   function deleteEmptyCreatedStrand(userId: number, decision: Decision, exceptStrandId: string | null): void {
@@ -1139,6 +1694,8 @@ export function createCapturesService(options: CapturesServiceOptions) {
     current: Decision,
     proposal: RouterProposal | null,
     alternative: DecisionAlternative | undefined,
+    part: PartRef = SINGLE_PART,
+    emit = true,
   ): CaptureResult {
     const oldStrand = manager().getThread(String(userId), capture.strandId!)
     if (proposal) selectionFor(capture)
@@ -1163,18 +1720,23 @@ export function createCapturesService(options: CapturesServiceOptions) {
       ).run(capture.id, NUDGE_LIKE).changes
       if (oldStrand) for (let i = 0; i < removedNudges; i += 1) bumpStrandActivity(userId, oldStrand, -1)
       if (!proposal) {
-        updateCapture(db, capture.id, { status: 'unsorted', strandId: null, messageId: null, filedAt: null })
+        // Only part 0 owns `captures.strand_id`/`message_id`; a later part
+        // that goes back must not unbind the parts that are still filed.
+        if (part.index === 0) updateCapture(db, capture.id, { status: 'unsorted', strandId: null, messageId: null, filedAt: null })
+        else updateCapture(db, capture.id, { status: 'unsorted' })
         deleteEmptyCreatedStrand(userId, current, null)
         const fresh = getCapture(db, String(userId), capture.id)!
         const decision = getDecision(db, current.id)!
-        emitRouted(userId, fresh, decision)
+        if (emit) emitRouted(userId, fresh, decision)
         return { capture: fresh, decision, created: false }
       }
-      const decision = persistProposal(capture.id, proposal, { model: 'user', latencyMs: null, confidence: alternative?.confidence ?? 1 })
-      const filed = file(userId, capture, proposal, decision.id, 'moved', true)
+      const decision = persistProposal(capture.id, proposal, { model: 'user', latencyMs: null, confidence: alternative?.confidence ?? 1 }, {
+        index: part.index, count: part.count, text: current.partText, title: current.partTitle, sentenceIds: current.sentenceIds,
+      })
+      const filed = file(userId, capture, proposal, decision.id, 'moved', true, capture.text, part)
       deleteEmptyCreatedStrand(userId, current, filed.strandId)
       const finalDecision = getDecision(db, decision.id)!
-      emitRouted(userId, filed, finalDecision)
+      if (emit) emitRouted(userId, filed, finalDecision)
       return { capture: filed, decision: finalDecision, created: false }
     }
 
@@ -1190,7 +1752,7 @@ export function createCapturesService(options: CapturesServiceOptions) {
     if (!proposal) {
       const fresh = getCapture(db, String(userId), capture.id)!
       const decision = getDecision(db, current.id)!
-      emitRouted(userId, fresh, decision)
+      if (emit) emitRouted(userId, fresh, decision)
       return { capture: fresh, decision, created: false }
     }
     const prefix = `moved from ${oldStrand?.title ?? 'another strand'}`
@@ -1208,28 +1770,109 @@ export function createCapturesService(options: CapturesServiceOptions) {
       createStrandLink(db, { fromStrand: oldStrand.id, toStrand: filed.strandId, captureId: capture.id, kind: 'moved_from' })
     }
     const finalDecision = getDecision(db, decision.id)!
-    emitRouted(userId, filed, finalDecision)
+    if (emit) emitRouted(userId, filed, finalDecision)
     return { capture: filed, decision: finalDecision, created: false, turn: takeTurn(filed.id) }
   }
 
-  async function preview(userId: number, body: RouterPreviewBody): Promise<{ decision: Omit<Decision, 'id' | 'captureId' | 'state' | 'createdAt' | 'appliedAt' | 'resolvedAt'> & { newStrand: RouterProposal['newStrand']; notes: string[] } }> {
+  /**
+   * The escape hatch of split-on-intake: the user says "this was one thought".
+   * Every part goes back, the old decisions are superseded, and the ORIGINAL
+   * capture text is routed once, with splitting switched off. Same capture row,
+   * same id, so nothing the client holds becomes stale.
+   */
+  async function keepAsOne(userId: number, captureId: string): Promise<CaptureResult> {
+    const stored = requireCapture(userId, captureId)
+    if (stored.status === 'dismissed') throw new CaptureServiceError(409, 'capture_dismissed', 'A discarded capture cannot be re-routed')
+    // Idempotent, like undo: a capture that already is one part (never split,
+    // or kept as one a moment ago) is answered with its current state. Without
+    // this a double tap routes the same text twice and opens a second strand.
+    const current = getCurrentDecision(db, stored.id)
+    if (current && current.partCount < 2) return { capture: stored, decision: current, created: false }
+    const inflight = keepingAsOne.get(stored.id)
+    if (inflight) return inflight
+    const run = keepAsOneNow(userId, stored).finally(() => keepingAsOne.delete(stored.id))
+    keepingAsOne.set(stored.id, run)
+    return run
+  }
+
+  async function keepAsOneNow(userId: number, stored: Capture): Promise<CaptureResult> {
+    const before = listCurrentDecisions(db, stored.id)
+    for (const decision of [...before].reverse()) {
+      const view = partView(stored, decision)
+      if (decision.state === 'applied' || decision.state === 'confirmed') {
+        undoPart(userId, view, decision, { strandId: null, partIndex: decision.partIndex }, false)
+      }
+    }
+    for (const decision of listCurrentDecisions(db, stored.id)) {
+      updateDecision(db, decision.id, { state: 'superseded', resolvedAt: 'now' })
+    }
+    updateCapture(db, stored.id, { status: 'pending', strandId: null, messageId: null, filedAt: null })
+    const capture = getCapture(db, String(userId), stored.id)!
+    const split = singlePartSplit(capture.text, 'kept as one by the user')
+    rememberSplit(capture.id, { ...split, model: 'user' })
+    const deviceHint = findDeviceAffinity(db, String(userId), { source: capture.source, excludeCaptureId: capture.id })
     const input = buildRouterInput(db, String(userId), {
-      id: 'preview', text: body.text, kind: 'text', personaHint: body.agentId, createdAt: new Date().toISOString(),
-    }, { personas: personaList(), defaultPersona: body.agentId ?? defaultPersona() })
-    const result = await runRouter(input, { chain: options.routerChain?.(), complete: options.routerComplete })
-    const p = result.proposal
+      id: capture.id, text: capture.text, kind: capture.kind, personaHint: capture.agentId, createdAt: capture.createdAt,
+    }, { personas: personaList(), defaultPersona: capture.agentId ?? defaultPersona(), deviceHint })
+    const body: CreateCaptureBody = {
+      text: capture.text, clientMessageId: null, agentId: capture.agentId, strandId: null,
+      kind: capture.kind, source: capture.source, attachments: capture.attachments, intent: null, mode: modeOf(capture),
+    }
+    const result = await routeParts(userId, capture, body, input, split)
+    return { ...result, created: false }
+  }
+
+  async function preview(userId: number, body: RouterPreviewBody): Promise<RouterPreviewResult> {
+    const chain = options.routerChain?.()
+    const split = isSplitEligible({ kind: 'text', text: body.text })
+      ? await runCaptureSplit(body.text, {
+        ...(chain ? { chain } : {}),
+        ...(options.splitComplete ? { complete: options.splitComplete } : {}),
+      })
+      : singlePartSplit(body.text, 'not eligible for a split')
+    const parts: RouterPreviewPart[] = []
+    for (const part of split.parts) {
+      const input = buildRouterInput(db, String(userId), {
+        id: 'preview', text: part.text, kind: 'text', personaHint: body.agentId, createdAt: new Date().toISOString(),
+      }, { personas: personaList(), defaultPersona: body.agentId ?? defaultPersona() })
+      const result = await runRouter(input, { chain, complete: options.routerComplete })
+      const p = result.proposal
+      parts.push({
+        index: part.index,
+        title: part.title || null,
+        text: part.text,
+        sentenceIds: part.sentenceIds,
+        decision: {
+          action: p.action, strandId: p.strandId, secondaryStrandId: p.secondaryStrandId, createdStrandId: null,
+          intent: p.intent, confidence: p.confidence, tags: p.tags, rationale: p.rationale, alternatives: p.alternatives,
+          title: p.newStrand?.title ?? null, personaId: p.newStrand?.personaId ?? null,
+          projectId: p.newStrand?.projectId ?? null, projectSuggestion: p.projectSuggestion,
+          partIndex: part.index, partCount: split.parts.length,
+          partText: split.parts.length > 1 ? part.text : null, partTitle: part.title || null,
+          sentenceIds: part.sentenceIds,
+          model: result.model, latencyMs: result.latencyMs, newStrand: p.newStrand, notes: result.notes,
+        },
+      })
+    }
     return {
-      decision: {
-        action: p.action, strandId: p.strandId, secondaryStrandId: p.secondaryStrandId, createdStrandId: null,
-        intent: p.intent, confidence: p.confidence, tags: p.tags, rationale: p.rationale, alternatives: p.alternatives,
-        title: p.newStrand?.title ?? null, personaId: p.newStrand?.personaId ?? null,
-        projectId: p.newStrand?.projectId ?? null, projectSuggestion: p.projectSuggestion,
-        model: result.model, latencyMs: result.latencyMs, newStrand: p.newStrand, notes: result.notes,
-      },
+      decision: parts[0].decision,
+      parts,
+      partCount: parts.length,
+      split: { confidence: split.splitConfidence, rationale: split.rationale, gated: split.gated },
     }
   }
 
-  return { createCapture, list, apply, undo, dismiss, preview, confirmNoteFiling }
+  return {
+    createCapture: async (userId: number, body: CreateCaptureBody) => withParts(await createCapture(userId, body)),
+    list,
+    get,
+    apply: (userId: number, captureId: string, body: ApplyCaptureBody) => withParts(apply(userId, captureId, body)),
+    undo: (userId: number, captureId: string, body: UndoCaptureBody) => withParts(undo(userId, captureId, body)),
+    dismiss: (userId: number, captureId: string) => withParts(dismiss(userId, captureId)),
+    keepAsOne: async (userId: number, captureId: string) => withParts(await keepAsOne(userId, captureId)),
+    preview,
+    confirmNoteFiling,
+  }
 }
 
 export type CapturesService = ReturnType<typeof createCapturesService>

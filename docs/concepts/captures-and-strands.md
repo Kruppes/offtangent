@@ -193,10 +193,30 @@ Projects sit one level above strands: a strand may belong to at most one project
 
 The now-set is the short, ordered list of strands you are actually working on. It is not a filter and not a pin — it is a bounded set with a rank.
 
-- `GET /api/now` returns the strands by rank plus the effective `max`.
-- `PUT /api/now { strandIds }` replaces the set. Exceeding the limit fails with `400 now_set_too_large`.
+- `GET /api/now` returns the strands by rank plus the effective `max` and the `mode` the set is filled with.
+- `PUT /api/now { strandIds }` replaces the set (manual mode only). Exceeding the limit fails with `400 now_set_too_large`.
 
-A filing can also add to the set by itself: after a capture is written into a strand, `addToNowSetIfRoom` puts that strand into the now-set **if there is room**, and broadcasts `now_set_changed`. It never evicts anything you put there.
+### Automatic (default) or manual
+
+The setting `offtangent.nowSetMode` decides who fills the set:
+
+| Mode | Where the list comes from | `PUT /api/now` |
+|---|---|---|
+| `auto` (default) | computed from your own activity, per request | `409 now_set_auto` |
+| `manual` | the curated `now_set` table | replaces the set as before |
+
+In `auto` the ranking is `rankStrandsByActivity` (`packages/core/src/strand-store.ts`):
+
+- Candidates are your own interactive, non-archived strands that carry a title.
+- A strand scores per **distinct calendar day** (UTC) on which it saw a message with `role = 'user'` in the last **14 days**; a day contributes `0.5 ^ (age / 1 day)`. Days, not messages: a bench thread with 92 messages in two days must not outrank a strand you came back to on five separate days. With a one-day half-life recency is the dominant term (a strand touched today beats four days of last week), while returning still wins between two strands of the same age: today plus the two days before scores 1.75 against 1.0 for a single fresh day. Only your own messages count, so cron runs, task reports and system injections never pull a strand in.
+- Pinned strands come first (among themselves by score), then the rest by score; ties break by the most recent user activity, then by id, so two reads give the same list.
+- Strands without a score appear only when they are pinned, and the list is cut at `max`. A short or even empty now-set is a valid answer.
+
+Window and half-life are documented constants (`NOW_SET_RANKING_WINDOW_DAYS`, `NOW_SET_RANKING_HALF_LIFE_DAYS`), not settings.
+
+In `auto` the `now_set` table is never read or written — switching back to `manual` restores exactly the set that was curated before, which is also the rollback path. A filing does not pull its strand into the table any more; instead the computed list is recomputed after the capture's message and after a user message in the chat, and `now_set_changed { strandIds }` is broadcast only when the computed list actually changed. Archiving a strand simply drops it out of the computed list.
+
+In `manual` a filing adds to the set by itself: after a capture is written into a strand, `addToNowSetIfRoom` puts that strand into the now-set **if there is room**, and broadcasts `now_set_changed`. It never evicts anything you put there.
 
 The bound is the setting `offtangent.nowSetMax`, default **4** (`DEFAULT_NOW_SET_MAX` in `packages/core/src/contracts/settings.ts`). The store enforces it in code as well: `setNowSet` and `addToNowSetIfRoom` take the max and refuse to exceed it, and `addToNowSetIfRoom` is the "add only if there is room" path — it returns `false` rather than evicting something you put there yourself.
 

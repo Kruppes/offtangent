@@ -81,21 +81,34 @@ export const SETTINGS_TTS_OPENAI_VOICES: ReadonlyArray<{ name: string; gpt4oOnly
   { name: 'cedar', gpt4oOnly: true },
 ]
 
-export const SETTINGS_TTS_RESPONSE_FORMATS = ['mp3', 'wav', 'opus', 'flac'] as const
+/**
+ * `pcm` is raw 16 bit little endian mono without container. Only an
+ * OpenAI-compatible endpoint delivers it, and it exists because a chunked
+ * stream of headerless samples is the cheapest thing a small device can play
+ * while it is still arriving.
+ */
+export const SETTINGS_TTS_RESPONSE_FORMATS = ['mp3', 'wav', 'opus', 'flac', 'pcm'] as const
 export type TtsResponseFormat = (typeof SETTINGS_TTS_RESPONSE_FORMATS)[number]
 
 /**
- * Which of the four user-facing formats each provider can actually deliver.
+ * Which of the user-facing formats each provider can actually deliver.
  * Gemini returns raw PCM that the core packages itself, so it is limited to
  * the two containers buildable without ffmpeg. One table for the synthesizer,
  * the catalog endpoint and the clients' format negotiation.
  */
 export const SETTINGS_TTS_FORMATS_BY_PROVIDER: Record<TtsProvider, readonly TtsResponseFormat[]> = {
-  openai: ['mp3', 'wav', 'opus', 'flac'],
+  openai: ['mp3', 'wav', 'opus', 'flac', 'pcm'],
   mistral: ['mp3', 'wav', 'opus', 'flac'],
   deepgram: ['mp3', 'wav', 'opus', 'flac'],
   gemini: ['opus', 'wav'],
 }
+
+/**
+ * Formats that can be handed to the client chunk by chunk, because a later
+ * chunk never rewrites an earlier byte. Everything else (mp3 frames, Ogg
+ * pages, flac) stays on the buffered path.
+ */
+export const SETTINGS_TTS_STREAMABLE_FORMATS: readonly TtsResponseFormat[] = ['wav', 'pcm']
 
 export const SETTINGS_STT_PROVIDERS = ['whisper-url', 'openai', 'ollama', 'deepgram'] as const
 export type SttProvider = (typeof SETTINGS_STT_PROVIDERS)[number]
@@ -293,6 +306,121 @@ export interface SttSettingsContract {
 export const DEFAULT_NOW_SET_MAX = 4
 export const NOW_SET_MAX_RANGE = { min: 1, max: 12 } as const
 
+/**
+ * How the now set is filled (`offtangent.nowSetMode`).
+ *
+ * `auto` (default) ranks the strands by the user's own activity
+ * (`rankStrandsByActivity` in `strand-store.ts`) and never writes the
+ * `now_set` table; `manual` is the curated set that table holds. Manual stays
+ * the escape hatch and the rollback path, so the table is kept either way.
+ */
+export const NOW_SET_MODES = ['auto', 'manual'] as const
+export type NowSetMode = typeof NOW_SET_MODES[number]
+export const DEFAULT_NOW_SET_MODE: NowSetMode = 'auto'
+
+/** Narrow an unknown value to a {@link NowSetMode}, or `null` if it is none. */
+export function parseNowSetMode(value: unknown): NowSetMode | null {
+  return NOW_SET_MODES.includes(value as NowSetMode) ? value as NowSetMode : null
+}
+
+/**
+ * Capture mode „Kurzfrage" (U10a): a capture the client marks as `mode:
+ * 'quick'` skips the router entirely and is answered in one fixed strand.
+ *
+ * The point is latency, not intelligence: a question asked into a voice puck
+ * waits for the router call, the strand choice and the persona's default
+ * model, and each of the three costs seconds. A quick capture pays none of
+ * them. Every field here is a setting because the right answer depends on the
+ * installation's provider list, and a wrong default must be fixable without a
+ * deploy.
+ */
+export interface CaptureQuickModeSettingsContract {
+  /** Provider the quick turn runs on. Empty = the persona's current provider. */
+  providerId: string
+  /** Model of that provider. Empty = the persona's current model. */
+  modelId: string
+  /** Thinking level of the quick turn only; `off` keeps it cheapest. */
+  thinkingLevel: SettingsThinkingLevel
+  /**
+   * Style instruction handed to the model for this turn alone (never
+   * persisted into the strand). Empty = no instruction at all.
+   */
+  styleHint: string
+  /** Title of the strand every quick capture is answered in. */
+  strandTitle: string
+}
+
+/**
+ * Capture mode `assist` (puck assist waves, W1): a spoken request whose
+ * ANSWER contains something the user wants to type somewhere.
+ *
+ * Unlike `quick` this mode pins neither a model nor a strand — the router
+ * decides where the capture goes, the persona's own model writes it. The only
+ * thing the mode owns is the style instruction that forces the answer into
+ * the shape a screenless device can act on: short prose, at most one
+ * question, and the typable text in exactly one `draft` block.
+ */
+export interface CaptureAssistModeSettingsContract {
+  /**
+   * Style instruction handed to the model for this turn alone (never
+   * persisted into the strand). Empty = no instruction at all.
+   */
+  styleHint: string
+}
+
+export interface CaptureModesSettingsContract {
+  quick: CaptureQuickModeSettingsContract
+  assist: CaptureAssistModeSettingsContract
+}
+
+/** Per-source style instruction, added on top of the mode's own hint. */
+export interface CaptureSourceSettingsContract {
+  styleHint: string
+}
+
+/**
+ * Settings that depend on WHERE a capture came from. Only sources whose
+ * physics differ from a screen need an entry: the puck has no display, so an
+ * answer that opens with a bulleted list is unusable on it.
+ */
+export interface CaptureSourcesSettingsContract {
+  puck: CaptureSourceSettingsContract
+}
+
+/** Upper bounds for the free-text capture-mode fields, enforced by `PUT /api/settings`. */
+export const CAPTURE_STYLE_HINT_MAX_LENGTH = 2000
+export const CAPTURE_STRAND_TITLE_MAX_LENGTH = 120
+
+/** Strand title a quick capture falls back to when the setting is blank. */
+export const DEFAULT_QUICK_STRAND_TITLE = 'Kurzfragen'
+
+/** Style hint of the quick mode: short spoken answer, no markup. */
+export const DEFAULT_QUICK_STYLE_HINT =
+  'Antworte in maximal drei Saetzen, gesprochen und ohne Aufzaehlungen, Markdown oder Ueberschriften. '
+  + 'Wenn die Frage nicht eindeutig ist, nimm die naheliegendste Lesart und sage in einem Satz, welche du genommen hast.'
+
+/**
+ * Style hint of the assist mode: short prose, one question at most, and the
+ * typable text exclusively inside one `draft` block.
+ *
+ * Written as an instruction a model can check itself against ("exactly one
+ * block", "never repeat it outside") rather than as a description, because
+ * the device typing the text has no way to tell prose from draft.
+ */
+export const DEFAULT_ASSIST_STYLE_HINT =
+  'Assist-Modus: der Nutzer diktiert an einem Geraet ohne Tastatur und tippt deinen Entwurf per Knopfdruck weiter. '
+  + 'Antworte ausserhalb des Entwurfs in hoechstens drei kurzen Saetzen, ohne Aufzaehlungen, ohne Markdown. '
+  + 'Stelle hoechstens EINE Rueckfrage und nur, wenn du ohne sie nicht schreiben kannst; sonst schreib los und nenne deine Annahme in einem Satz. '
+  + 'Jeden Text, den der Nutzer irgendwo hineintippen will (Mail, Nachricht, Notiz), lieferst du AUSSCHLIESSLICH in genau einem Codeblock '
+  + 'der Sprache offtangent mit dem JSON {"block":"draft","text":"..."}. '
+  + 'Der Entwurf darin ist reiner Plaintext: kein Markdown, keine Sternchen, keine Ueberschriften, Zeilenumbrueche als \\n. '
+  + 'Wiederhole den Entwurf niemals ausserhalb dieses Blocks, und schreibe hoechstens einen solchen Block pro Antwort. '
+  + 'Bei einer Ueberarbeitung lieferst du immer den vollstaendigen neuen Entwurf, nie nur die geaenderte Stelle.'
+
+/** Style hint of the puck source: no screen, so nothing visual. */
+export const DEFAULT_PUCK_STYLE_HINT =
+  'Die Antwort wird vorgelesen, der Empfaenger hat keinen Bildschirm: keine Tabellen, keine Links, keine Codebloecke.'
+
 /** Offtangent-specific behaviour the product owner can tune. */
 export interface OfftangentSettingsContract {
   /**
@@ -301,6 +429,11 @@ export interface OfftangentSettingsContract {
    * fits again.
    */
   nowSetMax: number
+  /**
+   * `auto` fills the now set from the user's activity (read only, `PUT
+   * /api/now` answers 409), `manual` keeps the hand-curated set.
+   */
+  nowSetMode: NowSetMode
 }
 
 /** Upper bounds for `instanceIdentity`, enforced by `PUT /api/settings`. */
@@ -366,6 +499,8 @@ export interface SettingsContract {
   tts: TtsSettingsContract
   stt: SttSettingsContract
   offtangent: OfftangentSettingsContract
+  captureModes: CaptureModesSettingsContract
+  captureSources: CaptureSourcesSettingsContract
   instanceIdentity: InstanceIdentitySettingsContract
 }
 
@@ -390,6 +525,8 @@ export interface SettingsStorageContract {
   tts?: Partial<TtsSettingsContract>
   stt?: Partial<SttSettingsContract>
   offtangent?: Partial<OfftangentSettingsContract>
+  captureModes?: DeepPartial<CaptureModesSettingsContract>
+  captureSources?: DeepPartial<CaptureSourcesSettingsContract>
   instanceIdentity?: Partial<InstanceIdentitySettingsContract>
 }
 
@@ -525,11 +662,32 @@ export const DEFAULT_SETTINGS_CONTRACT: SettingsContract = {
   },
   offtangent: {
     nowSetMax: DEFAULT_NOW_SET_MAX,
+    nowSetMode: DEFAULT_NOW_SET_MODE,
+  },
+  captureModes: {
+    quick: {
+      providerId: '',
+      modelId: '',
+      thinkingLevel: 'off',
+      styleHint: DEFAULT_QUICK_STYLE_HINT,
+      strandTitle: DEFAULT_QUICK_STRAND_TITLE,
+    },
+    assist: {
+      styleHint: DEFAULT_ASSIST_STYLE_HINT,
+    },
+  },
+  captureSources: {
+    puck: { styleHint: DEFAULT_PUCK_STYLE_HINT },
   },
   instanceIdentity: {
     name: '',
     notes: '',
   },
+}
+
+function normalizeStrandTitle(value: string | undefined, fallback: string): string {
+  const trimmed = (value ?? '').trim()
+  return trimmed === '' ? fallback : trimmed
 }
 
 function normalizeThinkingLevel(
@@ -717,6 +875,39 @@ export function normalizeSettingsContract(input: DeepPartial<SettingsContract> |
     },
     offtangent: {
       nowSetMax: source.offtangent?.nowSetMax ?? DEFAULT_SETTINGS_CONTRACT.offtangent.nowSetMax,
+      nowSetMode: parseNowSetMode(source.offtangent?.nowSetMode)
+        ?? DEFAULT_SETTINGS_CONTRACT.offtangent.nowSetMode,
+    },
+    captureModes: {
+      quick: {
+        providerId: source.captureModes?.quick?.providerId ?? DEFAULT_SETTINGS_CONTRACT.captureModes.quick.providerId,
+        modelId: source.captureModes?.quick?.modelId ?? DEFAULT_SETTINGS_CONTRACT.captureModes.quick.modelId,
+        thinkingLevel: normalizeThinkingLevel(
+          source.captureModes?.quick?.thinkingLevel,
+          DEFAULT_SETTINGS_CONTRACT.captureModes.quick.thinkingLevel,
+        ),
+        // An EMPTY hint is a decision ("no instruction"), a MISSING one is an
+        // installation that never configured the mode. Only the second gets
+        // the default, otherwise clearing the field in the UI would silently
+        // restore the text the user just deleted.
+        styleHint: source.captureModes?.quick?.styleHint ?? DEFAULT_SETTINGS_CONTRACT.captureModes.quick.styleHint,
+        // A blank title is different: the strand needs a name, so there is no
+        // "off" to express here and the default stands in.
+        strandTitle: normalizeStrandTitle(
+          source.captureModes?.quick?.strandTitle,
+          DEFAULT_SETTINGS_CONTRACT.captureModes.quick.strandTitle,
+        ),
+      },
+      assist: {
+        // Same rule as the quick hint: an empty string is "no instruction",
+        // only a missing field falls back to the shipped default.
+        styleHint: source.captureModes?.assist?.styleHint ?? DEFAULT_SETTINGS_CONTRACT.captureModes.assist.styleHint,
+      },
+    },
+    captureSources: {
+      puck: {
+        styleHint: source.captureSources?.puck?.styleHint ?? DEFAULT_SETTINGS_CONTRACT.captureSources.puck.styleHint,
+      },
     },
     instanceIdentity: {
       name: source.instanceIdentity?.name ?? DEFAULT_SETTINGS_CONTRACT.instanceIdentity.name,

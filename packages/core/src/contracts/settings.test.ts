@@ -1,5 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import {
+  CAPTURE_STYLE_HINT_MAX_LENGTH,
+  DEFAULT_ASSIST_STYLE_HINT,
   DEFAULT_SETTINGS_CONTRACT,
   normalizeSettingsContract,
   withLegacySettingsPayloadCompatibility,
@@ -125,6 +127,79 @@ describe('settings contracts', () => {
 
       expect(normalized.thinkingLevel).toBe('off')
       expect(normalized.tasks.backgroundThinkingLevel).toBe('off')
+    })
+  })
+
+  describe('capture modes (U10a)', () => {
+    it('defaults the quick mode to inherit the model and to speak briefly', () => {
+      const quick = DEFAULT_SETTINGS_CONTRACT.captureModes.quick
+      expect(quick.providerId).toBe('')
+      expect(quick.modelId).toBe('')
+      expect(quick.thinkingLevel).toBe('off')
+      expect(quick.styleHint.length).toBeGreaterThan(0)
+      expect(quick.strandTitle.length).toBeGreaterThan(0)
+      expect(DEFAULT_SETTINGS_CONTRACT.captureSources.puck.styleHint.length).toBeGreaterThan(0)
+    })
+
+    it('keeps an EMPTY style hint as the decision it is, and fills a MISSING one', () => {
+      const cleared = normalizeSettingsContract({ captureModes: { quick: { styleHint: '' } } })
+      expect(cleared.captureModes.quick.styleHint).toBe('')
+
+      const untouched = normalizeSettingsContract({ captureModes: { quick: { thinkingLevel: 'low' } } })
+      expect(untouched.captureModes.quick.styleHint)
+        .toBe(DEFAULT_SETTINGS_CONTRACT.captureModes.quick.styleHint)
+      expect(untouched.captureModes.quick.thinkingLevel).toBe('low')
+    })
+
+    it('replaces a blank strand title, because a strand needs a name', () => {
+      const normalized = normalizeSettingsContract({ captureModes: { quick: { strandTitle: '   ' } } })
+      expect(normalized.captureModes.quick.strandTitle)
+        .toBe(DEFAULT_SETTINGS_CONTRACT.captureModes.quick.strandTitle)
+
+      const named = normalizeSettingsContract({ captureModes: { quick: { strandTitle: ' Zurufe ' } } })
+      expect(named.captureModes.quick.strandTitle).toBe('Zurufe')
+    })
+
+    it('falls back to "off" for an unsupported quick thinking level', () => {
+      const normalized = normalizeSettingsContract({
+        // @ts-expect-error — deliberately passing an unsupported value
+        captureModes: { quick: { thinkingLevel: 'extreme' } },
+      })
+      expect(normalized.captureModes.quick.thinkingLevel).toBe('off')
+    })
+
+    it('defaults the assist mode to the draft instruction and nothing else', () => {
+      const assist = DEFAULT_SETTINGS_CONTRACT.captureModes.assist
+      expect(assist.styleHint).toBe(DEFAULT_ASSIST_STYLE_HINT)
+      // The instruction has to name the fence, the JSON key and the plaintext
+      // rule, otherwise a model has no way to produce a typable draft.
+      expect(assist.styleHint).toContain('offtangent')
+      expect(assist.styleHint).toContain('"block":"draft"')
+      expect(assist.styleHint).toContain('Plaintext')
+      expect(assist.styleHint.length).toBeLessThanOrEqual(CAPTURE_STYLE_HINT_MAX_LENGTH)
+      // Assist pins neither a model nor a strand: the router decides.
+      expect(Object.keys(assist)).toEqual(['styleHint'])
+    })
+
+    it('keeps an EMPTY assist hint and fills a MISSING one', () => {
+      expect(normalizeSettingsContract({ captureModes: { assist: { styleHint: '' } } }).captureModes.assist.styleHint)
+        .toBe('')
+      expect(normalizeSettingsContract({ captureModes: { quick: { thinkingLevel: 'low' } } }).captureModes.assist.styleHint)
+        .toBe(DEFAULT_ASSIST_STYLE_HINT)
+      expect(normalizeSettingsContract({}).captureModes.assist.styleHint).toBe(DEFAULT_ASSIST_STYLE_HINT)
+      // A custom hint survives normalization untouched.
+      expect(normalizeSettingsContract({ captureModes: { assist: { styleHint: 'Kurz und knapp.' } } })
+        .captureModes.assist.styleHint).toBe('Kurz und knapp.')
+    })
+
+    it('keeps a configured pair and the puck hint', () => {
+      const normalized = normalizeSettingsContract({
+        captureModes: { quick: { providerId: 'fast', modelId: 'tiny' } },
+        captureSources: { puck: { styleHint: 'Maximal zwanzig Woerter.' } },
+      })
+      expect(normalized.captureModes.quick.providerId).toBe('fast')
+      expect(normalized.captureModes.quick.modelId).toBe('tiny')
+      expect(normalized.captureSources.puck.styleHint).toBe('Maximal zwanzig Woerter.')
     })
   })
 })

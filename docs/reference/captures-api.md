@@ -46,6 +46,67 @@ All endpoints are JWT protected like `/api/chat/*`
 | `decision.state` | `proposed`, `applied`, `confirmed`, `undone`, `superseded` |
 | `decision.model` | `providerId:modelId` of the router entry that answered, `synthetic` when the router failed, `explicit` when the client named the strand, `user` for manual choices |
 | `alternatives` | at most 3, best first, never the chosen action and target |
+| `decision.partIndex` / `partCount` | topic part of the capture this decision belongs to. `0` / `1` for every capture that was not split |
+| `decision.partText` / `partTitle` | consolidated text and title of that part; `partText` is `null` for a single part, where the part IS `capture.text` |
+| `decision.sentenceIds` | 1-based sentence numbers of the capture this part was built from, `[]` for a single part |
+
+## Split on intake
+
+A long dictation that mixes unrelated matters is cut into topic parts BEFORE
+the router runs. Every part is consolidated (nothing is summarised away), gets
+its own router decision, its own strand and its own apply/undo. A capture about
+one matter is not touched: it keeps its text verbatim and produces exactly one
+decision with `partIndex 0`, `partCount 1`, `partText null`.
+
+Two model calls decide it, the code decides everything else:
+
+1. Stage 1 assigns every sentence to exactly one topic. The answer is validated
+   (each sentence id once, none missing), a rejected answer is echoed back up
+   to three times.
+2. Topics of a single sentence are folded into their neighbour, and a split
+   whose `splitConfidence` is below `0.7` is discarded: the capture is filed as
+   one. Splitting a coherent note is the expensive mistake.
+3. Stage 2 consolidates each part from its own sentences only. A failed
+   consolidation degrades to the verbatim sentences of that part; a capture is
+   never lost because a model was unavailable.
+
+A capture is eligible when the setting is on and it is either `kind: "voice"`
+or at least `captures.splitMinChars` characters long. **Never split:** captures
+with an explicit `strandId`, `mode: "quick"` (no router call at all by design)
+and `mode: "assist"` (an assist capture asks for one draft, and two parallel
+drafts out of one dictation is nothing the client can render).
+
+The part message stored in `chat_messages` holds the consolidated part text and
+carries `metadata.capturePart = { index, count, captureId }` plus
+`part_index`. The persona sees one extra line in front of it
+(`[Teil 2 von 3 einer Sprachnotiz; Original: capture <id>]`, language follows
+the capture) so it knows it is reading a fragment; that line is never stored.
+
+`captures.strand_id` / `message_id` stay bound to **part 0**, so the tray, the
+home screen and `GET /api/captures` keep showing one strand per capture. The
+other parts are reached through `parts[]`.
+
+Capture status over the parts:
+
+| Situation | `capture.status` |
+|---|---|
+| every part applied, none in the review band | `filed` |
+| any part applied in the medium band, or some parts still unapplied | `needs_review` |
+| no part applied (all undone, or all below the low band) | `unsorted` (`failed` when every part got a synthetic decision) |
+
+### Settings
+
+```json
+{ "captures": { "splitOnIntake": true, "splitMinChars": 400 } }
+```
+
+| Setting | Type | Default | Meaning |
+|---|---|---|---|
+| `captures.splitOnIntake` | `boolean` | `true` | master switch; `false` files every capture as one, exactly as before |
+| `captures.splitMinChars` | `number` | `400` | shortest non voice capture that is considered for a split |
+
+The split uses the same model chain as the router
+(`modelPolicy.roles.router`), first resolvable entry.
 
 ## Confidence bands
 
@@ -80,7 +141,7 @@ appended to the wrong strand does not.
 
 ```json
 { "text": "...", "clientMessageId": "cap-01J...", "agentId": "bob", "strandId": null,
-  "kind": "text", "source": "web", "attachments": [], "intent": "ask" }
+  "kind": "text", "source": "web", "attachments": [], "intent": "ask", "mode": "work" }
 ```
 
 - `text` required, trimmed, at most 20000 characters.
@@ -93,6 +154,9 @@ appended to the wrong strand does not.
   as returned by [`POST /api/uploads`](./uploads-api), passed through verbatim.
 - `intent` optional override. Without it the router decides; explicit
   captures default to `note`.
+- `mode` one of `work`, `quick`, `assist` (default `work`, see
+  [Capture modes](#capture-modes)). An unknown value is **400**
+  `invalid_mode`; `null` and `""` are treated as absent, i.e. `work`.
 
 - `modelProviderId` and `modelId` optional, paired nonempty strings naming a
   selectable model from `/api/models`. Invalid pairs or unavailable models return
@@ -108,7 +172,9 @@ Persistence: database initialization idempotently adds a nullable
 Unfiled captures have no chat message yet, so chat-message metadata cannot hold
 this selection reliably.
 
-**201** `{ capture, decision, turn }` new capture, router ran (or was skipped).
+**201** `{ capture, decision, turn, parts, partCount }` new capture, router ran (or was skipped).
+`parts`/`partCount` (split on intake) are additive: one entry for a capture
+that was not split, the shape of `GET /api/captures/:id`.
 **200** `{ capture, decision, turn }` known `clientMessageId`, nothing re-run.
 
 `turn` describes the answer turn this capture started:
@@ -120,7 +186,8 @@ WebSocket frame, and a client that reconnects later finds it as `pendingTurn`
 on `GET /api/strands/:id`.
 **400** codes `text_empty`, `text_too_long`, `invalid_client_message_id`,
 `unknown_agent`, `invalid_strand`, `invalid_kind`, `invalid_source`,
-`invalid_attachments`, `invalid_intent`, `invalid_model_pin`, `model_unavailable`.
+`invalid_attachments`, `invalid_intent`, `invalid_mode`, `invalid_model_pin`,
+`model_unavailable`.
 **404** inaccessible or missing strand. **409** `strand_busy` for an active turn
 in the target strand. **503** agent core not available.
 
@@ -133,26 +200,99 @@ carries `lastMessage`, the last user message of that strand, collapsed to one
 line and cut at 160 characters. A capture without any candidate becomes a new
 strand at confidence 0.5 without a model call.
 
+## Capture modes
+
+`mode` says **how** a capture is answered, not what it is. The field is defined
+in `CAPTURE_MODES` (`packages/web-backend/src/api/modules/captures/schema.ts`)
+and comes from the devices that send it: the puck firmware writes `work` or
+`quick` into every capture body, an assist wave writes `assist`.
+
+| Value | Router | Model of the answer turn | Thinking level | Style instruction |
+|---|---|---|---|---|
+| `work` (default) | runs | persona / strand / global | persona's own | source hint only (`captureSources.puck.styleHint`) |
+| `quick` | **skipped** when no `strandId` is given | `captureModes.quick.providerId` + `modelId`, else the persona's | `captureModes.quick.thinkingLevel` (default `off`) | `captureModes.quick.styleHint` plus the source hint |
+| `assist` | runs, like `work` | persona's own | persona's own | `captureModes.assist.styleHint` plus the source hint |
+
+- **`work`** is the behaviour that always shipped, and therefore also what a
+  missing, empty or `null` field means — an older client keeps working
+  unchanged.
+- **`quick`** is a short spoken question from a device without a screen.
+  Without `strandId` it does not call the router at all: the capture is filed
+  into one strand per `source` (title from `captureModes.quick.strandTitle`,
+  default `Kurzfragen`), which is found again through the
+  `router_decisions.created_strand_id` of an earlier quick filing of the same
+  user and source. An archived or deleted strand is skipped and the next quick
+  capture opens a fresh one. The decision of such a filing carries
+  `model: "quick-mode"` and the rationale
+  `Kurzfrage-Modus: fixer Strand, kein Router`, so quick filings stay countable
+  next to router ones. A configured model pair that is not selectable does not
+  fail the capture: the turn falls back to the persona model and the reason is
+  logged (`[captures] quick mode: …`). An explicit client pin
+  (`modelProviderId` + `modelId`) outranks the configured pair.
+- **`assist`** is a spoken request whose answer contains something the user
+  wants to **type** somewhere. It is the smallest mode: it adds one style
+  instruction and nothing else — no model pin, no thinking level, no fixed
+  strand, so the router files an assisted capture exactly like a working one.
+  The instruction asks for short prose, at most one question, and the typable
+  text in exactly one [`draft` block](./interaction-blocks#draft).
+
+A `quick` capture **with** an explicit `strandId` takes the normal explicit
+path: the strand decides where the answer goes, the mode still decides how it
+sounds. `kind: "voice"` captures stay subject to the silence guard and the
+courtesy filter in every mode.
+
+The mode is remembered on the capture (`captures.metadata`, only when it is not
+`work`), so a later turn started from the same capture is still answered in that
+mode. It is **not** part of the `capture` object in any response — `mode` is an
+input field only.
+
 ## `GET /api/captures`
 
 Query: `status=unsorted|needs_review|filed|moved|failed|pending|dismissed|all`
 (default `all`), `limit=1..200` (default 50), `offset`.
 
-**200** `{ "captures": Capture[], "decisions": Decision[] }`, newest first.
-`decisions` holds the current decision of every listed capture.
+**200** `{ "captures": Capture[], "decisions": Decision[], "parts": { [captureId]: Part[] } }`,
+newest first. `decisions` holds the current decision of **part 0** of every
+listed capture (one entry per capture, as before). `parts` is additive and
+holds every part:
+
+```json
+{ "index": 1, "title": "Auto zum Service", "text": "Das Auto muss zum Service, Termin am Montag.",
+  "sentenceIds": [3, 4], "decision": { ... } }
+```
 
 `all` means "everything that still counts": a `dismissed` capture is only
 returned when it is asked for by name. That is what lets the tray reach zero
 while nothing is actually deleted — and it keeps the card away from clients
 that filter the tray themselves.
 
+## `GET /api/captures/:id`
+
+**200** `{ "capture": Capture, "decision": Decision, "parts": Part[], "partCount": 2,
+"split": { "confidence": 0.93, "rationale": "...", "gated": false },
+"sentences": ["Das Dach tropft seit dem Sturm.", "..."] }`.
+
+`sentences` are the sentences of the original text exactly as the split
+numbered them, so `parts[i].sentenceIds` (1-based) index into this array and a
+client can mark a part inside the original. Empty for a capture with one part.
+
+`capture.text` is always the ORIGINAL dictation. `decision` is the decision of
+part 0. `split.confidence` is the `splitConfidence` stage 1 returned,
+`split.gated` is true when a proposed split was discarded by the confidence
+gate (then there is exactly one part). All three are `null` / `false` for a
+capture the split never looked at.
+
+**404** `capture_not_found`.
+
 ## `POST /api/captures/:id/apply`
 
 ```json
-{ "decisionId": "9a2e...", "action": "append", "strandId": "0f4c...", "title": null, "personaId": null }
+{ "decisionId": "9a2e...", "action": "append", "strandId": "0f4c...", "title": null, "personaId": null, "partIndex": 0 }
 ```
 
-All fields optional.
+All fields optional. `partIndex` names the topic part of a split capture;
+absent means part 0, which is the whole capture for everything that was not
+split. **404** `part_not_found` for a part that does not exist.
 
 - Empty body: confirm the current decision. An unsorted capture is filed as
   proposed; a `needs_review` capture becomes `filed` and its decision
@@ -167,14 +307,21 @@ All fields optional.
 - `decisionId` guards against stale clients: **409** `decision_superseded`
   when it is not the current decision.
 
-**200** `{ capture, decision }`. **404** unknown or foreign capture. **400**
-`invalid_strand` for an unknown, foreign or archived strand.
+**200** `{ capture, decision, turn, parts, partCount }` (every write answers
+with the current parts, see `GET /api/captures/:id`; the same holds for
+`undo`, `dismiss` and `keep-as-one`). **404** unknown or foreign capture.
+**400** `invalid_strand` for an unknown, foreign or archived strand.
 
 ## `POST /api/captures/:id/undo`
 
 ```json
-{ "strandId": "0f4c..." }
+{ "strandId": "0f4c...", "partIndex": 1 }
 ```
+
+`partIndex` undoes exactly that part of a split capture. **Without
+`partIndex` every part is undone** and the whole capture goes back to the
+tray, which is what the undo button on the card means. On a capture that was
+not split both are the same call as before.
 
 - **Before an answer exists** in the strand (no assistant message after the
   capture, always the case for `intent: "note"`): a true move. The chat row
@@ -195,6 +342,24 @@ All fields optional.
 
 Idempotent: a second undo, or an undo on an unsorted capture, answers **200**
 with the current state and changes nothing.
+
+## `POST /api/captures/:id/keep-as-one`
+
+The escape hatch of the split: the user says "that was one thought". Body
+empty.
+
+Every part is undone (chat rows removed, created empty strands deleted), all
+current decisions become `superseded`, and the ORIGINAL capture text is routed
+once with splitting switched off. Same capture row and same id, so nothing the
+client holds goes stale. The response has the same shape as `apply`:
+`{ capture, decision, turn, parts, partCount }` with `decision.partCount === 1`.
+
+Idempotent: on a capture that already is one part (never split, or kept as one
+a moment ago) it answers **200** with the current state and routes nothing, so
+a double tap cannot open a second strand. A second call while the first one is
+still routing joins it and gets the same answer.
+
+**409** `capture_dismissed` when the capture was thrown away.
 
 ## `POST /api/captures/:id/dismiss`
 
@@ -237,10 +402,15 @@ typed text is never guessed away.
 Admin only. `{ "text": "...", "agentId": "bob" }` runs the router against the
 caller's strands without writing anything.
 
-**200** `{ "decision": { action, strandId, secondaryStrandId, title, personaId, projectId,
-projectSuggestion, intent, confidence, tags, rationale, alternatives, model, latencyMs,
-newStrand, notes } }`.
+**200** `{ "decision": {...}, "parts": [...], "partCount": 1, "split": { confidence, rationale, gated } }`.
+
+`decision` is the preview decision of part 0 with the fields
+`action, strandId, secondaryStrandId, title, personaId, projectId,
+projectSuggestion, intent, confidence, tags, rationale, alternatives, partIndex,
+partCount, partText, partTitle, sentenceIds, model, latencyMs, newStrand, notes`.
 `notes` lists skipped chain entries, repair retries and threshold hand-overs.
+The preview runs the split as well, so a text that would be split previews one
+part per topic (`parts[i].decision` is the router decision of that part).
 
 ## Router model chain
 
@@ -265,11 +435,22 @@ decision. Changing the active chat model never touches this role.
 Additive frames on `/ws/chat`, delivered to every connection of the user:
 
 ```json
-{ "type": "capture_routed", "sessionId": "0f4c...", "agentId": "main", "capture": {...}, "decision": {...} }
-{ "type": "capture_needs_review", "sessionId": "0f4c...", "agentId": "main", "capture": {...}, "decision": {...} }
+{ "type": "capture_routed", "sessionId": "0f4c...", "agentId": "main", "capture": {...}, "decision": {...}, "parts": [{...}], "partCount": 1 }
+{ "type": "capture_needs_review", "sessionId": "0f4c...", "agentId": "main", "capture": {...}, "decision": {...}, "parts": [{...}], "partCount": 1 }
 { "type": "now_set_changed", "strandIds": ["0f4c...", "a3d1..."] }
 { "type": "turn_queued", "sessionId": "0f4c...", "agentId": "main", "position": 2, "blockedBy": { "agentId": "main", "sessionId": "a3d1...", "title": "Umzug" } }
 ```
+
+A split capture still produces exactly ONE `capture_routed` /
+`capture_needs_review` frame: a second frame with the same capture id would
+show up as a second card in every client that does not know parts.
+`decision` and `sessionId` are those of part 0 (backward compatible for the
+Android app 0.16.x and the web client), `parts` carries every part in part
+order in the shape of `GET /api/captures/:id` (`{ index, title, text,
+sentenceIds, decision }`) and `partCount` their number. `parts` is present on
+every frame, with one entry for a capture that was not split. The per part user rows
+are delivered through the ordinary `user_message` frame of the part's strand,
+one per part.
 
 `turn_queued` fires when the answer turn of a capture has to wait for another
 turn of the same persona (position >= 2) — the capture path used to stay

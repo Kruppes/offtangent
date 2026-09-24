@@ -8,6 +8,7 @@ import { uploadArray, getMaxUploadFiles, cleanupRequestUploads } from '../upload
 import type { ChatActionRegistry } from '../chat-actions.js'
 import { normalizeClientMessageId, normalizeSessionId, resolveAgentId } from '../persona-request.js'
 import { isSessionAccessError } from '@axiom/core'
+import { extractDraftText } from '@axiom/core/contracts'
 // Artifact projection shared with `/api/artifacts` so both endpoints agree.
 import { toArtifactRef } from '../api/modules/artifacts/schema.js'
 import { withDerivedTaskResultPreviews } from '../task-result-preview.js'
@@ -258,6 +259,14 @@ export function createChatRouter(options: ChatRouterOptions): Router {
    * Offtangent (SPEC 7.4b): every message carries its canvas artifacts as
    * `artifacts: ArtifactRef[]` (empty when it has none), so no client has to
    * re-parse the markdown to find out whether a message opens a canvas.
+   *
+   * Puck assist waves (W1): every message also carries `draft: string | null`,
+   * the plain text of its `draft` block (SPEC 7.4c wire format) or null. The
+   * device that types the draft over a BLE keyboard must not have to run a
+   * markdown parser to find it, and it must not guess which part of an answer
+   * was prose. `content` is untouched — exactly like every other block kind,
+   * the fence stays in the message and each surface degrades it itself — so no
+   * existing field changes meaning.
    */
   router.get('/history', (req: AuthenticatedRequest, res) => {
     const sessionId = req.query.session_id as string | undefined
@@ -317,6 +326,10 @@ export function createChatRouter(options: ChatRouterOptions): Router {
     const withArtifacts = rows.map(row => withIsoTimestamp({
       ...row,
       artifacts: (byMessage.get(Number(row.id)) ?? []).map(toArtifactRef),
+      // Only an assistant message can carry a draft: a draft is something the
+      // persona wrote for the user to type, and a fence a user typed himself
+      // is his own text, not a draft the device should send back to him.
+      draft: row.role === 'assistant' ? extractDraftText(String(row.content ?? '')) : null,
     }))
 
     res.json({

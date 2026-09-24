@@ -30,6 +30,8 @@ import {
   retryDelayMs,
 } from './turn-retry.js'
 import type { RetryPolicy } from './turn-retry.js'
+import type { TurnRuntimeOverrides } from './turn-overrides.js'
+import { hasTurnRuntimeOverrides } from './turn-overrides.js'
 
 /**
  * The slice of AgentCore the turn runner depends on. Keeping this narrow
@@ -50,6 +52,7 @@ export interface TurnAgentLike {
     // legacy behaviour.
     sessionId?: string,
     turnModelOverride?: ModelSelection | null,
+    turnOverrides?: TurnRuntimeOverrides | null,
   ): AsyncIterable<TurnStreamChunk>
   /**
    * Restart the failed assistant turn from the existing transcript instead of
@@ -64,6 +67,7 @@ export interface TurnAgentLike {
     agentId?: string,
     sessionId?: string,
     turnModelOverride?: ModelSelection | null,
+    turnOverrides?: TurnRuntimeOverrides | null,
   ): AsyncIterable<TurnStreamChunk>
   /**
    * Cancel live agent runs. A scope restricts the abort to one session (and
@@ -179,6 +183,12 @@ export interface StartTurnInput {
   explicitSessionId?: string
   /** One-shot model selection; it outranks the strand pin and is not persisted. */
   turnModelOverride?: ModelSelection | null
+  /**
+   * One-shot thinking level / style instruction for this turn (quick capture
+   * mode). Applied around the single stream and restored afterwards, so the
+   * persona's configured behaviour is unchanged for every other channel.
+   */
+  turnOverrides?: TurnRuntimeOverrides | null
   /**
    * Restart a failed turn from the existing transcript instead of prompting
    * with `text` again (manual retry). Set via {@link TurnRunner.retryTurn}.
@@ -747,9 +757,12 @@ export class TurnRunner {
       // Keep the legacy 5-arg call shape when no explicit thread was picked:
       // callers outside the threads feature (Telegram, companion) assert on the
       // exact argument list, and an appended `undefined` would break them.
-      const extra: [string?, (ModelSelection | null)?] = input.turnModelOverride !== undefined
-        ? [input.explicitSessionId, input.turnModelOverride]
-        : input.explicitSessionId !== undefined ? [input.explicitSessionId] : []
+      const extra: [string?, (ModelSelection | null)?, (TurnRuntimeOverrides | null)?] =
+        hasTurnRuntimeOverrides(input.turnOverrides)
+          ? [input.explicitSessionId, input.turnModelOverride ?? null, input.turnOverrides]
+          : input.turnModelOverride !== undefined
+            ? [input.explicitSessionId, input.turnModelOverride]
+            : input.explicitSessionId !== undefined ? [input.explicitSessionId] : []
       const stream = continueTurn && agent.retryTurn
         ? agent.retryTurn(agentUserId, input.text, input.source ?? 'web', input.attachments, turn.agentId, ...extra)
         : agent.sendMessage(agentUserId, input.text, input.source ?? 'web', input.attachments, turn.agentId, ...extra)

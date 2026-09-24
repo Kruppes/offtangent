@@ -76,7 +76,12 @@ export function ensureOfftangentTables(db: Database): void {
         CHECK(state IN ('proposed','applied','confirmed','undone','superseded')),
       created_at TEXT NOT NULL DEFAULT (datetime('now')),
       applied_at TEXT,
-      resolved_at TEXT
+      resolved_at TEXT,
+      part_index INTEGER NOT NULL DEFAULT 0,
+      part_count INTEGER NOT NULL DEFAULT 1,
+      part_text TEXT,
+      part_title TEXT,
+      sentence_ids TEXT
     );
     CREATE INDEX IF NOT EXISTS idx_router_decisions_capture ON router_decisions(capture_id);
 
@@ -166,11 +171,35 @@ export function ensureOfftangentTables(db: Database): void {
     db.exec('ALTER TABLE router_decisions ADD COLUMN project_suggestion TEXT')
   }
 
+  // Split-on-intake (plan 2026-09-24): one decision row per topic part of a
+  // capture. Additive and defaulted, so every row written before this reads as
+  // the single part it was (`part_index 0`, `part_count 1`, no own text) and
+  // every reader that ignores the columns keeps working.
+  if (!decisionCols.find(c => c.name === 'part_index')) {
+    db.exec('ALTER TABLE router_decisions ADD COLUMN part_index INTEGER NOT NULL DEFAULT 0')
+  }
+  if (!decisionCols.find(c => c.name === 'part_count')) {
+    db.exec('ALTER TABLE router_decisions ADD COLUMN part_count INTEGER NOT NULL DEFAULT 1')
+  }
+  if (!decisionCols.find(c => c.name === 'part_text')) {
+    db.exec('ALTER TABLE router_decisions ADD COLUMN part_text TEXT')
+  }
+  if (!decisionCols.find(c => c.name === 'part_title')) {
+    db.exec('ALTER TABLE router_decisions ADD COLUMN part_title TEXT')
+  }
+  if (!decisionCols.find(c => c.name === 'sentence_ids')) {
+    db.exec('ALTER TABLE router_decisions ADD COLUMN sentence_ids TEXT')
+  }
+  db.exec('CREATE INDEX IF NOT EXISTS idx_router_decisions_part ON router_decisions(capture_id, part_index)')
+
   ensureDismissedStatus(db)
 
   const chatCols = db.prepare('PRAGMA table_info(chat_messages)').all() as { name: string }[]
   if (!chatCols.find(c => c.name === 'capture_id')) {
     db.exec('ALTER TABLE chat_messages ADD COLUMN capture_id TEXT')
+  }
+  if (!chatCols.find(c => c.name === 'part_index')) {
+    db.exec('ALTER TABLE chat_messages ADD COLUMN part_index INTEGER NOT NULL DEFAULT 0')
   }
   db.exec('CREATE INDEX IF NOT EXISTS idx_chat_messages_capture ON chat_messages(capture_id)')
 }

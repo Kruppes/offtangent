@@ -17,7 +17,14 @@
  * depend on the telegram package. This file is the small piece of that
  * protocol the speech module needs (synthesize only, no health probe).
  */
-import { loadConfig, loadTtsSettings, loadVoiceTelegramSettings, synthesizeTts } from '@axiom/core'
+import type { Readable } from 'node:stream'
+import {
+  loadConfig,
+  loadTtsSettings,
+  loadVoiceTelegramSettings,
+  synthesizeTts,
+  synthesizeTtsStream,
+} from '@axiom/core'
 import type { TtsResponseFormat } from '@axiom/core/contracts'
 
 /** Same default voice the Telegram voice notes use. */
@@ -81,6 +88,27 @@ export async function synthesizeCloudSpeech(
     throw new Error('Cloud TTS returned no audio')
   }
   return { audio: result.audio, contentType: result.contentType }
+}
+
+export interface CloudSpeechStreamResult {
+  stream: Readable
+  contentType: string
+  /** `primary` = configured endpoint, `fallback` = hosted OpenAI. */
+  source: 'primary' | 'fallback'
+}
+
+/**
+ * Start a streamed synthesis, or return `null` when the configured provider
+ * cannot stream this container. `null` is not an error: the caller then takes
+ * the buffered path it always had.
+ */
+export async function synthesizeCloudSpeechStream(
+  text: string,
+  format: TtsResponseFormat | null = null,
+): Promise<CloudSpeechStreamResult | null> {
+  const result = await synthesizeTtsStream(text, format ? { format } : {})
+  if (!result) return null
+  return { stream: result.stream, contentType: result.contentType, source: result.source }
 }
 
 export interface SynthesizeSpeechInput {

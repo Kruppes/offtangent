@@ -1,6 +1,8 @@
 import fs from 'node:fs'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
+import { normalizeSettingsContract } from './contracts/settings.js'
+import type { CaptureModesSettingsContract, CaptureSourcesSettingsContract, SettingsContract } from './contracts/settings.js'
 
 /**
  * Resolve the default timezone for new installs and runtime fallbacks.
@@ -262,6 +264,29 @@ export function loadMultiPersonaSettings(): MultiPersonaSettings {
   } catch {
     return { enabled: false, defaultAgentId: 'main', scopedMemory: true }
   }
+}
+
+/**
+ * Capture-mode settings (`captureModes`, `captureSources`) as the capture
+ * service sees them: normalized, never throwing, defaults on a missing or
+ * corrupt `settings.json`.
+ *
+ * Read per capture on purpose. A quick capture must pick up a changed style
+ * hint or strand title on the next utterance, not on the next restart, and
+ * the file is a few kilobytes behind the OS cache.
+ */
+export function loadCaptureModeSettings(): {
+  captureModes: CaptureModesSettingsContract
+  captureSources: CaptureSourcesSettingsContract
+} {
+  let raw: Partial<SettingsContract> = {}
+  try {
+    raw = loadConfig<Partial<SettingsContract>>('settings.json')
+  } catch (err) {
+    warnConfigReadFailed('settings.json', err)
+  }
+  const normalized = normalizeSettingsContract(raw)
+  return { captureModes: normalized.captureModes, captureSources: normalized.captureSources }
 }
 
 const reportedConfigFailures = new Set<string>()

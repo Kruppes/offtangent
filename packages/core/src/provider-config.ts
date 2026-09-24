@@ -31,7 +31,7 @@ import type { PromptCacheSettings } from './prompt-cache.js'
  * here and guard the duplication with a drift test
  * (provider-config.claude-version.test.ts). Re-check on every pi-ai bump.
  */
-export const CLAUDE_CODE_VERSION = '2.1.251'
+export const CLAUDE_CODE_VERSION = '2.1.280'
 
 /**
  * Supported provider types with presets

@@ -1,10 +1,15 @@
 import {
+  CAPTURE_STRAND_TITLE_MAX_LENGTH,
+  CAPTURE_STYLE_HINT_MAX_LENGTH,
   DEFAULT_WATCHDOG_SETTINGS,
   INSTANCE_IDENTITY_NAME_MAX_LENGTH,
   INSTANCE_IDENTITY_NOTES_MAX_LENGTH,
   NOW_SET_MAX_RANGE,
+  NOW_SET_MODES,
   encrypt,
   HEALTH_MONITOR_FALLBACK_TRIGGERS,
+  isOfficialOpenAiBaseUrl,
+  loadProviders,
   SETTINGS_STT_OPENAI_MODELS,
   SETTINGS_STT_PROVIDERS,
   SETTINGS_THINKING_LEVELS,
@@ -372,6 +377,26 @@ export function mergeTasks(
   return { error: null }
 }
 
+/** Shape of a model id on a self-hosted endpoint. Deliberately narrow. */
+const TTS_MODEL_ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._:/-]{0,79}$/
+
+/**
+ * True when `providerId` names a configured provider that is NOT the hosted
+ * OpenAI API. Those endpoints (a LAN box running an OpenAI-compatible speech
+ * server) carry their own model names, so the model field cannot be an enum
+ * of the three hosted ids. Unknown ids and read failures stay strict.
+ */
+function isSelfHostedOpenAiProvider(providerId: unknown): boolean {
+  if (typeof providerId !== 'string' || !providerId) return false
+  try {
+    const provider = loadProviders().providers.find(p => p.id === providerId)
+    if (!provider) return false
+    return !isOfficialOpenAiBaseUrl(provider.baseUrl)
+  } catch {
+    return false
+  }
+}
+
 export function mergeTts(
   body: Record<string, unknown>,
   settingsRaw: Record<string, unknown>,
@@ -397,9 +422,20 @@ export function mergeTts(
   }
 
   if (tts.openaiModel !== undefined) {
-    const err = validateEnum(tts.openaiModel, SETTINGS_TTS_OPENAI_MODELS, 'tts.openaiModel')
-    if (err) return { error: err }
-    existing.openaiModel = tts.openaiModel
+    const providerId = (tts.providerId ?? existing.providerId) as string | undefined
+    if (isSelfHostedOpenAiProvider(providerId)) {
+      // A self-hosted OpenAI-compatible endpoint names its own models, so the
+      // three hosted model ids are not the whole world. Still validated in
+      // shape, so a typo stays a 400 and no URL or prose sneaks into the field.
+      if (typeof tts.openaiModel !== 'string' || !TTS_MODEL_ID_PATTERN.test(tts.openaiModel)) {
+        return { error: 'tts.openaiModel must be a model id (letters, digits, . _ : / -, max 80 chars)' }
+      }
+      existing.openaiModel = tts.openaiModel
+    } else {
+      const err = validateEnum(tts.openaiModel, SETTINGS_TTS_OPENAI_MODELS, 'tts.openaiModel')
+      if (err) return { error: err }
+      existing.openaiModel = tts.openaiModel
+    }
   }
 
   if (tts.openaiVoice !== undefined) {
@@ -544,7 +580,119 @@ export function mergeOfftangent(
     existing.nowSetMax = offtangent.nowSetMax
   }
 
+  if (offtangent.nowSetMode !== undefined) {
+    const err = validateEnum(offtangent.nowSetMode, NOW_SET_MODES, 'offtangent.nowSetMode')
+    if (err) return { error: err, changed: false }
+    existing.nowSetMode = offtangent.nowSetMode
+  }
+
   settingsRaw.offtangent = existing
+  return { error: null, changed: true }
+}
+
+/**
+ * `captureModes.quick` and `captureModes.assist`.
+ *
+ * `captureModes.quick`: the model pair is validated as a PAIR (both or
+ * neither), the thinking level against the same enum the chat agent uses, and
+ * the two free-text fields only for type and length. The pair is deliberately
+ * NOT checked against the live provider catalog here: a settings save must not
+ * fail because a provider is temporarily untested, and the capture service
+ * falls back to the persona model for an unusable pair (see `planQuickMode`).
+ */
+export function mergeCaptureModes(
+  body: Record<string, unknown>,
+  settingsRaw: Record<string, unknown>,
+): MergeGroupResult {
+  const captureModes = body.captureModes as Record<string, unknown> | undefined
+  if (!captureModes) return { error: null, changed: false }
+  const quick = captureModes.quick as Record<string, unknown> | undefined
+  const assist = captureModes.assist as Record<string, unknown> | undefined
+  if (!quick && !assist) return { error: null, changed: false }
+
+  const existingModes = (settingsRaw.captureModes ?? {}) as Record<string, unknown>
+  const existing = (existingModes.quick ?? {}) as Record<string, unknown>
+
+  if (quick) {
+  if (quick.providerId !== undefined) {
+    if (typeof quick.providerId !== 'string') return { error: 'captureModes.quick.providerId must be a string', changed: false }
+    existing.providerId = quick.providerId.trim()
+  }
+  if (quick.modelId !== undefined) {
+    if (typeof quick.modelId !== 'string') return { error: 'captureModes.quick.modelId must be a string', changed: false }
+    existing.modelId = quick.modelId.trim()
+  }
+  const providerId = (existing.providerId ?? '') as string
+  const modelId = (existing.modelId ?? '') as string
+  if ((providerId === '') !== (modelId === '')) {
+    return { error: 'captureModes.quick.providerId and captureModes.quick.modelId must both be set, or both empty', changed: false }
+  }
+  if (quick.thinkingLevel !== undefined) {
+    const err = validateEnum(quick.thinkingLevel, SETTINGS_THINKING_LEVELS, 'captureModes.quick.thinkingLevel')
+    if (err) return { error: err, changed: false }
+    existing.thinkingLevel = quick.thinkingLevel
+  }
+  if (quick.styleHint !== undefined) {
+    if (typeof quick.styleHint !== 'string') return { error: 'captureModes.quick.styleHint must be a string', changed: false }
+    if (quick.styleHint.length > CAPTURE_STYLE_HINT_MAX_LENGTH) {
+      return { error: `captureModes.quick.styleHint must be at most ${CAPTURE_STYLE_HINT_MAX_LENGTH} characters`, changed: false }
+    }
+    existing.styleHint = quick.styleHint.trim()
+  }
+  if (quick.strandTitle !== undefined) {
+    if (typeof quick.strandTitle !== 'string') return { error: 'captureModes.quick.strandTitle must be a string', changed: false }
+    if (quick.strandTitle.length > CAPTURE_STRAND_TITLE_MAX_LENGTH) {
+      return { error: `captureModes.quick.strandTitle must be at most ${CAPTURE_STRAND_TITLE_MAX_LENGTH} characters`, changed: false }
+    }
+    existing.strandTitle = quick.strandTitle.trim()
+  }
+
+  existingModes.quick = existing
+  }
+
+  // `captureModes.assist` owns nothing but its style hint: no model, no
+  // thinking level, no strand. The mode deliberately runs on the persona's
+  // own model and through the normal router, so there is nothing else here
+  // that could be misconfigured.
+  if (assist) {
+    const existingAssist = (existingModes.assist ?? {}) as Record<string, unknown>
+    if (assist.styleHint !== undefined) {
+      if (typeof assist.styleHint !== 'string') return { error: 'captureModes.assist.styleHint must be a string', changed: false }
+      if (assist.styleHint.length > CAPTURE_STYLE_HINT_MAX_LENGTH) {
+        return { error: `captureModes.assist.styleHint must be at most ${CAPTURE_STYLE_HINT_MAX_LENGTH} characters`, changed: false }
+      }
+      existingAssist.styleHint = assist.styleHint.trim()
+    }
+    existingModes.assist = existingAssist
+  }
+
+  settingsRaw.captureModes = existingModes
+  return { error: null, changed: true }
+}
+
+/** `captureSources.puck.styleHint`: free text, same length bound as the mode hint. */
+export function mergeCaptureSources(
+  body: Record<string, unknown>,
+  settingsRaw: Record<string, unknown>,
+): MergeGroupResult {
+  const captureSources = body.captureSources as Record<string, unknown> | undefined
+  if (!captureSources) return { error: null, changed: false }
+  const puck = captureSources.puck as Record<string, unknown> | undefined
+  if (!puck) return { error: null, changed: false }
+
+  const existingSources = (settingsRaw.captureSources ?? {}) as Record<string, unknown>
+  const existing = (existingSources.puck ?? {}) as Record<string, unknown>
+
+  if (puck.styleHint !== undefined) {
+    if (typeof puck.styleHint !== 'string') return { error: 'captureSources.puck.styleHint must be a string', changed: false }
+    if (puck.styleHint.length > CAPTURE_STYLE_HINT_MAX_LENGTH) {
+      return { error: `captureSources.puck.styleHint must be at most ${CAPTURE_STYLE_HINT_MAX_LENGTH} characters`, changed: false }
+    }
+    existing.styleHint = puck.styleHint.trim()
+  }
+
+  existingSources.puck = existing
+  settingsRaw.captureSources = existingSources
   return { error: null, changed: true }
 }
 

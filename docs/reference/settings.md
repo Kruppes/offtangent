@@ -227,10 +227,15 @@ Offtangent behaviour that is a choice rather than a constant. Read per request, 
 | Key                     | Type     | Default | Range                | Effect                                                                                         |
 |-------------------------|----------|---------|----------------------|-------------------------------------------------------------------------------------------------|
 | `offtangent.nowSetMax`  | `number` | `4`     | integer `1`–`12`     | How many strands the now set holds. Enforced by `PUT /api/now`, the now-set listing, and the automatic pull of a filed capture's strand. |
+| `captures.splitOnIntake` | `boolean` | `true` | `true` / `false` | splits a long dictation into topic parts before routing; each part is consolidated and routed on its own. `false` files every capture as one. See [Captures API](./captures-api#split-on-intake) |
+| `captures.splitMinChars` | `number` | `400` | integer `0`+ | shortest non voice capture that is considered for a split; a `kind: voice` capture is always considered |
+| `offtangent.nowSetMode` | `string` | `"auto"` | `"auto"` \| `"manual"` | Who fills the now set. `auto` ranks it from your own activity (distinct active days over 21 days, 5-day half-life, pinned first) and answers `PUT /api/now` with `409 now_set_auto`; `manual` keeps the curated set. Any other value is rejected with 400. |
 
 ```json
-{ "offtangent": { "nowSetMax": 4 } }
+{ "offtangent": { "nowSetMax": 4, "nowSetMode": "auto" } }
 ```
+
+`offtangent.nowSetMode` switches between the computed and the curated set without a restart; the `now_set` table is left untouched in `auto`, so switching back to `manual` restores the curated set unchanged. In `auto` the size still applies: it cuts the computed list.
 
 Lowering the value never removes a strand that is already in the set: the set stays as it is and is returned in full, only further additions are refused until it fits again. `GET /api/now` returns the value in force as `max`. See [Strands API → Now set](./strands-api#now-set) and [Agent → Now set size](../settings/agent#now-set-size).
 

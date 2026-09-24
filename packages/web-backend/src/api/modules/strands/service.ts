@@ -3,7 +3,7 @@
  * (interactive session) plus tags, now rank and link count; the session
  * manager already renders those fields, this service adds the writes.
  */
-import type { AgentCore, ModelSelection, Database, StrandDeletePreview, StrandDeleteResult, StrandReadState, StrandTaskTree, Tag, Thread, ResurfaceItem } from '@axiom/core'
+import type { AgentCore, ModelSelection, Database, NowSetMode, StrandDeletePreview, StrandDeleteResult, StrandReadState, StrandTaskTree, Tag, Thread, ResurfaceItem } from '@axiom/core'
 import {
   EMPTY_STRAND_READ_STATE,
   InvalidInputError,
@@ -20,6 +20,7 @@ import {
   listResurfaceItems,
   listTags,
   previewStrandDelete,
+  rankStrandsByActivity,
   removeFromNowSet,
   setNowSet,
   setStrandTags,
@@ -27,7 +28,7 @@ import {
   updateTag,
 } from '@axiom/core'
 import type { ChatEventBus } from '../../../chat-event-bus.js'
-import { resolveNowSetMax } from '../../../now-set-limit.js'
+import { resolveNowSetMax, resolveNowSetMode } from '../../../now-set-limit.js'
 import { describePendingTurn } from '../../../turn-queue.js'
 import type { DeleteStrandQuery, ListStrandsQuery, PatchStrandBody, PatchStrandModelBody, StrandTasksQuery } from './schema.js'
 import { effectiveModelForStrand, getProvider } from '../../../model-selection.js'
@@ -64,12 +65,19 @@ export interface StrandsServiceOptions {
   getTurnRunner?: () => StrandTurnGuard | null
   /** Effective now-set size, read per request so a settings save applies at once. */
   getNowSetMax?: () => number
+  /**
+   * How the now set is filled (`offtangent.nowSetMode`), read per request for
+   * the same reason. `auto` computes the set from the user's activity and
+   * refuses writes, `manual` is the curated `now_set` table.
+   */
+  getNowSetMode?: () => NowSetMode
   getQuotaSnapshot?: () => unknown
 }
 
 export function createStrandsService(options: StrandsServiceOptions) {
   const { db } = options
   const nowSetMaxOf = options.getNowSetMax ?? (() => resolveNowSetMax())
+  const nowSetModeOf = options.getNowSetMode ?? (() => resolveNowSetMode())
 
   function manager() {
     const core = options.getAgentCore()
@@ -111,12 +119,22 @@ export function createStrandsService(options: StrandsServiceOptions) {
     }
   }
 
+  /**
+   * Ids the clients should see right now: the computed ranking in auto mode,
+   * the stored set in manual mode.
+   */
+  function currentNowSetIds(userId: number): string[] {
+    return nowSetModeOf() === 'auto'
+      ? rankStrandsByActivity(db, String(userId), { max: nowSetMax() })
+      : getNowSet(db, String(userId))
+  }
+
   function broadcastNowSet(userId: number): void {
     options.chatEventBus?.broadcast({
       type: 'now_set_changed',
       userId,
       source: 'web',
-      strandIds: getNowSet(db, String(userId)),
+      strandIds: currentNowSetIds(userId),
     })
   }
 
@@ -136,8 +154,13 @@ export function createStrandsService(options: StrandsServiceOptions) {
     })
     if (!updated) throw new StrandServiceError(404, 'strand_not_found', 'Strand not found')
 
-    if (patch.archived === true && removeFromNowSet(db, String(userId), strandId)) {
-      broadcastNowSet(userId)
+    // Manual: the slot is freed and the broadcast carries the stored set.
+    // Auto: the archived strand simply drops out of the ranking, so the
+    // broadcast is driven by the computed list instead of the table write
+    // (which may still run harmlessly on a set left over from manual mode).
+    if (patch.archived === true) {
+      const removed = removeFromNowSet(db, String(userId), strandId)
+      if (removed || nowSetModeOf() === 'auto') broadcastNowSet(userId)
     }
     return requireStrand(userId, strandId)
   }
@@ -230,7 +253,7 @@ export function createStrandsService(options: StrandsServiceOptions) {
     const core = options.getAgentCore()
     core?.evictSessionTranscript?.(String(userId), strand.agentId, strandId)
 
-    const wasInNowSet = getNowSet(db, String(userId)).includes(strandId)
+    const wasInNowSet = currentNowSetIds(userId).includes(strandId)
     const result = deleteStrand(db, String(userId), strandId, { deleteFacts: query.deleteFacts })
     if (wasInNowSet) broadcastNowSet(userId)
     return result
@@ -299,12 +322,32 @@ export function createStrandsService(options: StrandsServiceOptions) {
     return nowSetMaxOf()
   }
 
+  function nowSetMode(): NowSetMode {
+    return nowSetModeOf()
+  }
+
   /**
    * The set can be larger than the current limit when the size setting was
    * lowered under it, so the list limit is the larger of the two — lowering
    * the setting must never hide a strand that is in the set.
+   *
+   * In auto mode the list is computed from the user's activity instead
+   * (`rankStrandsByActivity`), hydrated through the same `listThreads` path so
+   * tags, links and read state are attached exactly as before. `nowRank` is
+   * overwritten with the position in the computed list, because the `now_set`
+   * table the session manager reads is not what is shown here.
    */
   function nowSet(userId: number): Thread[] {
+    if (nowSetMode() === 'auto') {
+      const ranked = rankStrandsByActivity(db, String(userId), { max: nowSetMax() })
+      if (ranked.length === 0) return []
+      const hydrated = manager().listThreads(String(userId), { ids: ranked, limit: ranked.length })
+      const byId = new Map(hydrated.map(strand => [strand.id, strand]))
+      return ranked.flatMap((id, index) => {
+        const strand = byId.get(id)
+        return strand ? [{ ...strand, nowRank: index + 1 }] : []
+      })
+    }
     const ids = getNowSet(db, String(userId))
     if (ids.length === 0) return []
     const limit = Math.max(nowSetMax(), ids.length)
@@ -312,6 +355,13 @@ export function createStrandsService(options: StrandsServiceOptions) {
   }
 
   function replaceNowSet(userId: number, strandIds: string[]): Thread[] {
+    if (nowSetMode() === 'auto') {
+      throw new StrandServiceError(
+        409,
+        'now_set_auto',
+        'The now set is filled automatically; switch offtangent.nowSetMode to manual to edit it',
+      )
+    }
     const max = nowSetMax()
     if (strandIds.length > max) {
       throw new StrandServiceError(400, 'now_set_too_large', `The now set holds at most ${max} strands`)
@@ -385,6 +435,7 @@ export function createStrandsService(options: StrandsServiceOptions) {
     patchTag,
     nowSet,
     nowSetMax,
+    nowSetMode,
     replaceNowSet,
     resurface,
     snooze,

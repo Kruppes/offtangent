@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { resolveNowSetMax } from './now-set-limit.js'
+import { resolveNowSetMax, resolveNowSetMode } from './now-set-limit.js'
 
 describe('resolveNowSetMax', () => {
   it('returns the configured value inside the allowed range', () => {
@@ -21,5 +21,25 @@ describe('resolveNowSetMax', () => {
     expect(resolveNowSetMax(() => {
       throw new Error('no settings.json')
     })).toBe(4)
+  })
+})
+
+describe('resolveNowSetMode', () => {
+  it('returns the configured mode', () => {
+    expect(resolveNowSetMode(() => ({ offtangent: { nowSetMode: 'manual' } }))).toBe('manual')
+    expect(resolveNowSetMode(() => ({ offtangent: { nowSetMode: 'auto' } }))).toBe('auto')
+  })
+
+  it('defaults to auto for a missing, unknown or malformed value', () => {
+    expect(resolveNowSetMode(() => ({}))).toBe('auto')
+    expect(resolveNowSetMode(() => ({ offtangent: {} }))).toBe('auto')
+    expect(resolveNowSetMode(() => ({ offtangent: { nowSetMode: 'Manual' } }))).toBe('auto')
+    expect(resolveNowSetMode(() => ({ offtangent: { nowSetMode: 7 } }))).toBe('auto')
+  })
+
+  it('falls back to the default when the settings file cannot be read', () => {
+    expect(resolveNowSetMode(() => {
+      throw new Error('no settings.json')
+    })).toBe('auto')
   })
 })

@@ -7,6 +7,7 @@
  */
 import { describe, it, expect, beforeAll, afterAll, beforeEach, vi } from 'vitest'
 import http from 'node:http'
+import { Readable } from 'node:stream'
 import express from 'express'
 import { TtsFormatError } from '@axiom/core'
 import type { SynthesizeOptions, SynthesizeResult } from '@axiom/core'
@@ -19,12 +20,29 @@ let calls: Array<{ text: string; options: SynthesizeOptions }> = []
 let behaviour: 'ok' | 'format-error' | 'boom' = 'ok'
 /** Whether the mocked settings report TTS as enabled. */
 let enabled = true
+/** TTS provider the mocked settings report; decides buffered vs. streamed. */
+let provider: 'gemini' | 'openai' = 'gemini'
+/** Chunks the mocked streaming synthesizer emits, or `null` for "cannot stream". */
+let streamChunks: string[] | null = null
+/** Every call the route made into the streaming synthesizer. */
+let streamCalls: Array<{ text: string; options: SynthesizeOptions }> = []
 
 vi.mock('@axiom/core', async () => {
   const actual = await vi.importActual<typeof import('@axiom/core')>('@axiom/core')
   return {
     ...actual,
-    loadTtsSettings: () => ({ ...LOADED_SETTINGS, enabled }),
+    loadTtsSettings: () => ({ ...LOADED_SETTINGS, enabled, provider }),
+    synthesizeTtsStream: async (text: string, options: SynthesizeOptions = {}) => {
+      streamCalls.push({ text, options })
+      if (streamChunks === null) return null
+      return {
+        stream: Readable.from(streamChunks.map(c => Buffer.from(c))),
+        contentType: options.format === 'pcm' ? 'audio/pcm' : 'audio/wav',
+        extension: options.format === 'pcm' ? 'pcm' : 'wav',
+        sampleRate: options.sampleRate,
+        source: 'primary' as const,
+      }
+    },
     loadProviders: () => ({
       providers: [
         { id: 'p-google', name: 'Google', providerType: 'google', provider: 'google', apiKey: 'secret-1' },
@@ -79,6 +97,8 @@ interface TtsResponse {
   contentType: string | null
   disposition: string | null
   sampleRate: string | null
+  source: string | null
+  length: string | null
   bytes: Buffer
   json: Record<string, unknown>
 }
@@ -110,6 +130,8 @@ async function postTts(
     contentType: res.headers.get('content-type'),
     disposition: res.headers.get('content-disposition'),
     sampleRate: res.headers.get('x-tts-sample-rate'),
+    source: res.headers.get('x-tts-source'),
+    length: res.headers.get('content-length'),
     bytes,
     json,
   }
@@ -135,8 +157,84 @@ afterAll(async () => {
 
 beforeEach(() => {
   calls = []
+  streamCalls = []
   behaviour = 'ok'
   enabled = true
+  provider = 'gemini'
+  streamChunks = null
+})
+
+describe('POST /api/tts (streaming)', () => {
+  it('streams wav through without a Content-Length and never buffers it', async () => {
+    provider = 'openai'
+    streamChunks = ['RIFF-head', 'samples-1', 'samples-2']
+
+    const res = await postTts(
+      { text: 'Hallo Welt', sampleRate: 16000 },
+      { Accept: 'audio/wav, audio/*;q=0.9' },
+    )
+
+    expect(res.status).toBe(200)
+    expect(res.contentType).toBe('audio/wav')
+    expect(res.bytes.toString()).toBe('RIFF-headsamples-1samples-2')
+    expect(res.length).toBeNull()
+    expect(res.sampleRate).toBe('16000')
+    expect(res.source).toBe('primary')
+    expect(res.disposition).toBe('inline; filename="speech.wav"')
+    // The buffered synthesizer was not involved at all.
+    expect(calls).toHaveLength(0)
+    expect(streamCalls).toHaveLength(1)
+    expect(streamCalls[0]!.options.format).toBe('wav')
+    expect(streamCalls[0]!.options.sampleRate).toBe(16000)
+  })
+
+  it('streams raw pcm when the client asks for it', async () => {
+    provider = 'openai'
+    streamChunks = ['pcm-1', 'pcm-2']
+
+    const res = await postTts({ text: 'Hallo Welt', format: 'pcm' })
+
+    expect(res.status).toBe(200)
+    expect(res.contentType).toBe('audio/pcm')
+    expect(res.bytes.toString()).toBe('pcm-1pcm-2')
+    expect(res.disposition).toBe('inline; filename="speech.pcm"')
+    expect(calls).toHaveLength(0)
+  })
+
+  it('buffers mp3 as before, even on the streaming provider', async () => {
+    provider = 'openai'
+    streamChunks = ['never']
+
+    const res = await postTts({ text: 'Hallo Welt', format: 'mp3' })
+
+    expect(res.status).toBe(200)
+    expect(res.contentType).toBe('audio/mpeg')
+    expect(res.length).toBe(String(res.bytes.length))
+    expect(streamCalls).toHaveLength(0)
+    expect(calls).toHaveLength(1)
+  })
+
+  it('falls back to the buffered path when the synthesizer cannot stream', async () => {
+    provider = 'openai'
+    streamChunks = null
+
+    const res = await postTts({ text: 'Hallo Welt', format: 'wav' })
+
+    expect(res.status).toBe(200)
+    expect(res.contentType).toBe('audio/wav')
+    expect(streamCalls).toHaveLength(1)
+    expect(calls).toHaveLength(1)
+  })
+
+  it('leaves a non-streaming provider on the buffered path', async () => {
+    streamChunks = ['never']
+
+    const res = await postTts({ text: 'Hallo Welt', format: 'wav' })
+
+    expect(res.status).toBe(200)
+    expect(streamCalls).toHaveLength(0)
+    expect(calls).toHaveLength(1)
+  })
 })
 
 describe('formatFromAccept', () => {
@@ -379,8 +477,13 @@ describe('GET /api/tts/catalog', () => {
     expect(res.status).toBe(200)
     const body = await res.json() as Record<string, unknown>
     expect(body.providers).toEqual(['openai', 'mistral', 'deepgram', 'gemini'])
-    expect(body.formats).toEqual(['mp3', 'wav', 'opus', 'flac'])
+    expect(body.formats).toEqual(['mp3', 'wav', 'opus', 'flac', 'pcm'])
     expect((body.formatsByProvider as Record<string, string[]>).gemini).toEqual(['opus', 'wav'])
+    // Raw PCM only exists on the OpenAI-compatible path, where it streams.
+    expect((body.formatsByProvider as Record<string, string[]>).openai)
+      .toEqual(['mp3', 'wav', 'opus', 'flac', 'pcm'])
+    expect((body.formatsByProvider as Record<string, string[]>).deepgram)
+      .toEqual(['mp3', 'wav', 'opus', 'flac'])
     expect((body.gemini as { defaultVoice: string }).defaultVoice).toBe('Charon')
     expect((body.gemini as { voices: unknown[] }).voices.length).toBe(30)
     expect((body.openai as { voices: Array<{ name: string }> }).voices.some(v => v.name === 'nova')).toBe(true)

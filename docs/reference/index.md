@@ -14,6 +14,7 @@ Authoritative reference material for Offtangent's configuration surface.
 - [**Feed API**](./feed-api) - The feed: everything unsolicited (task results, cronjob reports, heartbeats), read state, and asking about an item.
 - [**Uploads API**](./uploads-api) - Storing files and the upload descriptors that captures and chat accept as attachments.
 - [**Artifacts API**](./artifacts-api) - The canvas: how an artifact is extracted from a message, how it is stored, and the sandbox both renderers have to honour.
+- [**Interaction blocks**](./interaction-blocks) - Answers you tap instead of type: the fenced block format, the `draft` block a device types out, and `POST /api/interactions`.
 - [**Voice API**](./voice-api) - Speech to text, keeping the spoken recording and attaching it to the message that carries its transcript.
 - [**Push API**](./push-api) - Device registration for the companion app and the FCM doorbell the backend sends.
 - [**Model Policy API**](./model-policy-api) - The model roles: reading and writing `modelPolicy.roles`, validation against the configured providers, and the resolve route that explains which step decided.

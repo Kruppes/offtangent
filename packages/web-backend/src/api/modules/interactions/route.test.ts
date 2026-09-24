@@ -269,6 +269,26 @@ describe('POST /api/interactions', () => {
     expect(res.json.label).toBe('No')
   })
 
+  it('refuses to answer a draft block: it is output, not a question', async () => {
+    // Puck assist waves (W1): a `draft` carries the text a device types, there
+    // is nothing to tap. It is deliberately NOT answerable, so an id pointing
+    // at one gets the same 404 an id that does not exist gets — no separate
+    // error class for a client to special-case.
+    const draftFence = [
+      '```offtangent',
+      JSON.stringify({ block: 'draft', text: 'Sehr geehrter Herr Mueller,\n\nKW 42 passt.' }),
+      '```',
+    ].join('\n')
+    const messageId = insertBlockMessage({ content: messageContent(draftFence) })
+
+    const res = await post({ messageId, blockId: 'draft', value: 'yes', clientMessageId: 'cmid-draft' })
+    expect(res.status).toBe(404)
+    expect(res.json.code).toBe('unknown_block')
+    // Nothing was written: no answer state, no user message, no turn.
+    const row = db.prepare('SELECT metadata FROM chat_messages WHERE id = ?').get(messageId) as { metadata: string | null }
+    expect(readInteractionAnswers(row.metadata ?? '{}')).toEqual({})
+  })
+
   it('ignores a block that only exists as broken JSON', async () => {
     const broken = '```offtangent\n{ "block": "choice", "id": "b1"\n```'
     const messageId = insertBlockMessage({ content: messageContent(broken) })

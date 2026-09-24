@@ -334,6 +334,84 @@
                   </p>
                 </div>
 
+                <div class="flex flex-col gap-2">
+                  <Label for="now-set-mode">{{ $t('settings.nowSetMode') }}</Label>
+                  <Select v-model="form.offtangent.nowSetMode">
+                    <SelectTrigger id="now-set-mode">
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem v-for="opt in nowSetModeOptions" :key="opt.value" :value="opt.value">
+                        {{ opt.label }}
+                      </SelectItem>
+                    </SelectContent>
+                  </Select>
+                  <p class="text-xs text-muted-foreground">
+                    {{ $t('settings.nowSetModeHint') }}
+                  </p>
+                </div>
+
+                <!-- ─── Capture mode: quick question ─── -->
+                <Separator />
+
+                <div>
+                  <h3 class="text-base font-semibold tracking-tight text-foreground">
+                    {{ $t('settings.quickModeSection') }}
+                  </h3>
+                  <p class="mt-1 text-sm text-muted-foreground">
+                    {{ $t('settings.quickModeSectionDescription') }}
+                  </p>
+                </div>
+
+                <div class="flex flex-col gap-2">
+                  <Label for="quick-mode-model">{{ $t('settings.quickModeModel') }}</Label>
+                  <Select :model-value="quickModeModelValue" @update:model-value="(v) => setQuickModeModel(v as string)">
+                    <SelectTrigger id="quick-mode-model">
+                      <SelectValue :placeholder="$t('settings.quickModeModelInherit')" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="">{{ $t('settings.quickModeModelInherit') }}</SelectItem>
+                      <SelectItem v-for="opt in providerModelOptions" :key="opt.value" :value="opt.value">
+                        {{ opt.label }}
+                      </SelectItem>
+                    </SelectContent>
+                  </Select>
+                  <p class="text-xs text-muted-foreground">{{ $t('settings.quickModeModelHint') }}</p>
+                </div>
+
+                <div class="flex flex-col gap-2">
+                  <Label for="quick-mode-thinking">{{ $t('settings.quickModeThinkingLevel') }}</Label>
+                  <Select v-model="form.captureModes.quick.thinkingLevel">
+                    <SelectTrigger id="quick-mode-thinking">
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem v-for="opt in thinkingLevelOptions" :key="opt.value" :value="opt.value">
+                        {{ opt.label }}
+                      </SelectItem>
+                    </SelectContent>
+                  </Select>
+                  <p class="text-xs text-muted-foreground">{{ $t('settings.quickModeThinkingLevelHint') }}</p>
+                </div>
+
+                <div class="flex flex-col gap-2">
+                  <Label for="quick-mode-style">{{ $t('settings.quickModeStyleHint') }}</Label>
+                  <textarea id="quick-mode-style" v-model="form.captureModes.quick.styleHint" rows="3" class="flex w-full rounded-md border border-input bg-background px-3 py-2 text-sm ring-offset-background placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring" />
+                  <p class="text-xs text-muted-foreground">{{ $t('settings.quickModeStyleHintHint') }}</p>
+                </div>
+
+                <div class="flex flex-col gap-2">
+                  <Label for="quick-mode-strand">{{ $t('settings.quickModeStrandTitle') }}</Label>
+                  <Input id="quick-mode-strand" v-model="form.captureModes.quick.strandTitle" class="w-full" />
+                  <p class="text-xs text-muted-foreground">{{ $t('settings.quickModeStrandTitleHint') }}</p>
+                </div>
+
+                <div class="flex flex-col gap-2">
+                  <Label for="capture-source-puck">{{ $t('settings.puckStyleHint') }}</Label>
+                  <textarea id="capture-source-puck" v-model="form.captureSources.puck.styleHint" rows="2" class="flex w-full rounded-md border border-input bg-background px-3 py-2 text-sm ring-offset-background placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring" />
+                  <p class="text-xs text-muted-foreground">{{ $t('settings.puckStyleHintHint') }}</p>
+                </div>
+
                 <!-- ─── Resilience (retry + watchdog) ─── -->
                 <Separator />
 
@@ -2167,13 +2245,13 @@
 </template>
 
 <script setup lang="ts">
-import { canonicalizeProviderModelRef, NOW_SET_MAX_RANGE, SETTINGS_THINKING_LEVELS, SETTINGS_TTS_GEMINI_MODELS, SETTINGS_TTS_GEMINI_VOICES, type SettingsThinkingLevel } from '@axiom/core/contracts'
+import { canonicalizeProviderModelRef, NOW_SET_MAX_RANGE, NOW_SET_MODES, SETTINGS_THINKING_LEVELS, SETTINGS_TTS_GEMINI_MODELS, SETTINGS_TTS_GEMINI_VOICES, type SettingsThinkingLevel } from '@axiom/core/contracts'
 import { buildProviderModelOptions } from '~/utils/providerModelOptions'
 import { useSettingsApi } from '~/api/settings'
 import { browserCanPlayType, classifyPlaybackError, pickPlayableFormat } from '~/utils/ttsPlayback'
 import EmailAccountsWorkspace from '~/features/email/components/EmailAccountsWorkspace.vue'
 import ModelPolicyPanel from './ModelPolicyPanel.vue'
-import type { MemoryConsolidationSettings, FactExtractionSettings, HealthMonitorNotificationToggles, HealthMonitorSettings, AgentHeartbeatSettings, TasksSettings, TtsSettings, SttSettings, UploadsSettings, TelegramSettings, WatchdogSettings, RetrySettings, OfftangentSettings } from '~/composables/useSettings'
+import type { MemoryConsolidationSettings, FactExtractionSettings, HealthMonitorNotificationToggles, HealthMonitorSettings, AgentHeartbeatSettings, TasksSettings, TtsSettings, SttSettings, UploadsSettings, TelegramSettings, WatchdogSettings, RetrySettings, OfftangentSettings, CaptureModesSettings, CaptureSourcesSettings } from '~/composables/useSettings'
 import type { TelegramUser } from '~/composables/useTelegramUsers'
 
 /* ── Auth ── */
@@ -2465,6 +2543,14 @@ const thinkingLevelOptions = computed(() =>
   })),
 )
 
+/* ── Now set mode (auto = ranked from activity, manual = curated) ── */
+const nowSetModeOptions = computed(() =>
+  NOW_SET_MODES.map(value => ({
+    value,
+    label: t(`settings.nowSetModeOptions.${value}`),
+  })),
+)
+
 /* ── Form state ── */
 interface MultiPersonaForm {
   enabled: boolean
@@ -2491,6 +2577,8 @@ interface SettingsForm {
   stt: SttSettings
   multiPersona: MultiPersonaForm
   offtangent: OfftangentSettings
+  captureModes: CaptureModesSettings
+  captureSources: CaptureSourcesSettings
 }
 
 const form = ref<SettingsForm | null>(null)
@@ -2560,7 +2648,33 @@ function hydrateForm() {
       defaultAgentId: s.multiPersona?.defaultAgentId ?? 'main',
     },
     offtangent: { ...s.offtangent },
+    captureModes: { quick: { ...s.captureModes.quick } },
+    captureSources: { puck: { ...s.captureSources.puck } },
   }
+}
+
+/**
+ * The quick mode's model as ONE `providerId:modelId` value, because that is how
+ * every other model pin in this dialog is chosen. Empty means "inherit the
+ * persona's model", and it is stored as two empty strings so the backend's
+ * pair check (both or neither) stays satisfied.
+ */
+const quickModeModelValue = computed(() => {
+  const quick = form.value?.captureModes.quick
+  if (!quick?.providerId || !quick.modelId) return ''
+  return `${quick.providerId}:${quick.modelId}`
+})
+
+function setQuickModeModel(value: string): void {
+  if (!form.value) return
+  const colon = value.indexOf(':')
+  if (colon === -1) {
+    form.value.captureModes.quick.providerId = ''
+    form.value.captureModes.quick.modelId = ''
+    return
+  }
+  form.value.captureModes.quick.providerId = value.slice(0, colon)
+  form.value.captureModes.quick.modelId = value.slice(colon + 1)
 }
 
 watch(settings, hydrateForm)

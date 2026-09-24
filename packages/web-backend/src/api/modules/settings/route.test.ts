@@ -8,7 +8,7 @@ import { initDatabase, loadRetryPolicy, loadStallThresholds } from '@axiom/core'
 import { createApp } from '../../../app.js'
 import type { AppOptions } from '../../../app.js'
 import { generateAccessToken } from '../../../auth.js'
-import { resolveNowSetMax } from '../../../now-set-limit.js'
+import { resolveNowSetMax, resolveNowSetMode } from '../../../now-set-limit.js'
 
 let db: Database
 let server: http.Server
@@ -324,7 +324,7 @@ describe('settings route module', () => {
   it('round-trips offtangent.nowSetMax and rejects an out-of-range value instead of clamping it', async () => {
     const defaults = await fetch(`${baseUrl}/api/settings`, { headers: authHeaders(adminToken) })
     const defaultsBody = await defaults.json() as { offtangent: { nowSetMax: number } }
-    expect(defaultsBody.offtangent).toEqual({ nowSetMax: 4 })
+    expect(defaultsBody.offtangent).toEqual({ nowSetMax: 4, nowSetMode: 'auto' })
 
     const updated = await fetch(`${baseUrl}/api/settings`, {
       method: 'PUT',
@@ -336,12 +336,12 @@ describe('settings route module', () => {
     })
 
     expect(updated.status).toBe(200)
-    expect((await updated.json() as { offtangent: { nowSetMax: number } }).offtangent).toEqual({ nowSetMax: 10 })
+    expect((await updated.json() as { offtangent: { nowSetMax: number } }).offtangent).toEqual({ nowSetMax: 10, nowSetMode: 'auto' })
 
     const settings = JSON.parse(fs.readFileSync(path.join(tempDataDir, 'config', 'settings.json'), 'utf-8')) as {
       offtangent: { nowSetMax: number }
     }
-    expect(settings.offtangent).toEqual({ nowSetMax: 10 })
+    expect(settings.offtangent).toEqual({ nowSetMax: 10 })  // only the written key lands on disk
     expect(resolveNowSetMax()).toBe(10)
 
     const tooLarge = await fetch(`${baseUrl}/api/settings`, {
@@ -358,7 +358,37 @@ describe('settings route module', () => {
 
     // The rejected write left the stored value alone — no silent clamp to 12.
     const reread = await fetch(`${baseUrl}/api/settings`, { headers: authHeaders(adminToken) })
-    expect((await reread.json() as { offtangent: { nowSetMax: number } }).offtangent).toEqual({ nowSetMax: 10 })
+    expect((await reread.json() as { offtangent: { nowSetMax: number } }).offtangent).toEqual({ nowSetMax: 10, nowSetMode: 'auto' })
+  })
+
+  it('round-trips offtangent.nowSetMode and rejects an unknown value', async () => {
+    const updated = await fetch(`${baseUrl}/api/settings`, {
+      method: 'PUT',
+      headers: { ...authHeaders(adminToken), 'Content-Type': 'application/json' },
+      body: JSON.stringify({ offtangent: { nowSetMode: 'manual' } }),
+    })
+    expect(updated.status).toBe(200)
+    expect((await updated.json() as { offtangent: { nowSetMode: string } }).offtangent.nowSetMode).toBe('manual')
+    expect(resolveNowSetMode()).toBe('manual')
+
+    const invalid = await fetch(`${baseUrl}/api/settings`, {
+      method: 'PUT',
+      headers: { ...authHeaders(adminToken), 'Content-Type': 'application/json' },
+      body: JSON.stringify({ offtangent: { nowSetMode: 'automatic' } }),
+    })
+    expect(invalid.status).toBe(400)
+    expect(await invalid.json()).toEqual({ error: 'offtangent.nowSetMode must be "auto" or "manual"' })
+
+    // The rejected write left the stored mode alone.
+    const reread = await fetch(`${baseUrl}/api/settings`, { headers: authHeaders(adminToken) })
+    expect((await reread.json() as { offtangent: { nowSetMode: string } }).offtangent.nowSetMode).toBe('manual')
+
+    // Back to the default, so the order of the tests in this file stays free.
+    await fetch(`${baseUrl}/api/settings`, {
+      method: 'PUT',
+      headers: { ...authHeaders(adminToken), 'Content-Type': 'application/json' },
+      body: JSON.stringify({ offtangent: { nowSetMode: 'auto' } }),
+    })
   })
 
   it('round-trips instanceIdentity and reports empty defaults', async () => {
@@ -395,6 +425,97 @@ describe('settings route module', () => {
 
     expect(invalid.status).toBe(400)
     expect(await invalid.json()).toEqual({ error: 'instanceIdentity.name must be a string' })
+  })
+
+  it('round-trips the quick capture mode and refuses half a model pair', async () => {
+    const put = async (body: unknown) => fetch(`${baseUrl}/api/settings`, {
+      method: 'PUT',
+      headers: { ...authHeaders(adminToken), 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+    })
+
+    const saved = await put({
+      captureModes: { quick: { providerId: 'fast', modelId: 'tiny', thinkingLevel: 'low', styleHint: ' Zwei Saetze. ', strandTitle: ' Zurufe ' } },
+      captureSources: { puck: { styleHint: 'Maximal zwanzig Woerter.' } },
+    })
+    expect(saved.status).toBe(200)
+    const body = await saved.json() as {
+      captureModes: { quick: { providerId: string; modelId: string; thinkingLevel: string; styleHint: string; strandTitle: string } }
+      captureSources: { puck: { styleHint: string } }
+    }
+    expect(body.captureModes.quick).toEqual({
+      providerId: 'fast', modelId: 'tiny', thinkingLevel: 'low', styleHint: 'Zwei Saetze.', strandTitle: 'Zurufe',
+    })
+    expect(body.captureSources.puck.styleHint).toBe('Maximal zwanzig Woerter.')
+
+    const onDisk = JSON.parse(fs.readFileSync(path.join(tempDataDir, 'config', 'settings.json'), 'utf-8')) as {
+      captureModes: { quick: { providerId: string; strandTitle: string } }
+    }
+    expect(onDisk.captureModes.quick.providerId).toBe('fast')
+    expect(onDisk.captureModes.quick.strandTitle).toBe('Zurufe')
+
+    // Half a pair is not a pin, it is a bug waiting to happen.
+    const half = await put({ captureModes: { quick: { modelId: '' } } })
+    expect(half.status).toBe(400)
+    expect(await half.json()).toEqual({
+      error: 'captureModes.quick.providerId and captureModes.quick.modelId must both be set, or both empty',
+    })
+
+    // ...and the rejected write changed nothing.
+    const reread = await fetch(`${baseUrl}/api/settings`, { headers: authHeaders(adminToken) })
+    expect((await reread.json() as { captureModes: { quick: { modelId: string } } }).captureModes.quick.modelId).toBe('tiny')
+
+    const badLevel = await put({ captureModes: { quick: { thinkingLevel: 'extreme' } } })
+    expect(badLevel.status).toBe(400)
+    expect((await badLevel.json() as { error: string }).error).toContain('captureModes.quick.thinkingLevel')
+
+    const tooLong = await put({ captureSources: { puck: { styleHint: 'x'.repeat(2001) } } })
+    expect(tooLong.status).toBe(400)
+    expect(await tooLong.json()).toEqual({ error: 'captureSources.puck.styleHint must be at most 2000 characters' })
+
+    // Clearing the pin is allowed, both fields together.
+    const cleared = await put({ captureModes: { quick: { providerId: '', modelId: '' } } })
+    expect(cleared.status).toBe(200)
+    expect((await cleared.json() as { captureModes: { quick: { providerId: string; modelId: string } } }).captureModes.quick)
+      .toMatchObject({ providerId: '', modelId: '' })
+  })
+
+  it('round-trips the assist capture mode hint and bounds its length', async () => {
+    const put = async (body: unknown) => fetch(`${baseUrl}/api/settings`, {
+      method: 'PUT',
+      headers: { ...authHeaders(adminToken), 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+    })
+
+    // The shipped default is served without any write at all.
+    const fresh = await fetch(`${baseUrl}/api/settings`, { headers: authHeaders(adminToken) })
+    const before = await fresh.json() as { captureModes: { assist: { styleHint: string } } }
+    expect(before.captureModes.assist.styleHint).toContain('"block":"draft"')
+
+    const saved = await put({ captureModes: { assist: { styleHint: '  Nur der Entwurf.  ' } } })
+    expect(saved.status).toBe(200)
+    const body = await saved.json() as { captureModes: { assist: { styleHint: string }; quick: { styleHint: string } } }
+    expect(body.captureModes.assist).toEqual({ styleHint: 'Nur der Entwurf.' })
+    // Writing the assist hint does not disturb the quick mode next to it.
+    expect(body.captureModes.quick.styleHint.length).toBeGreaterThan(0)
+
+    const onDisk = JSON.parse(fs.readFileSync(path.join(tempDataDir, 'config', 'settings.json'), 'utf-8')) as {
+      captureModes: { assist: { styleHint: string } }
+    }
+    expect(onDisk.captureModes.assist.styleHint).toBe('Nur der Entwurf.')
+
+    const tooLong = await put({ captureModes: { assist: { styleHint: 'x'.repeat(2001) } } })
+    expect(tooLong.status).toBe(400)
+    expect(await tooLong.json()).toEqual({ error: 'captureModes.assist.styleHint must be at most 2000 characters' })
+
+    const wrongType = await put({ captureModes: { assist: { styleHint: 42 } } })
+    expect(wrongType.status).toBe(400)
+    expect(await wrongType.json()).toEqual({ error: 'captureModes.assist.styleHint must be a string' })
+
+    // ...and the rejected writes changed nothing.
+    const reread = await fetch(`${baseUrl}/api/settings`, { headers: authHeaders(adminToken) })
+    expect((await reread.json() as { captureModes: { assist: { styleHint: string } } }).captureModes.assist.styleHint)
+      .toBe('Nur der Entwurf.')
   })
 
   it('enforces authentication and admin boundaries', async () => {

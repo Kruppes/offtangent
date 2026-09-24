@@ -159,6 +159,39 @@ describe('TranscriptCompactor', () => {
   })
 })
 
+describe('TranscriptCompactor with a leading system message', () => {
+  // pi-agent-core 0.87 folds the system prompt and the tool declarations into
+  // messages[0] (role 'system'). Hiding it leaves the model without its task
+  // and without tools: the observed failure was a thinking-only turn and an
+  // empty "completed" right after the first trim (2026-09-24).
+  const system = { role: 'system', content: 'Task prompt', timestamp: 0 } as unknown as AgentMessage
+
+  it('never hides the system message and never lists it in the digest', () => {
+    const c = new TranscriptCompactor({ windowTokens: 5000, targetTokens: 2500, indexLines: 60 })
+    const msgs = [system, ...buildTranscript(12)]
+    const view = c.compact(msgs)
+    expect(c.stats().trims).toBe(1)
+    expect(view[0]).toBe(system)
+    expect(roleOf(view[1])).toBe('user')
+    expect(textOf(view[1])).toContain(EARLIER_MESSAGES_OPEN)
+    expect(textOf(view[1])).not.toContain('Task prompt')
+    expect(view.filter(m => roleOf(m) === 'system')).toHaveLength(1)
+  })
+
+  it('keeps the system message pinned across later trims', () => {
+    const c = new TranscriptCompactor({ windowTokens: 5000, targetTokens: 2500, indexLines: 60 })
+    const msgs = [system, ...buildTranscript(12)]
+    c.compact(msgs)
+    for (let i = 12; i < 30; i++) {
+      msgs.push(assistant(`step ${i}`, `tc${i}`), toolResult(`tc${i}`, `result ${i} ${'x'.repeat(4000)}`))
+    }
+    const view = c.compact(msgs)
+    expect(c.stats().trims).toBe(2)
+    expect(view[0]).toBe(system)
+    expect(view.filter(m => roleOf(m) === 'system')).toHaveLength(1)
+  })
+})
+
 describe('TranscriptCompactor message shape', () => {
   it('merges the digest into the window when it opens on a user message', () => {
     const c = new TranscriptCompactor({ windowTokens: 4000, targetTokens: 2000, indexLines: 60 })

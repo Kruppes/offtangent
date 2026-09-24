@@ -155,7 +155,11 @@ export function createStrandsController(service: StrandsService): StrandsControl
 
     getNow(req, res) {
       run(res, 'Failed to read now set', () => {
-        res.json({ strands: service.nowSet(req.user!.userId), max: service.nowSetMax() })
+        res.json({
+          strands: service.nowSet(req.user!.userId),
+          max: service.nowSetMax(),
+          mode: service.nowSetMode(),
+        })
       })
     },
 
@@ -165,9 +169,21 @@ export function createStrandsController(service: StrandsService): StrandsControl
         res.status(400).json({ error: parsed.error, code: parsed.code })
         return
       }
-      run(res, 'Failed to update now set', () => {
-        res.json({ strands: service.replaceNowSet(req.user!.userId, parsed.value), max: service.nowSetMax() })
-      })
+      // A refusal because the set is computed carries the machine-readable
+      // `now_set_auto` in BOTH `error` and `code`: the clients of this route
+      // (web, app) were built against `{ error: 'now_set_auto' }`, every other
+      // error of this router puts the identifier in `code`. `message` keeps
+      // the sentence that tells a human what to do about it.
+      try {
+        const strands = service.replaceNowSet(req.user!.userId, parsed.value)
+        res.json({ strands, max: service.nowSetMax(), mode: service.nowSetMode() })
+      } catch (err) {
+        if (err instanceof StrandServiceError && err.code === 'now_set_auto') {
+          res.status(409).json({ error: 'now_set_auto', code: 'now_set_auto', message: err.message })
+          return
+        }
+        run(res, 'Failed to update now set', () => { throw err })
+      }
     },
 
     resurface(req, res) {

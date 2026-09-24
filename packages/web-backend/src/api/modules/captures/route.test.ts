@@ -74,6 +74,9 @@ beforeAll(async () => {
     chatEventBus: bus,
     getTurnRunner: () => ({ hasActiveTurnInSession: (_user, id) => busySessions.includes(id), startTurn: (input) => { turns.push({ sessionId: input.sessionId, text: input.text, agentId: input.agentId, ...(input.turnModelOverride ? { turnModelOverride: input.turnModelOverride } : {}) }); return {} } }),
     routerChain: () => chain,
+    // Filing pulls the strand into the CURATED now set here; the auto mode has
+    // its own test (captures.now-auto.test.ts).
+    getNowSetMode: () => 'manual',
     // Exactly the wiring app.ts uses: the service hands its doorbell to the
     // real trigger, the trigger to the sender.
     sendDoorbell: (input) => sendCaptureDoorbell(db, pushSender, input),
@@ -87,7 +90,7 @@ beforeAll(async () => {
   })
   app.use('/api/captures', captures.captures)
   app.use('/api/router', captures.router)
-  const strands = createStrandsRouters({ db, getAgentCore, chatEventBus: bus })
+  const strands = createStrandsRouters({ db, getAgentCore, chatEventBus: bus, getNowSetMode: () => 'manual' })
   app.use('/api/strands', strands.strands)
   app.use('/api/tags', strands.tags)
   app.use('/api/now', strands.now)

@@ -26,8 +26,15 @@ import { synthesizeGeminiPcm } from './gemini-tts.js'
 import { encodeOggOpus, normalizePcm, wrapPcmInWav } from './ogg-opus.js'
 import type { PcmAudio } from './ogg-opus.js'
 import { isSupportedSampleRate, resamplePcm } from './pcm-resample.js'
+import { Readable } from 'node:stream'
 import type { TtsProvider, TtsResponseFormat } from './contracts/settings.js'
-import { DEFAULT_TTS_GEMINI_MODEL, DEFAULT_TTS_GEMINI_VOICE, SETTINGS_TTS_FORMATS_BY_PROVIDER } from './contracts/settings.js'
+import {
+  DEFAULT_TTS_GEMINI_MODEL,
+  DEFAULT_TTS_GEMINI_VOICE,
+  SETTINGS_TTS_FORMATS_BY_PROVIDER,
+  SETTINGS_TTS_OPENAI_VOICES,
+  SETTINGS_TTS_STREAMABLE_FORMATS,
+} from './contracts/settings.js'
 
 /**
  * Map the unified user-facing `responseFormat` to Deepgram's `encoding`
@@ -40,6 +47,11 @@ const DEEPGRAM_FORMAT_MAP: Record<TtsResponseFormat, DeepgramTtsEncoding> = {
   opus: 'opus',
   flac: 'flac',
   wav: 'linear16',
+  // Deepgram does not advertise a headerless format in our catalog
+  // (`SETTINGS_TTS_FORMATS_BY_PROVIDER.deepgram`), so `resolveTtsFormat`
+  // rejects `pcm` before this entry is ever read. It only exists so the map
+  // stays total over the format union.
+  pcm: 'linear16',
 }
 
 /** Deepgram's `linear16` always uses these PCM parameters. */
@@ -155,6 +167,12 @@ export interface SynthesizeOptions {
 
 export interface SynthesizeResult {
   audio: Buffer
+  /**
+   * Which endpoint produced the audio: the configured primary or the hosted
+   * OpenAI fallback. Only set by the OpenAI-compatible path, which is the
+   * only one with a fallback.
+   */
+  source?: 'primary' | 'fallback'
   /** MIME type matching the encoded audio (e.g. `audio/mpeg`, `audio/ogg`). */
   contentType: string
   /** File extension hint without leading dot (e.g. `mp3`, `ogg`). */
@@ -164,6 +182,20 @@ export interface SynthesizeResult {
    * on request. Absent means "provider native rate", which we do not inspect.
    */
   sampleRate?: number
+}
+
+/**
+ * A synthesis that is handed on while it is still being produced. `stream`
+ * emits the raw audio bytes of `contentType` in the order the endpoint sent
+ * them, so an HTTP route can pipe it straight into its response.
+ */
+export interface TtsStreamResult {
+  stream: Readable
+  contentType: string
+  extension: string
+  /** Set only when the endpoint was asked for, and honors, a sample rate. */
+  sampleRate?: number
+  source: 'primary' | 'fallback'
 }
 
 /**
@@ -312,9 +344,10 @@ const CONTENT_TYPE_MAP: Record<string, string> = {
 
 const EXTENSION_MAP: Record<string, string> = {
   // Most encodings already match their extension; the table normalizes the
-  // few that don't so callers get a sensible filename suffix.
+  // few that don't so callers get a sensible filename suffix. `pcm` keeps its
+  // own suffix: the bytes carry no WAV header, so calling the file `.wav`
+  // would lie to whatever opens it.
   linear16: 'wav',
-  pcm: 'wav',
   opus: 'ogg',
 }
 
@@ -327,34 +360,100 @@ function describeAudio(encoding: string): { contentType: string; extension: stri
 
 // ── OpenAI synthesis ──────────────────────────────────────────────────
 
-export async function synthesizeOpenAi(
-  text: string,
-  settings: TtsSettings,
-  options: SynthesizeOptions = {},
-): Promise<SynthesizeResult> {
-  const provider = findTtsProvider(settings)
-  if (!provider) {
-    throw new Error(
-      'OpenAI TTS provider is not configured. Add or select an OpenAI-compatible provider in Settings \u2192 Text-to-Speech.',
-    )
+/**
+ * Time the primary endpoint has to answer with response HEADERS. It is not a
+ * budget for the whole synthesis: a streaming endpoint sends headers early and
+ * then speaks for half a minute. Exceeding it means "this box is not there",
+ * which is exactly the case the fallback exists for.
+ */
+export const TTS_FIRST_BYTE_TIMEOUT_MS = 3000
+
+/**
+ * Header budget for a container the endpoint cannot stream (mp3, opus, flac).
+ * Those are muxed after the last sample, so the headers arrive only when the
+ * whole text is spoken; a 3 s budget would cut off every longer reply. A dead
+ * box is still noticed at once, because a refused connection does not wait for
+ * a timer.
+ */
+export const TTS_BLOCK_TIMEOUT_MS = 120_000
+
+/** Header budget for `format`: early for a stream, generous for a block. */
+export function ttsHeaderTimeoutMs(format: TtsResponseFormat): number {
+  return TTS_STREAMABLE_FORMATS.has(format) ? TTS_FIRST_BYTE_TIMEOUT_MS : TTS_BLOCK_TIMEOUT_MS
+}
+
+/** Model used when the primary OpenAI-compatible endpoint is unreachable. */
+export const TTS_FALLBACK_MODEL = 'gpt-4o-mini-tts'
+
+/** Voice used for the fallback when the configured one is not an OpenAI voice. */
+export const TTS_FALLBACK_VOICE = 'nova'
+
+/** Formats the dispatcher hands through chunk by chunk. */
+export const TTS_STREAMABLE_FORMATS: ReadonlySet<TtsResponseFormat>
+  = new Set(SETTINGS_TTS_STREAMABLE_FORMATS)
+
+/**
+ * An upstream speech endpoint answered with a non-2xx status. Carries the
+ * status so the caller can tell a configuration problem (401, 400) from an
+ * outage (5xx) that deserves a fallback.
+ */
+export class TtsUpstreamError extends Error {
+  constructor(message: string, readonly status: number) {
+    super(message)
+    this.name = 'TtsUpstreamError'
   }
-  const format = resolveTtsFormat('openai', settings, options)
-  const apiKey = await getApiKeyForProvider(provider)
-  const baseUrl = provider.baseUrl || 'https://api.openai.com'
+}
+
+/** True for the hosted OpenAI API, false for any self-hosted clone. */
+export function isOfficialOpenAiBaseUrl(baseUrl: string | undefined | null): boolean {
+  if (!baseUrl) return true // empty baseUrl means the OpenAI default
+  return /(^|\/\/|\.)api\.openai\.com(\/|$|:)/.test(baseUrl)
+}
+
+interface OpenAiSpeechTarget {
+  provider: ProviderConfig
+  model: string
+  voice: string
+  instructions?: string
+  /** Only sent to non-OpenAI endpoints, which is where the knob exists. */
+  sampleRate?: number
+}
+
+/**
+ * One POST to an OpenAI-compatible `/v1/audio/speech`.
+ *
+ * The abort timer covers the wait for the response headers only and is
+ * cleared as soon as they arrive, so a long chunked body is never cut off
+ * mid-sentence by the connect timeout.
+ */
+async function requestOpenAiSpeech(
+  target: OpenAiSpeechTarget,
+  text: string,
+  format: TtsResponseFormat,
+  timeoutMs: number,
+): Promise<Response> {
+  const apiKey = await getApiKeyForProvider(target.provider)
+  const baseUrl = target.provider.baseUrl || 'https://api.openai.com'
+  const official = isOfficialOpenAiBaseUrl(target.provider.baseUrl)
   const url = `${normalizeBaseUrl(baseUrl)}/v1/audio/speech`
 
   const body: Record<string, unknown> = {
-    model: settings.openaiModel,
-    voice: options.voice ?? settings.openaiVoice,
+    model: target.model,
+    voice: target.voice,
     input: text,
     response_format: format,
   }
   // `instructions` is only honored by gpt-4o-mini-tts; sending it to other
   // models is a 400 from OpenAI.
-  if (settings.openaiInstructions && settings.openaiModel === 'gpt-4o-mini-tts') {
-    body.instructions = settings.openaiInstructions
+  if (target.instructions && target.model === 'gpt-4o-mini-tts') {
+    body.instructions = target.instructions
   }
+  // `sample_rate` is an extension of self-hosted endpoints. OpenAI answers 400
+  // for unknown body fields, so it never leaves the house towards api.openai.com.
+  if (!official && target.sampleRate) body.sample_rate = target.sampleRate
 
+  const controller = new AbortController()
+  const timer = setTimeout(() => controller.abort(), timeoutMs)
   let response: Response
   try {
     response = await fetch(url, {
@@ -364,18 +463,159 @@ export async function synthesizeOpenAi(
         'Content-Type': 'application/json',
       },
       body: JSON.stringify(body),
+      signal: controller.signal,
     })
   } catch (err) {
     throw new Error(`OpenAI TTS request failed: ${(err as Error).message}`)
+  } finally {
+    clearTimeout(timer)
   }
 
   if (!response.ok) {
     const errText = await response.text().catch(() => '')
-    throw new Error(`OpenAI TTS returned HTTP ${response.status}: ${errText.slice(0, 500)}`)
+    throw new TtsUpstreamError(
+      `OpenAI TTS returned HTTP ${response.status}: ${errText.slice(0, 500)}`,
+      response.status,
+    )
   }
+  return response
+}
 
-  const audio = Buffer.from(await response.arrayBuffer())
-  return { audio, ...describeAudio(format) }
+/**
+ * Whether a failed primary call should be retried on the hosted OpenAI API.
+ * Transport failures, aborts and 5xx say "the box is gone"; a 4xx says "the
+ * request was wrong", and repeating a wrong request elsewhere only hides it.
+ */
+function deservesTtsFallback(err: unknown): boolean {
+  if (err instanceof TtsFormatError) return false
+  if (err instanceof TtsUpstreamError) return err.status >= 500
+  return true
+}
+
+/**
+ * A configured provider that really is the hosted OpenAI API and carries a
+ * key. `excludeId` keeps the primary out of its own fallback.
+ */
+function findOpenAiFallbackProvider(excludeId?: string): ProviderConfig | null {
+  const file = loadProvidersDecrypted()
+  return file.providers.find(p =>
+    p.id !== excludeId
+    && (p.providerType === 'openai' || p.provider === 'openai')
+    && isOfficialOpenAiBaseUrl(p.baseUrl)
+    && !!p.apiKey,
+  ) ?? null
+}
+
+/** The configured voice if OpenAI knows it, otherwise the neutral default. */
+function openAiFallbackVoice(voice: string): string {
+  return SETTINGS_TTS_OPENAI_VOICES.some(v => v.name === voice) ? voice : TTS_FALLBACK_VOICE
+}
+
+interface OpenAiSpeechCall {
+  response: Response
+  format: TtsResponseFormat
+  /** `primary` = the configured endpoint, `fallback` = hosted OpenAI. */
+  source: 'primary' | 'fallback'
+}
+
+/**
+ * Ask the configured OpenAI-compatible endpoint and, if it does not answer,
+ * the hosted OpenAI API with {@link TTS_FALLBACK_MODEL}. The switch is logged
+ * with the reason; the caller only sees audio.
+ */
+async function callOpenAiSpeech(
+  text: string,
+  settings: TtsSettings,
+  options: SynthesizeOptions,
+): Promise<OpenAiSpeechCall> {
+  const provider = findTtsProvider(settings)
+  if (!provider) {
+    throw new Error(
+      'OpenAI TTS provider is not configured. Add or select an OpenAI-compatible provider in Settings \u2192 Text-to-Speech.',
+    )
+  }
+  const format = resolveTtsFormat('openai', settings, options)
+  const voice = options.voice ?? settings.openaiVoice
+
+  try {
+    const response = await requestOpenAiSpeech(
+      {
+        provider,
+        model: settings.openaiModel,
+        voice,
+        instructions: settings.openaiInstructions,
+        sampleRate: options.sampleRate,
+      },
+      text,
+      format,
+      ttsHeaderTimeoutMs(format),
+    )
+    return { response, format, source: 'primary' }
+  } catch (err) {
+    if (!deservesTtsFallback(err)) throw err
+
+    const fallback = findOpenAiFallbackProvider(provider.id)
+    if (!fallback) {
+      console.warn(
+        `[tts] primary voice "${provider.name}" failed and no hosted OpenAI provider with a key is configured`,
+      )
+      throw err
+    }
+    console.warn(
+      `[tts] primary voice "${provider.name}" failed (${(err as Error).message.slice(0, 200)}); `
+      + `falling back to OpenAI ${TTS_FALLBACK_MODEL} via "${fallback.name}"`,
+    )
+    const response = await requestOpenAiSpeech(
+      {
+        provider: fallback,
+        model: TTS_FALLBACK_MODEL,
+        voice: openAiFallbackVoice(voice),
+        instructions: settings.openaiInstructions,
+      },
+      text,
+      format,
+      ttsHeaderTimeoutMs(format),
+    )
+    return { response, format, source: 'fallback' }
+  }
+}
+
+export async function synthesizeOpenAi(
+  text: string,
+  settings: TtsSettings,
+  options: SynthesizeOptions = {},
+): Promise<SynthesizeResult> {
+  const call = await callOpenAiSpeech(text, settings, options)
+  const audio = Buffer.from(await call.response.arrayBuffer())
+  return { audio, ...describeAudio(call.format), source: call.source }
+}
+
+/**
+ * Same call as {@link synthesizeOpenAi}, but the body is handed on as it
+ * arrives. Used for `pcm`/`wav`, where every chunk is already playable and
+ * waiting for the last byte would waste the whole head start the endpoint
+ * gives us.
+ */
+export async function synthesizeOpenAiStream(
+  text: string,
+  settings: TtsSettings,
+  options: SynthesizeOptions = {},
+): Promise<TtsStreamResult> {
+  const call = await callOpenAiSpeech(text, settings, options)
+  if (!call.response.body) {
+    throw new Error('OpenAI TTS returned no response body to stream')
+  }
+  const described = describeAudio(call.format)
+  const result: TtsStreamResult = {
+    stream: Readable.fromWeb(call.response.body as Parameters<typeof Readable.fromWeb>[0]),
+    contentType: described.contentType,
+    extension: described.extension,
+    source: call.source,
+  }
+  // Only the self-hosted endpoint honors `sample_rate`; the hosted fallback
+  // answers in its own rate, so we must not claim the requested one there.
+  if (options.sampleRate && call.source === 'primary') result.sampleRate = options.sampleRate
+  return result
 }
 
 // ── Mistral synthesis ─────────────────────────────────────────────────
@@ -659,6 +899,7 @@ export async function synthesizeTts(
   switch (settings.provider) {
     case 'openai':
       return synthesizeOpenAi(trimmed, settings, options)
+
     case 'mistral':
       return synthesizeMistral(trimmed, settings, options)
     case 'deepgram':
@@ -668,4 +909,82 @@ export async function synthesizeTts(
     default:
       throw new Error(`Unknown TTS provider: ${settings.provider as string}`)
   }
+}
+
+/**
+ * Whether a call can be streamed: only the OpenAI-compatible path speaks a
+ * chunked protocol we can pass on, and only for formats where a later chunk
+ * never rewrites an earlier byte. Cheap and synchronous on purpose, so a
+ * route can decide before it opens a connection.
+ */
+export function shouldStreamTts(provider: TtsProvider, format: TtsResponseFormat | undefined): boolean {
+  return provider === 'openai' && !!format && TTS_STREAMABLE_FORMATS.has(format)
+}
+
+/**
+ * Synthesize `text` and hand the audio on while it is still being produced.
+ * Returns `null` when the configured provider or the requested format cannot
+ * stream; the caller then uses {@link synthesizeTts} and buffers as before.
+ */
+export async function synthesizeTtsStream(
+  text: string,
+  options: SynthesizeOptions = {},
+): Promise<TtsStreamResult | null> {
+  const settings: TtsSettings = options.settings
+    ? { ...loadTtsSettings(), ...options.settings }
+    : loadTtsSettings()
+  if (!settings.enabled) {
+    throw new Error('TTS is not enabled. Enable it in Settings \u2192 Text-to-Speech.')
+  }
+  const trimmed = text?.trim() ?? ''
+  if (!trimmed) {
+    throw new Error('TTS: input text is empty.')
+  }
+  const format = options.format ?? settings.responseFormat
+  if (!shouldStreamTts(settings.provider, format)) return null
+  return synthesizeOpenAiStream(trimmed, settings, { ...options, format })
+}
+
+/**
+ * Media types a client may ask for when it cannot set a body field. The puck
+ * firmware sends `Accept: audio/wav, audio/*;q=0.9`, so the header has to be
+ * enough to pick a container; `audio/*` and `*\/*` stay unopinionated and
+ * leave the saved setting in charge.
+ */
+const ACCEPT_FORMATS: Record<string, TtsResponseFormat> = {
+  'audio/wav': 'wav',
+  'audio/x-wav': 'wav',
+  'audio/wave': 'wav',
+  'audio/vnd.wave': 'wav',
+  'audio/ogg': 'opus',
+  'audio/opus': 'opus',
+  'audio/mpeg': 'mp3',
+  'audio/mp3': 'mp3',
+  'audio/flac': 'flac',
+  'audio/pcm': 'pcm',
+  'audio/l16': 'pcm',
+}
+
+/**
+ * Pick an audio format from an `Accept` header, or `null` when the header
+ * expresses no usable preference. The highest q value wins; the first listed
+ * type wins a tie; `q=0` rejects a type instead of selecting it.
+ */
+export function formatFromAccept(header: string | undefined | null): TtsResponseFormat | null {
+  if (!header) return null
+  let best: { format: TtsResponseFormat; q: number } | null = null
+  for (const part of header.split(',')) {
+    const segments = part.split(';')
+    const type = (segments[0] ?? '').trim().toLowerCase()
+    const format = ACCEPT_FORMATS[type]
+    if (!format) continue
+    let q = 1
+    for (const segment of segments.slice(1)) {
+      const match = /^\s*q\s*=\s*([0-9.]+)\s*$/i.exec(segment)
+      if (match) q = Number(match[1])
+    }
+    if (!Number.isFinite(q) || q <= 0) continue
+    if (!best || q > best.q) best = { format, q }
+  }
+  return best?.format ?? null
 }

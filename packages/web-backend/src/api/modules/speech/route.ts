@@ -37,6 +37,8 @@ export interface SpeechRouterOptions {
   synthesizeCloud?: SpeechServiceOptions['synthesizeCloud']
   /** Test seam, handed straight to the service. */
   loadCloudTtsConfig?: SpeechServiceOptions['loadCloudTtsConfig']
+  /** Test seam, handed straight to the service. */
+  synthesizeCloudStream?: SpeechServiceOptions['synthesizeCloudStream']
 }
 
 export function createSpeechRouter(options: SpeechRouterOptions): Router {
@@ -46,6 +48,7 @@ export function createSpeechRouter(options: SpeechRouterOptions): Router {
     synthesize: options.synthesize,
     loadTtsConfig: options.loadTtsConfig,
     synthesizeCloud: options.synthesizeCloud,
+    synthesizeCloudStream: options.synthesizeCloudStream,
     loadCloudTtsConfig: options.loadCloudTtsConfig,
   }))
 

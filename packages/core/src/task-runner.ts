@@ -380,11 +380,17 @@ function getLastAssistantMessage(agent: PiAgent): AssistantMessage | undefined {
  * tokens and an empty body, yet the run "succeeded" and defaulted to
  * status='completed' with an empty summary).
  *
- * Two signals, either of which means the run produced no real result:
+ * Three signals, any of which means the run produced no real result:
  *   1. the last assistant message carries `stopReason === 'error'` (pi-ai
  *      maps refusals / provider errors here and attaches the real
- *      `errorMessage`), or
- *   2. the run yielded no assistant text AND consumed no completion tokens.
+ *      `errorMessage`),
+ *   2. the run yielded no assistant text AND consumed no completion tokens, or
+ *   3. the run yielded no assistant text at all although it did produce
+ *      tokens — the last turn was thinking-only or a bare stop. 2026-09-24:
+ *      after pi-ai 0.87.1 the first transcript trim dropped the leading
+ *      system message (prompt + tool declarations); every task then ended
+ *      with a thinking-only turn and was recorded as an empty "completed".
+ *      A final message without text is never a result.
  *
  * Returns the surfaced error message when a failure is detected, else null.
  * The `errorMessage` from the assistant message is preferred so the true
@@ -406,6 +412,11 @@ function detectAgentRunFailure(
 
   if (resultText.trim().length === 0 && completionTokens === 0) {
     return errorMessage || 'Task produced no output (0 tokens) — likely provider error'
+  }
+
+  if (resultText.trim().length === 0) {
+    return errorMessage
+      || `Task ended without a final message: the last turn had no text and no tool call (${completionTokens} output tokens). The model usually lost its prompt or its tools mid-run; check the transcript.`
   }
 
   return null

@@ -1,5 +1,6 @@
 # Dependencies
 node_modules/
+node_modules
 
 # Build output
 dist/
@@ -26,6 +27,7 @@ coverage/
 
 # Nuxt
 .nuxt/
+.nuxt
 .output/
 
 packages/web-frontend/dist

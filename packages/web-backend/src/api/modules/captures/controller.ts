@@ -2,15 +2,32 @@ import type { Response } from 'express'
 import { isSessionAccessError } from '@axiom/core'
 import type { AuthenticatedRequest } from '../../../auth.js'
 import { parseApplyCaptureBody, parseCreateCaptureBody, parseListCapturesQuery, parseRouterPreviewBody, parseUndoCaptureBody } from './schema.js'
-import { CaptureServiceError, type CapturesService } from './service.js'
+import { CaptureServiceError, type CaptureResult, type CapturesService } from './service.js'
 
 export interface CapturesController {
   create: (req: AuthenticatedRequest, res: Response) => Promise<void>
   list: (req: AuthenticatedRequest, res: Response) => void
+  get: (req: AuthenticatedRequest, res: Response) => void
   apply: (req: AuthenticatedRequest, res: Response) => void
   undo: (req: AuthenticatedRequest, res: Response) => void
+  keepAsOne: (req: AuthenticatedRequest, res: Response) => Promise<void>
   dismiss: (req: AuthenticatedRequest, res: Response) => void
   preview: (req: AuthenticatedRequest, res: Response) => Promise<void>
+}
+
+/**
+ * The body of every write on a capture. `parts`/`partCount` are additive (same
+ * shape as `GET /api/captures/:id`), so a client that changed one part sees
+ * the others without reading the capture back.
+ */
+function resultBody(result: CaptureResult): Record<string, unknown> {
+  return {
+    capture: result.capture,
+    decision: result.decision,
+    turn: result.turn ?? null,
+    parts: result.parts ?? [],
+    partCount: result.partCount ?? 1,
+  }
 }
 
 function sendError(res: Response, err: unknown, context: string): void {
@@ -39,11 +56,7 @@ export function createCapturesController(service: CapturesService): CapturesCont
         // `turn` (plan 2026-09-19, D5): null when no answer turn was started
         // or when it started right away; an object when it has to wait, so the
         // client can say what it waits for instead of showing a mute card.
-        res.status(result.created ? 201 : 200).json({
-          capture: result.capture,
-          decision: result.decision,
-          turn: result.turn ?? null,
-        })
+        res.status(result.created ? 201 : 200).json(resultBody(result))
       } catch (err) {
         sendError(res, err, 'Failed to accept capture')
       }
@@ -62,6 +75,14 @@ export function createCapturesController(service: CapturesService): CapturesCont
       }
     },
 
+    get(req, res) {
+      try {
+        res.json(service.get(req.user!.userId, String(req.params.id)))
+      } catch (err) {
+        sendError(res, err, 'Failed to read capture')
+      }
+    },
+
     apply(req, res) {
       const parsed = parseApplyCaptureBody(req.body)
       if (!parsed.ok) {
@@ -70,7 +91,7 @@ export function createCapturesController(service: CapturesService): CapturesCont
       }
       try {
         const result = service.apply(req.user!.userId, String(req.params.id), parsed.value)
-        res.json({ capture: result.capture, decision: result.decision, turn: result.turn ?? null })
+        res.json(resultBody(result))
       } catch (err) {
         sendError(res, err, 'Failed to apply decision')
       }
@@ -84,16 +105,25 @@ export function createCapturesController(service: CapturesService): CapturesCont
       }
       try {
         const result = service.undo(req.user!.userId, String(req.params.id), parsed.value)
-        res.json({ capture: result.capture, decision: result.decision, turn: result.turn ?? null })
+        res.json(resultBody(result))
       } catch (err) {
         sendError(res, err, 'Failed to undo decision')
+      }
+    },
+
+    async keepAsOne(req, res) {
+      try {
+        const result = await service.keepAsOne(req.user!.userId, String(req.params.id))
+        res.json(resultBody(result))
+      } catch (err) {
+        sendError(res, err, 'Failed to keep the capture as one')
       }
     },
 
     dismiss(req, res) {
       try {
         const result = service.dismiss(req.user!.userId, String(req.params.id))
-        res.json({ capture: result.capture, decision: result.decision, turn: result.turn ?? null })
+        res.json(resultBody(result))
       } catch (err) {
         sendError(res, err, 'Failed to discard capture')
       }

@@ -37,6 +37,13 @@ const more = ref(false)
 const offset = ref(0)
 // Preserve the key for an identical retry after a lost response; changed drafts get a new key.
 let pending: { signature: string; key: string } | null = null
+/**
+ * Auto mode: the server ranks the now set from the user's own activity, so the
+ * Add/Replace/Remove/Clear controls have nothing to write (`PUT /api/now`
+ * answers 409). One hint line takes their place. A backend without `mode`
+ * behaves as before (manual).
+ */
+const nowAuto = computed(() => now.value?.mode === 'auto')
 const canSend = computed(() => !!text.value.trim() && text.value.trim().length <= 20000 && !busy.value && !uploading.value)
 const available = computed(() => candidates.value.filter(s => !now.value?.strands.some(n => n.id === s.id)))
 function strandTitle(id?: string | null) {
@@ -181,14 +188,15 @@ onMounted(() => {
       <section class="space-y-3" data-testid="now">
         <h2 class="text-lg font-semibold">{{ $t('capture.now') }} <span v-if="now" class="text-sm text-muted-foreground">{{ now.strands.length }} / {{ now.max }}</span></h2>
         <p v-if="!now?.strands.length" class="text-muted-foreground">{{ $t('capture.nowEmpty') }}</p>
-        <ul v-else class="space-y-2"><li v-for="s in now.strands" :key="s.id" class="flex items-center justify-between gap-2 rounded-xl border bg-card p-3"><NuxtLink :to="`/strands/${encodeURIComponent(s.id)}`" class="focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 flex min-h-11 min-w-0 flex-col justify-center break-words"><span>{{ s.title || $t('capture.untitled') }}</span><span class="text-sm text-muted-foreground">{{ (s.projectId && projects[s.projectId]) || $t('capture.noProject') }}</span><time v-if="s.lastActivity" :datetime="s.lastActivity" class="text-sm text-muted-foreground">{{ $t('capture.lastActivity') }} {{ new Date(s.lastActivity).toLocaleString() }}</time></NuxtLink><Button variant="outline" class="min-h-11 shrink-0 rounded-md border px-3" :disabled="busy" :aria-label="$t('capture.removeNow', { name: s.title || $t('capture.untitled') })" @click="changeNow(now!.strands.filter(n => n.id !== s.id).map(n => n.id))">{{ $t('capture.remove') }}</Button></li></ul>
-        <div v-if="now" class="flex flex-wrap gap-2">
+        <ul v-else class="space-y-2"><li v-for="s in now.strands" :key="s.id" class="flex items-center justify-between gap-2 rounded-xl border bg-card p-3"><NuxtLink :to="`/strands/${encodeURIComponent(s.id)}`" class="focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 flex min-h-11 min-w-0 flex-col justify-center break-words"><span>{{ s.title || $t('capture.untitled') }}</span><span class="text-sm text-muted-foreground">{{ (s.projectId && projects[s.projectId]) || $t('capture.noProject') }}</span><time v-if="s.lastActivity" :datetime="s.lastActivity" class="text-sm text-muted-foreground">{{ $t('capture.lastActivity') }} {{ new Date(s.lastActivity).toLocaleString() }}</time></NuxtLink><Button v-if="!nowAuto" variant="outline" class="min-h-11 shrink-0 rounded-md border px-3" :disabled="busy" :aria-label="$t('capture.removeNow', { name: s.title || $t('capture.untitled') })" @click="changeNow(now!.strands.filter(n => n.id !== s.id).map(n => n.id))">{{ $t('capture.remove') }}</Button></li></ul>
+        <p v-if="nowAuto" class="text-sm text-muted-foreground" data-testid="now-auto-hint">{{ $t('capture.nowAutoHint') }}</p>
+        <div v-if="now && !nowAuto" class="flex flex-wrap gap-2">
           <label class="w-full min-w-0 sm:w-auto sm:flex-1">{{ $t('capture.target') }}<select v-model="target" class="focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 block min-h-11 w-full rounded-md border border-input bg-background px-2" :disabled="busy"><option value="">{{ $t('capture.chooseStrand') }}</option><option v-for="s in available" :key="s.id" :value="s.id">{{ s.title || $t('capture.untitled') }}</option></select></label>
           <label class="w-full min-w-0 sm:w-auto sm:flex-1">{{ $t('capture.replace') }}<select v-model="replaceId" class="focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 block min-h-11 w-full rounded-md border border-input bg-background px-2" :disabled="busy"><option value="">{{ $t('capture.add') }}</option><option v-for="s in now.strands" :key="s.id" :value="s.id">{{ s.title || $t('capture.untitled') }}</option></select></label>
           <Button variant="outline" class="min-h-11 self-end rounded-md border px-3" :disabled="busy || !target || (!replaceId && now.strands.length >= now.max) || now.strands.length > now.max" @click="addNow">{{ $t('capture.updateNow') }}</Button>
           <Button variant="outline" v-if="now.strands.length" class="min-h-11 self-end rounded-md border px-3" :disabled="busy" @click="changeNow([])">{{ $t('capture.clearNow') }}</Button>
         </div>
-        <p v-if="now && now.strands.length >= now.max" class="text-sm text-muted-foreground">{{ $t('capture.nowFull') }}</p>
+        <p v-if="now && !nowAuto && now.strands.length >= now.max" class="text-sm text-muted-foreground">{{ $t('capture.nowFull') }}</p>
       </section>
       <section class="space-y-3"><h2 class="text-lg font-semibold">{{ $t('capture.unsorted') }}</h2><p class="text-sm text-muted-foreground">{{ $t('capture.trayHelp') }}</p><p v-if="!tray.length" class="rounded-xl border p-6 text-muted-foreground">{{ $t('capture.empty') }}</p><CaptureDecision v-for="item in tray" :key="item.capture.id" :result="item" :strand-title="titleFor(item)" :title-for-id="strandTitle" :busy="busy" @undo="act(item)" @apply="act(item, $event)" @dismiss="discard(item)" /><Button variant="outline" v-if="more" class="min-h-11 rounded-md border px-3" :disabled="busy" @click="loadMore">{{ $t('capture.more') }}</Button></section>
     </template>

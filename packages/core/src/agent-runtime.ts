@@ -3,7 +3,7 @@ import fs from 'node:fs'
 import nodePath from 'node:path'
 import { Agent as PiAgent } from '@earendil-works/pi-agent-core'
 import type { AgentEvent, AgentMessage, AgentTool } from '@earendil-works/pi-agent-core'
-import type { Api, AssistantMessage, Message, ImageContent, Model } from '@earendil-works/pi-ai'
+import type { Api, AssistantMessage, Message, ImageContent, Model, SystemMessage } from '@earendil-works/pi-ai'
 import { Type } from '@earendil-works/pi-ai'
 import type { Database } from './database.js'
 import { logTokenUsage, logToolCall } from './token-logger.js'
@@ -185,6 +185,12 @@ export interface AgentRuntimeBoundary {
   getCurrentProvider(): ProviderConfig | null
   /** Update the thinking level used for future turns. */
   setThinkingLevel(level: SettingsThinkingLevel | string): void
+  /**
+   * The level `setThinkingLevel` would replace. A turn-local override (quick
+   * capture mode) needs it to put the persona's own level back afterwards.
+   * Optional so lightweight test doubles of this boundary stay valid.
+   */
+  getThinkingLevel?(): SettingsThinkingLevel
 }
 
 /**
@@ -853,8 +859,22 @@ class PiAgentRuntime implements AgentRuntimeBoundary, AgentRuntimePiAgentAccess 
 
   // Fork: persona-aware refresh (agentId selects the persona's instructions,
   // defaulting to this runtime's bound persona).
+  // pi-agent-core >= 0.87 makes `state.systemPrompt` read-only: the prompt is
+  // replayed from the transcript's system messages. Replacing the prompt (what
+  // this fork does on every persona/channel switch) therefore means rewriting
+  // the leading system message in place, keeping its tool declarations.
   refreshSystemPrompt(channel?: string, currentUser?: { username: string }, agentId?: string): void {
-    this.agent.state.systemPrompt = this.buildSystemPrompt(channel, currentUser, agentId ?? this.agentId)
+    const prompt = this.buildSystemPrompt(channel, currentUser, agentId ?? this.agentId)
+    if (this.agent.state.systemPrompt === prompt) return
+
+    const messages = this.agent.state.messages.slice()
+    const first = messages[0] as (SystemMessage & { role?: string }) | undefined
+    if (first && first.role === 'system') {
+      messages[0] = { ...first, content: prompt } as AgentMessage
+    } else {
+      messages.unshift({ role: 'system', content: prompt, timestamp: Date.now() } as AgentMessage)
+    }
+    this.agent.state.messages = messages
   }
 
   getCurrentTimeContext(): string {
@@ -866,6 +886,10 @@ class PiAgentRuntime implements AgentRuntimeBoundary, AgentRuntimePiAgentAccess 
     const normalized = normalizeThinkingLevel(level)
     if (!normalized) return
     this.agent.state.thinkingLevel = normalized
+  }
+
+  getThinkingLevel(): SettingsThinkingLevel {
+    return normalizeThinkingLevel(this.agent.state.thinkingLevel) ?? 'off'
   }
 
   swapProvider(provider: ProviderConfig, apiKey: string, modelId?: string): void {

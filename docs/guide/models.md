@@ -45,6 +45,33 @@ Notes on the table:
 - `opencode-zen` and `opencode-go` are gateways whose models span several wire APIs. They set `resolveModelsFromCatalog`, so each model keeps its own `api`, `baseUrl`, cost and limits instead of being pinned to one API type. `kimi` and `kimi-coding` use the same mechanism to inherit the maintained upstream catalog.
 - `openai-compatible` is the escape hatch for anything speaking the OpenAI completions protocol: LM Studio, vLLM, NVIDIA NIM, a Cloudflare AI Gateway, a self-hosted router. You supply base URL and (optionally) key.
 
+## The bundled catalog and new model ids
+
+For every provider type without a dynamic catalog the list of selectable
+models is the one bundled with `@earendil-works/pi-ai`, pinned by version in
+`packages/core/package.json` (0.87.1 as of 2026-09-24, which added
+`claude-opus-5-5`, `gpt-6-sol` and `gpt-6-luna`). Two things follow from that:
+
+- **A model id the catalog does not know does not work by being typed in.**
+  The Add Model dialog offers to add an unmatched id as a custom model, and
+  for `ollama` and `openai-compatible` that is the normal way to name a model.
+  For a catalog provider such an entry falls back to the generic
+  `buildModel()` path: OAuth providers have no base URL there, the Anthropic
+  client version stays at whatever the old SDK pinned, and the first turn fails
+  with a provider error (seen as a 400 `claude_code_version_too_old` when
+  `claude-fable-5-1` was added ahead of its catalog). The catalog and the pinned
+  Claude Code client version are checked against each other by a test
+  (`provider-config.claude-version.test.ts`), so a mismatch fails the test run
+  rather than the first turn.
+- **A new model therefore arrives with a dependency bump**, not with a config
+  change: raise `@earendil-works/pi-ai` and `@earendil-works/pi-agent-core`
+  together (the agent core pins its own `pi-ai` range, a mismatch drags a second
+  copy into the tree and breaks the shared types), run the tests, deploy, and
+  the new ids show up in the Add Model dialog.
+
+Only `openrouter` has a dynamic catalog (see the table above) and is not
+affected: it lists whatever the endpoint reports.
+
 ## Subscription and OAuth paths
 
 Three further provider types authenticate with an OAuth login instead of an API key. They are deliberately kept out of the table above, because there is no key to enter and no base URL to set — the preset manages both. What you are buying here is a **consumer subscription**, not metered API credit:

@@ -13,7 +13,7 @@
   "dependencies": {
     "@axiom/core": "*",
     "@axiom/telegram": "*",
-    "@earendil-works/pi-ai": "0.85.1",
+    "@earendil-works/pi-ai": "0.87.1",
     "bcrypt": "^6.0.0",
     "express": "^5.1.0",
     "jsonwebtoken": "^9.0.3",

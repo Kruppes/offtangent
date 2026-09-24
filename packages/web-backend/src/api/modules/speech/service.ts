@@ -24,11 +24,14 @@
  * `user_id`). A foreign message answers exactly like a missing one, so the
  * endpoint is no existence oracle.
  */
+import type { Readable } from 'node:stream'
 import {
+  formatFromAccept,
   SpeechSummaryEmptyError,
   SpeechSummaryUpstreamError,
   summarizeForSpeech,
   TtsFormatError,
+  TTS_STREAMABLE_FORMATS,
   type Database,
   type SpeechSummaryResult,
   type SummarizeForSpeechOptions,
@@ -40,12 +43,25 @@ import {
   loadCloudTtsConfig,
   loadLocalTtsConfig,
   synthesizeCloudSpeech,
+  synthesizeCloudSpeechStream,
   synthesizeSpeech,
   type CloudSpeechResult,
+  type CloudSpeechStreamResult,
   type CloudTtsConfig,
   type LocalTtsConfig,
   type SynthesizeSpeechInput,
 } from './tts.js'
+
+/**
+ * Container the app path uses when the caller names none.
+ *
+ * Deliberately NOT `settings.tts.responseFormat`: this endpoint is the
+ * companion app's read-aloud contract, which is Ogg Opus, and the global
+ * format setting exists for the other clients (a puck asking for WAV, a
+ * browser preview asking for mp3). A client that wants something else says so
+ * with `format` or `Accept`.
+ */
+export const SPEECH_DEFAULT_FORMAT: TtsResponseFormat = 'opus'
 
 export class SpeechServiceError extends Error {
   constructor(readonly status: number, readonly code: string, message: string) {
@@ -64,6 +80,11 @@ export interface SpeechServiceOptions {
   loadTtsConfig?: () => LocalTtsConfig
   /** Test seam: the cloud TTS call, so no test ever hits a provider. */
   synthesizeCloud?: (text: string, format: TtsResponseFormat | null) => Promise<CloudSpeechResult>
+  /** Test seam: the streamed cloud TTS call. */
+  synthesizeCloudStream?: (
+    text: string,
+    format: TtsResponseFormat | null,
+  ) => Promise<CloudSpeechStreamResult | null>
   /** Test seam: whether the cloud voice is switched on. */
   loadCloudTtsConfig?: () => CloudTtsConfig
 }
@@ -76,16 +97,31 @@ export interface SpeechSummaryResponse {
 }
 
 export interface SpeechAudioResponse {
-  audio: Buffer
-  /** MIME type of `audio`. */
+  /** Set on the buffered path; exactly one of `audio`/`stream` is present. */
+  audio?: Buffer
+  /** Set when the voice streams: the controller pipes it into the response. */
+  stream?: Readable
+  /** MIME type of the audio. */
   contentType: string
   language: 'de' | 'en'
   summaryChars: number
+  /** Which endpoint spoke, for the response header and the log. */
+  source?: 'primary' | 'fallback'
+}
+
+/** Per-request wishes that do not travel in the JSON body. */
+export interface SpeechAudioOptions {
+  /** Raw `Accept` header; decides the container when the body names none. */
+  accept?: string | null
 }
 
 export interface SpeechService {
   summary: (userId: number, body: SpeechSummaryBody) => Promise<SpeechSummaryResponse>
-  audio: (userId: number, body: SpeechSummaryBody) => Promise<SpeechAudioResponse>
+  audio: (
+    userId: number,
+    body: SpeechSummaryBody,
+    options?: SpeechAudioOptions,
+  ) => Promise<SpeechAudioResponse>
 }
 
 interface MessageRow {
@@ -122,6 +158,7 @@ export function createSpeechService(options: SpeechServiceOptions): SpeechServic
   const synthesize = options.synthesize ?? synthesizeSpeech
   const loadTtsConfig = options.loadTtsConfig ?? loadLocalTtsConfig
   const synthesizeCloud = options.synthesizeCloud ?? synthesizeCloudSpeech
+  const synthesizeCloudStream = options.synthesizeCloudStream ?? synthesizeCloudSpeechStream
   const loadCloudConfig = options.loadCloudTtsConfig ?? loadCloudTtsConfig
 
   function loadMessage(userId: number, messageId: number): string {
@@ -190,7 +227,7 @@ export function createSpeechService(options: SpeechServiceOptions): SpeechServic
   return {
     summary,
 
-    async audio(userId, body) {
+    async audio(userId, body, audioOptions = {}) {
       // Exactly the same summary pipeline — ownership, cleaning, passthrough,
       // cache and the 400/404/502 codes come from one place, not from a copy.
       const spoken = await summary(userId, body)
@@ -204,8 +241,27 @@ export function createSpeechService(options: SpeechServiceOptions): SpeechServic
         // The cloud voice is an explicit choice, so it wins over a configured
         // local box; no silent fallback to the other engine on failure.
         engine = 'cloud'
+        const format = body.format
+          ?? formatFromAccept(audioOptions.accept)
+          ?? SPEECH_DEFAULT_FORMAT
         try {
-          const result = await synthesizeCloud(spoken.text, body.format)
+          if (TTS_STREAMABLE_FORMATS.has(format)) {
+            const streamed = await synthesizeCloudStream(spoken.text, format)
+            if (streamed) {
+              console.log(
+                `[speech-audio] cloud stream ${spoken.summaryChars} chars, ${spoken.language} -> `
+                + `${streamed.contentType} (${streamed.source}), headers in ${Date.now() - startedAt}ms`,
+              )
+              return {
+                stream: streamed.stream,
+                contentType: streamed.contentType,
+                language: spoken.language,
+                summaryChars: spoken.summaryChars,
+                source: streamed.source,
+              }
+            }
+          }
+          const result = await synthesizeCloud(spoken.text, format)
           audio = result.audio
           contentType = result.contentType
         } catch (err) {

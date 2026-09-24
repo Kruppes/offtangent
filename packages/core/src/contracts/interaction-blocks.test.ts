@@ -5,10 +5,13 @@ import {
   findAnswerableInteractionBlock,
   INTERACTION_BLOCK_KINDS,
   INTERACTION_BLOCK_MAX_OPTIONS,
+  INTERACTION_DRAFT_TEXT_MAX,
   RENDERED_INTERACTION_BLOCK_KINDS,
+  extractDraftText,
   extractInteractionBlocks,
   findInteractionBlock,
   formatInteractionBlockAsText,
+  formatDraftFence,
   formatInteractionBlockFence,
   hasInteractionBlock,
   parseInteractionBlockPayload,
@@ -153,7 +156,7 @@ describe('parseInteractionMessage', () => {
   })
 })
 
-describe('all five SPEC kinds are prepared; two of them render', () => {
+describe('all question kinds are prepared; two of them render', () => {
   const payloads = {
     choice: { block: 'choice', id: 'k1', question: 'Which one?', options: [{ id: 'a', label: 'Alpha' }, { id: 'b', label: 'Beta' }] },
     confirm: { block: 'confirm', id: 'k2', question: 'Send it?' },
@@ -162,8 +165,10 @@ describe('all five SPEC kinds are prepared; two of them render', () => {
     schedule: { block: 'schedule', id: 'k5', question: 'When?', options: [{ id: 'now', label: 'Now' }, { id: 'tonight', label: 'Tonight' }] },
   } as const
 
-  it.each(INTERACTION_BLOCK_KINDS)('parses and validates a %s block', (kind) => {
-    const block = parseInteractionBlockPayload(payloads[kind])
+  // `draft` is not in this table: it carries no question and no options and
+  // is not answerable, so it has its own describe block below.
+  it.each(ANSWERABLE_INTERACTION_BLOCK_KINDS)('parses and validates a %s block', (kind) => {
+    const block = parseInteractionBlockPayload(payloads[kind as keyof typeof payloads])
     expect(block).not.toBeNull()
     expect(block!.kind).toBe(kind)
     expect(block!.options.length).toBeGreaterThan(0)
@@ -173,17 +178,18 @@ describe('all five SPEC kinds are prepared; two of them render', () => {
     expect(validateInteractionAnswer(block!, value).ok).toBe(true)
   })
 
-  it('renders exactly confirm and choice as cards; the other three stay text', () => {
+  it('renders exactly confirm and choice as cards; the other question kinds stay text', () => {
     expect([...RENDERED_INTERACTION_BLOCK_KINDS]).toEqual(['confirm', 'choice'])
-    for (const kind of INTERACTION_BLOCK_KINDS) {
-      const block = parseInteractionBlockPayload(payloads[kind])!
+    for (const kind of ANSWERABLE_INTERACTION_BLOCK_KINDS) {
+      const payload = payloads[kind as keyof typeof payloads]
+      const block = parseInteractionBlockPayload(payload)!
       const rendered = RENDERED_INTERACTION_BLOCK_KINDS.includes(kind)
       expect(block.supported).toBe(rendered)
-      expect(hasInteractionBlock(fence(JSON.stringify(payloads[kind])))).toBe(rendered)
+      expect(hasInteractionBlock(fence(JSON.stringify(payload)))).toBe(rendered)
       // Whatever does not render is a readable list, never raw JSON.
       if (!rendered) {
-        const text = renderInteractionMessageAsText(fence(JSON.stringify(payloads[kind])))
-        expect(text).toContain(payloads[kind].question)
+        const text = renderInteractionMessageAsText(fence(JSON.stringify(payload)))
+        expect(text).toContain(payload.question)
         expect(text).toContain('1. ')
         expect(text).not.toContain('{')
       }
@@ -352,8 +358,8 @@ describe('extractAnswerableInteractionBlocks', () => {
 
   const twoOptions = [{ id: 'a', label: 'A' }, { id: 'b', label: 'B' }]
 
-  it('returns every declared kind, including the ones that only degrade to text', () => {
-    for (const kind of INTERACTION_BLOCK_KINDS) {
+  it('returns every answerable kind, including the ones that only degrade to text', () => {
+    for (const kind of ANSWERABLE_INTERACTION_BLOCK_KINDS) {
       const content = `Text\n\n${fence({ block: kind, id: 'x', question: 'Which?', options: twoOptions })}`
       const answerable = findAnswerableInteractionBlock(content, 'x')
       expect(answerable?.kind).toBe(kind)
@@ -365,8 +371,14 @@ describe('extractAnswerableInteractionBlocks', () => {
     }
   })
 
-  it('declares every kind answerable', () => {
-    expect([...ANSWERABLE_INTERACTION_BLOCK_KINDS]).toEqual([...INTERACTION_BLOCK_KINDS])
+  it('declares every kind answerable except draft, which is output and not a question', () => {
+    expect([...ANSWERABLE_INTERACTION_BLOCK_KINDS])
+      .toEqual(INTERACTION_BLOCK_KINDS.filter(kind => kind !== 'draft'))
+    // A draft id therefore behaves exactly like an id that does not exist,
+    // which is what `POST /api/interactions` turns into 404 unknown_block.
+    const content = ['```offtangent', JSON.stringify({ block: 'draft', text: 'Hallo Welt' }), '```'].join('\n')
+    expect(extractAnswerableInteractionBlocks(content)).toEqual([])
+    expect(findAnswerableInteractionBlock(content, 'draft')).toBeNull()
   })
 
   it('finds a second block that the renderer degrades to text', () => {
@@ -393,5 +405,96 @@ describe('extractAnswerableInteractionBlocks', () => {
     const blocks = extractAnswerableInteractionBlocks(content)
     expect(blocks).toHaveLength(1)
     expect(blocks[0].question).toBe('First?')
+  })
+})
+
+/**
+ * `draft` (puck assist waves, W1): the block that carries typable plain text.
+ *
+ * What these tests pin, in the order the wire format is used:
+ *   - the payload shape (`text` required, bounded, no markdown fence inside)
+ *   - the extraction a device relies on (`extractDraftText`)
+ *   - the degradation: a draft is never a card and never raw JSON, it IS its
+ *     own text in every surface without a renderer
+ */
+describe('draft blocks', () => {
+  function draftFence(payload: Record<string, unknown>): string {
+    return ['```offtangent', JSON.stringify(payload), '```'].join('\n')
+  }
+
+  it('parses a draft and keeps the text verbatim, newlines included', () => {
+    const text = 'Sehr geehrter Herr Mueller,\n\nder Liefertermin ist KW 42.\n\nViele Gruesse'
+    const block = parseInteractionBlockPayload({ block: 'draft', text })!
+    expect(block).not.toBeNull()
+    expect(block.kind).toBe('draft')
+    expect(block.text).toBe(text)
+    // No question, no options, and an id only so the block shape stays one type.
+    expect(block.question).toBe('')
+    expect(block.options).toEqual([])
+    expect(block.id).toBe('draft')
+  })
+
+  it('rejects a draft without usable text', () => {
+    expect(parseInteractionBlockPayload({ block: 'draft' })).toBeNull()
+    expect(parseInteractionBlockPayload({ block: 'draft', text: '' })).toBeNull()
+    expect(parseInteractionBlockPayload({ block: 'draft', text: '   \n  ' })).toBeNull()
+    expect(parseInteractionBlockPayload({ block: 'draft', text: 42 })).toBeNull()
+    expect(parseInteractionBlockPayload({ block: 'draft', text: ['a'] })).toBeNull()
+  })
+
+  it('rejects a draft that is too long', () => {
+    const ok = parseInteractionBlockPayload({ block: 'draft', text: 'x'.repeat(INTERACTION_DRAFT_TEXT_MAX) })
+    expect(ok?.text).toHaveLength(INTERACTION_DRAFT_TEXT_MAX)
+    expect(parseInteractionBlockPayload({ block: 'draft', text: 'x'.repeat(INTERACTION_DRAFT_TEXT_MAX + 1) })).toBeNull()
+  })
+
+  it('rejects a markdown fence inside the draft text', () => {
+    expect(parseInteractionBlockPayload({ block: 'draft', text: 'Hallo\n```\ncode\n```\nGruss' })).toBeNull()
+    expect(extractDraftText(draftFence({ block: 'draft', text: 'Hallo ``` Gruss' }))).toBeNull()
+  })
+
+  it('extracts the draft text out of a full message', () => {
+    const content = [
+      'Hier ist der Entwurf.',
+      '',
+      draftFence({ block: 'draft', text: 'Hallo Herr Mueller,\n\nKW 42.' }),
+      '',
+      'Passt das so?',
+    ].join('\n')
+    expect(extractDraftText(content)).toBe('Hallo Herr Mueller,\n\nKW 42.')
+  })
+
+  it('has no draft to extract when the message carries none', () => {
+    expect(extractDraftText('Nur Text.')).toBeNull()
+    expect(extractDraftText('')).toBeNull()
+    expect(extractDraftText(fence(choiceBody))).toBeNull()
+    // A broken or unterminated draft is text, not a draft.
+    expect(extractDraftText('```offtangent\n{ "block": "draft", "text": "halb')).toBeNull()
+    expect(extractDraftText('```offtangent\n{ "block": "draft" }\n```')).toBeNull()
+  })
+
+  it('lets the first draft win when a message carries two', () => {
+    const content = [
+      draftFence({ block: 'draft', text: 'Erster Entwurf' }),
+      draftFence({ block: 'draft', text: 'Zweiter Entwurf' }),
+    ].join('\n\n')
+    expect(extractDraftText(content)).toBe('Erster Entwurf')
+  })
+
+  it('degrades to its own text instead of a numbered list or raw JSON', () => {
+    const content = `Vorschlag:\n\n${draftFence({ block: 'draft', text: 'Hallo Herr Mueller,\nKW 42 passt.' })}\n\nOk?`
+    // Not a card: the web renderer and the Android app keep showing plain text.
+    expect(hasInteractionBlock(content)).toBe(false)
+    expect(parseInteractionBlockPayload({ block: 'draft', text: 'x' })!.supported).toBe(false)
+    const rendered = renderInteractionMessageAsText(content)
+    expect(rendered).toContain('Hallo Herr Mueller,')
+    expect(rendered).toContain('KW 42 passt.')
+    expect(rendered).not.toContain('{')
+    expect(rendered).not.toContain('```')
+  })
+
+  it('round-trips through formatDraftFence', () => {
+    const text = 'Zeile eins\nZeile zwei'
+    expect(extractDraftText(formatDraftFence(text))).toBe(text)
   })
 })

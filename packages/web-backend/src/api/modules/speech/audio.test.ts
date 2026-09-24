@@ -9,6 +9,7 @@
  */
 import { describe, it, expect, beforeAll, afterAll, beforeEach } from 'vitest'
 import http from 'node:http'
+import { Readable } from 'node:stream'
 import express from 'express'
 import { initDatabase, SpeechSummaryUpstreamError, summarizeForSpeech, TtsFormatError } from '@axiom/core'
 import type { Database } from '@axiom/core'
@@ -40,6 +41,10 @@ let cloudBehaviour: 'ok' | 'fail' | 'unsupported' = 'ok'
 let cloudCalls: string[] = []
 /** The `format` argument of every cloud synthesize call. */
 let cloudFormats: (TtsResponseFormat | null)[] = []
+/** Formats handed to the streaming cloud seam. */
+let streamFormats: (TtsResponseFormat | null)[] = []
+/** Chunks the streaming seam emits, or `null` for "this voice cannot stream". */
+let streamChunks: string[] | null = null
 
 /** Stand-in for what the Gemini path produces: Ogg magic, served as audio/ogg. */
 const FAKE_CLOUD = { audio: Buffer.from('OggScloud'), contentType: 'audio/ogg' }
@@ -74,17 +79,28 @@ function insertMessage(input: { content: string; userId?: number | null; session
 
 interface AudioResponse {
   status: number
-  headers: { contentType: string | null; language: string | null; summaryChars: string | null }
+  headers: {
+    contentType: string | null
+    language: string | null
+    summaryChars: string | null
+    length: string | null
+    source: string | null
+  }
   bytes: Buffer
   json: Record<string, unknown>
 }
 
-async function postAudio(body: unknown, auth: string | null = token): Promise<AudioResponse> {
+async function postAudio(
+  body: unknown,
+  auth: string | null = token,
+  extraHeaders: Record<string, string> = {},
+): Promise<AudioResponse> {
   const res = await fetch(`${baseUrl}/api/speech/audio`, {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
       ...(auth ? { Authorization: `Bearer ${auth}` } : {}),
+      ...extraHeaders,
     },
     body: JSON.stringify(body),
   })
@@ -101,6 +117,8 @@ async function postAudio(body: unknown, auth: string | null = token): Promise<Au
       contentType: res.headers.get('content-type'),
       language: res.headers.get('x-speech-language'),
       summaryChars: res.headers.get('x-speech-summary-chars'),
+      length: res.headers.get('content-length'),
+      source: res.headers.get('x-tts-source'),
     },
     bytes,
     json,
@@ -160,6 +178,15 @@ beforeAll(async () => {
       }
       return format === 'wav' ? FAKE_CLOUD_WAV : FAKE_CLOUD
     },
+    synthesizeCloudStream: async (text, format) => {
+      streamFormats.push(format)
+      if (streamChunks === null) return null
+      return {
+        stream: Readable.from(streamChunks.map(c => Buffer.from(c))),
+        contentType: format === 'pcm' ? 'audio/pcm' : 'audio/wav',
+        source: 'primary' as const,
+      }
+    },
   }))
 
   server = http.createServer(app)
@@ -182,6 +209,8 @@ beforeEach(() => {
   cloudBehaviour = 'ok'
   cloudCalls = []
   cloudFormats = []
+  streamFormats = []
+  streamChunks = null
   clearSpeechSummaryCache()
   db.prepare('DELETE FROM chat_messages').run()
   db.prepare('DELETE FROM sessions').run()
@@ -344,13 +373,64 @@ describe('POST /api/speech/audio', () => {
     expect(cloudFormats).toEqual(['wav'])
   })
 
-  it('passes null as the format when the body does not ask for one', async () => {
+  // The app path is the read-aloud contract of the companion, which is Ogg
+  // Opus. It must not follow the global `tts.responseFormat` setting, because
+  // that one is set for the puck (wav/pcm) and would silently change what the
+  // app receives.
+  it('defaults to opus when the body does not ask for a format', async () => {
     cloudEnabled = true
     const id = insertMessage({ content: LONG_REPORT, userId: 1 })
     const res = await postAudio({ messageId: id })
     expect(res.status).toBe(200)
     expect(res.headers.contentType).toBe('audio/ogg')
-    expect(cloudFormats).toEqual([null])
+    expect(cloudFormats).toEqual(['opus'])
+    expect(streamFormats).toEqual([])
+  })
+
+  it('streams the cloud voice for wav instead of buffering it', async () => {
+    cloudEnabled = true
+    streamChunks = ['RIFF-head', 'samples-1', 'samples-2']
+    const id = insertMessage({ content: LONG_REPORT, userId: 1 })
+
+    const res = await postAudio({ messageId: id, format: 'wav' })
+
+    expect(res.status).toBe(200)
+    expect(res.headers.contentType).toBe('audio/wav')
+    expect(res.headers.language).toBe('de')
+    expect(res.headers.summaryChars).toBe('43')
+    expect(res.headers.source).toBe('primary')
+    // Nothing knows the length while the voice is still speaking.
+    expect(res.headers.length).toBeNull()
+    expect(res.bytes.toString()).toBe('RIFF-headsamples-1samples-2')
+    expect(streamFormats).toEqual(['wav'])
+    expect(cloudCalls).toEqual([])
+  })
+
+  it('picks the format from the Accept header when the body names none', async () => {
+    cloudEnabled = true
+    streamChunks = ['pcm-1', 'pcm-2']
+    const id = insertMessage({ content: LONG_REPORT, userId: 1 })
+
+    const res = await postAudio({ messageId: id }, token, { Accept: 'audio/pcm' })
+
+    expect(res.status).toBe(200)
+    expect(res.headers.contentType).toBe('audio/pcm')
+    expect(res.bytes.toString()).toBe('pcm-1pcm-2')
+    expect(streamFormats).toEqual(['pcm'])
+  })
+
+  it('buffers when the configured voice cannot stream the container', async () => {
+    cloudEnabled = true
+    streamChunks = null
+    const id = insertMessage({ content: LONG_REPORT, userId: 1 })
+
+    const res = await postAudio({ messageId: id, format: 'wav' })
+
+    expect(res.status).toBe(200)
+    expect(res.headers.contentType).toBe('audio/wav')
+    expect(res.bytes.equals(FAKE_CLOUD_WAV.audio)).toBe(true)
+    expect(streamFormats).toEqual(['wav'])
+    expect(cloudFormats).toEqual(['wav'])
   })
 
   it('answers 400 invalid_format for a format outside the whitelist', async () => {

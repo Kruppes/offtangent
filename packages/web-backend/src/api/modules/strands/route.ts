@@ -23,15 +23,22 @@
  *   GET  /api/tags?include_archived=0|1 -> { tags }
  *   POST /api/tags { name, color? } -> 201 { tag } (200 when the name exists)
  *   PATCH /api/tags/:id { name?, color?, archived? } -> { tag }
- *   GET  /api/now -> { strands } (by rank) + { max }, the effective now-set
- *        size (setting `offtangent.nowSetMax`, default 4)
- *   PUT  /api/now { strandIds } -> { strands, max }, 400 now_set_too_large
- *        above `max`
+ *   GET  /api/now -> { strands, max, mode }. `max` is the effective now-set
+ *        size (setting `offtangent.nowSetMax`, default 4), `mode` how the set
+ *        is filled (setting `offtangent.nowSetMode`, default `auto`).
+ *        `auto`: `strands` is computed from the user's activity
+ *        (`rankStrandsByActivity`, pinned first, then distinct active days
+ *        with a 1-day half-life over 14 days) and `nowRank` is the position
+ *        in that computed list; the `now_set` table is never read or written.
+ *        `manual`: the curated `now_set` table, ordered by its rank.
+ *   PUT  /api/now { strandIds } -> { strands, max, mode }, 400
+ *        now_set_too_large above `max`, 409 now_set_auto while the mode is
+ *        `auto` (the set is computed, so there is nothing to write)
  *   GET  /api/resurface?limit=5 -> { items }
  *   POST /api/resurface/:strandId/snooze { days } -> 204
  */
 import { Router } from 'express'
-import type { AgentCore, Database } from '@axiom/core'
+import type { AgentCore, Database, NowSetMode } from '@axiom/core'
 import type { ProviderQuotaContract } from '@axiom/core/contracts'
 import { jwtMiddleware } from '../../../auth.js'
 import type { ChatEventBus } from '../../../chat-event-bus.js'
@@ -44,6 +51,7 @@ export interface StrandsRouterOptions {
   chatEventBus?: ChatEventBus | null
   getTurnRunner?: () => StrandTurnGuard | null
   getNowSetMax?: () => number
+  getNowSetMode?: () => NowSetMode
   getQuotaSnapshot?: () => Record<string, ProviderQuotaContract>
 }
 

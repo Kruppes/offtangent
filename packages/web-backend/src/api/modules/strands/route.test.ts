@@ -59,6 +59,8 @@ beforeAll(async () => {
       hasActiveTurnInSession: (_user: number | string, sessionId: string) => busySessions.includes(sessionId),
     }),
     getNowSetMax: () => nowSetMax,
+    // This suite is about the curated set; the auto ranking has its own tests.
+    getNowSetMode: () => 'manual',
   })
   app.use('/api/strands', routers.strands)
   app.use('/api/tags', routers.tags)

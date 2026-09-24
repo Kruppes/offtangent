@@ -10,13 +10,15 @@ import { isSlashCommandPicker, isSlashCommandAgentTurn, isSessionAccessError } f
 import { parseTurnModelSelection } from './model-selection.js'
 import { normalizeClientMessageId, normalizeSessionId, resolveAgentId } from './persona-request.js'
 import type { TurnPreambleToolCall } from '@axiom/core'
-import type { AgentCore, Capture, Decision, FeedItem, ResponseChunk, RetryInfo, StallInfo, StrandProjectSuggestion, TurnErrorInfo, TurnEvent } from '@axiom/core'
+import type { AgentCore, Capture, Decision, FeedItem, NowSetMode, ResponseChunk, RetryInfo, StallInfo, StrandProjectSuggestion, TurnErrorInfo, TurnEvent } from '@axiom/core'
 import {
   TaskStore,
   ScheduledTaskStore,
   TurnRunner,
+  rankStrandsByActivity,
   toIsoUtc,
 } from '@axiom/core'
+import { resolveNowSetMax, resolveNowSetMode } from './now-set-limit.js'
 import { buildWebChatSlashCommandRegistry } from './slash-commands.js'
 import { verifyAccessToken } from './auth.js'
 import type { JwtPayload } from './auth.js'
@@ -340,7 +342,16 @@ export function setupWebSocketChat(
   // Fork: web-side slash commands can switch the active provider. Appended
   // LAST so it does not shift upstream's positional arguments.
   onActiveProviderChanged?: () => void,
+  /**
+   * Now-set hooks (`offtangent.nowSetMode = 'auto'`): a user message changes
+   * the activity ranking, so the computed set is re-read around the write and
+   * broadcast when it changed. Injectable for tests; the defaults read
+   * `settings.json` per message, like every other now-set reader.
+   */
+  nowSet?: { getNowSetMax?: () => number; getNowSetMode?: () => NowSetMode },
 ): WebSocketChatResult {
+  const nowSetMax = nowSet?.getNowSetMax ?? (() => resolveNowSetMax())
+  const nowSetMode = nowSet?.getNowSetMode ?? (() => resolveNowSetMode())
   // Support both getter function and direct reference (backward compat)
   const resolveAgentCore = typeof getAgentCore === 'function' ? getAgentCore : () => getAgentCore
   const wss = new WebSocketServer({ noServer: true })
@@ -666,6 +677,14 @@ export function setupWebSocketChat(
         return
       }
 
+      // Auto now set: the ranking before this message is written. One SQL
+      // statement, so it is cheap enough to run on every message; the
+      // comparison below decides whether anything is broadcast at all.
+      const nowSetAuto = nowSetMode() === 'auto'
+      const nowSetBefore = nowSetAuto
+        ? rankStrandsByActivity(db, String(currentUser.userId), { max: nowSetMax() })
+        : null
+
       let savedMessageId: number | undefined
       let duplicateRow = false
       if (!parsed.skipSave) {
@@ -710,6 +729,21 @@ export function setupWebSocketChat(
         text: parsed.content,
         agentId,
       })
+
+      // The message just written may have pulled its strand into the computed
+      // now set (or moved it up). Only a real change is announced, so a second
+      // message in the same strand on the same day stays silent.
+      if (nowSetBefore) {
+        const nowSetAfter = rankStrandsByActivity(db, String(currentUser.userId), { max: nowSetMax() })
+        if (nowSetAfter.join('\u0000') !== nowSetBefore.join('\u0000')) {
+          chatEventBus?.broadcast({
+            type: 'now_set_changed',
+            userId: currentUser.userId,
+            source: 'web',
+            strandIds: nowSetAfter,
+          })
+        }
+      }
 
       if (!agentCore) {
         sendMessage(ws, { type: 'error', error: 'Agent core not available' })
