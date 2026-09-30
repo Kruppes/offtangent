@@ -189,7 +189,14 @@ on `GET /api/strands/:id`.
 `invalid_attachments`, `invalid_intent`, `invalid_mode`, `invalid_model_pin`,
 `model_unavailable`.
 **404** inaccessible or missing strand. **409** `strand_busy` for an active turn
-in the target strand. **503** agent core not available.
+in the strand named in `strandId`. **503** agent core not available.
+
+A strand the ROUTER picked is never refused for a running turn: the capture is
+filed into it and its answer waits behind that turn (`turn.queued: true`), the
+decision rationale starts with `capture guard: strand busy`. When a routed
+filing fails for any other reason (the target was archived meanwhile), the
+capture lands in the tray as `unsorted` with its decision still `proposed`,
+never as a `pending` row no surface shows.
 
 The router only sees strands of the calling user: the now set first, then the
 20 most recently active strands, then strands whose tags match a keyword of the

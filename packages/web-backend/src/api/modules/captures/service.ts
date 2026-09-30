@@ -96,6 +96,15 @@ export const ADDRESSED_NOTE_MARKER = 'capture guard: a note that addresses you'
 export const DOUBTFUL_NOTE_MARKER = 'capture guard: a note that may address you'
 
 /**
+ * Marker of a router filing into a strand whose turn was still running. The
+ * capture is filed anyway and its answer waits in the strand's turn queue,
+ * exactly like a chat message typed into that strand; refusing it instead
+ * left the capture `pending` with nothing anywhere (incident 2026-09-30).
+ * Countable with `WHERE rationale LIKE 'capture guard: strand busy%'`.
+ */
+export const BUSY_STRAND_QUEUED_MARKER = 'capture guard: strand busy, answer queued behind the running turn'
+
+/**
  * The sentence above the card. It states what happened, so every surface that
  * cannot render an interactive block — an older app, a plain text export —
  * still carries the fact in prose. Language follows the capture (see
@@ -423,8 +432,12 @@ export function createCapturesService(options: CapturesServiceOptions) {
     return parsed.value
   }
 
+  function strandBusy(userId: number, strandId: string): boolean {
+    return options.getTurnRunner?.()?.hasActiveTurnInSession?.(userId, strandId) ?? false
+  }
+
   function requireIdle(userId: number, strandId: string): void {
-    if (options.getTurnRunner?.()?.hasActiveTurnInSession?.(userId, strandId)) {
+    if (strandBusy(userId, strandId)) {
       throw new CaptureServiceError(409, 'strand_busy', 'Strand has an active turn')
     }
   }
@@ -553,6 +566,32 @@ export function createCapturesService(options: CapturesServiceOptions) {
       return { proposal: { ...proposal, intent: 'ask', rationale: rationale.slice(0, 400) }, doubtful: false }
     }
     return { proposal, doubtful: true }
+  }
+
+  /** Stamp the busy strand marker onto a router filing whose answer will queue. */
+  function markQueuedBehindBusyStrand(proposal: RouterProposal): RouterProposal {
+    const marker = `${BUSY_STRAND_QUEUED_MARKER}.`
+    const rationale = proposal.rationale ? `${marker} ${proposal.rationale}` : marker
+    return { ...proposal, rationale: rationale.slice(0, 400) }
+  }
+
+  /**
+   * A routed part whose filing threw. The capture goes to the tray exactly like
+   * a low band one (`unsorted`, decision stays `proposed`, so apply and dismiss
+   * work on it) instead of staying `pending`, which no surface shows. The
+   * routed frame at the end of {@link routeParts} tells the clients.
+   */
+  function parkUnfiledPart(userId: number, capture: Capture, decision: Decision, count: number, err: unknown): Capture {
+    const reason = err instanceof CaptureServiceError ? err.code : (err as Error)?.message ?? String(err)
+    // A throw after the decision was applied (the turn start, a broadcast) means
+    // the capture IS filed; resetting it would orphan the message it wrote.
+    if (getDecision(db, decision.id)?.state !== 'proposed') {
+      console.error(`[captures] capture ${capture.id} part ${decision.partIndex} was filed, but the filing ended with: ${reason}`)
+      return getCapture(db, String(userId), capture.id)!
+    }
+    console.error(`[captures] filing capture ${capture.id} part ${decision.partIndex} into ${decision.strandId ?? 'a new strand'} failed (${reason}), left unsorted`)
+    if (count === 1) updateCapture(db, capture.id, { status: 'unsorted', strandId: null, messageId: null, filedAt: null })
+    return getCapture(db, String(userId), capture.id)!
   }
 
   /** Stamp the doubt band's marker onto a decision that stays a `note`. */
@@ -880,6 +919,13 @@ export function createCapturesService(options: CapturesServiceOptions) {
    * capture, tag and link, pull the strand into the now set, and start the
    * turn for `ask`. `runTurn` says whether the answer may run now; see the
    * call sites for when it does not (SPEC 4.4).
+   *
+   * `onBusy` decides what a target with a running turn gets. A strand the
+   * user picked is refused (`409 strand_busy`, the client still holds the
+   * text and can say so). A strand the ROUTER picked is filed anyway and the
+   * answer is queued behind the running turn by the TurnRunner, like a chat
+   * message typed into that strand: the router path has nobody who could
+   * resend the text.
    */
   function file(
     userId: number,
@@ -890,6 +936,7 @@ export function createCapturesService(options: CapturesServiceOptions) {
     runTurn: boolean,
     text: string = capture.text,
     part: PartRef = SINGLE_PART,
+    onBusy: 'refuse' | 'queue' = 'refuse',
   ): Capture {
     selectionFor(capture)
     // Auto mode: the ranking BEFORE this filing writes its user message, so
@@ -897,7 +944,7 @@ export function createCapturesService(options: CapturesServiceOptions) {
     const rankedBefore = nowSetMode() === 'auto' ? rankedNowIds(userId) : null
     if (proposal.action !== 'new_strand') {
       ownStrand(userId, proposal.strandId!)
-      requireIdle(userId, proposal.strandId!)
+      if (onBusy === 'refuse') requireIdle(userId, proposal.strandId!)
     }
     const { strand, createdStrandId } = resolveTargets(userId, capture, proposal)
     if (proposal.action === 'link' && proposal.secondaryStrandId) {
@@ -1242,6 +1289,9 @@ export function createCapturesService(options: CapturesServiceOptions) {
       // marker count equal to the number of questions asked.
       const doubtful = guarded.doubtful && band !== 'low'
       if (doubtful) proposal = markDoubtful(proposal)
+      if (band !== 'low' && proposal.action !== 'new_strand' && proposal.strandId && strandBusy(userId, proposal.strandId)) {
+        proposal = markQueuedBehindBusyStrand(proposal)
+      }
 
       const decision = persistProposal(capture.id, proposal, { model: result.model, latencyMs: result.latencyMs }, {
         index: part.index,
@@ -1268,10 +1318,15 @@ export function createCapturesService(options: CapturesServiceOptions) {
         // history. The `new_strand` test keeps that guarantee checkable from
         // here instead of trusting a guard two packages away.
         const answers = band === 'high' || proposal.action === 'new_strand'
-        filed = file(
-          userId, capture, proposal, decision.id, band === 'high' ? 'filed' : 'needs_review', answers,
-          part.text, { index: part.index, count },
-        )
+        try {
+          filed = file(
+            userId, capture, proposal, decision.id, band === 'high' ? 'filed' : 'needs_review', answers,
+            part.text, { index: part.index, count }, 'queue',
+          )
+        } catch (err) {
+          filed = parkUnfiledPart(userId, capture, decision, count, err)
+          continue
+        }
         // Only the doubt band asks. `doubtful` already carries every condition
         // that may produce a card — intent `note`, no stated intent from the
         // client, exactly one address marker in the text, a band that files
