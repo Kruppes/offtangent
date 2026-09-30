@@ -15,7 +15,7 @@ Authorization: Bearer <service token>
 Idempotency-Key: <optional, 8..128 chars of [A-Za-z0-9._:-]>
 Content-Type: application/json
 
-{ "profile": "interview.v1", "input": "<text>", "maxOutputTokens": 900 }
+{ "profile": "interview.v1", "input": "<text>", "maxOutputTokens": 2400 }
 ```
 
 - Request keys are **exactly** `profile`, `input`, `maxOutputTokens`. Anything else →
@@ -45,7 +45,7 @@ Content-Type: application/json
 Errors are `{ "contract": "isolated-inference.v1", "error": { "code": …, "message": … } }` with
 codes `unauthorized` (401), `unknown_field` / `invalid_request` (400), `profile_not_allowed` (403),
 `input_too_large` (413), `busy` / `budget_exhausted` (429), `model_not_available` /
-`model_blocked_by_policy` (503), `upstream_failed` / `bad_model_output` (502),
+`model_blocked_by_policy` (503), `upstream_failed` / `output_truncated` / `bad_model_output` (502),
 `method_not_allowed` (405). No provider message, URL, key or stack ever reaches the client.
 
 ## Profile `interview.v1` (server side, not caller controllable)
@@ -54,12 +54,12 @@ codes `unauthorized` (401), `unknown_field` / `invalid_request` (400), `profile_
 |---|---|
 | model | `claude-sonnet-5-5` (resolved through the configured providers) |
 | system prompt | fixed in `packages/core/src/isolated-inference.ts` |
-| output ceiling | 2000 tokens (a larger `maxOutputTokens` is clamped) |
+| output ceiling | 3000 tokens (a larger `maxOutputTokens` is clamped). Derived from the live run of 30.09.2026: a valid interview state JSON cost 474-993 output tokens, the bounded delta contract of the client worst cases at ~2200, the client asks for 2400. |
 | input cap | 80 000 chars |
 | tools | none, ever |
 | temperature | never sent (Sonnet 5.5 rejects it) |
 | thinking | never sent as `disabled` (Sonnet 5.5 rejects that) |
-| output | must be one JSON object; anything else → `bad_model_output` |
+| output | must be one JSON object; anything else → `bad_model_output`. A run that stopped at the token budget (`stopReason: length`) is never parsed and never returned: it is `output_truncated`, so the caller can enlarge the budget or shrink its contract instead of guessing. |
 
 The model still goes through the normal **data-policy gate** (`resolveRoleModel` →
 `checkAutomaticModelFor`): region, training and gate mode decide, and a blocked provider means

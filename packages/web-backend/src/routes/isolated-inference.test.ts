@@ -26,6 +26,14 @@ let previousAdminUsername: string | undefined
 let previousAdminPassword: string | undefined
 let providerCalls = 0
 
+/**
+ * Stop reason the fake provider reports. `max_tokens` reproduces the live
+ * finding of 30.09.2026: the model was cut off at the output budget and the
+ * JSON arrived unterminated.
+ */
+let fakeStopReason: 'end_turn' | 'max_tokens' = 'end_turn'
+let fakeText = '{"nextQuestion":"Wie oft passiert das?","done":false}'
+
 /** Controlled fake of the Anthropic messages stream. Never a real call. */
 function installFakeProviderBackend(): void {
   const realFetch = globalThis.fetch
@@ -36,9 +44,9 @@ function installFakeProviderBackend(): void {
       const events = [
         { type: 'message_start', message: { id: 'msg_fake', type: 'message', role: 'assistant', model: 'claude-sonnet-5-5', content: [], stop_reason: null, usage: { input_tokens: 7, output_tokens: 0 } } },
         { type: 'content_block_start', index: 0, content_block: { type: 'text', text: '' } },
-        { type: 'content_block_delta', index: 0, delta: { type: 'text_delta', text: '{"nextQuestion":"Wie oft passiert das?","done":false}' } },
+        { type: 'content_block_delta', index: 0, delta: { type: 'text_delta', text: fakeText } },
         { type: 'content_block_stop', index: 0 },
-        { type: 'message_delta', delta: { stop_reason: 'end_turn' }, usage: { output_tokens: 19 } },
+        { type: 'message_delta', delta: { stop_reason: fakeStopReason }, usage: { output_tokens: 19 } },
         { type: 'message_stop' },
       ]
       return new Response(events.map(e => `event: ${e.type}\ndata: ${JSON.stringify(e)}\n\n`).join(''), {
@@ -280,15 +288,49 @@ describe('body parser, CORS and path matching of the isolated route', () => {
   })
 
   it('matches the path case sensitively and without a trailing slash', async () => {
-    for (const path of ['/V1/ISOLATED/INFER', '/v1/isolated/infer/', '/v1/Isolated/infer']) {
+    // Both halves matter: the wrong spelling must not reach the endpoint AND
+    // it must answer the contract shape, not the HTML error page of the app.
+    // The 404 alone was already pinned; that a caller can PARSE the answer was
+    // not, and the express mount prefix is matched case insensitively, so
+    // `/V1/ISOLATED/INFER` really does land inside this router.
+    for (const path of ['/V1/ISOLATED/INFER', '/v1/isolated/infer/', '/v1/Isolated/infer', '/v1/isolated//infer', '/v1/isolated/INFER']) {
       const res = await fetch(`${baseUrl}${path}`, {
         method: 'POST',
         headers: { 'content-type': 'application/json', authorization: `Bearer ${TOKEN}` },
         body: JSON.stringify(goodBody),
       })
       expect(res.status, path).toBe(404)
+      expect(res.headers.get('content-type') ?? '', path).toContain('application/json')
+      expect(await res.json(), path).toEqual({
+        contract: 'isolated-inference.v1',
+        error: { code: 'not_found', message: 'unknown path' },
+      })
+      expect(res.headers.get('cache-control'), path).toBe('no-store')
     }
     expect(providerCalls).toBe(0)
+  })
+
+  // Live repro 30.09.2026: 22 of 32 calls ended at the output cap. The caller
+  // saw `bad_model_output` and could not tell a budget problem from a bad
+  // model, so it silently used its own fallback question.
+  it('reports a provider stop at the token budget as output_truncated', async () => {
+    fakeStopReason = 'max_tokens'
+    fakeText = '{"nextQuestion":"Wie viele Anrufe kommen an einem norm'
+    try {
+      const res = await fetch(`${baseUrl}/v1/isolated/infer`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json', authorization: `Bearer ${TOKEN}` },
+        body: JSON.stringify(goodBody),
+      })
+      expect(res.status).toBe(502)
+      expect(await res.json()).toEqual({
+        contract: 'isolated-inference.v1',
+        error: { code: 'output_truncated', message: 'model output hit the output token budget' },
+      })
+    } finally {
+      fakeStopReason = 'end_turn'
+      fakeText = '{"nextQuestion":"Wie oft passiert das?","done":false}'
+    }
   })
 })
 
@@ -332,6 +374,26 @@ describe('the service credential reaches nothing else', () => {
       })
       expect([404], `${url} answered ${res.status}`).toContain(res.status)
     }
+  })
+
+  // Repro of the 30.09.2026 acceptance finding: a non canonical path below the
+  // mount answered an HTML page, so a client could not tell a typo from a
+  // broken proxy. Every answer below the mount is the contract shape now.
+  it('answers non canonical paths below the mount in the contract shape, not HTML', async () => {
+    for (const [method, url] of [['POST', '/v1/isolated/chat'], ['GET', '/v1/isolated/'], ['POST', '/v1/isolated/infer/extra'], ['DELETE', '/v1/isolated/admin']] as Array<[string, string]>) {
+      const res = await fetch(`${baseUrl}${url}`, {
+        method,
+        headers: { 'content-type': 'application/json', authorization: `Bearer ${TOKEN}` },
+        body: method === 'GET' || method === 'DELETE' ? undefined : JSON.stringify(goodBody),
+      })
+      expect(res.status, `${method} ${url}`).toBe(404)
+      expect(res.headers.get('content-type') ?? '', `${method} ${url}`).toContain('application/json')
+      expect(await res.json(), `${method} ${url}`).toEqual({
+        contract: 'isolated-inference.v1',
+        error: { code: 'not_found', message: 'unknown path' },
+      })
+    }
+    expect(providerCalls).toBe(0)
   })
 })
 

@@ -80,7 +80,17 @@ export const ISOLATED_INFERENCE_PROFILES: Readonly<Record<string, IsolatedInfere
   'interview.v1': Object.freeze({
     modelSpec: 'claude-sonnet-5-5',
     systemPrompt: INTERVIEW_V1_SYSTEM,
-    maxOutputTokens: 2000,
+    // Ceiling, not a default: the request value is clamped against it and a
+    // caller can never pick a model or a larger budget. Derived from the live
+    // acceptance run of 30.09.2026: a valid interview state JSON cost between
+    // 474 and 993 output tokens, and the bounded delta contract of the calling
+    // service (<=6 new facts, <=3 assumptions/open questions, <=2
+    // contradictions, <=3 pilot candidates, summary <=700 characters) worst
+    // cases at ~5700 characters, i.e. ~2200 tokens at the ~2.6 characters per
+    // token measured for German JSON in the same run. 3000 leaves head room
+    // above the 2400 the client asks for without turning this endpoint into an
+    // open ended text generator.
+    maxOutputTokens: 3000,
     maxInputChars: 80_000,
     timeoutMs: 120_000,
   }),
@@ -320,6 +330,7 @@ export type IsolatedErrorCode =
   | 'model_not_available'
   | 'model_blocked_by_policy'
   | 'upstream_failed'
+  | 'output_truncated'
   | 'bad_model_output'
 
 export interface IsolatedInferenceRequest {
@@ -798,9 +809,27 @@ async function runOnce(
     if (message.stopReason === 'error' || message.stopReason === 'aborted') {
       return fail(new IsolatedInferenceError('upstream_failed', 502, 'inference failed'), model)
     }
+    // Prompt caching splits the billable input across three counters
+    // (`input`, `cacheRead`, `cacheWrite`). Reporting only `input` made a
+    // 588 character prompt show up as 4 input tokens in the audit as soon as
+    // the provider served it from cache — wrong cost reporting, found in the
+    // 30.09.2026 acceptance run. Report what was actually paid for.
     const spent = {
-      inputTokens: Number(message.usage?.input ?? 0),
+      inputTokens: Number(message.usage?.input ?? 0)
+        + Number(message.usage?.cacheRead ?? 0)
+        + Number(message.usage?.cacheWrite ?? 0),
       outputTokens: Number(message.usage?.output ?? 0),
+    }
+    // A run that ended because the token budget ran out is NOT a model that
+    // answered badly: the JSON is cut off mid object, and on the rare cut that
+    // still parses it is silently incomplete interview state. The live run of
+    // 30.09.2026 produced 22 of these and they all arrived at the calling
+    // service as the generic `bad_model_output`, which it could not tell from
+    // a quality problem — so it fell back to its own deterministic question
+    // and presented that as a normal turn. Own code, own audit line.
+    if (message.stopReason === 'length') {
+      record('error', 'output_truncated', model, spent)
+      throw new IsolatedInferenceError('output_truncated', 502, 'model output hit the output token budget')
     }
     let json: Record<string, unknown>
     try {

@@ -158,6 +158,12 @@ describe('isolated inference over the real provider client', () => {
   })
 
   it('keeps the profile ceiling even when the model would allow far more', () => {
-    expect(ISOLATED_INFERENCE_PROFILES['interview.v1'].maxOutputTokens).toBeLessThanOrEqual(2000)
+    // Raised from 2000 to 3000 on 30.09.2026 with the live measurement behind
+    // it: a valid interview state JSON cost 474-993 output tokens, the bounded
+    // delta contract of the calling service worst cases at ~2200, the client
+    // asks for 2400. The point of the pin is that this stays a NARROW ceiling
+    // (claude-sonnet-5-5 would allow tens of thousands), so it is an exact
+    // value, not a range that can drift upwards unnoticed.
+    expect(ISOLATED_INFERENCE_PROFILES['interview.v1'].maxOutputTokens).toBe(3000)
   })
 })

@@ -105,6 +105,20 @@ export function createIsolatedInferenceRouter(): Router {
     },
   )
 
+  // Anything else below the mount is a 404 IN THE CONTRACT SHAPE. Without
+  // this the request falls through to the app default handler, which answers
+  // an HTML page: a calling service cannot tell a typo in the path from a
+  // broken proxy in front of the app (found in the 30.09.2026 acceptance run).
+  // No auth, no body parsing, no timing difference — this leaks nothing beyond
+  // "this prefix exists", which the canonical path already tells everyone.
+  router.all(/.*/, (_req: Request, res: Response) => {
+    res.setHeader('Cache-Control', 'no-store')
+    res.status(404).json({
+      contract: ISOLATED_INFERENCE_CONTRACT,
+      error: { code: 'not_found', message: 'unknown path' },
+    })
+  })
+
   // A body-parser failure must answer in the contract shape too. Without this
   // express' default handler answers an HTML page, which is indistinguishable
   // from a broken proxy for the calling service.
