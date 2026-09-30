@@ -58,6 +58,11 @@ import { describeQueuedTurn, emitTurnQueued } from '../../../turn-queue.js'
 import type { QueuedTurnInfo } from '../../../turn-queue.js'
 import { resolveNowSetMax, resolveNowSetMode } from '../../../now-set-limit.js'
 import type { CaptureMode, CreateCaptureBody, ApplyCaptureBody, UndoCaptureBody, RouterPreviewBody } from './schema.js'
+import { CAPTURE_STRAND_TITLE_MAX } from './schema.js'
+
+/** Decision row markers for a capture the client sent as "start a new strand". */
+export const NEW_STRAND_MODEL = 'explicit-new-strand'
+export const NEW_STRAND_RATIONALE = 'New strand chosen by the user, no router'
 import { findQuickStrand, planAssistMode, planQuickMode, planSourceStyle, QUICK_MODE_MODEL, QUICK_MODE_RATIONALE } from './quick-mode.js'
 
 /**
@@ -1140,6 +1145,14 @@ export function createCapturesService(options: CapturesServiceOptions) {
     // that exist to keep pointless turns from running at all.
     if (body.mode === 'quick' && !body.strandId) return createQuick(userId, body)
 
+    // "This starts something new": the mirror image of an explicit strand, and
+    // like that one a user gesture that skips the router. A question asked
+    // from a news story carries a whole article snapshot, and a router that
+    // appends such a text to the strand it resembles most puts the reader into
+    // a conversation they were not having. No model can be trusted to never do
+    // that, so the choice is not offered to one.
+    if (body.destination === 'new_strand') return createInNewStrand(userId, body, selection.value)
+
     const capture = insertCapture(db, {
       userId: userKey, agentId: body.agentId, clientMessageId: body.clientMessageId, text: body.text,
       kind: body.kind, source: body.source, attachments: body.attachments,
@@ -1333,6 +1346,45 @@ export function createCapturesService(options: CapturesServiceOptions) {
     const current = getDecision(db, decision.id)!
     emitRouted(userId, filed, current)
     return { capture: filed, decision: current, created: true, turn: takeTurn(filed.id) }
+  }
+
+  /**
+   * File a capture into a strand that is created for it, without asking the
+   * router (`destination: 'new_strand'`).
+   *
+   * The intent is `ask` unless the client said otherwise: the gesture behind
+   * it is "ask a question about this", and a note would open a strand nobody
+   * answers in. The title is the client's proposal, already trimmed to 60
+   * characters by the schema, and falls back to the capture's own first line,
+   * so a strand is never nameless.
+   */
+  function createInNewStrand(userId: number, body: CreateCaptureBody, selection: ModelSelection | undefined): CaptureResult {
+    const userKey = String(userId)
+    const agentId = body.agentId ?? defaultPersona()
+    const capture = insertCapture(db, {
+      userId: userKey, agentId, clientMessageId: body.clientMessageId, text: body.text,
+      kind: body.kind, source: body.source, attachments: body.attachments,
+    })
+    rememberSelection(capture, selection, body.mode)
+    const proposal: RouterProposal = {
+      action: 'new_strand', strandId: null, secondaryStrandId: null, intent: body.intent ?? 'ask',
+      newStrand: { title: newStrandTitle(body), personaId: agentId, tags: [], projectId: null },
+      confidence: 1, tags: [], rationale: NEW_STRAND_RATIONALE,
+      alternatives: [], projectSuggestion: null,
+    }
+    const decision = persistProposal(capture.id, proposal, { model: NEW_STRAND_MODEL, latencyMs: 0 })
+    const filed = file(userId, capture, proposal, decision.id, 'filed', true)
+    const current = getDecision(db, decision.id)!
+    emitRouted(userId, filed, current)
+    return { capture: filed, decision: current, created: true, turn: takeTurn(filed.id) }
+  }
+
+  /** The client's proposed title, else the first line of the capture. */
+  function newStrandTitle(body: CreateCaptureBody): string {
+    const proposed = body.strandTitle?.trim()
+    if (proposed) return proposed
+    const firstLine = body.text.split('\n').map(line => line.trim()).find(line => line.length > 0) ?? ''
+    return (firstLine.slice(0, CAPTURE_STRAND_TITLE_MAX) || 'New strand').trim()
   }
 
   /**

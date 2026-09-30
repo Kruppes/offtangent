@@ -1,0 +1,294 @@
+<!doctype html>
+<html lang="de">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>News board</title>
+<style>
+  :root {
+    color-scheme: dark;
+    --bg: #12100f; --card: #1b1917; --line: #2e2a26; --fg: #f2ece4; --dim: #a79f95;
+    --hot: #e2624a; --relevant: #d8a34a; --watch: #7f9c8b; --hype: #8d7d9c;
+  }
+  html.light {
+    color-scheme: light;
+    --bg: #f6f2ec; --card: #ffffff; --line: #e0d8cc; --fg: #211d1a; --dim: #6c645b;
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--fg);
+    font: 16px/1.45 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+    -webkit-text-size-adjust: 100%; }
+  .wrap { max-width: 720px; margin: 0 auto; padding: 14px 14px 32px; }
+  header h1 { font-size: 1.15rem; margin: 0 0 2px; line-height: 1.3; }
+  .meta { color: var(--dim); font-size: .8rem; }
+  ul { list-style: none; margin: 16px 0 0; padding: 0; }
+  li.story { border-top: 1px solid var(--line); }
+  li.story:last-child { border-bottom: 1px solid var(--line); }
+  button.row { width: 100%; text-align: left; background: none; border: 0; color: inherit;
+    font: inherit; padding: 12px 2px; display: block; cursor: pointer; }
+  button.row:focus-visible { outline: 2px solid var(--relevant); outline-offset: -2px; }
+  .title { font-weight: 600; }
+  .take { color: var(--dim); font-size: .88rem; margin-top: 3px; }
+  .tags { margin-top: 6px; font-size: .72rem; letter-spacing: .04em; text-transform: uppercase; color: var(--dim); }
+  .badge { display: inline-block; padding: 1px 6px; border-radius: 999px; border: 1px solid currentColor; margin-right: 6px; }
+  .v-hot { color: var(--hot); } .v-relevant { color: var(--relevant); }
+  .v-watch { color: var(--watch); } .v-hype { color: var(--hype); }
+  .detail { display: none; }
+  body.detail-open .list, body.detail-open header.list-head { display: none; }
+  body.detail-open .detail { display: block; }
+  .back { background: none; border: 0; color: var(--dim); font: inherit; padding: 6px 0; cursor: pointer; }
+  h2 { font-size: 1.1rem; margin: 6px 0 8px; line-height: 1.32; }
+  .block { background: var(--card); border: 1px solid var(--line); border-radius: 10px; padding: 12px; margin: 12px 0; }
+  .block h3 { font-size: .74rem; text-transform: uppercase; letter-spacing: .06em; color: var(--dim); margin: 0 0 6px; }
+  a { color: inherit; }
+  .sources a { display: block; padding: 5px 0; overflow-wrap: anywhere; }
+  .ask { display: inline-block; margin: 4px 0 2px; padding: 9px 14px; border-radius: 999px;
+    background: var(--relevant); color: #1a1512; font-weight: 600; text-decoration: none; }
+  textarea { width: 100%; min-height: 150px; background: var(--bg); color: var(--fg);
+    border: 1px solid var(--line); border-radius: 8px; padding: 8px; font: 12px/1.4 ui-monospace, monospace; }
+  .hint { color: var(--dim); font-size: .78rem; margin-top: 6px; }
+  .quick li { border: 0; padding: 3px 0; color: var(--dim); font-size: .86rem; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header class="list-head">
+    <h1 id="headline"></h1>
+    <div class="meta" id="boardmeta"></div>
+  </header>
+  <div class="list">
+    <ul id="stories"></ul>
+    <div class="block" id="quickwrap" hidden>
+      <h3>Quick hits</h3>
+      <ul class="quick" id="quick"></ul>
+    </div>
+    <div class="meta" id="stats"></div>
+  </div>
+  <section class="detail" id="detail" aria-live="polite"></section>
+</div>
+<script>
+(function () {
+  var raw = document.getElementById('board-data');
+  var data = {};
+  try { data = JSON.parse(raw ? raw.textContent : '{}') || {}; } catch (e) { data = {}; }
+  var payload = (data && typeof data.payload === 'object' && data.payload) ? data.payload : {};
+  var theme = (location.search.match(/[?&]theme=(dark|light)/) || [])[1];
+  if (theme === 'light') document.documentElement.className = 'light';
+
+  var VERDICTS = { hot: 'hot', relevant: 'relevant', watch: 'watch', hype: 'hype' };
+  function text(value, max) {
+    if (typeof value !== 'string') return '';
+    var flat = value.replace(/[\u0000-\u001f\u007f-\u009f]/g, ' ').replace(/\s+/g, ' ').trim();
+    return max && flat.length > max ? flat.slice(0, max - 1) + '\u2026' : flat;
+  }
+  function httpsUrl(value) {
+    if (typeof value !== 'string' || value.length > 2048) return '';
+    var url;
+    try { url = new URL(value); } catch (e) { return ''; }
+    if (url.protocol !== 'https:' && url.protocol !== 'http:') return '';
+    if (url.username || url.password) return '';
+    return url.href;
+  }
+  function el(tag, cls, content) {
+    var node = document.createElement(tag);
+    if (cls) node.className = cls;
+    if (content != null) node.textContent = content;
+    return node;
+  }
+
+  var categories = (payload.categories && typeof payload.categories === 'object') ? payload.categories : {};
+  function categoryLabel(id) {
+    var label = categories[id];
+    return text(typeof label === 'string' ? label : id, 60);
+  }
+
+  var items = Array.isArray(payload.items) ? payload.items.slice(0, 20) : [];
+  var digestDate = text(payload.date || (typeof data.as_of === 'string' ? data.as_of.slice(0, 10) : ''), 40);
+
+  document.getElementById('headline').textContent = text(payload.headline || data.title || 'News', 200);
+  var metaBits = [];
+  if (digestDate) metaBits.push(digestDate);
+  if (data.revision) metaBits.push('Revision ' + data.revision);
+  metaBits.push(items.length + (items.length === 1 ? ' Meldung' : ' Meldungen'));
+  document.getElementById('boardmeta').textContent = metaBits.join(' \u00b7 ');
+
+  /*
+   * The article snapshot handed into a conversation. Mirrors
+   * `formatNewsStoryContext` in @axiom/core/contracts (same fence lines, same
+   * fields, same `ot-news:` code) so a block built here and a block built by
+   * the web UI are the same text.
+   */
+  function snapshot(story) {
+    var lines = ['--- Off-Tangent news article (board snapshot, not the full text) ---'];
+    var code = 'ot-news:' + text(data.key, 40) + '/' + text(story.story_id, 120) + (data.revision ? '@r' + data.revision : '');
+    lines.push('Code: ' + code);
+    var head = ['Board: ' + text(data.title || data.key, 160) + (data.key ? ' (' + text(data.key, 40) + ')' : '')];
+    if (digestDate) head.push('Digest date: ' + digestDate);
+    if (data.revision) head.push('Revision: ' + data.revision);
+    lines.push(head.join(' \u00b7 '));
+    var story2 = ['Story: ' + text(story.story_id, 120)];
+    if (story.verdict) story2.push('Verdict: ' + text(story.verdict, 40));
+    if (story.category) story2.push('Category: ' + categoryLabel(story.category));
+    lines.push(story2.join(' \u00b7 '));
+    lines.push('Title: ' + text(story.title, 300));
+    if (story.take) lines.push('Take: ' + text(story.take, 400));
+    if (story.summary) lines.push('Summary: ' + text(story.summary, 1200));
+    if (story.status === 'update' && story.delta) lines.push("What's new: " + text(story.delta, 400));
+    var sources = Array.isArray(story.sources) ? story.sources.slice(0, 20) : [];
+    if (sources.length) {
+      lines.push('Sources:');
+      sources.forEach(function (source) {
+        var url = httpsUrl(source && source.url);
+        var name = text(source && source.name, 160) || url;
+        if (!name && !url) return;
+        var meta = [text(source && source.type, 40), text(source && source.published_at, 40)].filter(Boolean).join(', ');
+        var label = name + (meta ? ' (' + meta + ')' : '');
+        lines.push(url ? '- ' + label + ': ' + url : '- ' + label + ' (no link in the payload)');
+      });
+    }
+    lines.push('--- end of article snapshot ---');
+    return lines.join('\n').replace(/-{3,}(?!\s*(Off-Tangent|end of))/g, '--');
+  }
+
+  /*
+   * "Frage dazu stellen" needs the address of the web UI, which a board
+   * document cannot know: it is served from the sandboxed content origin with
+   * `connect-src 'none'`. The backend injects `app_url` (PUBLIC_BASE_URL) into
+   * the board data; without it the button is not rendered at all and the
+   * reader uses the copy block below it. Only the ids travel in the URL, never
+   * the article text.
+   */
+  function askUrl(story) {
+    var base = httpsUrl(data.app_url);
+    if (!base || !story.story_id) return '';
+    var url = new URL('/ask/news', base);
+    url.searchParams.set('board', String(data.key || ''));
+    url.searchParams.set('story', String(story.story_id));
+    if (data.revision) url.searchParams.set('rev', String(data.revision));
+    if (digestDate) url.searchParams.set('date', digestDate);
+    return url.href;
+  }
+
+  var detail = document.getElementById('detail');
+  function openStory(story) {
+    detail.textContent = '';
+    var back = el('button', 'back', '\u2039 Alle Meldungen');
+    back.addEventListener('click', closeStory);
+    detail.appendChild(back);
+
+    var verdict = VERDICTS[story.verdict] ? story.verdict : '';
+    if (verdict) {
+      var badge = el('span', 'badge v-' + verdict, verdict);
+      var line = el('div', 'tags');
+      line.appendChild(badge);
+      if (story.category) line.appendChild(document.createTextNode(categoryLabel(story.category)));
+      detail.appendChild(line);
+    }
+    detail.appendChild(el('h2', null, text(story.title, 300)));
+    if (story.take) detail.appendChild(el('div', 'take', text(story.take, 400)));
+
+    if (story.summary) {
+      var box = el('div', 'block');
+      box.appendChild(el('h3', null, 'Was passiert ist'));
+      box.appendChild(el('div', null, text(story.summary, 1600)));
+      detail.appendChild(box);
+    }
+    if (story.status === 'update' && story.delta) {
+      var upd = el('div', 'block');
+      upd.appendChild(el('h3', null, 'Neu an dieser Meldung'));
+      upd.appendChild(el('div', null, text(story.delta, 600)));
+      detail.appendChild(upd);
+    }
+    var sources = Array.isArray(story.sources) ? story.sources.slice(0, 20) : [];
+    if (sources.length) {
+      var src = el('div', 'block sources');
+      src.appendChild(el('h3', null, 'Quellen'));
+      sources.forEach(function (source) {
+        var url = httpsUrl(source && source.url);
+        var name = text(source && source.name, 160) || url;
+        if (url) {
+          var anchor = el('a', null, name + ' \u2197');
+          anchor.href = url;
+          anchor.rel = 'noopener noreferrer';
+          src.appendChild(anchor);
+        } else if (name) {
+          src.appendChild(el('div', 'hint', name + ' (kein Link in der Payload)'));
+        }
+      });
+      detail.appendChild(src);
+    }
+
+    var ask = el('div', 'block');
+    ask.appendChild(el('h3', null, 'Frage zu dieser Meldung'));
+    var href = askUrl(story);
+    if (href) {
+      var link = el('a', 'ask', 'Frage dazu stellen \u2197');
+      link.href = href;
+      link.rel = 'noopener noreferrer';
+      ask.appendChild(link);
+      ask.appendChild(el('div', 'hint', 'Öffnet die Weboberfläche mit diesem Artikel als Kontext in einer NEUEN Unterhaltung. Deine Frage schreibst und schickst du selbst.'));
+    }
+    var area = document.createElement('textarea');
+    area.readOnly = true;
+    area.value = snapshot(story);
+    area.setAttribute('aria-label', 'Artikel-Kontext zum Kopieren');
+    ask.appendChild(area);
+    ask.appendChild(el('div', 'hint', 'Alternativ: Text markieren, kopieren und in eine Unterhaltung einfügen.'));
+    detail.appendChild(ask);
+
+    document.body.className = 'detail-open';
+    window.scrollTo(0, 0);
+  }
+  function closeStory() {
+    document.body.className = '';
+    detail.textContent = '';
+    window.scrollTo(0, 0);
+  }
+
+  var list = document.getElementById('stories');
+  items.forEach(function (story) {
+    if (!story || typeof story !== 'object' || !text(story.title)) return;
+    var li = el('li', 'story');
+    var row = el('button', 'row');
+    row.type = 'button';
+    row.appendChild(el('div', 'title', text(story.title, 300)));
+    if (story.take) row.appendChild(el('div', 'take', text(story.take, 400)));
+    var tags = el('div', 'tags');
+    var verdict = VERDICTS[story.verdict] ? story.verdict : '';
+    if (verdict) tags.appendChild(el('span', 'badge v-' + verdict, verdict));
+    var bits = [];
+    if (story.category) bits.push(categoryLabel(story.category));
+    if (story.status === 'update') bits.push('Update');
+    if (Array.isArray(story.sources) && story.sources.length) bits.push(story.sources.length + ' Quellen');
+    if (bits.length) tags.appendChild(document.createTextNode(bits.join(' \u00b7 ')));
+    row.appendChild(tags);
+    row.addEventListener('click', function () { openStory(story); });
+    li.appendChild(row);
+    list.appendChild(li);
+  });
+  if (!items.length) {
+    list.appendChild(el('li', 'story', 'Diese Ausgabe enthält keine Meldungen.'));
+  }
+
+  var quick = Array.isArray(payload.quick_hits) ? payload.quick_hits.slice(0, 20) : [];
+  if (quick.length) {
+    document.getElementById('quickwrap').hidden = false;
+    var quickList = document.getElementById('quick');
+    quick.forEach(function (hit) {
+      var label = text(typeof hit === 'string' ? hit : (hit && (hit.text || hit.title)), 240);
+      if (label) quickList.appendChild(el('li', null, '\u00b7 ' + label));
+    });
+  }
+  var stats = payload.stats && typeof payload.stats === 'object' ? payload.stats : null;
+  if (stats) {
+    var parts = [];
+    Object.keys(stats).slice(0, 8).forEach(function (name) {
+      var value = stats[name];
+      if (typeof value === 'number' || typeof value === 'string') parts.push(text(name, 40) + ': ' + text(String(value), 60));
+    });
+    document.getElementById('stats').textContent = parts.join(' \u00b7 ');
+  }
+})();
+</script>
+</body>
+</html>

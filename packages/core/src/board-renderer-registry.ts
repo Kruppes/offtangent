@@ -118,6 +118,34 @@ export interface BoardRendererData {
   as_of: string
   summary: string | null
   payload: unknown
+  /**
+   * Public base URL of this instance (`PUBLIC_BASE_URL`), or null when it is
+   * not configured. The document is served from the sandboxed content origin
+   * with `connect-src 'none'` and cannot discover the web UI's address by
+   * itself, so a renderer that wants to link back into the app (e.g. "ask a
+   * question about this story") needs it handed in. Never a token, never a
+   * session: an origin the reader is looking at anyway.
+   */
+  app_url?: string | null
+}
+
+/**
+ * `PUBLIC_BASE_URL` as an http(s) origin without a trailing slash, or null.
+ * Same shape check as the connector redirect helper: a value with credentials,
+ * another scheme or junk is treated as unset rather than passed on.
+ */
+export function boardRendererAppUrl(value: string | undefined = process.env.PUBLIC_BASE_URL): string | null {
+  const raw = typeof value === 'string' ? value.trim() : ''
+  if (!raw) return null
+  let parsed: URL
+  try {
+    parsed = new URL(raw)
+  } catch {
+    return null
+  }
+  if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') return null
+  if (parsed.username || parsed.password) return null
+  return `${parsed.origin}${parsed.pathname.replace(/\/+$/, '')}`
 }
 
 /**

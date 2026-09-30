@@ -6,6 +6,7 @@ import * as captures from '~/api/captures'
 import * as now from '~/api/now'
 import * as models from '~/api/models'
 import * as personas from '~/api/personas'
+import * as composerHandoff from '~/composables/useComposerHandoff'
 import { readFileSync } from 'node:fs'
 import { parse, compileScript } from '@vue/compiler-sfc'
 import { transpileModule, ModuleKind, ScriptTarget } from 'typescript'
@@ -14,7 +15,7 @@ function loadComponent(path: string): Component {
  const script = compileScript(descriptor, { id: path, inlineTemplate: true })
  const { outputText } = transpileModule(script.content, { compilerOptions: { module: ModuleKind.CommonJS, target: ScriptTarget.ES2022 } })
  const exports: { default?: Component } = {}
- const modules: Record<string, unknown> = { vue: { ...Vue, vModelText: { mounted: (el: Node, binding: { value: unknown }) => { el.props.value = binding.value }, updated: (el: Node, binding: { value: unknown }) => { el.props.value = binding.value } }, vModelSelect: {} }, '~/api/captures': captures, '~/api/now': now, '~/api/models': models, '~/api/personas': personas }
+ const modules: Record<string, unknown> = { vue: { ...Vue, vModelText: { mounted: (el: Node, binding: { value: unknown }) => { el.props.value = binding.value }, updated: (el: Node, binding: { value: unknown }) => { el.props.value = binding.value } }, vModelSelect: {} }, '~/api/captures': captures, '~/api/now': now, '~/api/models': models, '~/api/personas': personas, '~/composables/useComposerHandoff': composerHandoff }
  new Function('require', 'exports', outputText)((name: string) => name === './CaptureDecision.vue' ? { default: loadComponent(name) } : modules[name], exports)
  return exports.default!
 }
@@ -128,6 +129,58 @@ describe('Capture Home rendered', () => {
   const call = request.mock.calls.find(([url]) => url === 'https://test.example/api/captures')!
   expect(JSON.parse(call[1].body)).toMatchObject({ text: 'Roof note', source: 'web', attachments: [], clientMessageId: expect.any(String) })
   expect(all(root).find(n => n.tag === 'textarea')?.props.value).toBe('')
+ })
+ /**
+  * "Use in question" on a news story hands the article snapshot over; the
+  * composer opens with it in the box, unsent, and takes it exactly once.
+  */
+ it('prefills the box from a composer handoff and consumes it', async () => {
+  const store = new Map<string, string>()
+  store.set('offtangent.composer.handoff', '--- Off-Tangent news article (board snapshot, not the full text) ---\nTitle: A story\n--- end of article snapshot ---\n\n')
+  vi.stubGlobal('window', {
+   sessionStorage: {
+    getItem: (key: string) => store.get(key) ?? null,
+    setItem: (key: string, value: string) => { store.set(key, value) },
+    removeItem: (key: string) => { store.delete(key) },
+   },
+   matchMedia: () => ({ matches: false }),
+  })
+  const { root } = mount(Home); await flush()
+  expect(all(root).find(n => n.tag === 'textarea')?.props.value).toContain('Title: A story')
+  expect(text(root)).toContain('capture.contextAdded')
+  expect(store.size).toBe(0)
+
+  // A second visit starts empty instead of resurrecting the snapshot.
+  const second = mount(Home); await flush()
+  expect(all(second.root).find(n => n.tag === 'textarea')?.props.value).toBe('')
+ })
+ it('sends a news handoff as its own new strand, with the article title', async () => {
+  const store = new Map<string, string>()
+  store.set('offtangent.composer.handoff', JSON.stringify({ text: 'Title: A story\n\n', newStrand: true, title: 'A story' }))
+  vi.stubGlobal('window', {
+   sessionStorage: {
+    getItem: (key: string) => store.get(key) ?? null,
+    setItem: (key: string, value: string) => { store.set(key, value) },
+    removeItem: (key: string) => { store.delete(key) },
+   },
+   matchMedia: () => ({ matches: false }),
+  })
+  const { root } = mount(Home); await flush()
+  expect(text(root)).toContain('capture.contextAddedNewStrand')
+  await draft(root, 'Title: A story\n\nWas heisst das fuer uns?')
+  await send(root)
+  const post = request.mock.calls.find(([url, options]) => url === 'https://test.example/api/captures' && (options as RequestInit | undefined)?.method === 'POST')
+  expect(post).toBeTruthy()
+  const body = JSON.parse((post![1] as RequestInit).body as string)
+  expect(body.destination).toBe('new_strand')
+  expect(body.strandTitle).toBe('A story')
+
+  // The promise belongs to that one draft: the next capture is routed again.
+  await draft(root, 'Ganz normale Notiz')
+  await send(root)
+  const posts = request.mock.calls.filter(([url, options]) => url === 'https://test.example/api/captures' && (options as RequestInit | undefined)?.method === 'POST')
+  const second = JSON.parse((posts[posts.length - 1]![1] as RequestInit).body as string)
+  expect(second.destination).toBeUndefined()
  })
  it('undo returns to the unsorted tray and can be applied again', async () => {
   const { root } = mount(Home); await flush(); await draft(root); await send(root); await click(root, 'capture.undo')

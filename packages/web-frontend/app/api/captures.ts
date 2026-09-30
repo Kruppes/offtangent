@@ -1,7 +1,8 @@
 import type { Capture, Decision, UploadDescriptor } from '@axiom/core'
 export type { Capture, Decision, UploadDescriptor }
 export interface CaptureResult { capture: Capture; decision: Decision }
-export interface CaptureInput { text: string; clientMessageId: string; source: 'web'; attachments: UploadDescriptor[]; agentId?: string; modelProviderId?: string; modelId?: string }
+/** `destination: 'new_strand'` makes the server open a strand instead of routing; `strandTitle` names it. */
+export interface CaptureInput { text: string; clientMessageId: string; source: 'web'; attachments: UploadDescriptor[]; agentId?: string; modelProviderId?: string; modelId?: string; destination?: 'new_strand'; strandTitle?: string }
 export interface ApplyCaptureInput { decisionId?: string; action?: Decision['action']; strandId?: string; title?: string }
 export interface ClientPersona { id: string; displayName: string; emoji: string | null; color: string | null; isDefault: boolean }
 export function newestDecision(captureId: string, decisions: Decision[]) {

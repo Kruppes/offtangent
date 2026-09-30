@@ -1563,6 +1563,7 @@ export {
   BOARD_DATA_SCRIPT_ID,
   BOARD_RENDERER_MAX_BYTES,
   boardDataScript,
+  boardRendererAppUrl,
   boardRendererPath,
   boardRenderersDir,
   encodeBoardDataJson,

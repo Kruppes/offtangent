@@ -12,6 +12,7 @@ import path from 'node:path'
 import {
   BOARD_DATA_SCRIPT_ID,
   BOARD_RENDERER_MAX_BYTES,
+  boardRendererAppUrl,
   boardRendererPath,
   boardRenderersDir,
   encodeBoardDataJson,
@@ -224,5 +225,33 @@ describe('injectBoardData', () => {
     const rendered = injectBoardData('<p>fragment</p>', data)
     expect(rendered.startsWith('<script type="application/json"')).toBe(true)
     expect(rendered.endsWith('<p>fragment</p>')).toBe(true)
+  })
+})
+
+describe('boardRendererAppUrl', () => {
+  it('normalises an https base URL and drops a trailing slash', () => {
+    expect(boardRendererAppUrl('https://boards.example/')).toBe('https://boards.example')
+    expect(boardRendererAppUrl('https://boards.example/app/')).toBe('https://boards.example/app')
+  })
+
+  it('treats an unusable value as unset, so a renderer hides its app link', () => {
+    expect(boardRendererAppUrl('')).toBeNull()
+    expect(boardRendererAppUrl('   ')).toBeNull()
+    expect(boardRendererAppUrl('javascript:alert(1)')).toBeNull()
+    expect(boardRendererAppUrl('not a url')).toBeNull()
+    expect(boardRendererAppUrl('https://user:pw@boards.example')).toBeNull()
+  })
+
+  it('falls back to PUBLIC_BASE_URL when no value is passed', () => {
+    const previous = process.env.PUBLIC_BASE_URL
+    try {
+      process.env.PUBLIC_BASE_URL = 'https://env.example/'
+      expect(boardRendererAppUrl()).toBe('https://env.example')
+      delete process.env.PUBLIC_BASE_URL
+      expect(boardRendererAppUrl()).toBeNull()
+    } finally {
+      if (previous === undefined) delete process.env.PUBLIC_BASE_URL
+      else process.env.PUBLIC_BASE_URL = previous
+    }
   })
 })

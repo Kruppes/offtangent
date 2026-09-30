@@ -1,5 +1,6 @@
 <script setup lang="ts">
-import { computed, onMounted, ref } from 'vue'
+import { computed, nextTick, onMounted, ref } from 'vue'
+import { takeComposerHandoff } from '~/composables/useComposerHandoff'
 import { useCapturesApi, type CaptureResult, type CaptureInput, type ApplyCaptureInput, type UploadDescriptor, type ClientPersona, newestDecision } from '~/api/captures'
 import { useNowApi, type NowSet, type NowStrand } from '~/api/now'
 import { useModelsApi, type SelectableModel } from '~/api/models'
@@ -21,6 +22,12 @@ const resolved = ref<Record<string, NowStrand>>({})
 const projects = ref<Record<string, string>>({})
 const notice = ref('')
 const latest = ref<CaptureResult | null>(null)
+/**
+ * Set by a handoff that promised its own conversation (a question about a news
+ * story). It survives until the draft is sent or replaced, and makes the send
+ * ask the server for a new strand instead of letting the router pick one.
+ */
+const handoffTarget = ref<{ title: string | null } | null>(null)
 const tray = ref<CaptureResult[]>([])
 const loading = ref(true)
 const loadError = ref(false)
@@ -92,13 +99,13 @@ async function send() {
   if (!canSend.value) return
   busy.value = true; sending.value = true; error.value = ''; errorDetail.value = ''; notice.value = ''
   const model = models.value.find(m => JSON.stringify([m.providerId, m.modelId]) === modelKey.value)
-  const draft = { text: text.value.trim(), source: 'web' as const, attachments: attachments.value, ...(agentId.value ? { agentId: agentId.value } : {}), ...(model ? { modelProviderId: model.providerId, modelId: model.modelId } : {}) }
+  const draft = { text: text.value.trim(), source: 'web' as const, attachments: attachments.value, ...(agentId.value ? { agentId: agentId.value } : {}), ...(model ? { modelProviderId: model.providerId, modelId: model.modelId } : {}), ...(handoffTarget.value ? { destination: 'new_strand' as const, ...(handoffTarget.value.title ? { strandTitle: handoffTarget.value.title } : {}) } : {}) }
   const signature = JSON.stringify(draft)
   if (pending?.signature !== signature) pending = { signature, key: crypto.randomUUID() }
   try {
     latest.value = await api.create({ ...draft, clientMessageId: pending.key } satisfies CaptureInput)
     sending.value = false; refreshing.value = true
-    text.value = ''; attachments.value = []; pending = null
+    text.value = ''; attachments.value = []; pending = null; handoffTarget.value = null
     await load()
     await resolveTitles()
   } catch { error.value = 'capture.sendError' }
@@ -152,9 +159,31 @@ function addNow() {
   else ids.push(target.value)
   if (ids.length <= now.value.max) void changeNow(ids)
 }
+/**
+ * A screen that handed something to the composer ("Use in question" on a news
+ * story) put the text in the handoff; it is taken exactly once and lands in
+ * the box unsent, with the cursor at its end so the reader's question goes
+ * below the snapshot.
+ */
+function applyHandoff() {
+  const handoff = takeComposerHandoff()
+  if (!handoff) return
+  text.value = handoff.text
+  handoffTarget.value = handoff.newStrand ? { title: handoff.title } : null
+  notice.value = handoff.newStrand ? 'capture.contextAddedNewStrand' : 'capture.contextAdded'
+  void nextTick(() => {
+    const element = textarea.value
+    // Guarded: under SSR and in the unit renderer this is not a DOM node.
+    if (!element || typeof element.focus !== 'function') return
+    element.focus()
+    element.selectionStart = element.selectionEnd = element.value.length
+    element.scrollTop = element.scrollHeight
+  })
+}
 onMounted(() => {
   void load(); void loadOptions()
-  if (typeof window !== 'undefined' && window.matchMedia?.('(min-width: 768px) and (pointer: fine)').matches) textarea.value?.focus()
+  applyHandoff()
+  if (!text.value && typeof window !== 'undefined' && window.matchMedia?.('(min-width: 768px) and (pointer: fine)').matches) textarea.value?.focus()
 })
 </script>
 <template>

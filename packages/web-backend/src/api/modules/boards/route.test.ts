@@ -462,6 +462,10 @@ describe('server side renderer registry', () => {
   it('serves the renderer with the board state injected and the same security headers', async () => {
     seedList('1')
     installRenderer()
+    // The renderer gets the public base URL handed in: a sandboxed document
+    // has no way to learn the address of the web UI it should link back to.
+    const previousBaseUrl = process.env.PUBLIC_BASE_URL
+    process.env.PUBLIC_BASE_URL = 'https://boards.example/'
     const url = (await api('GET', '/api/boards/demo')).body.content.url
     const res = await raw(url)
     expect(res.status).toBe(200)
@@ -488,7 +492,10 @@ describe('server side renderer registry', () => {
       as_of: '2026-09-28T06:00:00Z',
       summary: 'One entry.',
       payload: { items: [{ title: 'Alice', url: 'https://example.com/alice' }] },
+      app_url: 'https://boards.example',
     })
+    if (previousBaseUrl === undefined) delete process.env.PUBLIC_BASE_URL
+    else process.env.PUBLIC_BASE_URL = previousBaseUrl
     // Injected before </head>, and the link bridge is there too.
     expect(res.text.indexOf('id="board-data"')).toBeLessThan(res.text.indexOf('</head>'))
     expect(res.text).toContain(BOARD_LINK_BRIDGE_MARKER)

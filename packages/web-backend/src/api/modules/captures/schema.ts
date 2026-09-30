@@ -35,6 +35,23 @@ const SOURCE_PATTERN = /^[a-z][a-z0-9_-]{0,31}$/
 export const CAPTURE_MODES = ['work', 'quick', 'assist'] as const
 export type CaptureMode = (typeof CAPTURE_MODES)[number]
 
+/**
+ * Where a capture is allowed to land.
+ *
+ * `router` (the default, and what a missing field means) is the behaviour that
+ * always shipped: the router decides. `new_strand` is a user gesture that says
+ * "this starts a conversation of its own" — a question asked from a news story
+ * must not be appended to whatever strand happens to look similar, because the
+ * reader would be talking into an unrelated conversation. It is the mirror
+ * image of `strandId`: both are explicit choices that skip the router, one
+ * names an existing strand, the other refuses every existing one.
+ */
+export const CAPTURE_DESTINATIONS = ['router', 'new_strand'] as const
+export type CaptureDestination = (typeof CAPTURE_DESTINATIONS)[number]
+
+/** A title the client may propose for the forced new strand. */
+export const CAPTURE_STRAND_TITLE_MAX = 60
+
 export interface CreateCaptureBody {
   text: string
   clientMessageId: string | null
@@ -45,6 +62,9 @@ export interface CreateCaptureBody {
   attachments: UploadDescriptor[]
   intent: RouterIntent | null
   mode: CaptureMode
+  /** Absent means `router`: every client that predates the field is unchanged. */
+  destination?: CaptureDestination
+  strandTitle?: string | null
   turnOverride?: ModelSelection
 }
 
@@ -102,12 +122,24 @@ export function parseCreateCaptureBody(body: unknown): ParseResult<CreateCapture
     return { ok: false, error: `mode must be one of ${CAPTURE_MODES.join(', ')}`, code: 'invalid_mode' }
   }
 
+  const rawDestination = b.destination === undefined || b.destination === null || b.destination === '' ? 'router' : b.destination
+  if (typeof rawDestination !== 'string' || !(CAPTURE_DESTINATIONS as readonly string[]).includes(rawDestination)) {
+    return { ok: false, error: `destination must be one of ${CAPTURE_DESTINATIONS.join(', ')}`, code: 'invalid_destination' }
+  }
+  const destination = rawDestination as CaptureDestination
+  if (destination === 'new_strand' && strandId) {
+    return { ok: false, error: 'destination new_strand cannot be combined with strandId', code: 'invalid_destination' }
+  }
+
+  const rawTitle = typeof b.strandTitle === 'string' ? b.strandTitle.replace(/\s+/g, ' ').trim() : ''
+  const strandTitle = rawTitle ? rawTitle.slice(0, CAPTURE_STRAND_TITLE_MAX) : null
+
   const selection = parseTurnModelSelection(b)
   if (!selection.ok) return selection
 
   return {
     ok: true,
-    value: { turnOverride: selection.value, text, clientMessageId: clientMessageId ?? null, agentId, strandId: strandId ?? null, kind: kind as CaptureKind, source, attachments, intent, mode: mode as CaptureMode },
+    value: { turnOverride: selection.value, text, clientMessageId: clientMessageId ?? null, agentId, strandId: strandId ?? null, kind: kind as CaptureKind, source, attachments, intent, mode: mode as CaptureMode, destination, strandTitle },
   }
 }
 

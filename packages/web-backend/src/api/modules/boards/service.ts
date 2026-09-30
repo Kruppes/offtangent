@@ -12,6 +12,7 @@
 import {
   BOARD_SERIES_MAX_DAYS,
   HTML_VIEW_KIND,
+  boardRendererAppUrl,
   hasBoardRenderer,
   injectBoardData,
   injectBoardLinkBridge,
@@ -192,6 +193,7 @@ export function createBoardsService(options: BoardsServiceOptions): BoardsServic
           as_of: source.asOf,
           summary: source.summary,
           payload: source.payload,
+          app_url: boardRendererAppUrl(),
         })
       } else {
         const view = readHtmlViewPayload(source.payload)

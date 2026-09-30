@@ -1,4 +1,11 @@
 {
+  "ask": {
+    "failed": "The board could not be loaded.",
+    "home": "Back to capture",
+    "loading": "Preparing the article context…",
+    "missing": "This link is incomplete: board or story is missing.",
+    "storyGone": "That story is not part of this board revision any more."
+  },
   "w4Content": {
     "loading": "Loading messages",
     "runningState": "Running",
@@ -1780,7 +1787,9 @@
     "lastActivity": "Last activity:",
     "discard": "Discard",
     "discarded": "Discarded. Undo brings it back.",
-    "restore": "Undo discard"
+    "restore": "Undo discard",
+    "contextAdded": "Article context added. Write your question below it, then send.",
+    "contextAddedNewStrand": "Article context added. Write your question below it, then send — it starts a new conversation."
   },
   "strandsW3": {
     "title": "Strands",
@@ -1994,7 +2003,11 @@
         "bench": "Bench",
         "watch": "Watch",
         "skip": "Skip"
-      }
+      },
+      "useInQuestion": "Use in question",
+      "copyContext": "Copy article context",
+      "contextCopied": "Article context copied to the clipboard.",
+      "useInQuestionHint": "Opens the composer with a snapshot of this story. Nothing is sent until you have written your question."
     }
   },
   "connectors": {

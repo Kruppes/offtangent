@@ -7,6 +7,7 @@ import SandboxedBoard from '~/components/board/SandboxedBoard.vue'
 import NewsDigestBoard from '~/components/board/NewsDigestBoard.vue'
 import PortfolioDigestBoard from '~/components/board/PortfolioDigestBoard.vue'
 import { parseNewsDigest } from '~/utils/newsDigest'
+import { setComposerHandoff } from '~/composables/useComposerHandoff'
 
 const route = useRoute()
 const router = useRouter()
@@ -58,6 +59,17 @@ const newsRevision = computed(() => {
   if (!matching.length) return null
   return matching.reduce((newest, entry) => (entry.revision > newest.revision ? entry : newest)).revision
 })
+
+/**
+ * "Use in question" on a story: the snapshot goes to the composer, the reader
+ * types the question there. Nothing is sent — but when it is sent, it opens
+ * its own conversation, so the question never lands in whatever strand the
+ * router finds most similar.
+ */
+function useInQuestion(draft: { text: string; title: string | null }) {
+  setComposerHandoff(draft.text, { newStrand: true, title: draft.title })
+  void router.push('/')
+}
 
 function onNewsNavigate(target: { date?: string | null; story?: string | null }) {
   const query: Record<string, string> = {}
@@ -121,7 +133,8 @@ onMounted(load)
           <SandboxedBoard v-else-if="renderer === 'sandboxed'" :content="board.content" :title="board.title" :summary="board.summary" />
           <NewsDigestBoard v-else-if="renderer === 'news_digest'" :payload="board.payload" :revisions="revisions"
             :story="newsStory" :date="newsDate" :loading="loading" :failed="Boolean(error)"
-            :base-path="`/boards/${boardKey}`" @navigate="onNewsNavigate" @retry="load" />
+            :base-path="`/boards/${boardKey}`" :board-key="boardKey" :board-title="board.title" :revision="board.revision"
+            @navigate="onNewsNavigate" @retry="load" @use-in-question="useInQuestion" />
           <GenericBoard v-else :summary="board.summary" :payload="board.payload" :kind="board.kind" />
 
           <section v-if="revisions.length && renderer !== 'news_digest'" class="rounded-lg border bg-card text-card-foreground">

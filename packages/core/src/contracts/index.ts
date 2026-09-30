@@ -249,3 +249,27 @@ export type {
   ConnectorTestResponseContract,
   ConnectorsListResponseContract,
 } from './connectors.js'
+
+export {
+  NEWS_STORY_REF_SCHEME,
+  NEWS_CONTEXT_HEADER,
+  NEWS_CONTEXT_FOOTER,
+  NEWS_CONTEXT_TITLE_MAX,
+  NEWS_CONTEXT_TAKE_MAX,
+  NEWS_CONTEXT_SUMMARY_MAX,
+  NEWS_CONTEXT_DELTA_MAX,
+  NEWS_CONTEXT_NAME_MAX,
+  NEWS_CONTEXT_URL_MAX,
+  NEWS_CONTEXT_MAX_SOURCES,
+  formatNewsStoryRef,
+  parseNewsStoryRef,
+  isHttpsContextUrl,
+  sanitizeContextValue,
+  formatNewsStoryContext,
+} from './news-story-context.js'
+
+export type {
+  NewsStoryContextInput,
+  NewsStoryContextSource,
+  NewsStoryRef,
+} from './news-story-context.js'

@@ -1,4 +1,11 @@
 {
+  "ask": {
+    "failed": "Das Board konnte nicht geladen werden.",
+    "home": "Zurück zum Eingang",
+    "loading": "Artikelkontext wird vorbereitet…",
+    "missing": "Dieser Link ist unvollständig: Board oder Meldung fehlt.",
+    "storyGone": "Diese Meldung ist in dieser Board-Ausgabe nicht mehr enthalten."
+  },
   "w4Content": {
     "loading": "Nachrichten werden geladen",
     "runningState": "Aktiv",
@@ -1780,7 +1787,9 @@
     "lastActivity": "Letzte Aktivität:",
     "discard": "Verwerfen",
     "discarded": "Verworfen. Rückgängig macht es wieder sichtbar.",
-    "restore": "Verwerfen rückgängig"
+    "restore": "Verwerfen rückgängig",
+    "contextAdded": "Artikelkontext übernommen. Schreibe deine Frage darunter und sende ab.",
+    "contextAddedNewStrand": "Artikelkontext übernommen. Schreibe deine Frage darunter und sende ab — die Antwort startet eine neue Unterhaltung."
   },
   "strandsW3": {
     "title": "Strands",
@@ -1994,7 +2003,11 @@
         "bench": "Bench",
         "watch": "Watch",
         "skip": "Skip"
-      }
+      },
+      "useInQuestion": "In Frage übernehmen",
+      "copyContext": "Artikelkontext kopieren",
+      "contextCopied": "Artikelkontext in die Zwischenablage kopiert.",
+      "useInQuestionHint": "Öffnet den Editor mit einem Abbild dieser Story. Es wird nichts gesendet, bevor du deine Frage geschrieben hast."
     }
   },
   "connectors": {

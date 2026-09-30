@@ -30,6 +30,7 @@ import {
   formatSourceDate, useNewsDigestView,
   type NewsDigestDay, type NewsRevisionEntry,
 } from '~/composables/useNewsDigestView'
+import { buildNewsStoryContext, newsStoryComposerDraft } from '~/utils/newsStoryContext'
 
 const props = withDefaults(defineProps<{
   payload: unknown
@@ -44,6 +45,11 @@ const props = withDefaults(defineProps<{
   failed?: boolean
   /** Path the deep links are built on, e.g. `/boards/ki-news`. */
   basePath?: string
+  /** Board key and title, for the article context of "Use in question". */
+  boardKey?: string
+  boardTitle?: string | null
+  /** Revision on screen, so the context names the snapshot it came from. */
+  revision?: number | null
 }>(), {
   revisions: () => [],
   story: null,
@@ -51,6 +57,9 @@ const props = withDefaults(defineProps<{
   loading: false,
   failed: false,
   basePath: '',
+  boardKey: '',
+  boardTitle: null,
+  revision: null,
 })
 
 const { t } = useI18n()
@@ -59,6 +68,13 @@ const emit = defineEmits<{
   /** Route state the page turns into a URL: day and/or story. */
   navigate: [{ date?: string | null; story?: string | null; revision?: number | null }]
   retry: []
+  /**
+   * The reader wants to ask about this story: the article snapshot as plain
+   * text. The page owns the navigation to the composer, this renderer only
+   * builds the text — and nothing is sent anywhere until the reader has
+   * typed a question.
+   */
+  useInQuestion: [{ text: string; title: string | null }]
 }>()
 
 const view = useNewsDigestView({
@@ -76,6 +92,43 @@ const {
 } = view
 
 const dayPickerOpen = ref(false)
+/** Feedback for the copy button; reset after a moment, never an error banner. */
+const copied = ref(false)
+let copiedTimer: ReturnType<typeof setTimeout> | null = null
+
+function contextOptions() {
+  return {
+    boardKey: props.boardKey,
+    boardTitle: props.boardTitle,
+    revision: props.revision,
+    date: currentDate.value,
+    basePath: props.basePath,
+  }
+}
+
+/** Hand the snapshot of the open story to the composer. */
+function useInQuestion() {
+  if (!selected.value) return
+  emit('useInQuestion', { text: newsStoryComposerDraft(selected.value, contextOptions()), title: selected.value.title })
+}
+
+/**
+ * The same snapshot on the clipboard, for a question inside a strand that is
+ * already open. A denied clipboard is not worth an error state: the button
+ * simply does not confirm.
+ */
+async function copyContext() {
+  if (!selected.value) return
+  const text = buildNewsStoryContext(selected.value, contextOptions())
+  try {
+    await navigator.clipboard?.writeText(text)
+    copied.value = true
+    if (copiedTimer) clearTimeout(copiedTimer)
+    copiedTimer = setTimeout(() => { copied.value = false }, 2500)
+  } catch {
+    copied.value = false
+  }
+}
 
 function storyHref(item: NewsStory): string {
   const params = new URLSearchParams()
@@ -87,6 +140,7 @@ function dayHref(day: NewsDigestDay): string {
   return `${props.basePath}?date=${day.date}`
 }
 function openStory(item: NewsStory | null) {
+  copied.value = false
   emit('navigate', { date: currentDate.value, story: item?.storyId ?? null })
 }
 function openDay(day: NewsDigestDay | null) {
@@ -106,7 +160,10 @@ function onKeydown(event: KeyboardEvent) {
   if (event.key === 'ArrowLeft' && previousStory.value) { openStory(previousStory.value); event.preventDefault() }
 }
 onMounted(() => document.addEventListener('keydown', onKeydown))
-onBeforeUnmount(() => document.removeEventListener('keydown', onKeydown))
+onBeforeUnmount(() => {
+  document.removeEventListener('keydown', onKeydown)
+  if (copiedTimer) clearTimeout(copiedTimer)
+})
 
 const verdictClasses: Record<string, string> = {
   'filled-signal': 'nd-signal',
@@ -356,6 +413,28 @@ const listHidden = computed(() => selected.value !== null)
 
           <h2 class="nd-display nd-t1 nd-de mt-[12px]" lang="de">{{ selected.title }}</h2>
           <p v-if="selected.take" class="nd-lead nd-t1 nd-de mt-[12px]" lang="de">{{ selected.take }}</p>
+
+          <!--
+            Take the story into a conversation. The primary button opens the
+            composer with the snapshot, the secondary one puts the same text on
+            the clipboard for a strand that is already open. Neither one sends
+            anything: the question is the reader's.
+          -->
+          <div v-if="boardKey" class="mt-[20px] flex flex-wrap items-center gap-[8px]">
+            <button type="button" data-testid="news-use-in-question"
+              class="nd-focus nd-signal nd-label inline-flex min-h-[48px] items-center rounded-[8px] px-[16px]"
+              @click="useInQuestion">
+              {{ $t('boards.news.useInQuestion') }}
+            </button>
+            <button type="button" data-testid="news-copy-context"
+              class="nd-focus nd-outline-t2 nd-t1 nd-label inline-flex min-h-[48px] items-center rounded-[8px] px-[16px]"
+              @click="copyContext">
+              {{ $t('boards.news.copyContext') }}
+            </button>
+          </div>
+          <p v-if="boardKey" role="status" class="nd-meta nd-t2 mt-[8px]">
+            {{ copied ? $t('boards.news.contextCopied') : $t('boards.news.useInQuestionHint') }}
+          </p>
 
           <template v-if="selected.status === 'update' && selected.delta">
             <h3 class="nd-label nd-t2 mt-[32px]">{{ $t('boards.news.whatsNew') }}</h3>

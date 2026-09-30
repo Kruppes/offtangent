@@ -633,6 +633,23 @@ describe('news digest renderer', () => {
     expect(titleClass(await render({ board: newsBoard(), revisions: newsRevisions }), 'Example Lab releases model 3')).toContain('nd-t2')
   })
 
+  /**
+   * "Use in question" belongs to the open story, not to the list: it is the
+   * one action that carries a single article into a conversation.
+   */
+  it('offers "Use in question" and the copy fallback on an open story only', async () => {
+    const list = await render({ board: newsBoard(), revisions: newsRevisions })
+    expect(list).not.toContain('news-use-in-question')
+
+    const detail = await render({ board: newsBoard(), revisions: newsRevisions, query: { story: 'model-3' } })
+    expect(detail).toContain('data-testid="news-use-in-question"')
+    expect(detail).toContain('boards.news.useInQuestion')
+    expect(detail).toContain('data-testid="news-copy-context"')
+    expect(detail).toContain('boards.news.copyContext')
+    // The hint says that nothing is sent before the reader has a question.
+    expect(detail).toContain('boards.news.useInQuestionHint')
+  })
+
   it('renders the empty state when a digest has no story', async () => {
     const html = await render({ board: newsBoard({ schema_version: 'news_digest.v2', headline: 'Quiet day.', items: [], stats: { sources_checked: 31 } }) })
     expect(html).toContain('boards.news.empty')
