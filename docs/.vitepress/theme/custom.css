@@ -1,0 +1,76 @@
+/**
+ * Offtangent brand overrides for VitePress default theme.
+ *
+ * Primary color matches the web frontend:
+ *   --primary: hsl(160 84% 30%)   ≈ #0C8D62
+ *
+ * We map VitePress' --vp-c-brand-* variables to tonal variants of that green
+ * and use a slightly lighter tone in dark mode for better contrast.
+ */
+
+:root {
+  /* Brand tokens */
+  --vp-c-brand-1: #0c8d62;
+  --vp-c-brand-2: #0a7552;
+  --vp-c-brand-3: #0c8d62;
+  --vp-c-brand-soft: rgba(12, 141, 98, 0.14);
+
+  /* Buttons (primary / "brand" CTA) */
+  --vp-button-brand-border: transparent;
+  --vp-button-brand-text: #ffffff;
+  --vp-button-brand-bg: #0c8d62;
+  --vp-button-brand-hover-border: transparent;
+  --vp-button-brand-hover-text: #ffffff;
+  --vp-button-brand-hover-bg: #0a7552;
+  --vp-button-brand-active-border: transparent;
+  --vp-button-brand-active-text: #ffffff;
+  --vp-button-brand-active-bg: #085d42;
+
+  /* Hero name gradient */
+  --vp-home-hero-name-color: transparent;
+  --vp-home-hero-name-background: linear-gradient(
+    120deg,
+    #0c8d62 30%,
+    #10b87f
+  );
+}
+
+/* Code block title label (rendered by markdown.config in config.ts).
+   Glued to the top of the code block so it reads as the file path / name
+   for the snippet below. */
+.vp-code-block-title {
+  display: inline-block;
+  margin-top: 16px;
+  padding: 6px 12px;
+  font-family: var(--vp-font-family-mono);
+  font-size: 12px;
+  line-height: 1;
+  color: var(--vp-c-text-2);
+  background-color: var(--vp-code-block-bg);
+  border-radius: 8px 8px 0 0;
+  border-bottom: 1px solid var(--vp-c-divider);
+}
+.vp-code-block-title + div[class*='language-'] {
+  margin-top: 0;
+  border-top-left-radius: 0;
+}
+.vp-code-block-title + div[class*='language-'] > pre.vp-code {
+  border-top-left-radius: 0;
+}
+
+.dark {
+  --vp-c-brand-1: #10b87f;
+  --vp-c-brand-2: #0c8d62;
+  --vp-c-brand-3: #10b87f;
+  --vp-c-brand-soft: rgba(16, 184, 127, 0.16);
+
+  --vp-button-brand-bg: #10b87f;
+  --vp-button-brand-hover-bg: #0c8d62;
+  --vp-button-brand-active-bg: #0a7552;
+
+  --vp-home-hero-name-background: linear-gradient(
+    120deg,
+    #10b87f 30%,
+    #34d5a0
+  );
+}

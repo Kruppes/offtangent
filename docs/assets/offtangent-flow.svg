@@ -1,0 +1,52 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 760 430" width="760" height="430" role="img" aria-labelledby="ttl dsc">
+  <title id="ttl">Say it once — it ends up where you will look for it</title>
+  <desc id="dsc">A spoken thought is stored first, without a destination. A small router model then proposes where it belongs: it lands in the thread you already have, or it becomes its own thread and asks you, or it waits unsorted in the tray. Nothing is thrown away, every decision is reversible with one tap.</desc>
+  <rect width="760" height="430" rx="16" fill="#0d1017"/>
+  <rect x="0.5" y="0.5" width="759" height="429" rx="16" fill="none" stroke="#2b3240"/>
+
+  <text x="40" y="52" font-family="ui-sans-serif,-apple-system,Segoe UI,Roboto,Helvetica,Arial,sans-serif" font-size="27" font-weight="700" fill="#f4f7fb">Say it once. It ends up where you look for it.</text>
+
+  <!-- capture -->
+  <rect x="40" y="86" width="250" height="132" rx="13" fill="#161b24" stroke="#38404f"/>
+  <text x="62" y="118" font-family="ui-sans-serif,-apple-system,Segoe UI,Roboto,Helvetica,Arial,sans-serif" font-size="16" letter-spacing="1.6" fill="#8b96a8">YOU, HANDS FULL</text>
+  <text x="62" y="152" font-family="ui-sans-serif,-apple-system,Segoe UI,Roboto,Helvetica,Arial,sans-serif" font-size="21" fill="#e8ecf3">&#8220;Sintered brake pads,</text>
+  <text x="62" y="180" font-family="ui-sans-serif,-apple-system,Segoe UI,Roboto,Helvetica,Arial,sans-serif" font-size="21" fill="#e8ecf3">not the resin ones.&#8221;</text>
+  <text x="62" y="207" font-family="ui-sans-serif,-apple-system,Segoe UI,Roboto,Helvetica,Arial,sans-serif" font-size="17" fill="#7f8a9c">no thread picked yet</text>
+
+  <!-- arrow down to router -->
+  <path d="M165 224 V 252" stroke="#4b5666" stroke-width="2" fill="none"/>
+  <path d="M165 252 l -6 -10 h 12 z" fill="#4b5666"/>
+
+  <!-- router -->
+  <rect x="40" y="258" width="250" height="78" rx="13" fill="#141b26" stroke="#3b6ea8"/>
+  <text x="62" y="292" font-family="ui-sans-serif,-apple-system,Segoe UI,Roboto,Helvetica,Arial,sans-serif" font-size="21" font-weight="600" fill="#cfe0f5">Router &#183; a small model</text>
+  <text x="62" y="318" font-family="ui-sans-serif,-apple-system,Segoe UI,Roboto,Helvetica,Arial,sans-serif" font-size="17" fill="#8fa6c2">proposes a place, notes why</text>
+
+  <!-- fan out -->
+  <path d="M296 297 C 330 297 320 122 356 122" stroke="#4b5666" stroke-width="2" fill="none"/>
+  <path d="M356 122 l -10 -6 v 12 z" fill="#4b5666"/>
+  <path d="M296 297 C 330 297 322 232 356 232" stroke="#4b5666" stroke-width="2" fill="none"/>
+  <path d="M356 232 l -10 -6 v 12 z" fill="#4b5666"/>
+  <path d="M296 297 C 330 297 322 342 356 342" stroke="#4b5666" stroke-width="2" fill="none"/>
+  <path d="M356 342 l -10 -6 v 12 z" fill="#4b5666"/>
+
+  <!-- outcome 1 -->
+  <rect x="364" y="80" width="356" height="84" rx="12" fill="#12211a" stroke="#2f6b4d"/>
+  <circle cx="390" cy="112" r="7" fill="#57c785"/>
+  <text x="410" y="119" font-family="ui-sans-serif,-apple-system,Segoe UI,Roboto,Helvetica,Arial,sans-serif" font-size="21" font-weight="600" fill="#d9f2e4">It joins the thread you have</text>
+  <text x="390" y="147" font-family="ui-sans-serif,-apple-system,Segoe UI,Roboto,Helvetica,Arial,sans-serif" font-size="17" fill="#9fc5b1">&#8220;Rear brake rubbing&#8221;, 9 days old &#183; 0.91</text>
+
+  <!-- outcome 2 -->
+  <rect x="364" y="190" width="356" height="84" rx="12" fill="#211d12" stroke="#7a5c25"/>
+  <circle cx="390" cy="222" r="7" fill="#e5a94a"/>
+  <text x="410" y="229" font-family="ui-sans-serif,-apple-system,Segoe UI,Roboto,Helvetica,Arial,sans-serif" font-size="21" font-weight="600" fill="#f6e6c8">Not sure? It asks instead</text>
+  <text x="390" y="257" font-family="ui-sans-serif,-apple-system,Segoe UI,Roboto,Helvetica,Arial,sans-serif" font-size="17" fill="#cbb289">own thread, plus a review card</text>
+
+  <!-- outcome 3 -->
+  <rect x="364" y="300" width="356" height="84" rx="12" fill="#171a21" stroke="#3b4353"/>
+  <circle cx="390" cy="332" r="7" fill="#8b96a8"/>
+  <text x="410" y="339" font-family="ui-sans-serif,-apple-system,Segoe UI,Roboto,Helvetica,Arial,sans-serif" font-size="21" font-weight="600" fill="#e2e7ef">Fits nothing? It still waits</text>
+  <text x="390" y="367" font-family="ui-sans-serif,-apple-system,Segoe UI,Roboto,Helvetica,Arial,sans-serif" font-size="17" fill="#98a2b3">unsorted beats wrongly sorted </text>
+
+  <text x="40" y="408" font-family="ui-sans-serif,-apple-system,Segoe UI,Roboto,Helvetica,Arial,sans-serif" font-size="17" fill="#69748a">Every decision keeps its reason and stays reversible.</text>
+</svg>

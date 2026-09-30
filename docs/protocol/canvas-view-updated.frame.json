@@ -1,0 +1,19 @@
+{
+  "type": "canvas_view_updated",
+  "sessionId": "strand-canvas-live",
+  "agentId": "analyst",
+  "canvasView": {
+    "userId": 1,
+    "strandId": "strand-canvas-live",
+    "viewKey": "front-wheel",
+    "revision": 1,
+    "latestRevision": 1,
+    "artifactId": "<artifactId>",
+    "title": "Wheel truing",
+    "note": "measure spoke 25 first",
+    "messageId": "<messageId>",
+    "agentId": "analyst",
+    "kind": "html"
+  },
+  "messageId": "<messageId>"
+}

@@ -1,0 +1,762 @@
+/**
+ * Strands, tags, now set and resurface (SPEC 6.2, 6.3). A strand is a thread
+ * (interactive session) plus tags, now rank and link count; the session
+ * manager already renders those fields, this service adds the writes.
+ */
+import type { AgentCore, EffectiveModel, ModelSelection, Database, NowSetMode, StrandAttention, StrandAttentionSummary, StrandDeletePreview, StrandDeleteResult, StrandReadState, StrandTaskTree, Tag, Thread, ResurfaceItem } from '@axiom/core'
+import {
+  EMPTY_STRAND_READ_STATE,
+  InvalidInputError,
+  firstAwaitingStrandId,
+  getStrandAttentions,
+  getStrandReadStates,
+  listStrandIdsForAttention,
+  markStrandRead,
+  assignProjectIfUnset,
+  buildStrandTaskTree,
+  createTag,
+  dismissStrandProject,
+  getStrandProjectSuggestion,
+  deleteStrand,
+  getNowSet,
+  hasLiveTaskForStrand,
+  listChildStrandIds,
+  listResurfaceItems,
+  listTags,
+  lastCompactionForStrand,
+  lastRequestUsageForStrand,
+  lastTranscriptWindowForStrand,
+  previewStrandDelete,
+  rankStrandsByActivity,
+  removeFromNowSet,
+  setNowSet,
+  setStrandTags,
+  snoozeStrand,
+  updateTag,
+} from '@axiom/core'
+import type { ChatEventBus } from '../../../chat-event-bus.js'
+import { resolveNowSetMax, resolveNowSetMode } from '../../../now-set-limit.js'
+import { describePendingTurn } from '../../../turn-queue.js'
+import type { DeleteStrandQuery, ListStrandsQuery, PatchStrandBody, PatchStrandModelBody, StrandTasksQuery } from './schema.js'
+import { effectiveModelForStrand, getProvider, modelMetadataFor } from '../../../model-selection.js'
+
+/**
+ * `GET /api/strands/:id/context` (plan 2026-09-24, strand status bar).
+ *
+ * Everything here describes ONE strand and the LAST request it really sent to
+ * a provider. No accumulated billing totals, no visible history length. Any
+ * number that cannot be derived honestly is `null`, never 0 — the client
+ * renders a dash for it.
+ */
+export interface StrandContextMeasurement {
+  /** `measured` = a provider counted it; `unknown` = the strand never ran. */
+  state: 'measured' | 'unknown'
+  requestTokens: number | null
+  inputTokens: number | null
+  cacheReadTokens: number | null
+  cacheWriteTokens: number | null
+  outputTokens: number | null
+  measuredAt: string | null
+  measuredModelId: string | null
+  measuredProviderId: string | null
+  /**
+   * True when the measurement was taken on a different model than the one the
+   * next turn will use — the percentage then refers to a foreign window and
+   * the client must mark it as outdated instead of silently rescaling it.
+   */
+  stale: boolean
+  /**
+   * False when the counts come from the provider, true for a locally
+   * estimated row. Only `kind = 'request'` rows are selected today, and those
+   * are always provider counted, so this is false in practice — it stays a
+   * boolean so the field can never lie if another source is ever admitted.
+   */
+  estimated: boolean
+}
+
+export interface StrandContextBudget {
+  /**
+   * Context window of the CURRENT model, null when the catalog has none. This
+   * is the ONE denominator of the percentage in the status bar: measured
+   * request tokens / context window.
+   */
+  contextWindow: number | null
+  /**
+   * The catalog's max output tokens of the current model. This is a CAP on the
+   * answer, not a reservation the runtime subtracts from the input budget —
+   * nothing in the runtime deducts it (`maxTokens` is catalog metadata only).
+   * It is reported as a cap and must never be turned into a "usable budget".
+   */
+  outputCapTokens: number | null
+  /** Where the cap comes from, so the client can label it honestly. */
+  outputCapSource: 'model_catalog' | null
+}
+
+/**
+ * The transcript side of the context, and the ONLY basis on which a trim
+ * warning may be raised.
+ *
+ * `AgentCore.prepareStrandContext` applies `heuristics.strand.windowTokens` to
+ * `trimMessagesToBudget(runtime.getMessages())` — the transcript window alone,
+ * estimated locally. The measured request total is a different quantity (it
+ * also carries system prompt, memory, tool definitions and attachments, all
+ * counted by the provider), so comparing it against this budget would light up
+ * permanently on every strand with a large system prompt.
+ *
+ * `state: 'unknown'` means this strand never wrote a `strand_context` metric
+ * row; the client then shows no trim warning instead of guessing one.
+ */
+export interface StrandTranscriptStatus {
+  state: 'measured' | 'unknown'
+  estimatedTokens: number | null
+  budgetTokens: number | null
+  at: string | null
+  /**
+   * Messages the last measured turn dropped. `estimatedTokens` is logged after
+   * the trim, so a strand that was trimmed once sits just below the budget
+   * forever; a threshold warning on top of that would never switch off again.
+   * `> 0` means "already trimmed" (state a fact), `0` with a high ratio means
+   * "trim is imminent" (the only case that warrants a warning).
+   */
+  trimmedMessages: number | null
+  /** Local heuristic estimate, never a provider count. */
+  estimated: true
+}
+
+export interface StrandContextReport {
+  strandId: string
+  measurement: StrandContextMeasurement
+  budget: StrandContextBudget
+  transcript: StrandTranscriptStatus
+  lastCompaction: { at: string; droppedMessages: number; keptTokens: number | null; budgetTokens: number | null } | null
+  model: (EffectiveModel & { displayName: string | null; providerName: string | null }) | null
+  generatedAt: string
+}
+
+export class StrandServiceError extends Error {
+  constructor(readonly status: number, readonly code: string, message: string) {
+    super(message)
+    this.name = 'StrandServiceError'
+  }
+}
+
+/**
+ * Minimal turn runner view: the strands service only asks whether a turn is
+ * live in one session, it never starts one.
+ */
+export interface StrandTurnGuard {
+  getTurnModelOverride?: (user: number | string, sessionId: string) => ModelSelection | null
+  /**
+   * The model a live turn of this strand was bound to at its start, or null
+   * when no turn runs. Feeds `runningTurnModel` (incident 2026-09-24: the
+   * header showed the globally effective model while an older model was still
+   * answering).
+   */
+  getRunningTurnModel?: (user: number | string, sessionId: string) =>
+  (ModelSelection & { source?: string; degradedReason?: string }) | null
+  hasActiveTurnInSession?: (user: number | string, sessionId: string) => boolean
+}
+
+/**
+ * What the strand endpoints actually return: the thread plus its server side
+ * read state (`lastActivityAt`, `unread`). The read state is NOT built in
+ * `SessionManager.toThread` — that runs per row, and the list endpoint would
+ * turn into an N+1 over `chat_messages`. It is joined in one query here
+ * instead (see `getStrandReadStates`).
+ */
+/**
+ * What the list and detail reads add on top of a `Thread`: the read state
+ * (`lastActivityAt` / `unread`) and the "awaiting you" state (`attention`).
+ * Additive, exactly like the read state before it — `Thread` itself stays
+ * untouched so every other consumer of the type is unaffected.
+ */
+export type StrandWithReadState = Thread & StrandReadState & { attention: StrandAttention | null }
+
+export interface StrandsServiceOptions {
+  db: Database
+  getAgentCore: () => AgentCore | null
+  chatEventBus?: ChatEventBus | null
+  getTurnRunner?: () => StrandTurnGuard | null
+  /** Effective now-set size, read per request so a settings save applies at once. */
+  getNowSetMax?: () => number
+  /**
+   * How the now set is filled (`offtangent.nowSetMode`), read per request for
+   * the same reason. `auto` computes the set from the user's activity and
+   * refuses writes, `manual` is the curated `now_set` table.
+   */
+  getNowSetMode?: () => NowSetMode
+  getQuotaSnapshot?: () => unknown
+}
+
+export function createStrandsService(options: StrandsServiceOptions) {
+  const { db } = options
+  const nowSetMaxOf = options.getNowSetMax ?? (() => resolveNowSetMax())
+  const nowSetModeOf = options.getNowSetMode ?? (() => resolveNowSetMode())
+
+  function manager() {
+    const core = options.getAgentCore()
+    if (!core) throw new StrandServiceError(503, 'agent_unavailable', 'Agent core not available')
+    return core.getSessionManager()
+  }
+
+  function requireStrand(userId: number, strandId: string): Thread {
+    const strand = manager().getThread(String(userId), strandId)
+    if (!strand) throw new StrandServiceError(404, 'strand_not_found', 'Strand not found')
+    return strand
+  }
+
+  /**
+   * Ownership of a strand id, told apart from a plain miss. Every other read
+   * answers 404 for a foreign strand (no existence oracle), but SPEC 6.2 asks
+   * DELETE for an explicit 403, so the delete path needs the distinction.
+   */
+  function ownershipOf(userId: number, strandId: string): 'unknown' | 'foreign' | 'own' {
+    const row = db.prepare('SELECT type, user_id, session_user FROM sessions WHERE id = ?')
+      .get(strandId) as { type: string; user_id: number | null; session_user: string | null } | undefined
+    if (!row || row.type !== 'interactive') return 'unknown'
+    const owned = row.session_user === String(userId) || (row.user_id != null && String(row.user_id) === String(userId))
+    return owned ? 'own' : 'foreign'
+  }
+
+  /**
+   * SPEC 7.5b runtime hazard: a strand that is being written to right now, or
+   * that carries a delegated task, must not be archived or deleted — the next
+   * turn would write the rows back.
+   */
+  function assertNotBusy(userId: number, strandId: string): void {
+    const runner = options.getTurnRunner?.()
+    if (runner?.hasActiveTurnInSession?.(userId, strandId)) {
+      throw new StrandServiceError(409, 'strand_busy', 'A turn is running in this strand')
+    }
+    if (hasLiveTaskForStrand(db, strandId)) {
+      throw new StrandServiceError(409, 'strand_busy', 'A delegated task is running in this strand')
+    }
+  }
+
+  /**
+   * Ids the clients should see right now: the computed ranking in auto mode,
+   * the stored set in manual mode.
+   */
+  function currentNowSetIds(userId: number): string[] {
+    return nowSetModeOf() === 'auto'
+      ? rankStrandsByActivity(db, String(userId), { max: nowSetMax() })
+      : getNowSet(db, String(userId))
+  }
+
+  function broadcastNowSet(userId: number): void {
+    options.chatEventBus?.broadcast({
+      type: 'now_set_changed',
+      userId,
+      source: 'web',
+      strandIds: currentNowSetIds(userId),
+    })
+  }
+
+  /**
+   * Archive / un-archive, pin and rename (SPEC 6.2, 7.5b). Archiving clears
+   * the now-set slot and the pin, un-archiving (the undo of the swipe) is
+   * always allowed and never blocked by a running turn.
+   */
+  function patchStrand(userId: number, strandId: string, patch: PatchStrandBody): Thread {
+    const existing = requireStrand(userId, strandId)
+    if (patch.archived === true && !existing.archived) assertNotBusy(userId, strandId)
+
+    const updated = manager().updateThread(String(userId), strandId, {
+      ...(patch.archived !== undefined ? { archived: patch.archived } : {}),
+      ...(patch.archived === true ? { pinned: false } : patch.pinned !== undefined ? { pinned: patch.pinned } : {}),
+      ...(patch.title !== undefined ? { title: patch.title } : {}),
+    })
+    if (!updated) throw new StrandServiceError(404, 'strand_not_found', 'Strand not found')
+
+    // Manual: the slot is freed and the broadcast carries the stored set.
+    // Auto: the archived strand simply drops out of the ranking, so the
+    // broadcast is driven by the computed list instead of the table write
+    // (which may still run harmlessly on a set left over from manual mode).
+    if (patch.archived === true) {
+      const removed = removeFromNowSet(db, String(userId), strandId)
+      if (removed || nowSetModeOf() === 'auto') broadcastNowSet(userId)
+    }
+    return requireStrand(userId, strandId)
+  }
+
+  /**
+   * Attach `lastActivityAt` / `unread` / `attention` to a list of strands in a
+   * bounded number of queries (read state: one per 400 ids, attention: three
+   * per 400 ids). Never one query per strand.
+   */
+  function withReadState(userId: number, strands: Thread[]): StrandWithReadState[] {
+    const ids = strands.map(strand => strand.id)
+    const states = getStrandReadStates(db, ids)
+    const attentions = getStrandAttentions(db, ids, { userId })
+    return strands.map(strand => ({
+      ...strand,
+      ...(states.get(strand.id) ?? EMPTY_STRAND_READ_STATE),
+      attention: attentions.get(strand.id) ?? null,
+    }))
+  }
+
+  /**
+   * Title of a lineage parent, read without an ownership check on purpose: the
+   * caller already owns the CHILD, and a fork never crosses users (see
+   * strand-fork.ts), so this cannot leak a foreign title.
+   */
+  function parentTitleOf(parentStrandId: string): string | null {
+    const row = db.prepare('SELECT title FROM sessions WHERE id = ?').get(parentStrandId) as
+      { title: string | null } | undefined
+    return row?.title ?? null
+  }
+
+  function getStrand(userId: number, strandId: string) {
+    const strand = withReadState(userId, [requireStrand(userId, strandId)])[0]
+    const row = db.prepare('SELECT model_provider_id, model_id FROM sessions WHERE id = ?').get(strandId) as {
+      model_provider_id: string | null
+      model_id: string | null
+    }
+    return {
+      ...strand,
+      pinnedModel: row.model_provider_id && row.model_id
+        ? { providerId: row.model_provider_id, modelId: row.model_id }
+        : null,
+      effectiveModel: effectiveModelForStrand(db, strandId, options.getTurnRunner?.()?.getTurnModelOverride?.(userId, strandId)),
+      /**
+       * The model that is answering RIGHT NOW, frozen when the running turn
+       * started, or null when the strand is idle. `effectiveModel` answers
+       * "what will the next turn use" and changes the moment the global
+       * selection changes; it must not be presented as the source of an answer
+       * that is still streaming from another model (incident 2026-09-24).
+       */
+      runningTurnModel: runningTurnModelOf(userId, strandId),
+      /**
+       * A turn of this strand that is enqueued but has not started yet (plan
+       * 2026-09-19, D5), else null. A client that missed the live
+       * `turn_queued` event (reload, second device) reads the same wait state
+       * here instead of showing an idle strand that is in fact waiting.
+       */
+      pendingTurn: describePendingTurn(db, options.getAgentCore(), userId, strand.agentId, strandId),
+      /**
+       * Lineage of a forked strand (`fork_strand`). `parentStrandId` and
+       * `forkedAt` are already on the thread (and therefore in the list too);
+       * the detail adds the parent's title so a back-link chip needs no second
+       * request, and the direct children so the branch is navigable downwards.
+       * A parent that was deleted resolves to a null title — the lineage id
+       * stays, the fork still happened.
+       */
+      parentStrandTitle: strand.parentStrandId ? parentTitleOf(strand.parentStrandId) : null,
+      childStrandIds: listChildStrandIds(db, strandId),
+    }
+  }
+
+  /**
+   * Normalize the runner's frozen turn model into the same shape the clients
+   * already parse for `effectiveModel`. `source` defaults to `turn` because a
+   * running turn IS the strongest binding, whatever made it effective.
+   */
+  function runningTurnModelOf(userId: number, strandId: string): EffectiveModel | null {
+    const running = options.getTurnRunner?.()?.getRunningTurnModel?.(userId, strandId)
+    if (!running) return null
+    return {
+      providerId: running.providerId,
+      modelId: running.modelId,
+      source: (running.source as EffectiveModel['source'] | undefined) ?? 'turn',
+      ...(running.degradedReason ? { degradedReason: running.degradedReason } : {}),
+    }
+  }
+
+  function patchStrandModel(userId: number, strandId: string, patch: PatchStrandModelBody) {
+    const strand = requireStrand(userId, strandId)
+    assertNotBusy(userId, strandId)
+    const before = effectiveModelForStrand(db, strandId)
+    if (patch.providerId !== null && patch.modelId !== null) {
+      const provider = getProvider(patch.providerId)
+      if (!provider || !(provider.enabledModels ?? []).includes(patch.modelId)
+        || provider.modelStatuses?.[patch.modelId] === 'error') {
+        throw new StrandServiceError(400, 'model_unavailable', 'Provider/model does not exist, is disabled, or is unavailable')
+      }
+    }
+    db.prepare('UPDATE sessions SET model_provider_id = ?, model_id = ? WHERE id = ?')
+      .run(patch.providerId, patch.modelId, strandId)
+    const effective = effectiveModelForStrand(db, strandId)
+    const from = before?.modelId ?? 'kein Modell'
+    const to = effective?.modelId ?? 'kein Modell'
+    db.prepare(
+      `INSERT INTO chat_messages (session_id, user_id, role, content, metadata, agent_id)
+       VALUES (?, ?, 'system', ?, ?, ?)`,
+    ).run(
+      strandId,
+      userId,
+      `Modell: ${from} → ${to}`,
+      JSON.stringify({ type: 'model_change', automatic: false }),
+      strand.agentId,
+    )
+    return {
+      pinnedModel: patch.providerId && patch.modelId ? { providerId: patch.providerId, modelId: patch.modelId } : null,
+      effectiveModel: effective,
+    }
+  }
+
+  function deletePreview(userId: number, strandId: string): StrandDeletePreview {
+    requireStrand(userId, strandId)
+    return previewStrandDelete(db, String(userId), strandId)
+  }
+
+  /**
+   * Hard delete (SPEC 7.5b). Order matters: ownership, confirmation and the
+   * busy guards first, then the in-memory transcript is evicted, and only
+   * then the rows are dropped in one transaction. Evicting before the commit
+   * means a turn that somehow starts in between rebuilds its context from the
+   * database instead of re-persisting a stale one.
+   */
+  function removeStrand(userId: number, strandId: string, query: DeleteStrandQuery): StrandDeleteResult {
+    const ownership = ownershipOf(userId, strandId)
+    if (ownership === 'unknown') throw new StrandServiceError(404, 'strand_not_found', 'Strand not found')
+    if (ownership === 'foreign') throw new StrandServiceError(403, 'forbidden', 'Strand belongs to another user')
+    if (!query.confirm) {
+      throw new StrandServiceError(400, 'confirm_required', 'Deleting a strand requires confirm=1')
+    }
+    const strand = requireStrand(userId, strandId)
+    assertNotBusy(userId, strandId)
+
+    const core = options.getAgentCore()
+    core?.evictSessionTranscript?.(String(userId), strand.agentId, strandId)
+
+    const wasInNowSet = currentNowSetIds(userId).includes(strandId)
+    const result = deleteStrand(db, String(userId), strandId, { deleteFacts: query.deleteFacts })
+    if (wasInNowSet) broadcastNowSet(userId)
+    return result
+  }
+
+  /**
+   * `GET /api/strands`, with the two server side filter chips (plan
+   * 2026-09-26).
+   *
+   * A filter is resolved to an ID SET first and handed to `listThreads` as
+   * `ids`, so ordering, the other filters (tag, persona, project, now) and
+   * LIMIT/OFFSET keep working exactly as before — filtering the page after the
+   * fact would return short pages and a wrong offset. The candidate set is
+   * bounded by the user's own strand count, and both filters combine as AND.
+   */
+  function listStrands(userId: number, query: ListStrandsQuery): StrandWithReadState[] {
+    if (!query.attentionOnly && !query.unreadOnly) {
+      return withReadState(userId, manager().listThreads(String(userId), query))
+    }
+
+    const candidates = listStrandIdsForAttention(db, userId, { includeArchived: query.includeArchived })
+    let ids = candidates
+    if (query.attentionOnly) {
+      const attentions = getStrandAttentions(db, candidates, { userId })
+      ids = ids.filter(id => attentions.has(id))
+    }
+    if (query.unreadOnly) {
+      const states = getStrandReadStates(db, ids)
+      ids = ids.filter(id => states.get(id)?.unread)
+    }
+    if (ids.length === 0) return []
+    return withReadState(userId, manager().listThreads(String(userId), { ...query, ids }))
+  }
+
+  /**
+   * `GET /api/strands/attention-summary`: the two counts a client shows before
+   * it has any list, over ALL non-archived strands of the user — deliberately
+   * independent of the 100-per-page cap of the list endpoint, which is exactly
+   * why this endpoint exists.
+   */
+  function attentionSummary(userId: number): StrandAttentionSummary {
+    const ids = listStrandIdsForAttention(db, userId)
+    const attentions = getStrandAttentions(db, ids, { userId })
+    const states = getStrandReadStates(db, ids)
+    let unread = 0
+    for (const id of ids) {
+      if (states.get(id)?.unread) unread += 1
+    }
+    return {
+      awaiting: attentions.size,
+      unread,
+      firstAwaitingStrandId: firstAwaitingStrandId(attentions),
+    }
+  }
+
+  /**
+   * Mark a strand as read (`POST /api/strands/:id/read`, 204). Idempotent:
+   * the marker is moved to `now` every time, a second call just writes the
+   * same state again. A foreign or unknown strand answers 404 via
+   * `requireStrand` — same rule as every other strand read.
+   */
+  function markRead(userId: number, strandId: string): void {
+    requireStrand(userId, strandId)
+    markStrandRead(db, strandId)
+  }
+
+  /**
+   * Everything that works for this strand right now: the tasks it delegated
+   * and, recursively, their sub-tasks (SPEC 10.x, strand activity).
+   *
+   * Ownership is checked first (`requireStrand` — 404 for a foreign strand,
+   * no existence oracle). This is also the catch-up read after a reconnect:
+   * a client that missed a `task_started` frame still sees the full tree.
+   */
+  function strandTasks(userId: number, strandId: string, query: StrandTasksQuery): StrandTaskTree {
+    requireStrand(userId, strandId)
+    return buildStrandTaskTree(db, strandId, { include: query.include })
+  }
+
+  /**
+   * Context telemetry of one strand (status bar). Ownership first, exactly
+   * like `strandTasks` — a foreign or unknown strand gets 404, never a
+   * measurement. There is one runtime per strand since the isolation merge,
+   * and the reads below are keyed by `session_id` anyway, so no other
+   * strand's numbers can appear here.
+   */
+  /**
+   * `token_usage.provider` is the pi-ai provider SLUG of the request
+   * (`assistantMsg.provider` -> 'ollama', 'anthropic', 'gemini'), while an
+   * effective model carries the CONFIGURED provider id, which is a uuid for
+   * every provider created through the UI. Comparing the two directly marked
+   * every single measurement as stale (observed on the emulator: a request
+   * booked as 'ollama' against provider id '4ac0eadd-…' rendered as "other
+   * model"). So the measured slug is compared against the slug of the
+   * effective provider, and the configured id is still accepted for old rows
+   * and for providers whose id is their slug.
+   *
+   * Limitation, deliberately not invented around: two configured providers can
+   * share one slug (two 'openai-compatible' endpoints). A switch between them
+   * is then invisible here. An unknown provider (deleted from the config)
+   * yields no slug at all — in that case the provider dimension is dropped and
+   * only the model id decides, instead of claiming a change nobody can verify.
+   */
+  function providerChanged(measuredProvider: string, effectiveProviderId: string): boolean {
+    if (measuredProvider === effectiveProviderId) return false
+    const slug = getProvider(effectiveProviderId)?.provider ?? null
+    if (slug === null) return false
+    return measuredProvider !== slug
+  }
+
+  function strandContext(userId: number, strandId: string): StrandContextReport {
+    requireStrand(userId, strandId)
+    const effective = effectiveModelForStrand(db, strandId, options.getTurnRunner?.()?.getTurnModelOverride?.(userId, strandId))
+    const usage = lastRequestUsageForStrand(db, strandId)
+    const meta = effective ? modelMetadataFor(effective.providerId, effective.modelId) : null
+    const contextWindow = meta?.contextWindow ?? null
+    const outputCap = meta?.maxTokens ?? null
+    const transcriptWindow = lastTranscriptWindowForStrand(db, strandId)
+    const measurement: StrandContextMeasurement = usage
+      ? {
+          state: 'measured',
+          requestTokens: usage.requestTokens,
+          inputTokens: usage.inputTokens,
+          cacheReadTokens: usage.cacheReadTokens,
+          cacheWriteTokens: usage.cacheWriteTokens,
+          outputTokens: usage.outputTokens,
+          measuredAt: usage.measuredAt,
+          measuredModelId: usage.measuredModelId,
+          measuredProviderId: usage.measuredProviderId,
+          stale: effective !== null
+            && (usage.measuredModelId !== effective.modelId
+              || providerChanged(usage.measuredProviderId, effective.providerId)),
+          estimated: false,
+        }
+      : {
+          state: 'unknown',
+          requestTokens: null,
+          inputTokens: null,
+          cacheReadTokens: null,
+          cacheWriteTokens: null,
+          outputTokens: null,
+          measuredAt: null,
+          measuredModelId: null,
+          measuredProviderId: null,
+          stale: false,
+          estimated: false,
+        }
+    return {
+      strandId,
+      measurement,
+      budget: {
+        contextWindow,
+        outputCapTokens: outputCap,
+        outputCapSource: outputCap === null ? null : 'model_catalog',
+      },
+      transcript: transcriptWindow
+        ? {
+            state: 'measured',
+            estimatedTokens: transcriptWindow.estimatedTokens,
+            budgetTokens: transcriptWindow.budgetTokens,
+            at: transcriptWindow.at,
+            trimmedMessages: transcriptWindow.trimmedMessages,
+            estimated: true,
+          }
+        : {
+            state: 'unknown',
+            estimatedTokens: null,
+            budgetTokens: null,
+            at: null,
+            trimmedMessages: null,
+            estimated: true,
+          },
+      lastCompaction: lastCompactionForStrand(db, strandId),
+      model: effective
+        ? { ...effective, displayName: meta?.displayName ?? null, providerName: meta?.providerName ?? null }
+        : null,
+      generatedAt: new Date().toISOString(),
+    }
+  }
+
+  function setTags(userId: number, strandId: string, tags: string[]): Thread {
+    requireStrand(userId, strandId)
+    setStrandTags(db, String(userId), strandId, tags)
+    return requireStrand(userId, strandId)
+  }
+
+  function tags(userId: number, includeArchived: boolean): Tag[] {
+    return listTags(db, String(userId), { includeArchived })
+  }
+
+  function createTagFor(userId: number, body: { name?: unknown; color?: unknown }): { tag: Tag; created: boolean } {
+    try {
+      return createTag(db, String(userId), { name: body.name, color: body.color })
+    } catch (err) {
+      if (err instanceof InvalidInputError) throw new StrandServiceError(400, 'invalid_tag', err.message)
+      throw err
+    }
+  }
+
+  function patchTag(userId: number, id: string, body: { name?: unknown; color?: unknown; archived?: unknown }): Tag {
+    let tag: Tag | null
+    try {
+      tag = updateTag(db, String(userId), id, body)
+    } catch (err) {
+      if (err instanceof InvalidInputError) throw new StrandServiceError(400, 'invalid_tag', err.message)
+      throw err
+    }
+    if (!tag) throw new StrandServiceError(404, 'tag_not_found', 'Tag not found')
+    return tag
+  }
+
+  function nowSetMax(): number {
+    return nowSetMaxOf()
+  }
+
+  function nowSetMode(): NowSetMode {
+    return nowSetModeOf()
+  }
+
+  /**
+   * The set can be larger than the current limit when the size setting was
+   * lowered under it, so the list limit is the larger of the two — lowering
+   * the setting must never hide a strand that is in the set.
+   *
+   * In auto mode the list is computed from the user's activity instead
+   * (`rankStrandsByActivity`), hydrated through the same `listThreads` path so
+   * tags, links and read state are attached exactly as before. `nowRank` is
+   * overwritten with the position in the computed list, because the `now_set`
+   * table the session manager reads is not what is shown here.
+   */
+  function nowSet(userId: number): Thread[] {
+    if (nowSetMode() === 'auto') {
+      const ranked = rankStrandsByActivity(db, String(userId), { max: nowSetMax() })
+      if (ranked.length === 0) return []
+      const hydrated = manager().listThreads(String(userId), { ids: ranked, limit: ranked.length })
+      const byId = new Map(hydrated.map(strand => [strand.id, strand]))
+      return ranked.flatMap((id, index) => {
+        const strand = byId.get(id)
+        return strand ? [{ ...strand, nowRank: index + 1 }] : []
+      })
+    }
+    const ids = getNowSet(db, String(userId))
+    if (ids.length === 0) return []
+    const limit = Math.max(nowSetMax(), ids.length)
+    return manager().listThreads(String(userId), { nowOnly: true, includeArchived: true, limit })
+  }
+
+  function replaceNowSet(userId: number, strandIds: string[]): Thread[] {
+    if (nowSetMode() === 'auto') {
+      throw new StrandServiceError(
+        409,
+        'now_set_auto',
+        'The now set is filled automatically; switch offtangent.nowSetMode to manual to edit it',
+      )
+    }
+    const max = nowSetMax()
+    if (strandIds.length > max) {
+      throw new StrandServiceError(400, 'now_set_too_large', `The now set holds at most ${max} strands`)
+    }
+    for (const id of strandIds) {
+      const strand = manager().getThread(String(userId), id)
+      if (!strand || strand.archived) throw new StrandServiceError(400, 'strand_not_found', `Strand ${id} not found`)
+    }
+    const ids = setNowSet(db, String(userId), strandIds, max)
+    options.chatEventBus?.broadcast({ type: 'now_set_changed', userId, source: 'web', strandIds: ids })
+    return nowSet(userId)
+  }
+
+  function resurface(userId: number, limit: number): ResurfaceItem[] {
+    return listResurfaceItems(db, String(userId), { limit })
+  }
+
+  function snooze(userId: number, strandId: string, days: number): void {
+    requireStrand(userId, strandId)
+    snoozeStrand(db, String(userId), strandId, days)
+  }
+
+  /**
+   * Accept the open project proposal of a strand (Stufe 2). Writes the
+   * project only while the strand has none: a strand that got a project in
+   * the meantime (by hand or by a confident run) answers 409 instead of being
+   * moved, because nothing in this feature ever moves a filed strand.
+   */
+  function acceptProjectSuggestion(userId: number, strandId: string): Thread {
+    const strand = requireStrand(userId, strandId)
+    if (strand.projectId) {
+      throw new StrandServiceError(409, 'project_already_set', 'This strand already has a project')
+    }
+    const suggestion = getStrandProjectSuggestion(db, strandId)
+    if (!suggestion) {
+      throw new StrandServiceError(404, 'suggestion_not_found', 'This strand has no open project suggestion')
+    }
+    if (!assignProjectIfUnset(db, strandId, String(userId), suggestion.projectId)) {
+      throw new StrandServiceError(409, 'project_not_assignable', 'The suggested project could not be assigned')
+    }
+    return requireStrand(userId, strandId)
+  }
+
+  /**
+   * Throw the proposal away for good. The (strand, project) pair is recorded,
+   * so no later run suggests it again and no later run assigns it silently
+   * either, however confident it is.
+   */
+  function dismissProjectSuggestion(userId: number, strandId: string): Thread {
+    requireStrand(userId, strandId)
+    const suggestion = getStrandProjectSuggestion(db, strandId)
+    if (!suggestion) {
+      throw new StrandServiceError(404, 'suggestion_not_found', 'This strand has no open project suggestion')
+    }
+    dismissStrandProject(db, strandId, suggestion.projectId)
+    return requireStrand(userId, strandId)
+  }
+
+  return {
+    listStrands,
+    attentionSummary,
+    markRead,
+    getStrand,
+    patchStrandModel,
+    patchStrand,
+    deletePreview,
+    removeStrand,
+    strandTasks,
+    strandContext,
+    setTags,
+    tags,
+    createTag: createTagFor,
+    patchTag,
+    nowSet,
+    nowSetMax,
+    nowSetMode,
+    replaceNowSet,
+    resurface,
+    snooze,
+    acceptProjectSuggestion,
+    dismissProjectSuggestion,
+  }
+}
+
+export type StrandsService = ReturnType<typeof createStrandsService>

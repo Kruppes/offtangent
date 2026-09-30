@@ -1,0 +1,54 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 360 706" width="360" height="706" role="img" aria-labelledby="mstt mstd">
+  <title id="mstt">One agent, three kinds of engine — you pick what runs where</title>
+  <desc id="mstd">Three sources feed one agent: models on your own network (Ollama, LM Studio, vLLM, a Whisper endpoint for dictation, your own OpenAI-compatible speech server), a frontier provider of your choice (sixteen API provider types, three subscription logins, selectable per role, persona and strand), and the tools that run on your own host (shell, files, web, background tasks, cronjobs, boards, canvas, your own services through skills). Every automatic call passes a data policy gate that checks region and training per model, where local counts only when the box itself confirmed it. The result is one agent: captures become strands, memory keeps its provenance, answers come back as text, voice or files.</desc>
+  <rect width="360" height="706" rx="16" fill="#0d1017"/>
+  <rect x="0.5" y="0.5" width="359" height="705" rx="16" fill="none" stroke="#2b3240"/>
+
+  <text x="22" y="38" font-family="ui-sans-serif,-apple-system,Segoe UI,Roboto,Helvetica,Arial,sans-serif" font-size="21" font-weight="700" fill="#f4f7fb">One agent.</text>
+  <text x="22" y="64" font-family="ui-sans-serif,-apple-system,Segoe UI,Roboto,Helvetica,Arial,sans-serif" font-size="21" font-weight="700" fill="#f4f7fb">You pick what runs where.</text>
+
+  <!-- local -->
+  <rect x="22" y="80" width="316" height="116" rx="13" fill="#131c19" stroke="#2f6b52"/>
+  <text x="40" y="106" font-family="ui-sans-serif,-apple-system,Segoe UI,Roboto,Helvetica,Arial,sans-serif" font-size="16" font-weight="700" letter-spacing="1.1" fill="#63c49a">LOCAL &#183; YOUR NETWORK</text>
+  <text x="40" y="132" font-family="ui-sans-serif,-apple-system,Segoe UI,Roboto,Helvetica,Arial,sans-serif" font-size="17" fill="#e4ece8">Ollama, LM Studio, vLLM</text>
+  <text x="40" y="156" font-family="ui-sans-serif,-apple-system,Segoe UI,Roboto,Helvetica,Arial,sans-serif" font-size="17" fill="#e4ece8">Whisper box for dictation</text>
+  <text x="40" y="180" font-family="ui-sans-serif,-apple-system,Segoe UI,Roboto,Helvetica,Arial,sans-serif" font-size="17" fill="#e4ece8">Your own speech server</text>
+
+  <path d="M180 196 V 214" stroke="#4b5666" stroke-width="2" fill="none"/>
+  <path d="M180 216 l -6 -10 h 12 z" fill="#4b5666"/>
+
+  <!-- frontier -->
+  <rect x="22" y="218" width="316" height="116" rx="13" fill="#141b26" stroke="#3b6ea8"/>
+  <text x="40" y="244" font-family="ui-sans-serif,-apple-system,Segoe UI,Roboto,Helvetica,Arial,sans-serif" font-size="16" font-weight="700" letter-spacing="1.1" fill="#7fb2ed">FRONTIER &#183; YOUR KEY</text>
+  <text x="40" y="270" font-family="ui-sans-serif,-apple-system,Segoe UI,Roboto,Helvetica,Arial,sans-serif" font-size="17" fill="#e6ecf5">19 provider types</text>
+  <text x="40" y="294" font-family="ui-sans-serif,-apple-system,Segoe UI,Roboto,Helvetica,Arial,sans-serif" font-size="17" fill="#e6ecf5">3 subscription logins</text>
+  <text x="40" y="318" font-family="ui-sans-serif,-apple-system,Segoe UI,Roboto,Helvetica,Arial,sans-serif" font-size="17" fill="#e6ecf5">Per role, persona, strand</text>
+
+  <path d="M180 334 V 352" stroke="#4b5666" stroke-width="2" fill="none"/>
+  <path d="M180 354 l -6 -10 h 12 z" fill="#4b5666"/>
+
+  <!-- act -->
+  <rect x="22" y="356" width="316" height="116" rx="13" fill="#1c1823" stroke="#6a4f9c"/>
+  <text x="40" y="382" font-family="ui-sans-serif,-apple-system,Segoe UI,Roboto,Helvetica,Arial,sans-serif" font-size="16" font-weight="700" letter-spacing="1.1" fill="#b39aef">ACT &#183; YOUR HOST</text>
+  <text x="40" y="408" font-family="ui-sans-serif,-apple-system,Segoe UI,Roboto,Helvetica,Arial,sans-serif" font-size="17" fill="#eae6f2">Shell, files, web, tasks</text>
+  <text x="40" y="432" font-family="ui-sans-serif,-apple-system,Segoe UI,Roboto,Helvetica,Arial,sans-serif" font-size="17" fill="#eae6f2">Cronjobs, boards, canvas</text>
+  <text x="40" y="456" font-family="ui-sans-serif,-apple-system,Segoe UI,Roboto,Helvetica,Arial,sans-serif" font-size="17" fill="#eae6f2">Your services, via skills</text>
+
+  <path d="M180 472 V 490" stroke="#4b5666" stroke-width="2" fill="none"/>
+  <path d="M180 492 l -6 -10 h 12 z" fill="#4b5666"/>
+
+  <!-- gate -->
+  <rect x="22" y="494" width="316" height="116" rx="13" fill="#1b1a14" stroke="#7d6a2e"/>
+  <text x="40" y="520" font-family="ui-sans-serif,-apple-system,Segoe UI,Roboto,Helvetica,Arial,sans-serif" font-size="16" font-weight="700" letter-spacing="1.1" fill="#d8bb5c">GATE &#183; AUTOMATIC CALLS</text>
+  <text x="40" y="546" font-family="ui-sans-serif,-apple-system,Segoe UI,Roboto,Helvetica,Arial,sans-serif" font-size="16" fill="#ece5cf">Router, summaries, voice:</text>
+  <text x="40" y="570" font-family="ui-sans-serif,-apple-system,Segoe UI,Roboto,Helvetica,Arial,sans-serif" font-size="16" fill="#ece5cf">region + training per model.</text>
+  <text x="40" y="594" font-family="ui-sans-serif,-apple-system,Segoe UI,Roboto,Helvetica,Arial,sans-serif" font-size="16" fill="#ece5cf">&#8220;Local&#8221; needs the box&#8217;s word.</text>
+
+  <path d="M180 610 V 628" stroke="#4b5666" stroke-width="2" fill="none"/>
+  <path d="M180 630 l -6 -10 h 12 z" fill="#4b5666"/>
+
+  <!-- agent -->
+  <rect x="22" y="632" width="316" height="62" rx="13" fill="#161b24" stroke="#4d596b"/>
+  <text x="40" y="660" font-family="ui-sans-serif,-apple-system,Segoe UI,Roboto,Helvetica,Arial,sans-serif" font-size="18" font-weight="600" fill="#f4f7fb">One agent: captures &#8594;</text>
+  <text x="40" y="682" font-family="ui-sans-serif,-apple-system,Segoe UI,Roboto,Helvetica,Arial,sans-serif" font-size="18" font-weight="600" fill="#f4f7fb">strands &#8594; memory.</text>
+</svg>

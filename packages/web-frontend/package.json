@@ -1,0 +1,35 @@
+{
+  "name": "@axiom/web-frontend",
+  "version": "0.29.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build": "nuxt generate",
+    "dev": "nuxt dev --port 3001",
+    "generate": "nuxt generate",
+    "preview": "nuxt preview",
+    "postinstall": "nuxt prepare",
+    "typecheck": "nuxt typecheck",
+    "test:render": "vitest run --config vitest.render.config.ts"
+  },
+  "dependencies": {
+    "@nuxtjs/i18n": "^10.2.4",
+    "@axiom/core": "*",
+    "@tailwindcss/vite": "^4.2.2",
+    "@vueuse/core": "^14.2.1",
+    "class-variance-authority": "^0.7.1",
+    "clsx": "^2.1.1",
+    "lucide-vue-next": "^1.0.0",
+    "marked": "^17.0.5",
+    "nuxt": "^4.4.2",
+    "reka-ui": "^2.9.3",
+    "tailwind-merge": "^3.5.0",
+    "tailwindcss": "^4.2.2",
+    "turndown": "^7.2.2",
+    "vue": "^3.5.0"
+  },
+  "devDependencies": {
+    "@types/turndown": "^5.0.6",
+    "typescript": "^5.7.0"
+  }
+}

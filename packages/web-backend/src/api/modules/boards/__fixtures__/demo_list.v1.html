@@ -1,0 +1,55 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Demo list</title>
+<style>
+  :root { color-scheme: dark; --bg: #0b0c0e; --fg: #e8e8ea; --muted: #9aa0a6; --line: #26282c; --link: #7cb3ff; }
+  :root.light { color-scheme: light; --bg: #ffffff; --fg: #14161a; --muted: #5f6368; --line: #e3e5e8; --link: #1a5fd0; }
+  * { box-sizing: border-box; }
+  body { margin: 0; padding: 16px; background: var(--bg); color: var(--fg);
+         font: 15px/1.45 system-ui, -apple-system, "Segoe UI", sans-serif; }
+  h1 { margin: 0 0 4px; font-size: 18px; }
+  p.meta { margin: 0 0 16px; color: var(--muted); font-size: 12px; }
+  ul { list-style: none; margin: 0; padding: 0; }
+  li { border-top: 1px solid var(--line); padding: 12px 0; }
+  a { color: var(--link); }
+  .note { color: var(--muted); font-size: 12px; }
+</style>
+</head>
+<body>
+<h1 id="title">…</h1>
+<p class="meta" id="meta"></p>
+<ul id="items"></ul>
+<p class="note" id="summary"></p>
+<script>
+  // A server renderer gets its board as a JSON data island and nothing else:
+  // no network, no storage. `?theme=` is the only other input.
+  if (new URLSearchParams(location.search).get('theme') === 'light') {
+    document.documentElement.classList.add('light')
+  }
+  var raw = document.getElementById('board-data')
+  var board = raw ? JSON.parse(raw.textContent) : { title: 'No data', payload: {} }
+  document.getElementById('title').textContent = board.title || ''
+  document.getElementById('meta').textContent = 'Revision ' + board.revision + ' · ' + board.as_of
+  document.getElementById('summary').textContent = board.summary || ''
+  var items = (board.payload && board.payload.items) || []
+  var list = document.getElementById('items')
+  for (var index = 0; index < items.length; index++) {
+    var item = items[index]
+    var li = document.createElement('li')
+    if (item.url) {
+      var link = document.createElement('a')
+      link.href = item.url
+      link.id = 'item-' + index
+      link.textContent = item.title || item.url
+      li.appendChild(link)
+    } else {
+      li.textContent = item.title || String(item)
+    }
+    list.appendChild(li)
+  }
+</script>
+</body>
+</html>

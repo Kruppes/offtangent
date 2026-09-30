@@ -1,0 +1,53 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 760 430" width="760" height="430" role="img" aria-labelledby="stt std">
+  <title id="stt">One agent, three kinds of engine — you pick what runs where</title>
+  <desc id="std">Three sources feed one agent: models on your own network (Ollama, LM Studio, vLLM, a Whisper endpoint for dictation, your own OpenAI-compatible speech server), a frontier provider of your choice (sixteen API provider types, three subscription logins, selectable per role, persona and strand), and the tools that run on your own host (shell, files, web, background tasks, cronjobs, boards, canvas, your own services through skills). Every automatic call passes a data policy gate that checks region and training per model, where local counts only when the box itself confirmed it. The result is one agent: captures become strands, memory keeps its provenance, answers come back as text, voice or files.</desc>
+  <rect width="760" height="430" rx="16" fill="#0d1017"/>
+  <rect x="0.5" y="0.5" width="759" height="429" rx="16" fill="none" stroke="#2b3240"/>
+
+  <text x="28" y="46" font-family="ui-sans-serif,-apple-system,Segoe UI,Roboto,Helvetica,Arial,sans-serif" font-size="26" font-weight="700" fill="#f4f7fb">One agent. You pick what runs where.</text>
+
+  <!-- card 1: local -->
+  <rect x="28" y="70" width="224" height="152" rx="13" fill="#131c19" stroke="#2f6b52"/>
+  <text x="48" y="100" font-family="ui-sans-serif,-apple-system,Segoe UI,Roboto,Helvetica,Arial,sans-serif" font-size="15" font-weight="700" letter-spacing="1.2" fill="#63c49a">LOCAL &#183; YOUR NETWORK</text>
+  <text x="48" y="130" font-family="ui-sans-serif,-apple-system,Segoe UI,Roboto,Helvetica,Arial,sans-serif" font-size="17" fill="#e4ece8">Ollama, LM Studio, vLLM</text>
+  <text x="48" y="158" font-family="ui-sans-serif,-apple-system,Segoe UI,Roboto,Helvetica,Arial,sans-serif" font-size="17" fill="#e4ece8">Whisper box for dictation</text>
+  <text x="48" y="186" font-family="ui-sans-serif,-apple-system,Segoe UI,Roboto,Helvetica,Arial,sans-serif" font-size="17" fill="#e4ece8">Your own speech server</text>
+  <text x="48" y="210" font-family="ui-sans-serif,-apple-system,Segoe UI,Roboto,Helvetica,Arial,sans-serif" font-size="15" fill="#7f9a8d">no key leaves the house</text>
+
+  <!-- card 2: frontier -->
+  <rect x="268" y="70" width="224" height="152" rx="13" fill="#141b26" stroke="#3b6ea8"/>
+  <text x="288" y="100" font-family="ui-sans-serif,-apple-system,Segoe UI,Roboto,Helvetica,Arial,sans-serif" font-size="15" font-weight="700" letter-spacing="1.2" fill="#7fb2ed">FRONTIER &#183; YOUR KEY</text>
+  <text x="288" y="130" font-family="ui-sans-serif,-apple-system,Segoe UI,Roboto,Helvetica,Arial,sans-serif" font-size="17" fill="#e6ecf5">19 provider types</text>
+  <text x="288" y="158" font-family="ui-sans-serif,-apple-system,Segoe UI,Roboto,Helvetica,Arial,sans-serif" font-size="17" fill="#e6ecf5">3 subscription logins</text>
+  <text x="288" y="186" font-family="ui-sans-serif,-apple-system,Segoe UI,Roboto,Helvetica,Arial,sans-serif" font-size="17" fill="#e6ecf5">Per role, persona, strand</text>
+  <text x="288" y="210" font-family="ui-sans-serif,-apple-system,Segoe UI,Roboto,Helvetica,Arial,sans-serif" font-size="15" fill="#8ba0bc">keys encrypted at rest</text>
+
+  <!-- card 3: act -->
+  <rect x="508" y="70" width="224" height="152" rx="13" fill="#1c1823" stroke="#6a4f9c"/>
+  <text x="528" y="100" font-family="ui-sans-serif,-apple-system,Segoe UI,Roboto,Helvetica,Arial,sans-serif" font-size="15" font-weight="700" letter-spacing="1.2" fill="#b39aef">ACT &#183; YOUR HOST</text>
+  <text x="528" y="130" font-family="ui-sans-serif,-apple-system,Segoe UI,Roboto,Helvetica,Arial,sans-serif" font-size="17" fill="#eae6f2">Shell, files, web, tasks</text>
+  <text x="528" y="158" font-family="ui-sans-serif,-apple-system,Segoe UI,Roboto,Helvetica,Arial,sans-serif" font-size="17" fill="#eae6f2">Cronjobs, boards, canvas</text>
+  <text x="528" y="186" font-family="ui-sans-serif,-apple-system,Segoe UI,Roboto,Helvetica,Arial,sans-serif" font-size="17" fill="#eae6f2">Your services, via skills</text>
+  <text x="528" y="210" font-family="ui-sans-serif,-apple-system,Segoe UI,Roboto,Helvetica,Arial,sans-serif" font-size="15" fill="#9b8dbb">runs in your container</text>
+
+  <!-- arrows into the gate -->
+  <path d="M140 222 V 248" stroke="#4b5666" stroke-width="2" fill="none"/>
+  <path d="M140 250 l -6 -10 h 12 z" fill="#4b5666"/>
+  <path d="M380 222 V 248" stroke="#4b5666" stroke-width="2" fill="none"/>
+  <path d="M380 250 l -6 -10 h 12 z" fill="#4b5666"/>
+  <path d="M620 222 V 248" stroke="#4b5666" stroke-width="2" fill="none"/>
+  <path d="M620 250 l -6 -10 h 12 z" fill="#4b5666"/>
+
+  <!-- gate band -->
+  <rect x="28" y="254" width="704" height="86" rx="13" fill="#1b1a14" stroke="#7d6a2e"/>
+  <text x="48" y="281" font-family="ui-sans-serif,-apple-system,Segoe UI,Roboto,Helvetica,Arial,sans-serif" font-size="15" font-weight="700" letter-spacing="1.2" fill="#d8bb5c">GATE &#183; AUTOMATIC CALLS ONLY</text>
+  <text x="48" y="307" font-family="ui-sans-serif,-apple-system,Segoe UI,Roboto,Helvetica,Arial,sans-serif" font-size="17" fill="#ece5cf">Router, summaries, consolidation and spoken replies pass a data policy:</text>
+  <text x="48" y="330" font-family="ui-sans-serif,-apple-system,Segoe UI,Roboto,Helvetica,Arial,sans-serif" font-size="17" fill="#ece5cf">region and training per model &#8212; &#8220;local&#8221; only when the box confirmed it.</text>
+
+  <path d="M380 340 V 358" stroke="#4b5666" stroke-width="2" fill="none"/>
+  <path d="M380 360 l -6 -10 h 12 z" fill="#4b5666"/>
+
+  <!-- agent -->
+  <rect x="28" y="364" width="704" height="48" rx="13" fill="#161b24" stroke="#4d596b"/>
+  <text x="48" y="394" font-family="ui-sans-serif,-apple-system,Segoe UI,Roboto,Helvetica,Arial,sans-serif" font-size="19" font-weight="600" fill="#f4f7fb">One agent: captures &#8594; strands &#8594; memory, answered in text, voice or files.</text>
+</svg>

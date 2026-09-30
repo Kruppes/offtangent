@@ -1,0 +1,23 @@
+# gitleaks configuration
+#
+# The repository is scanned by scripts/publish-snapshot.sh (gate 1) before any
+# snapshot is published. Everything in the tree must be free of credentials.
+#
+# The single exception is the secret-detector corpus: it exists to look like
+# leaked material so the detector can be proven against it. Every value in that
+# file is synthetic, no real and no expired credential, no personal data.
+# See risk R8 in /data/memory/plans/2026-09-26-privacy-step1-PLAN.md.
+
+[extend]
+useDefault = true
+
+[allowlist]
+  description = "Synthetic secret-detector corpus (test fixture only)"
+  # Scoped to exactly one file: the fixture itself, plus the artifacts tsc
+  # emits for it. The dist entries exist because `gitleaks detect --no-git`
+  # also walks untracked build output; the publish gate scans a `git archive`
+  # export, where dist/ does not exist at all.
+  paths = [
+    '''packages/core/src/secret-corpus\.fixture\.ts''',
+    '''packages/core/dist/secret-corpus\.fixture\.(js|d\.ts|js\.map|d\.ts\.map)''',
+  ]
