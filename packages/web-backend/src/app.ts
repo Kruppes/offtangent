@@ -55,6 +55,7 @@ import type { HealthMonitorService } from './health-monitor.js'
 import type { RuntimeMetrics } from './runtime-metrics.js'
 import type { MemoryConsolidationScheduler } from './memory-consolidation-scheduler.js'
 import { createUploadsRouter } from './routes/uploads.js'
+import { ISOLATED_INFER_MOUNT, createIsolatedInferenceRouter } from './routes/isolated-inference.js'
 import type { ChatActionRegistry } from './chat-actions.js'
 
 const startTime = Date.now()
@@ -132,6 +133,17 @@ export function createApp(options?: AppOptions): express.Express {
   // it express would answer 413 and the documented
   // `400 { error: 'text_too_large' }` could never reach a client.
   app.use('/api/speech', express.json({ limit: SPEECH_BODY_LIMIT }))
+
+  // Isolated inference (contract `isolated-inference.v1`): ONE profile bound
+  // completion for a registered external service. Mounted FIRST, before the
+  // generic body parser, the CORS middleware and the JWT gated routers, and
+  // without the database handle:
+  //  - its own `express.json()` limit only applies while `req.body` is unset,
+  //  - the credentialed CORS headers must never be answered for this path,
+  //  - it brings its own service scoped bearer credential and can reach
+  //    nothing but the provider layer.
+  app.use(ISOLATED_INFER_MOUNT, createIsolatedInferenceRouter())
+
   app.use(express.json())
 
   // CORS: allow frontend dev server (different port) to access API

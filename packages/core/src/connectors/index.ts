@@ -115,6 +115,28 @@ export {
 } from './google/manifest.js'
 export type { GoogleManifestOptions } from './google/manifest.js'
 
+// Generic read-only adapter for an interview service (interview-read.v1).
+export {
+  INTERVIEW_READ_CONTRACT,
+  INTERVIEW_READ_DEFAULT_SCOPES,
+  INTERVIEW_READ_LIMITS,
+  INTERVIEW_READ_ORIGIN_ENV,
+  INTERVIEW_READ_PATHS,
+  INTERVIEW_READ_SCOPES,
+  InterviewReadError,
+  UNTRUSTED_NOTE as INTERVIEW_READ_UNTRUSTED_NOTE,
+  createInterviewReadClient,
+  createInterviewReadManifest,
+  resolveInterviewOrigin,
+} from './interview-read/manifest.js'
+export type {
+  InterviewReadClient,
+  InterviewReadClientOptions,
+  InterviewReadManifestOptions,
+  InterviewReadScope,
+  InterviewSummary,
+} from './interview-read/manifest.js'
+
 export {
   CONNECTOR_UNTRUSTED_NOTE,
   createAskConnectorTool,

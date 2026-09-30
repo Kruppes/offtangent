@@ -1374,6 +1374,36 @@ export {
 } from './router-model.js'
 export type { RouterChainEntry, ResolvedRouterModel, RouterModelHandle } from './router-model.js'
 export {
+  ISOLATED_INFERENCE_CONTRACT,
+  ISOLATED_INFERENCE_CONFIG_FILE,
+  ISOLATED_INFERENCE_PROFILES,
+  ISOLATED_INFERENCE_REQUEST_KEYS,
+  ISOLATED_INFERENCE_AUDIT_FILE,
+  IsolatedInferenceError,
+  authenticateIsolatedService,
+  isIsolatedServiceStillValid,
+  isolatedInferenceAuditPath,
+  isolatedInferenceUsage,
+  loadIsolatedInferenceConfig,
+  parseIsolatedRequest,
+  parseModelJson,
+  resetIsolatedInferenceState,
+  resolveProfileModel,
+  runIsolatedInference,
+} from './isolated-inference.js'
+export type {
+  IsolatedCompletion,
+  IsolatedCompletionInput,
+  IsolatedErrorCode,
+  IsolatedInferenceConfig,
+  IsolatedInferenceProfile,
+  IsolatedInferenceRequest,
+  IsolatedInferenceResult,
+  IsolatedInferenceService,
+  IsolatedInferenceUsage,
+  IsolatedInferenceAuditEntry,
+} from './isolated-inference.js'
+export {
   ROUTER_CANDIDATE_CAP,
   ROUTER_TITLE_MAX,
   ROUTER_PROJECT_CAP,

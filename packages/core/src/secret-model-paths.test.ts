@@ -44,7 +44,20 @@ const MODEL_CALL_PATTERNS = ['completeSimple(', 'new PiAgent(', 'embedTexts(']
  */
 const FOREIGN_CALL_PATTERNS = ['.complete(', '.stream(', 'new Agent(', 'streamText(', 'generateText(']
 
-type CallClass = 'redacted-context' | 'sealed-text' | 'no-user-text' | 'wrapper' | 'unsealed-user-text'
+type CallClass =
+  | 'redacted-context'
+  | 'sealed-text'
+  | 'no-user-text'
+  | 'wrapper'
+  | 'unsealed-user-text'
+  /**
+   * Text that a registered EXTERNAL service handed in over its own API and that
+   * never touched a local chat, capture, memory row or agent context. No local
+   * value can be in it, so there is nothing to unseal — but the site still owes
+   * an entry in {@link KNOWN_EXTERNAL_TEXT} explaining why no local data can
+   * reach it.
+   */
+  | 'external-service-text'
 
 const MODEL_CALL_SITES: Record<string, { class: CallClass; why: string }> = {
   // ------------------------------------------------- the indirection itself
@@ -132,6 +145,11 @@ const MODEL_CALL_SITES: Record<string, { class: CallClass; why: string }> = {
     class: 'no-user-text',
     why: 'Health probe with the fixed prompt "Respond with OK only." and maxTokens 5.',
   },
+  // ------------------------------------------------- inbound external service
+  'core/src/isolated-inference.ts#defaultCompletion': {
+    class: 'external-service-text',
+    why: 'The isolated inference gateway (POST /v1/isolated/infer). The prompt is the server side profile prompt plus the `input` a registered service posted; it reads no chat, capture, memory, strand or agent context, so no local (sealable) value can enter it. See KNOWN_EXTERNAL_TEXT.',
+  },
   // ------------------------------------------------------ documented exception
   'core/src/stt.ts#rewriteTranscript': {
     class: 'unsealed-user-text',
@@ -149,6 +167,18 @@ const KNOWN_UNSEALED: Record<string, string> = {
     + 'speech path and its model is subject to the data-policy gate (role `stt-rewrite`), and the channel edge '
     + '(ws-chat / REST / telegram bot) seals the transcript before it is stored or sent to the turn agent. '
     + 'Open point in the integration report: sealing before the rewrite call would still be an improvement.',
+}
+
+/**
+ * Sites that may send text of an external service to a model, with the reason
+ * why no local data can reach that prompt. Anything else with that class fails.
+ */
+const KNOWN_EXTERNAL_TEXT: Record<string, string> = {
+  'core/src/isolated-inference.ts#defaultCompletion': 'The module imports only config, data-policy, pi-models and provider-config '
+    + '(pinned by isolated-inference.test.ts), so it has no access to the database, to memory, to chats, strands, captures, '
+    + 'connectors or tools. Its only input is the `input` string of the request, which the caller sends over HTTP; the system '
+    + 'prompt belongs to the server side profile and the caller cannot set one. The model is chosen by the profile and still '
+    + 'passes the data-policy gate, so region/training rules apply exactly as for every other call.',
 }
 
 const RESERVED = new Set(['if', 'for', 'while', 'switch', 'catch', 'return', 'else', 'try', 'do', 'await'])
@@ -248,6 +278,31 @@ describe('secret boundary: model-call inventory (T3, second architecture test)',
       expect(reason.length, `${key} needs a reason in KNOWN_UNSEALED`).toBeGreaterThan(80)
       expect(MODEL_CALL_SITES[key]?.class).toBe('unsealed-user-text')
     }
+  })
+
+  it('allows external service text only for a documented inbound endpoint', () => {
+    const external = Object.entries(MODEL_CALL_SITES)
+      .filter(([, entry]) => entry.class === 'external-service-text')
+      .map(([key]) => key)
+    expect(
+      external.filter(key => !(key in KNOWN_EXTERNAL_TEXT)),
+      'This site sends text of an external caller to a model. Document in KNOWN_EXTERNAL_TEXT why no local data can reach it.',
+    ).toEqual([])
+    for (const [key, reason] of Object.entries(KNOWN_EXTERNAL_TEXT)) {
+      expect(reason.length, `${key} needs a reason in KNOWN_EXTERNAL_TEXT`).toBeGreaterThan(80)
+      expect(MODEL_CALL_SITES[key]?.class).toBe('external-service-text')
+    }
+    // Structural, not prose: this class exists for EXACTLY the isolated
+    // inference endpoint. A new call site cannot be silenced with a paragraph,
+    // it has to be discussed here.
+    expect(
+      Object.keys(KNOWN_EXTERNAL_TEXT).sort(),
+      'external-service-text is reserved for the isolated inference gateway. A new entry needs a review, not a comment.',
+    ).toEqual(['core/src/isolated-inference.ts#defaultCompletion'])
+    // ... and the isolation that the reason above claims must still hold.
+    const source = fs.readFileSync(path.join(REPO_ROOT, 'packages/core/src/isolated-inference.ts'), 'utf-8')
+    const imports = [...source.matchAll(/from '(\.[^']+)'/g)].map(m => m[1]).sort()
+    expect(imports).toEqual(['./config.js', './data-policy.js', './pi-models.js', './provider-config.js'])
   })
 
   it('keeps both agent loops on the redacted context', () => {

@@ -1,11 +1,17 @@
 import { createGoogleConnectorManifest } from './google/manifest.js'
+import { createInterviewReadManifest } from './interview-read/manifest.js'
 import type { ConnectorManifest } from './types.js'
 
 /**
  * The production registry. Only real connectors live here; a synthetic manifest
  * stays in its fixture and is registered by tests (AGENTS.md).
  */
-const builtinConnectors: ConnectorManifest[] = [createGoogleConnectorManifest()]
+const builtinConnectors: ConnectorManifest[] = [
+  createGoogleConnectorManifest(),
+  // Generic, config driven: without INTERVIEW_READ_ORIGIN and a stored read
+  // token it stays `not_configured` and reaches nothing.
+  createInterviewReadManifest(),
+]
 
 export interface ConnectorRegistry {
   list: () => ConnectorManifest[]
