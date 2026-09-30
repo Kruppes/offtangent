@@ -54,7 +54,7 @@ codes `unauthorized` (401), `unknown_field` / `invalid_request` (400), `profile_
 |---|---|
 | model | `claude-sonnet-5-5` (resolved through the configured providers) |
 | system prompt | fixed in `packages/core/src/isolated-inference.ts` |
-| output ceiling | 3000 tokens (a larger `maxOutputTokens` is clamped). Derived from the live run of 30.09.2026: a valid interview state JSON cost 474-993 output tokens, the bounded delta contract of the client worst cases at ~2200, the client asks for 2400. |
+| output ceiling | 3000 tokens (a larger `maxOutputTokens` is clamped). Empirical allowance: valid live answers used 474–993 tokens; the client asks for 2400. A character/token ratio is not a worst-case guarantee. The provider token limit is enforced; the calling service validates its own delta schema after generation. |
 | input cap | 80 000 chars |
 | tools | none, ever |
 | temperature | never sent (Sonnet 5.5 rejects it) |

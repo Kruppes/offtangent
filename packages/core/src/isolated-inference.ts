@@ -81,15 +81,12 @@ export const ISOLATED_INFERENCE_PROFILES: Readonly<Record<string, IsolatedInfere
     modelSpec: 'claude-sonnet-5-5',
     systemPrompt: INTERVIEW_V1_SYSTEM,
     // Ceiling, not a default: the request value is clamped against it and a
-    // caller can never pick a model or a larger budget. Derived from the live
-    // acceptance run of 30.09.2026: a valid interview state JSON cost between
-    // 474 and 993 output tokens, and the bounded delta contract of the calling
-    // service (<=6 new facts, <=3 assumptions/open questions, <=2
-    // contradictions, <=3 pilot candidates, summary <=700 characters) worst
-    // cases at ~5700 characters, i.e. ~2200 tokens at the ~2.6 characters per
-    // token measured for German JSON in the same run. 3000 leaves head room
-    // above the 2400 the client asks for without turning this endpoint into an
-    // open ended text generator.
+    // caller can never pick a model or a larger budget. Empirical allowance:
+    // valid live answers used 474-993 tokens; the caller requests 2400 for a
+    // bounded delta. Character/token ratios are NOT a worst-case proof (the
+    // original estimate omitted processProfile). The client validates its
+    // schema; the provider token cap is the actual generation bound, and a
+    // length stop is always output_truncated, never silently accepted.
     maxOutputTokens: 3000,
     maxInputChars: 80_000,
     timeoutMs: 120_000,
