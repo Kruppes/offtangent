@@ -47,6 +47,10 @@
   textarea { width: 100%; min-height: 150px; background: var(--bg); color: var(--fg);
     border: 1px solid var(--line); border-radius: 8px; padding: 8px; font: 12px/1.4 ui-monospace, monospace; }
   .hint { color: var(--dim); font-size: .78rem; margin-top: 6px; }
+  .tools { margin: 8px 0 6px; }
+  button.copy { background: var(--card); color: var(--fg); border: 1px solid var(--dim); border-radius: 999px;
+    padding: 9px 14px; min-height: 44px; font: inherit; font-weight: 600; cursor: pointer; }
+  button.copy:focus-visible { outline: 2px solid var(--relevant); outline-offset: 2px; }
   .quick li { border: 0; padding: 3px 0; color: var(--dim); font-size: .86rem; }
 </style>
 </head>
@@ -169,6 +173,30 @@
     return url.href;
   }
 
+  /*
+   * Copying out of the sandbox. The document is served with
+   * `Content-Security-Policy: … sandbox allow-scripts` and framed with
+   * `sandbox="allow-scripts"`: no `allow-same-origin`, no clipboard
+   * permission. `navigator.clipboard.writeText` is therefore refused in most
+   * browsers here, and `execCommand('copy')` may be too. So the SELECTION is
+   * the guaranteed part (it always works), the clipboard write is a bonus, and
+   * the status line says which of the two actually happened instead of
+   * claiming success.
+   */
+  function fallbackCopy() {
+    try { return document.execCommand ? document.execCommand('copy') === true : false; }
+    catch (e) { return false; }
+  }
+  function copyText(value) {
+    var api = navigator.clipboard;
+    if (api && typeof api.writeText === 'function') {
+      try {
+        return api.writeText(value).then(function () { return true; }, function () { return fallbackCopy(); });
+      } catch (e) { return Promise.resolve(fallbackCopy()); }
+    }
+    return Promise.resolve(fallbackCopy());
+  }
+
   var detail = document.getElementById('detail');
   function openStory(story) {
     detail.textContent = '';
@@ -232,8 +260,28 @@
     area.readOnly = true;
     area.value = snapshot(story);
     area.setAttribute('aria-label', 'Artikel-Kontext zum Kopieren');
+    ask.appendChild(el('div', 'hint', href
+      ? 'Ohne Link: Artikel-Kontext markieren, kopieren und selbst in eine Unterhaltung einfügen.'
+      : 'Artikel-Kontext zum Kopieren. Ein Direktlink in die Weboberfläche steht in dieser Ansicht nicht zur Verfügung: Text markieren, kopieren und selbst in eine Unterhaltung einfügen.'));
+    var tools = el('div', 'tools');
+    var mark = el('button', 'copy', 'Alles markieren');
+    mark.type = 'button';
+    var status = el('div', 'hint', '');
+    status.setAttribute('role', 'status');
+    mark.addEventListener('click', function () {
+      area.focus();
+      area.select();
+      try { area.setSelectionRange(0, area.value.length); } catch (e) { /* older WebViews */ }
+      copyText(area.value).then(function (copied) {
+        status.textContent = copied
+          ? 'In die Zwischenablage kopiert.'
+          : 'Text ist markiert. Kopieren geht in diesem eingebetteten Fenster nur von Hand: Strg+C, bzw. am Handy lange tippen und „Kopieren“.';
+      });
+    });
+    tools.appendChild(mark);
+    ask.appendChild(tools);
     ask.appendChild(area);
-    ask.appendChild(el('div', 'hint', 'Alternativ: Text markieren, kopieren und in eine Unterhaltung einfügen.'));
+    ask.appendChild(status);
     detail.appendChild(ask);
 
     document.body.className = 'detail-open';
