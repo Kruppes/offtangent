@@ -76,7 +76,7 @@ beforeAll(async () => {
       const proposal = newest
         ? { action: 'append', strandId: newest.id, intent: 'ask', confidence: 0.95, tags: [], rationale: 'stub appends', alternatives: [] }
         : { action: 'new_strand', newStrand: { title: 'Router strand', personaId: 'main', tags: [] }, intent: 'ask', confidence: 0.95, tags: [], rationale: 'stub opens', alternatives: [] }
-      return { text: JSON.stringify(proposal), model: chain[0]!, latencyMs: 1 }
+      return JSON.stringify(proposal)
     },
   })
   app.use('/api/captures', captures.captures)
