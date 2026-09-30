@@ -8,6 +8,7 @@ import {
   ProvidersNotFoundError,
   ProvidersValidationError,
 } from './service.js'
+import { mapProvidersListResponse } from './mapper.js'
 
 let tempDataDir: string
 let previousDataDir: string | undefined
@@ -127,5 +128,27 @@ describe('getLiveModels (dynamic catalog)', () => {
   it('rejects an unknown provider id', async () => {
     const service = createProvidersService()
     await expect(service.getLiveModels('does-not-exist')).rejects.toBeInstanceOf(ProvidersNotFoundError)
+  })
+})
+
+// GPT-6.1 Sol is newer than the pinned pi-ai catalog and reaches the picker
+// through PROVIDER_TYPE_MODEL_OVERRIDES (openai + openai-codex).
+describe('GPT-6.1 Sol in the model picker', () => {
+  it.each(['openai', 'openai-codex'])('lists it for %s in the Add Model catalog', (providerType) => {
+    const models = createProvidersService().getModelsByProviderType(providerType)
+    expect(models.find(m => m.id === 'gpt-6.1-sol')).toMatchObject({ name: 'GPT-6.1 Sol', contextWindow: 272_000 })
+  })
+
+  it('reports its per-token prices once it is enabled on a ChatGPT provider', () => {
+    const provider = addProvider({
+      name: 'ChatGPT',
+      providerType: 'openai-codex',
+      apiKey: '',
+      enabledModels: ['gpt-6-sol', 'gpt-6.1-sol'],
+    })
+    const { masked, decrypted } = createProvidersService().listProviders()
+    const listed = mapProvidersListResponse(masked, decrypted).providers.find(p => p.id === provider.id)
+    expect(listed?.modelCosts?.['gpt-6.1-sol']).toEqual({ input: 2, output: 10, cacheRead: 0.1, cacheWrite: 2.5 })
+    expect(listed?.modelCosts?.['gpt-6-sol']).toEqual({ input: 2, output: 10, cacheRead: 0.2, cacheWrite: 2.5 })
   })
 })

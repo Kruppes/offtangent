@@ -465,6 +465,40 @@ const ANTHROPIC_MODEL_OVERRIDES: ProviderModelConfig[] = [
 ]
 
 /**
+ * GPT-6.1 Sol (released 2026-09-29) is newer than the pinned pi-ai release
+ * (0.87.1). Metadata mirrors the generated catalog of pi-ai 0.99.2. Remove
+ * both entries once the pi-ai pin contains `gpt-6.1-sol` (the provider-config
+ * test "is still missing from the pinned pi-ai catalog" fails at that point).
+ *
+ * Differences to GPT-6 Sol: half the cache read price, and no reasoning-off
+ * mode (`off: null`; GPT-6 Sol maps `off` to `none`).
+ */
+const GPT_6_1_SOL_BASE: ProviderModelConfig = {
+  id: 'gpt-6.1-sol', name: 'GPT-6.1 Sol', contextWindow: 272_000, maxTokens: 128_000, reasoning: true,
+  cost: {
+    input: 2, output: 10, cacheRead: 0.1, cacheWrite: 2.5,
+    tiers: [{ inputTokensAbove: 272_000, input: 4, output: 15, cacheRead: 0.2, cacheWrite: 5 }],
+  },
+}
+
+/**
+ * OpenAI API key provider. The preset speaks Chat Completions, so the
+ * Responses-only compat flags of pi-ai's `openai` catalog entry are not
+ * carried over; the thinking map is the catalog's (`minimal` unsupported).
+ */
+const OPENAI_MODEL_OVERRIDES: ProviderModelConfig[] = [
+  { ...GPT_6_1_SOL_BASE,
+    thinkingLevelMap: { off: null, minimal: null, low: 'low', medium: 'medium', high: 'high', xhigh: 'xhigh', max: 'max' } },
+]
+
+/** ChatGPT subscription (Codex Responses API), pi-ai's `openai-codex` entry. */
+const OPENAI_CODEX_MODEL_OVERRIDES: ProviderModelConfig[] = [
+  { ...GPT_6_1_SOL_BASE,
+    thinkingLevelMap: { off: null, minimal: 'low', low: 'low', medium: 'medium', high: 'high', xhigh: 'xhigh', max: 'max' },
+    compat: { supportsOpenAIGrammarTools: true, supportsAdditionalTools: true, supportsToolSearch: true, supportsMidConvoSystemMessages: true } },
+]
+
+/**
  * Local catalog overrides for provider types whose model list is not well
  * represented in pi-ai. Entries here take precedence over pi-ai and also feed
  * buildModel() with metadata (contextWindow, maxTokens, cost, reasoning) so
@@ -478,6 +512,9 @@ export const PROVIDER_TYPE_MODEL_OVERRIDES: Partial<Record<ProviderType, Provide
   // generated catalog picks it up.
   anthropic: ANTHROPIC_MODEL_OVERRIDES,
   'anthropic-oauth': ANTHROPIC_MODEL_OVERRIDES,
+  // OpenAI API and ChatGPT subscription; same removal rule as above.
+  openai: OPENAI_MODEL_OVERRIDES,
+  'openai-codex': OPENAI_CODEX_MODEL_OVERRIDES,
   // Moonshot Platform API (https://platform.moonshot.ai)
   // Confirmed via GET https://api.moonshot.ai/v1/models and official pricing docs.
   // Fallback catalog only — the `kimi` preset now resolves its model list from
@@ -1070,6 +1107,11 @@ export interface ProviderModelConfig {
     output: number
     cacheRead?: number
     cacheWrite?: number
+    /**
+     * Long-context price tiers, handed to pi-ai's `calculateCost` verbatim
+     * (the highest `inputTokensAbove` below the request's input wins).
+     */
+    tiers?: NonNullable<Model<Api>['cost']['tiers']>
   }
 }
 
@@ -2243,6 +2285,7 @@ export function buildModel(provider: ProviderConfig, modelId?: string): Model<Ap
       output: modelConfig?.cost?.output ?? priceFallback.output,
       cacheRead: modelConfig?.cost?.cacheRead ?? 0,
       cacheWrite: modelConfig?.cost?.cacheWrite ?? 0,
+      ...(modelConfig?.cost?.tiers && { tiers: modelConfig.cost.tiers }),
     },
     contextWindow: modelConfig?.contextWindow ?? 128000,
     maxTokens: modelConfig?.maxTokens ?? 16384,

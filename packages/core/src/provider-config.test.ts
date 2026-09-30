@@ -36,6 +36,8 @@ import {
   resolvePromptProfileOptions,
 } from './provider-config.js'
 import { SYSTEM_PROMPT_CACHE_MARKER } from './prompt-cache.js'
+import { getBuiltinModels } from '@earendil-works/pi-ai/providers/all'
+import { calculateCost, getSupportedThinkingLevels } from '@earendil-works/pi-ai'
 import { encrypt, decrypt, maskApiKey } from './encryption.js'
 import fs from 'node:fs'
 import path from 'node:path'
@@ -1949,6 +1951,18 @@ describe('syncNewCatalogModels', () => {
     expect(loadProviders().providers[0].knownModels).toContain(newModel)
   })
 
+  it('enables GPT-6.1 Sol on a ChatGPT (Codex) provider that knows the pinned pi-ai catalog', () => {
+    const pinned = getBuiltinModels('openai-codex').map(m => m.id)
+    setup([{
+      id: 'codex-1', name: 'ChatGPT', type: 'openai-codex-responses', providerType: 'openai-codex',
+      provider: 'openai-codex', baseUrl: '', apiKey: '', authMethod: 'oauth',
+      enabledModels: ['gpt-6-sol'], knownModels: pinned,
+    }])
+
+    expect(syncNewCatalogModels()).toEqual([{ providerId: 'codex-1', providerName: 'ChatGPT', added: ['gpt-6.1-sol'] }])
+    expect(loadProviders().providers[0].enabledModels).toEqual(['gpt-6-sol', 'gpt-6.1-sol'])
+  })
+
   it('keeps vanished catalog models in knownModels (grow-only union)', () => {
     const catalogIds = getAvailableModels('anthropic').map(m => m.id)
     setup([anthropicProvider({ knownModels: [...catalogIds, 'claude-legacy-gone'] })])
@@ -2039,5 +2053,89 @@ describe('OAuth recovery after an authentication failure', () => {
     expect(await recoverOAuthAfterAuthFailure('keyed')).toBe(false)
     expect(await recoverOAuthAfterAuthFailure('does-not-exist')).toBe(false)
     expect(await recoverOAuthAfterAuthFailure('oauthish')).toBe(true)
+  })
+})
+
+/**
+ * GPT-6.1 Sol shipped after the pinned pi-ai release (0.87.1). It is carried as
+ * a local override for both OpenAI provider types until the pin includes it;
+ * the metadata mirrors pi-ai 0.99.2's generated catalog entry.
+ */
+describe('GPT-6.1 Sol override (openai + openai-codex)', () => {
+  const codexProvider = {
+    id: 'codex-id',
+    name: 'ChatGPT',
+    type: 'openai-codex-responses',
+    providerType: 'openai-codex' as const,
+    provider: 'openai-codex',
+    baseUrl: '',
+    apiKey: '',
+    authMethod: 'oauth' as const,
+    enabledModels: ['gpt-6.1-sol'],
+  }
+  const openaiProvider = {
+    id: 'openai-id',
+    name: 'OpenAI',
+    type: 'openai-completions',
+    providerType: 'openai' as const,
+    provider: 'openai',
+    baseUrl: 'https://api.openai.com/v1',
+    apiKey: 'sk-test',
+    enabledModels: ['gpt-6.1-sol'],
+  }
+
+  it('is still missing from the pinned pi-ai catalog (drop the override once this fails)', () => {
+    expect(getBuiltinModels('openai').some(m => m.id === 'gpt-6.1-sol')).toBe(false)
+    expect(getBuiltinModels('openai-codex').some(m => m.id === 'gpt-6.1-sol')).toBe(false)
+  })
+
+  it.each(['openai', 'openai-codex'] as const)('appears in the %s model list next to GPT-6 Sol', (type) => {
+    const models = getAvailableModels(type)
+    expect(models.find(m => m.id === 'gpt-6-sol')).toBeDefined()
+    expect(models.find(m => m.id === 'gpt-6.1-sol')).toEqual({
+      id: 'gpt-6.1-sol', name: 'GPT-6.1 Sol', contextWindow: 272_000, cost: { input: 2, output: 10 },
+    })
+  })
+
+  it('builds a Codex model with the catalog metadata, tiered pricing and xhigh', () => {
+    const model = buildModel(codexProvider, 'gpt-6.1-sol')
+    expect(model).toMatchObject({
+      id: 'gpt-6.1-sol',
+      name: 'GPT-6.1 Sol',
+      api: 'openai-codex-responses',
+      provider: 'openai-codex',
+      reasoning: true,
+      input: ['text', 'image'],
+      contextWindow: 272_000,
+      maxTokens: 128_000,
+      cost: {
+        input: 2, output: 10, cacheRead: 0.1, cacheWrite: 2.5,
+        tiers: [{ inputTokensAbove: 272_000, input: 4, output: 15, cacheRead: 0.2, cacheWrite: 5 }],
+      },
+      compat: { supportsOpenAIGrammarTools: true, supportsAdditionalTools: true, supportsToolSearch: true, supportsMidConvoSystemMessages: true },
+    })
+    // GPT-6.1 Sol has no reasoning-off mode (unlike GPT-6 Sol's `none`).
+    expect(getSupportedThinkingLevels(model)).toEqual(['minimal', 'low', 'medium', 'high', 'xhigh', 'max'])
+  })
+
+  it('builds an OpenAI api-key model with reasoning and without a reasoning-off / minimal level', () => {
+    const model = buildModel(openaiProvider, 'gpt-6.1-sol')
+    expect(model).toMatchObject({
+      api: 'openai-completions', baseUrl: 'https://api.openai.com/v1', reasoning: true,
+      contextWindow: 272_000, maxTokens: 128_000, cost: { input: 2, output: 10, cacheRead: 0.1, cacheWrite: 2.5 },
+    })
+    expect(getSupportedThinkingLevels(model)).toEqual(['low', 'medium', 'high', 'xhigh', 'max'])
+  })
+
+  it('prices usage: flat estimate and the pi-ai long-context tier', () => {
+    const model = buildModel(codexProvider, 'gpt-6.1-sol')
+    // 1M in + 1M out + 1M cache read + 1M cache write at 2 / 10 / 0.1 / 2.5
+    expect(estimateCost(model, 1_000_000, 1_000_000, 1_000_000, 1_000_000)).toBeCloseTo(14.6, 6)
+    const usage = (input: number) => ({
+      input, output: 1_000, cacheRead: 0, cacheWrite: 0, totalTokens: input + 1_000,
+      cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
+    })
+    expect(calculateCost(model, usage(100_000)).total).toBeCloseTo(100_000 * 2 / 1e6 + 1_000 * 10 / 1e6, 9)
+    expect(calculateCost(model, usage(300_000)).total).toBeCloseTo(300_000 * 4 / 1e6 + 1_000 * 15 / 1e6, 9)
   })
 })
