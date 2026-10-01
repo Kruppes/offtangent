@@ -1,8 +1,11 @@
 import {
   DEFAULT_HEALTH_MONITOR_NOTIFICATION_TOGGLES,
+  DEFAULT_MAX_CONCURRENT_TASKS,
+  DEFAULT_MAX_CONCURRENT_TASKS_PER_PROVIDER,
   DEFAULT_MODEL_GATE_MODE,
   MODEL_GATE_MODES,
   normalizeBlockedFamilyList,
+  normalizeProviderLimitOverrides,
   DEFAULT_NOW_SET_MAX,
   DEFAULT_ATTENTION_MAX_AGE_HOURS,
   DEFAULT_NOW_SET_MODE,
@@ -100,7 +103,9 @@ function buildTasksResponse(settingsRaw: Record<string, unknown>) {
   return {
     defaultProvider: tasks.defaultProvider ?? '',
     maxDurationMinutes: tasks.maxDurationMinutes ?? 60,
-    maxConcurrent: tasks.maxConcurrent ?? 3,
+    maxConcurrent: tasks.maxConcurrent ?? DEFAULT_MAX_CONCURRENT_TASKS,
+    maxConcurrentPerProvider: tasks.maxConcurrentPerProvider ?? DEFAULT_MAX_CONCURRENT_TASKS_PER_PROVIDER,
+    maxConcurrentByProvider: normalizeProviderLimitOverrides(tasks.maxConcurrentByProvider),
     telegramDelivery: tasks.telegramDelivery ?? 'auto',
     loopDetection: {
       enabled: loopDetection.enabled ?? true,

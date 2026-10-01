@@ -1,6 +1,6 @@
 import type { Database } from './database.js'
 import { TaskRunner } from './task-runner.js'
-import type { TaskRunnerOptions, TaskOverrides } from './task-runner.js'
+import type { TaskRunnerOptions, TaskOverrides, TaskQueueInfo } from './task-runner.js'
 import { TaskScheduler } from './task-scheduler.js'
 import type { TaskSchedulerOptions } from './task-scheduler.js'
 import type { ProviderConfig } from './provider-config.js'
@@ -28,9 +28,12 @@ export interface TaskRuntimeTaskBoundary {
   /**
    * Concurrency-queue state of a task (optional so existing test doubles of
    * this boundary keep compiling): `position` is 1-based, `0` when the task
-   * is not waiting; `limit` is `0` when the limit is disabled.
+   * is not waiting; `limit` (global cap) is `0` when the limit is disabled.
+   * The provider fields are optional for the same reason: `reason` says
+   * whether the provider limit or the global cap keeps the task waiting.
    */
-  queueInfo?(taskId: string): { queued: boolean; position: number; running: number; queued_count: number; limit: number }
+  queueInfo?(taskId: string): Pick<TaskQueueInfo, 'queued' | 'position' | 'running' | 'queued_count' | 'limit'>
+    & Partial<Pick<TaskQueueInfo, 'reason' | 'provider' | 'provider_running' | 'provider_limit'>>
   /** Ids of the tasks waiting for a concurrency slot, in FIFO order. */
   getQueuedIds?(): string[]
   cleanupStalePaused(): number

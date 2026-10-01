@@ -1,7 +1,9 @@
 import { describe, it, expect } from 'vitest'
 import {
   DEFAULT_MAX_CONCURRENT_TASKS,
+  DEFAULT_MAX_CONCURRENT_TASKS_PER_PROVIDER,
   TaskConcurrencyQueue,
+  UNKNOWN_PROVIDER_KEY,
   normalizeMaxConcurrentTasks,
   queueAppliesToTrigger,
 } from './task-queue.js'
@@ -45,10 +47,22 @@ describe('normalizeMaxConcurrentTasks', () => {
 })
 
 describe('TaskConcurrencyQueue', () => {
+  // These tests pin the global cap (`tasks.maxConcurrent`) on its own: the
+  // per-provider limit is switched off (0) and every task lands in the same
+  // `unknown` provider bucket. Per-provider behaviour lives in
+  // task-queue.per-provider.test.ts.
   function makeQueue(limit: number) {
     const box = { limit }
-    const queue = new TaskConcurrencyQueue<string>(() => box.limit)
+    const queue = new TaskConcurrencyQueue<string>(() => ({ global: box.limit, perProvider: 0 }))
     return { queue, box }
+  }
+
+  /** Shape of a waiting admission under the global cap (additive fields since the per-provider limit). */
+  function waitingOnGlobal(position: number, running: number) {
+    return {
+      admitted: false, position, running,
+      reason: 'global', providerKey: UNKNOWN_PROVIDER_KEY, providerRunning: running, providerLimit: 0,
+    }
   }
 
   it('admits up to the limit and queues the rest in FIFO order', () => {
@@ -56,8 +70,8 @@ describe('TaskConcurrencyQueue', () => {
 
     expect(queue.admit('a', 'payload-a')).toEqual({ admitted: true, running: 1 })
     expect(queue.admit('b', 'payload-b')).toEqual({ admitted: true, running: 2 })
-    expect(queue.admit('c', 'payload-c')).toEqual({ admitted: false, position: 1, running: 2 })
-    expect(queue.admit('d', 'payload-d')).toEqual({ admitted: false, position: 2, running: 2 })
+    expect(queue.admit('c', 'payload-c')).toEqual(waitingOnGlobal(1, 2))
+    expect(queue.admit('d', 'payload-d')).toEqual(waitingOnGlobal(2, 2))
 
     expect(queue.activeCount()).toBe(2)
     expect(queue.queuedIds()).toEqual(['c', 'd'])
@@ -121,8 +135,9 @@ describe('TaskConcurrencyQueue', () => {
   })
 
   it('falls back to the default when the limit source returns garbage', () => {
-    const queue = new TaskConcurrencyQueue<string>(() => Number.NaN)
+    const queue = new TaskConcurrencyQueue<string>(() => ({ global: Number.NaN, perProvider: Number.NaN }))
     expect(queue.limit()).toBe(DEFAULT_MAX_CONCURRENT_TASKS)
+    expect(queue.providerLimit('any')).toBe(DEFAULT_MAX_CONCURRENT_TASKS_PER_PROVIDER)
   })
 
   it('occupy takes a slot without waiting (bypass) and still counts', () => {
@@ -166,7 +181,7 @@ describe('TaskConcurrencyQueue', () => {
     expect(queue.admit('a', 'a')).toEqual({ admitted: true, running: 1 })
 
     queue.admit('b', 'b')
-    expect(queue.admit('b', 'b')).toEqual({ admitted: false, position: 1, running: 1 })
+    expect(queue.admit('b', 'b')).toEqual(waitingOnGlobal(1, 1))
     expect(queue.queuedIds()).toEqual(['b'])
   })
 
@@ -175,7 +190,9 @@ describe('TaskConcurrencyQueue', () => {
     queue.admit('a', 'a')
     queue.admit('b', 'b')
     queue.clear()
-    expect(queue.snapshot()).toEqual({ limit: 1, running: 0, queued: 0, queuedIds: [] })
+    expect(queue.snapshot()).toEqual({
+      limit: 1, perProviderLimit: 0, running: 0, queued: 0, queuedIds: [], providers: {},
+    })
   })
 
   it('snapshot reports limit, running and queued for logging', () => {
@@ -183,6 +200,9 @@ describe('TaskConcurrencyQueue', () => {
     queue.admit('a', 'a')
     queue.admit('b', 'b')
     queue.admit('c', 'c')
-    expect(queue.snapshot()).toEqual({ limit: 2, running: 2, queued: 1, queuedIds: ['c'] })
+    expect(queue.snapshot()).toEqual({
+      limit: 2, perProviderLimit: 0, running: 2, queued: 1, queuedIds: ['c'],
+      providers: { [UNKNOWN_PROVIDER_KEY]: { running: 2, queued: 1, limit: 0 } },
+    })
   })
 })

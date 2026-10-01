@@ -334,3 +334,55 @@ describe('mergePrivacy blockedModelFamilies (T1b)', () => {
     expect(settingsRaw).toEqual({})
   })
 })
+
+describe('tasks concurrency settings', () => {
+  it('accepts and persists the per-provider default and overrides', () => {
+    const settingsRaw: Record<string, unknown> = { tasks: { maxConcurrent: 6 } }
+    expect(mergeTasks({
+      tasks: { maxConcurrentPerProvider: 0, maxConcurrentByProvider: { 'provider-a': 2, 'provider-b': 64 } },
+    }, settingsRaw)).toEqual({ error: null })
+    expect(settingsRaw.tasks).toEqual({
+      maxConcurrent: 6,
+      maxConcurrentPerProvider: 0,
+      maxConcurrentByProvider: { 'provider-a': 2, 'provider-b': 64 },
+    })
+  })
+
+  it('an empty override object clears the overrides', () => {
+    const settingsRaw: Record<string, unknown> = { tasks: { maxConcurrentByProvider: { 'provider-a': 2 } } }
+    expect(mergeTasks({ tasks: { maxConcurrentByProvider: {} } }, settingsRaw)).toEqual({ error: null })
+    expect(settingsRaw.tasks).toEqual({ maxConcurrentByProvider: {} })
+  })
+
+  it.each([
+    [-1, 'tasks.maxConcurrentPerProvider must be an integer 0-64'],
+    [65, 'tasks.maxConcurrentPerProvider must be an integer 0-64'],
+    [2.5, 'tasks.maxConcurrentPerProvider must be an integer 0-64'],
+    ['5', 'tasks.maxConcurrentPerProvider must be an integer 0-64'],
+  ])('rejects maxConcurrentPerProvider %j', (value, error) => {
+    const settingsRaw: Record<string, unknown> = {}
+    expect(mergeTasks({ tasks: { maxConcurrentPerProvider: value } }, settingsRaw)).toEqual({ error })
+    expect(settingsRaw.tasks).toBeUndefined()
+  })
+
+  it.each([
+    [[1, 2], 'tasks.maxConcurrentByProvider must be an object of provider id to integer 0-64'],
+    [null, 'tasks.maxConcurrentByProvider must be an object of provider id to integer 0-64'],
+    [5, 'tasks.maxConcurrentByProvider must be an object of provider id to integer 0-64'],
+    [{ 'provider-a': 65 }, 'tasks.maxConcurrentByProvider.provider-a must be an integer 0-64'],
+    [{ 'provider-a': -1 }, 'tasks.maxConcurrentByProvider.provider-a must be an integer 0-64'],
+    [{ 'provider-a': 'two' }, 'tasks.maxConcurrentByProvider.provider-a must be an integer 0-64'],
+    [{ '': 2 }, 'tasks.maxConcurrentByProvider keys must be non-empty provider ids'],
+  ])('rejects maxConcurrentByProvider %j', (value, error) => {
+    const settingsRaw: Record<string, unknown> = {}
+    expect(mergeTasks({ tasks: { maxConcurrentByProvider: value } }, settingsRaw)).toEqual({ error })
+    expect(settingsRaw.tasks).toBeUndefined()
+  })
+
+  it('keeps validating the global cap 0..64', () => {
+    expect(mergeTasks({ tasks: { maxConcurrent: 65 } }, {})).toEqual({ error: 'tasks.maxConcurrent must be an integer 0-64' })
+    const settingsRaw: Record<string, unknown> = {}
+    expect(mergeTasks({ tasks: { maxConcurrent: 0 } }, settingsRaw)).toEqual({ error: null })
+    expect(settingsRaw.tasks).toEqual({ maxConcurrent: 0 })
+  })
+})

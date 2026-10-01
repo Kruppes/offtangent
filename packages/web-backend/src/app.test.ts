@@ -1157,6 +1157,46 @@ describe('settings API', () => {
     expect(body.error).toContain('tasks.maxConcurrent')
   })
 
+  it('reports and persists the per-provider task limits', async () => {
+    const headers = { Authorization: `Bearer ${adminToken}`, 'Content-Type': 'application/json' }
+    const settingsPath = path.join(tempDataDir, 'config', 'settings.json')
+    const onDisk = JSON.parse(fs.readFileSync(settingsPath, 'utf-8')) as { tasks?: Record<string, unknown> }
+    if (onDisk.tasks) {
+      delete onDisk.tasks.maxConcurrent
+      delete onDisk.tasks.maxConcurrentPerProvider
+      delete onDisk.tasks.maxConcurrentByProvider
+      fs.writeFileSync(settingsPath, JSON.stringify(onDisk, null, 2))
+    }
+
+    // Defaults when nothing is configured: 5 per provider, global cap 12.
+    const before = (await (await fetch(`${baseUrl}/api/settings`, { headers })).json()) as { tasks: Record<string, unknown> }
+    expect(before.tasks.maxConcurrent).toBe(12)
+    expect(before.tasks.maxConcurrentPerProvider).toBe(5)
+    expect(before.tasks.maxConcurrentByProvider).toEqual({})
+
+    const res = await fetch(`${baseUrl}/api/settings`, {
+      method: 'PUT',
+      headers,
+      body: JSON.stringify({ tasks: { maxConcurrentPerProvider: 3, maxConcurrentByProvider: { 'provider-a': 1 } } }),
+    })
+    expect(res.status).toBe(200)
+    const settings = JSON.parse(fs.readFileSync(settingsPath, 'utf-8')) as { tasks: Record<string, unknown> }
+    expect(settings.tasks.maxConcurrentPerProvider).toBe(3)
+    expect(settings.tasks.maxConcurrentByProvider).toEqual({ 'provider-a': 1 })
+
+    const after = (await (await fetch(`${baseUrl}/api/settings`, { headers })).json()) as { tasks: Record<string, unknown> }
+    expect(after.tasks.maxConcurrentPerProvider).toBe(3)
+    expect(after.tasks.maxConcurrentByProvider).toEqual({ 'provider-a': 1 })
+
+    const bad = await fetch(`${baseUrl}/api/settings`, {
+      method: 'PUT',
+      headers,
+      body: JSON.stringify({ tasks: { maxConcurrentByProvider: { 'provider-a': 99 } } }),
+    })
+    expect(bad.status).toBe(400)
+    expect(((await bad.json()) as { error: string }).error).toContain('tasks.maxConcurrentByProvider')
+  })
+
   it('persists factExtraction when saving full form (like the frontend)', async () => {
     const getRes = await fetch(`${baseUrl}/api/settings`, {
       headers: { Authorization: `Bearer ${adminToken}` },

@@ -30,22 +30,30 @@ Offtangent has no built-in hard spend cap. Max duration and loop detection bound
 
 ### Max concurrent tasks
 
-How many background tasks may run **at the same time**. Default: `3`. Range: 0 – 64, where `0` means "no limit".
+How many background tasks may run **at the same time**. There are two limits, and a task starts only when both have room:
 
-Everything above the limit waits in a **FIFO queue** and starts automatically as soon as a slot frees up. A waiting task is already a real task row (status `running`, but without a start time), so it survives a restart and shows up as _queued_ in the UI. Its time budget (max duration, wrap-up warning) only starts ticking when the task really starts — waiting is free.
+| Key | Default | Meaning |
+|---|---|---|
+| `tasks.maxConcurrentPerProvider` | `5` | Tasks **one provider** may run at the same time. Range 0 – 64, `0` = no limit. |
+| `tasks.maxConcurrentByProvider` | `{}` | Optional override per provider id, e.g. `{ "<provider-id>": 2 }`. Values 0 – 64, `0` = no limit for that provider. |
+| `tasks.maxConcurrent` | `12` | **Global cap** across all providers — a safety net for the host. Range 0 – 64, `0` = no cap. |
 
-What the limit is for: a task can be expensive locally, not just at the provider (builds, test suites, browsers). Seven of those in parallel are enough to push a small host into swap. Size the limit by RAM, not by patience.
+The slot of a task is counted against the provider it was started with (task pin, persona default, or the default task provider above). A model or provider fallback during the run does not move the slot. Tasks whose provider cannot be resolved share one `unknown` bucket.
+
+Everything above a limit waits in a **FIFO queue** and starts automatically as soon as a slot frees up. The queue does not block across providers: when a slot frees up, the **oldest waiting task that can start** gets it, so a task waiting for a busy provider never holds up a task of another provider. Within one provider the order is strictly first in, first out. The tool result of `create_task` says whether the provider limit or the global cap keeps a task waiting. A waiting task is already a real task row (status `running`, but without a start time), so it survives a restart and shows up as _queued_ in the UI. Its time budget (max duration, wrap-up warning) only starts ticking when the task really starts — waiting is free.
+
+What the limits are for: the per-provider limit keeps one provider's rate limits and subscription quota from being hammered. The global cap exists because a task can be expensive locally, not just at the provider (builds, test suites, browsers) — CPU and RAM are shared no matter which provider drives a task. Seven of those in parallel are enough to push a small host into swap. Size the global cap by RAM, not by patience.
 
 Details worth knowing:
 
 - **Who waits:** tasks with trigger `user` or `agent`.
-- **Who skips the queue:** `cronjob` and `heartbeat` runs (short, time-critical) and a task that is *resumed* after a question — someone is waiting for that answer. They still occupy a slot, so they count towards the limit.
+- **Who skips the queue:** `cronjob` and `heartbeat` runs (short, time-critical) and a task that is *resumed* after a question — someone is waiting for that answer. They still occupy a slot (in their provider and globally), so they count towards both limits.
 - **Paused tasks are free:** a task waiting for your answer holds no slot.
 - **After a restart:** recovered tasks all go through the queue instead of starting at once.
-- **Changing the value** takes effect on the next queue decision — no restart needed.
+- **Changing a value** takes effect on the next queue decision — no restart needed.
 
 ```json
-{ "tasks": { "maxConcurrent": 3 } }
+{ "tasks": { "maxConcurrent": 12, "maxConcurrentPerProvider": 5, "maxConcurrentByProvider": { "<provider-id>": 2 } } }
 ```
 
 ### Telegram delivery

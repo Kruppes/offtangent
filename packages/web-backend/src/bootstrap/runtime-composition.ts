@@ -1196,12 +1196,14 @@ export async function createRuntimeComposition(options: RuntimeCompositionOption
       // this a hung LLM call would leave the row at status='running'
       // forever. Per-task limits still take precedence when set.
       defaultMaxDurationMinutes: taskSettings.maxDurationMinutes,
-      // Global task concurrency limit (`tasks.maxConcurrent`, plan
-      // 2026-09-26): deliberately NOT wired from the boot-time settings
-      // snapshot above. The runner reads the value from settings.json on
-      // every admission/dequeue decision (`readMaxConcurrentTasksFromConfig`),
-      // so raising or lowering the limit applies without a server restart.
-      // Pass `getMaxConcurrentTasks` only to override that live read.
+      // Task concurrency limits (`tasks.maxConcurrentPerProvider`,
+      // `tasks.maxConcurrentByProvider`, global cap `tasks.maxConcurrent`;
+      // plans 2026-09-26 and 2026-10-01): deliberately NOT wired from the
+      // boot-time settings snapshot above. The runner reads them from
+      // settings.json on every admission/dequeue decision
+      // (`readTaskConcurrencyLimitsFromConfig`), so changing a limit applies
+      // without a server restart. Pass `getMaxConcurrentTasks` /
+      // `getProviderTaskLimits` only to override that live read.
     },
     scheduler: {
       // Cronjob tasks can be pinned via modelPolicy.roles["task:cronjob"].

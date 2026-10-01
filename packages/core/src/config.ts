@@ -105,8 +105,10 @@ const TEMPLATES: Record<string, object> = {
     tasks: {
       defaultProvider: '',
       maxDurationMinutes: 60,
-      // Global task concurrency limit (0 = unlimited). See task-queue.ts.
-      maxConcurrent: 3,
+      // Task concurrency: global cap across all providers plus slots per
+      // provider (0 = unlimited). See task-queue.ts.
+      maxConcurrent: 12,
+      maxConcurrentPerProvider: 5,
       telegramDelivery: 'auto',
       loopDetection: {
         enabled: true,

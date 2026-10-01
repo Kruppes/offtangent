@@ -656,7 +656,12 @@ export type {
   TaskFilterClauseOptions,
 } from './task-store.js'
 export { TaskRunner, formatTaskInjection } from './task-runner.js'
-export type { TaskRunnerOptions, TaskOverrides } from './task-runner.js'
+export type { TaskRunnerOptions, TaskOverrides, TaskQueueInfo } from './task-runner.js'
+export {
+  DEFAULT_MAX_CONCURRENT_TASKS,
+  DEFAULT_MAX_CONCURRENT_TASKS_PER_PROVIDER,
+  normalizeProviderLimitOverrides,
+} from './task-queue.js'
 export { createTaskRuntime } from './task-runtime.js'
 export type {
   TaskRuntimeBoundary,

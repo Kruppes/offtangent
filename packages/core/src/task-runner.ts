@@ -41,9 +41,11 @@ import { buildTaskHandoff, extractHandoffSection } from './task-handoff.js'
 import type { HandoffReason } from './task-handoff.js'
 import {
   TaskConcurrencyQueue,
+  normalizeProviderKey,
   queueAppliesToTrigger,
-  readMaxConcurrentTasksFromConfig,
+  readTaskConcurrencyLimitsFromConfig,
 } from './task-queue.js'
+import type { QueueWaitReason, TaskConcurrencyLimits } from './task-queue.js'
 
 const MAX_STATUS_UPDATE_INTERVAL_MINUTES = 120
 
@@ -198,16 +200,53 @@ export interface TaskRunnerOptions {
    */
   defaultMaxDurationMinutes?: number
   /**
-   * Global task concurrency limit: how many tasks may occupy a slot at the
-   * same time. Further `user`/`agent` tasks wait in a FIFO queue and start
-   * when a slot frees up. `0` (or negative) = unlimited.
+   * Global (host-wide) task concurrency cap across all providers: how many
+   * tasks may occupy a slot at the same time. `0` (or negative) = unlimited.
    *
    * A function, not a number, because the limit is re-read on every
    * admission/dequeue decision so a `settings.json` edit applies without a
    * restart. When omitted, `tasks.maxConcurrent` is read from settings.json
-   * directly (default 3).
+   * directly (default 12).
    */
   getMaxConcurrentTasks?: () => number
+  /**
+   * Per-provider task slots: `perProvider` is the default number of tasks one
+   * provider (keyed by provider id) may run at the same time, `byProvider`
+   * overrides it per provider id. `0` = unlimited. Further `user`/`agent`
+   * tasks of a saturated provider wait in the queue; tasks of other
+   * providers are not held up by them.
+   *
+   * Re-read on every decision like `getMaxConcurrentTasks`. When omitted,
+   * `tasks.maxConcurrentPerProvider` (default 5) and
+   * `tasks.maxConcurrentByProvider` are read from settings.json directly.
+   */
+  getProviderTaskLimits?: () => Pick<TaskConcurrencyLimits, 'perProvider' | 'byProvider'>
+}
+
+/** Concurrency-queue state of one task (see `TaskRunner.getQueueInfo`). */
+export interface TaskQueueInfo {
+  queued: boolean
+  /** 1-based position in the overall waiting list, 0 when not waiting. */
+  position: number
+  /** Tasks occupying a slot, all providers. */
+  running: number
+  /** Tasks waiting for a slot, all providers. */
+  queued_count: number
+  /** Global cap (0 = unlimited). */
+  limit: number
+  /** Which limit keeps the task waiting (null when it is not waiting). */
+  reason: QueueWaitReason | null
+  /** Provider key the task's slot is counted against (null when unknown to the queue). */
+  provider: string | null
+  /** Tasks of that provider occupying a slot. */
+  provider_running: number
+  /** Slot limit of that provider (0 = unlimited). */
+  provider_limit: number
+}
+
+/** Slot key of a task: the id of the provider it runs on. */
+function providerKeyOf(provider: ProviderConfig | null | undefined): string {
+  return normalizeProviderKey(provider?.id)
 }
 
 /**
@@ -227,6 +266,12 @@ interface RunningTask {
   agent: PiAgent
   /** Provider the task runs on (null on resume — provider not persisted in PausedTask). */
   provider?: ProviderConfig | null
+  /**
+   * Concurrency slot key: the provider the task was admitted with. Carried
+   * through pause/resume so a resumed task re-occupies a slot of the same
+   * provider; a model/provider fallback inside the run does not change it.
+   */
+  slotProviderKey: string
   abortController: AbortController
   timeoutTimer: ReturnType<typeof setTimeout> | null
   /**
@@ -288,6 +333,8 @@ interface PausedTask {
   taskId: string
   agent: PiAgent
   provider: ProviderConfig
+  /** Slot key to re-occupy on resume (see `RunningTask.slotProviderKey`). */
+  slotProviderKey: string
   pausedAt: number
   promptTokens: number
   completionTokens: number
@@ -309,6 +356,14 @@ interface PendingStart {
   provider: ProviderConfig
   overrides?: TaskOverrides
   parentSessionId?: string | null
+}
+
+/** `provider-a 2/5, provider-b 1/unlimited` — for the slot log lines. */
+function formatProviderOccupancy(providers: Record<string, { running: number; queued: number; limit: number }>): string {
+  const parts = Object.entries(providers).map(
+    ([key, p]) => `${key} ${p.running}/${p.limit || 'unlimited'}${p.queued ? ` +${p.queued} queued` : ''}`,
+  )
+  return parts.length ? parts.join(', ') : 'no provider busy'
 }
 
 /** Interval for cleaning up stale paused tasks (1 hour) */
@@ -498,8 +553,11 @@ export class TaskRunner {
   private options: TaskRunnerOptions
   private cleanupTimer: ReturnType<typeof setInterval> | null = null
   /**
-   * Global task concurrency limit + FIFO waiting list (plan 2026-09-26).
-   * Slots are taken in `startTask`/`resumeTask` and released in
+   * Task concurrency slots per provider plus a global cap, with a FIFO
+   * waiting list (plans 2026-09-26 and 2026-10-01). A slot is counted against
+   * the provider the task was admitted with (`provider.id`) and keeps that key
+   * until it is released. Slots are taken in `startTask`/`resumeTask` and
+   * released in
    * `cleanupRunningTask` — the single funnel every terminal path (completed,
    * failed, aborted, timeout, guard, pause) already goes through.
    */
@@ -511,12 +569,25 @@ export class TaskRunner {
     this.options = options
     this.db = options.db
     this.store = new TaskStore(options.db)
-    this.queue = new TaskConcurrencyQueue<PendingStart>(
-      () => this.options.getMaxConcurrentTasks?.() ?? readMaxConcurrentTasksFromConfig(),
-    )
+    this.queue = new TaskConcurrencyQueue<PendingStart>(() => this.resolveConcurrencyLimits())
 
     // Start periodic cleanup of stale paused tasks
     this.cleanupTimer = setInterval(() => this.cleanupStalePausedTasks(), CLEANUP_INTERVAL_MS)
+  }
+
+  /**
+   * Limits for one queue decision: runner options win, everything else is
+   * read live from settings.json (one read per decision).
+   */
+  private resolveConcurrencyLimits(): TaskConcurrencyLimits {
+    const { getMaxConcurrentTasks, getProviderTaskLimits } = this.options
+    const fromConfig = getMaxConcurrentTasks && getProviderTaskLimits ? null : readTaskConcurrencyLimitsFromConfig()
+    const providerLimits = getProviderTaskLimits?.()
+    return {
+      global: getMaxConcurrentTasks?.() ?? fromConfig!.global,
+      perProvider: providerLimits?.perProvider ?? fromConfig!.perProvider,
+      byProvider: providerLimits ? (providerLimits.byProvider ?? {}) : fromConfig!.byProvider,
+    }
   }
 
   /**
@@ -666,18 +737,28 @@ export class TaskRunner {
     forceQueue: boolean,
   ): Promise<string> {
     const taskId = task.id
+    // The provider the caller resolved (task pin, persona, role or
+    // tasks.defaultProvider) is the slot key. A missing id lands in the
+    // shared `unknown` bucket instead of failing the start.
+    const providerKey = providerKeyOf(provider)
 
     if (!forceQueue && !queueAppliesToTrigger(task.triggerType)) {
-      // Bypass: counts towards the limit, but never waits.
-      this.queue.occupy(taskId)
+      // Bypass: counts towards its provider and the global cap, never waits.
+      this.queue.occupy(taskId, providerKey)
       return this.startTaskNow(task, provider, overrides, parentSessionId)
     }
 
-    const admission = this.queue.admit(taskId, { task, provider, overrides, parentSessionId })
+    // Let older waiters use capacity that appeared without a release (a limit
+    // raised in settings.json) before the newcomer is judged.
+    this.pumpQueue()
+
+    const admission = this.queue.admit(taskId, { task, provider, overrides, parentSessionId }, providerKey)
     if (!admission.admitted) {
       console.log(
         `[task-runner] Queued task ${taskId} ("${task.name}") at position ${admission.position} — `
-        + `${admission.running} task(s) running, limit ${this.queue.limit()}`,
+        + `waiting for the ${admission.reason} limit; provider ${admission.providerKey}: `
+        + `${admission.providerRunning}/${admission.providerLimit || 'unlimited'} running, `
+        + `all providers: ${admission.running}/${this.queue.limit() || 'unlimited'} running`,
       )
       return taskId
     }
@@ -814,6 +895,7 @@ export class TaskRunner {
         taskId,
         agent,
         provider,
+        slotProviderKey: providerKeyOf(provider),
         abortController,
         timeoutTimer: null,
         wrapUpTimer: null,
@@ -914,16 +996,19 @@ export class TaskRunner {
       const snapshot = this.queue.snapshot()
       console.log(
         `[task-runner] Released the slot of task ${taskId} (${reason}) — `
-        + `${snapshot.running} running, ${snapshot.queued} queued, limit ${snapshot.limit}`,
+        + `${snapshot.running} running, ${snapshot.queued} queued, global limit ${snapshot.limit}`
+        + ` (${formatProviderOccupancy(snapshot.providers)})`,
       )
     }
     this.pumpQueue()
   }
 
   /**
-   * Start as many queued tasks as the current limit allows. Called after every
-   * slot release; the limit is re-read inside `takeNext`, so lowering
-   * `tasks.maxConcurrent` in settings.json applies from the next dequeue on.
+   * Start as many queued tasks as the current limits allow. Called after every
+   * slot release; the limits are re-read inside `takeNext`, so changing them
+   * in settings.json applies from the next dequeue on. `takeNext` skips
+   * waiters of saturated providers, so one busy provider never holds up the
+   * others.
    */
   private pumpQueue(): void {
     if (this.pumping) return
@@ -946,8 +1031,8 @@ export class TaskRunner {
         const waitedSeconds = Math.round((Date.now() - next.enqueuedAtMs) / 1000)
         const snapshot = this.queue.snapshot()
         console.log(
-          `[task-runner] Dequeued task ${task.id} ("${task.name}") after ${waitedSeconds}s — `
-          + `${snapshot.running} running, ${snapshot.queued} still queued, limit ${snapshot.limit}`,
+          `[task-runner] Dequeued task ${task.id} ("${task.name}", provider ${next.providerKey}) after ${waitedSeconds}s — `
+          + `${snapshot.running} running, ${snapshot.queued} still queued, global limit ${snapshot.limit}`,
         )
 
         // Start with the freshest row so the time budget is anchored on the
@@ -1236,6 +1321,7 @@ export class TaskRunner {
           taskId,
           agent: runningTask.agent,
           provider: {} as ProviderConfig, // provider info already saved in DB
+          slotProviderKey: runningTask.slotProviderKey,
           pausedAt: Date.now(),
           promptTokens: runningTask.promptTokens,
           completionTokens: runningTask.completionTokens,
@@ -2094,18 +2180,25 @@ Hint: Use /kill_task ${task.id} if the task needs to be cleaned up.
   /**
    * Queue state for one task, for tool results and diagnostics:
    * `position` is 1-based (0 = not queued), `running` counts the tasks that
-   * currently occupy a slot and `limit` is the configured maximum (0 =
-   * unlimited).
+   * currently occupy a slot and `limit` is the global cap (0 = unlimited).
+   * The provider fields (additive since the per-provider limit) tell which
+   * limit keeps a waiting task out: `reason` is `provider` or `global`.
    */
-  getQueueInfo(taskId: string): { queued: boolean; position: number; running: number; queued_count: number; limit: number } {
+  getQueueInfo(taskId: string): TaskQueueInfo {
     const snapshot = this.queue.snapshot()
     const position = this.queue.position(taskId)
+    const provider = this.queue.providerOf(taskId)
+    const bucket = provider ? snapshot.providers[provider] : undefined
     return {
       queued: position > 0,
       position,
       running: snapshot.running,
       queued_count: snapshot.queued,
       limit: snapshot.limit,
+      reason: this.queue.waitReason(taskId),
+      provider,
+      provider_running: bucket?.running ?? 0,
+      provider_limit: provider ? this.queue.providerLimit(provider) : snapshot.perProviderLimit,
     }
   }
 
@@ -2313,8 +2406,9 @@ Hint: Use /kill_task ${task.id} if the task needs to be cleaned up.
     this.validateStatusUpdatesConfig()
 
     // E5: a resume bypasses the queue — a human already waited for this
-    // answer — but it does occupy a slot again (the pause released it).
-    this.queue.occupy(taskId)
+    // answer — but it does occupy a slot again (the pause released it), in
+    // the provider the task runs on.
+    this.queue.occupy(taskId, pausedTask.slotProviderKey)
 
     // Remove from paused map
     this.pausedTasks.delete(taskId)
@@ -2347,6 +2441,7 @@ Hint: Use /kill_task ${task.id} if the task needs to be cleaned up.
     const runningTask: RunningTask = {
       taskId,
       agent,
+      slotProviderKey: pausedTask.slotProviderKey,
       abortController: new AbortController(),
       timeoutTimer: null,
       wrapUpTimer: null,
@@ -2490,6 +2585,7 @@ Hint: Use /kill_task ${task.id} if the task needs to be cleaned up.
           taskId,
           agent: runningTask.agent,
           provider: {} as ProviderConfig,
+          slotProviderKey: runningTask.slotProviderKey,
           pausedAt: Date.now(),
           promptTokens: runningTask.promptTokens,
           completionTokens: runningTask.completionTokens,

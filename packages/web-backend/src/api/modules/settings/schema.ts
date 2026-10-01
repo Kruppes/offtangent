@@ -49,6 +49,19 @@ export function validateIntegerRange(value: unknown, name: string, min: number, 
   return null
 }
 
+/** `{ providerId: integer 0..64 }` — the shape of `tasks.maxConcurrentByProvider`. */
+export function validateProviderLimitOverrides(value: unknown, name: string): string | null {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) {
+    return `${name} must be an object of provider id to integer 0-64`
+  }
+  for (const [key, limit] of Object.entries(value as Record<string, unknown>)) {
+    if (!key.trim()) return `${name} keys must be non-empty provider ids`
+    const err = validateIntegerRange(limit, `${name}.${key}`, 0, 64)
+    if (err) return err
+  }
+  return null
+}
+
 export function validateNonNegativeNumber(value: unknown, name: string): string | null {
   if (typeof value !== 'number' || !Number.isFinite(value) || value < 0) {
     return `${name} must be a non-negative number`
@@ -292,6 +305,23 @@ export function mergeTasks(
     const err = validateIntegerRange(tasks.maxConcurrent, 'tasks.maxConcurrent', 0, 64)
     if (err) return { error: err }
     existing.maxConcurrent = tasks.maxConcurrent
+  }
+
+  // Per-provider task slots (default 5, 0 = unlimited) and optional overrides
+  // per provider id. Both are validated before anything is written, so a bad
+  // override never leaves a half-applied tasks block behind.
+  if (tasks.maxConcurrentPerProvider !== undefined) {
+    const err = validateIntegerRange(tasks.maxConcurrentPerProvider, 'tasks.maxConcurrentPerProvider', 0, 64)
+    if (err) return { error: err }
+  }
+  if (tasks.maxConcurrentByProvider !== undefined) {
+    const err = validateProviderLimitOverrides(tasks.maxConcurrentByProvider, 'tasks.maxConcurrentByProvider')
+    if (err) return { error: err }
+  }
+  if (tasks.maxConcurrentPerProvider !== undefined) existing.maxConcurrentPerProvider = tasks.maxConcurrentPerProvider
+  if (tasks.maxConcurrentByProvider !== undefined) {
+    // Replaced as a whole: the UI/API sends the full map, `{}` clears it.
+    existing.maxConcurrentByProvider = { ...(tasks.maxConcurrentByProvider as Record<string, number>) }
   }
 
   if (tasks.telegramDelivery !== undefined) {

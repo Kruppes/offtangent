@@ -256,13 +256,19 @@ export interface TasksSettingsContract {
   defaultProvider: string
   maxDurationMinutes: number
   /**
-   * Global task concurrency limit: how many background tasks may run at the
-   * same time. Further `user`/`agent` tasks wait in a FIFO queue (DB row at
-   * `status='running'` with `startedAt = NULL`) and start automatically when
-   * a slot frees up. `0` disables the limit. Cronjob/heartbeat tasks and
-   * resumed tasks bypass the wait but still count towards the limit.
+   * Global task concurrency cap across all providers (host safety net,
+   * default 12). A task starts only when its provider is below its own limit
+   * (`maxConcurrentPerProvider` / `maxConcurrentByProvider`) AND the total is
+   * below this cap. Further `user`/`agent` tasks wait in a FIFO queue (DB row
+   * at `status='running'` with `startedAt = NULL`) and start automatically
+   * when a slot frees up. `0` disables the cap. Cronjob/heartbeat tasks and
+   * resumed tasks bypass the wait but still count towards both limits.
    */
   maxConcurrent: number
+  /** Tasks one provider may run at the same time (default 5, `0` = unlimited). */
+  maxConcurrentPerProvider: number
+  /** Per-provider overrides of `maxConcurrentPerProvider`, keyed by provider id. */
+  maxConcurrentByProvider: Record<string, number>
   telegramDelivery: TaskTelegramDelivery
   loopDetection: TasksLoopDetectionSettingsContract
   /**
@@ -743,7 +749,9 @@ export const DEFAULT_SETTINGS_CONTRACT: SettingsContract = {
   tasks: {
     defaultProvider: '',
     maxDurationMinutes: 60,
-    maxConcurrent: 3,
+    maxConcurrent: 12,
+    maxConcurrentPerProvider: 5,
+    maxConcurrentByProvider: {},
     telegramDelivery: 'auto',
     loopDetection: {
       enabled: true,
@@ -958,6 +966,12 @@ export function normalizeSettingsContract(input: DeepPartial<SettingsContract> |
       defaultProvider: source.tasks?.defaultProvider ?? DEFAULT_SETTINGS_CONTRACT.tasks.defaultProvider,
       maxDurationMinutes: source.tasks?.maxDurationMinutes ?? DEFAULT_SETTINGS_CONTRACT.tasks.maxDurationMinutes,
       maxConcurrent: source.tasks?.maxConcurrent ?? DEFAULT_SETTINGS_CONTRACT.tasks.maxConcurrent,
+      maxConcurrentPerProvider:
+        source.tasks?.maxConcurrentPerProvider ?? DEFAULT_SETTINGS_CONTRACT.tasks.maxConcurrentPerProvider,
+      maxConcurrentByProvider: Object.fromEntries(
+        Object.entries(source.tasks?.maxConcurrentByProvider ?? DEFAULT_SETTINGS_CONTRACT.tasks.maxConcurrentByProvider)
+          .filter((entry): entry is [string, number] => typeof entry[1] === 'number'),
+      ),
       telegramDelivery: source.tasks?.telegramDelivery ?? DEFAULT_SETTINGS_CONTRACT.tasks.telegramDelivery,
       loopDetection: {
         enabled: source.tasks?.loopDetection?.enabled ?? DEFAULT_SETTINGS_CONTRACT.tasks.loopDetection.enabled,

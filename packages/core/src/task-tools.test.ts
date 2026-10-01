@@ -170,6 +170,38 @@ describe('createTaskTool', () => {
     runner.abortTask(taskId, 'cleanup')
   })
 
+  it('says whether the provider limit or the global cap keeps a queued task waiting', async () => {
+    const reasons = ['provider', 'global'] as const
+    const texts: string[] = []
+    const details: Record<string, unknown>[] = []
+    for (const reason of reasons) {
+      const tool = createTaskTool({
+        taskRuntime: {
+          ...buildBoundary(),
+          // Do not run anything: only the wording of the queued result matters.
+          start: async (task: Task) => task.id,
+          queueInfo: () => ({
+            queued: true, position: 2, running: 7, queued_count: 2, limit: 12,
+            reason, provider: 'provider-a', provider_running: 5, provider_limit: 5,
+          }),
+        },
+        getDefaultProvider: () => mockProvider,
+        resolveProvider: () => mockProvider,
+        defaultMaxDurationMinutes: 60,
+        maxDurationMinutesCap: 240,
+      })
+      const result = await tool.execute(`call-queued-${reason}`, { prompt: 'queued work', name: 'Queued' })
+      texts.push(result.content.map(part => ('text' in part ? part.text : '')).join(''))
+      details.push(result.details as Record<string, unknown>)
+    }
+
+    expect(texts[0]).toContain('queued (position 2, 7 running)')
+    expect(texts[0]).toContain('provider limit: 5 concurrent task(s) on this provider, 5 running')
+    expect(texts[1]).toContain('global limit: 12 concurrent task(s) across all providers')
+    expect(JSON.stringify(details[0])).toContain('"queueReason":"provider"')
+    expect(JSON.stringify(details[1])).toContain('"queueReason":"global"')
+  })
+
   it('sub-task with explicit provider/model overrides the parent task\'s model (explicit > parent)', async () => {
     const { runWithTaskExecutionContext } = await import('./task-execution-context.js')
 

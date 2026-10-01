@@ -11,7 +11,10 @@ import path from 'node:path'
 import os from 'node:os'
 
 /**
- * Tests for the global task concurrency limit (`tasks.maxConcurrent`).
+ * Tests for the global task concurrency limit (`tasks.maxConcurrent`). The
+ * per-provider limit is switched off here (perProvider 0) so these tests pin
+ * the host-wide cap on its own; see task-runner.concurrency-per-provider.test.ts
+ * for the per-provider slots.
  *
  * The agent mock here is *controllable*: `prompt()` returns a promise that
  * only settles when the test says so. That is what makes it possible to have
@@ -149,6 +152,7 @@ describe('TaskRunner — global concurrency limit', () => {
       onTaskComplete: () => { },
       sessionManager,
       getMaxConcurrentTasks: () => limit,
+      getProviderTaskLimits: () => ({ perProvider: 0 }),
       ...overrides,
     })
   }
@@ -209,6 +213,9 @@ describe('TaskRunner — global concurrency limit', () => {
 
       expect(runner.getQueueInfo(d.id)).toEqual({
         queued: true, position: 2, running: 2, queued_count: 2, limit: 2,
+        // Additive since the per-provider limit: the global cap is what keeps
+        // Delta waiting; its provider has no own limit in this suite.
+        reason: 'global', provider: 'test-provider-id', provider_running: 2, provider_limit: 0,
       })
     })
 

@@ -222,7 +222,9 @@ Companion file: `/data/config/HEARTBEAT.md` — the prompt the agent receives ev
 |-------------------------------------------------|-----------------------------------|---------------|---------------------------------------------|
 | `tasks.defaultProvider`                         | `string` (`provider::model`)      | `""`          | string                                      |
 | `tasks.maxDurationMinutes`                      | `number`                          | `60`          | `> 0` (UI clamps `1–1440`)                  |
-| `tasks.maxConcurrent`                           | `number`                          | `3`           | integer `0–64` (`0` = unlimited)            |
+| `tasks.maxConcurrent`                           | `number`                          | `12`          | integer `0–64` (`0` = unlimited); global cap across all providers |
+| `tasks.maxConcurrentPerProvider`                | `number`                          | `5`           | integer `0–64` (`0` = unlimited); slots per provider |
+| `tasks.maxConcurrentByProvider`                 | `object` (`providerId → number`)  | `{}`          | values integer `0–64`; overrides the per-provider default |
 | `tasks.telegramDelivery`                        | `"auto" \| "always"`              | `"auto"`      | enum                                        |
 | `tasks.backgroundThinkingLevel`                 | thinking-level enum               | `"off"`       | same as top-level `thinkingLevel`           |
 | `tasks.loopDetection.enabled`                   | `boolean`                         | `true`        | bool                                        |
@@ -556,7 +558,9 @@ This is the literal file written by `ensureConfigTemplates()`:
   "tasks": {
     "defaultProvider": "",
     "maxDurationMinutes": 60,
-    "maxConcurrent": 3,
+    "maxConcurrent": 12,
+    "maxConcurrentPerProvider": 5,
+    "maxConcurrentByProvider": {},
     "telegramDelivery": "auto",
     "loopDetection": {
       "enabled": true,

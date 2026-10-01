@@ -380,16 +380,22 @@ export function createTaskTool(options: TaskToolsOptions): AgentTool {
           : ''
         const continuationLine = continuationOfId ? `Continuation of: ${continuationOfId}\n` : ''
 
-        // A global limit (`tasks.maxConcurrent`) can put the task in a FIFO
-        // queue instead of starting it right away. Say so plainly: the caller
-        // must not poll or wait for a task that has not started yet.
+        // The per-provider limit (`tasks.maxConcurrentPerProvider`) or the
+        // global cap (`tasks.maxConcurrent`) can put the task in a FIFO queue
+        // instead of starting it right away. Say so plainly: the caller must
+        // not poll or wait for a task that has not started yet.
         const queueInfo = options.taskRuntime.queueInfo?.(task.id)
         const queued = queueInfo?.queued === true
         const headline = queued
           ? `Background task created and queued (position ${queueInfo.position}, ${queueInfo.running} running).`
           : 'Background task started successfully.'
+        const limitText = !queued
+          ? ''
+          : queueInfo.reason === 'provider'
+            ? `provider limit: ${queueInfo.provider_limit} concurrent task(s) on this provider, ${queueInfo.provider_running} running`
+            : `global limit: ${queueInfo.limit} concurrent task(s) across all providers`
         const closing = queued
-          ? `The task waits for a free slot and starts automatically when one frees up (limit: ${queueInfo.limit} concurrent task(s)). `
+          ? `The task waits for a free slot and starts automatically when one frees up (${limitText}). `
             + 'Do NOT poll or wait for it — continue with your own work; you will receive a notification when it completes or fails.'
           : 'The task is now running in the background. You will receive a notification when it completes or fails.'
 
@@ -414,6 +420,13 @@ export function createTaskTool(options: TaskToolsOptions): AgentTool {
                   queuePosition: queueInfo.position,
                   runningTasks: queueInfo.running,
                   maxConcurrentTasks: queueInfo.limit,
+                  ...(queueInfo.reason
+                    ? {
+                        queueReason: queueInfo.reason,
+                        providerRunningTasks: queueInfo.provider_running,
+                        maxConcurrentTasksPerProvider: queueInfo.provider_limit,
+                      }
+                    : {}),
                 }
               : {}),
           },
