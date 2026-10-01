@@ -190,6 +190,30 @@ describe('resolveTaskPolicy', () => {
     if (res.ok) expect(res.routing.source).toBe('explicit_provider')
   })
 
+  it('explicit provider whose default is an exception model needs a reason unless a tier model is picked', () => {
+    const fableFirst = provider('fab', 'anthropic-oauth', ['claude-fable-5', 'claude-sonnet-5-5', 'claude-opus-5-5'])
+    const local = provider('loc2', 'ollama', ['astra-local'])
+    const withFable = (o: Partial<ResolveTaskPolicyInput>) => base({
+      resolveProvider: (id) => [fableFirst, local, ...ALL].find((p) => p.id === id || p.name === id) ?? null,
+      resolveExplicit: ({ provider: p }) => {
+        const hit = [fableFirst, local].find((x) => x.id === p)!
+        return { ok: true, providerId: hit.id, providerName: hit.name, modelId: hit.enabledModels![0] }
+      },
+      ...o,
+    })
+    const bare = resolveTaskPolicy(withFable({ explicitProvider: 'fab' }))
+    expect(bare.ok).toBe(false)
+    if (!bare.ok) expect(bare.error).toContain('model_reason')
+    // No matrix for the provider → default model kept → same rule.
+    expect(resolveTaskPolicy(withFable({ explicitProvider: 'loc2', profile: profile('general', 'low') })).ok).toBe(false)
+    // A profile picks a regular tier model: no exception model runs.
+    expect(resolveTaskPolicy(withFable({ explicitProvider: 'fab', profile: profile('review', 'low') })))
+      .toMatchObject({ ok: true, modelId: 'claude-sonnet-5-5' })
+    // With a reason the provider default is allowed.
+    expect(resolveTaskPolicy(withFable({ explicitProvider: 'fab', modelReason: 'synthetic: needs the top line' })))
+      .toMatchObject({ ok: true, modelId: 'claude-fable-5' })
+  })
+
   it('parent case: profile picks the tier inside the parent provider; strand pin is ignored', () => {
     const parent = { ...OAI, enabledModels: ['gpt-6-luna'] }
     const res = resolveTaskPolicy(base({

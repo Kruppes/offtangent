@@ -129,7 +129,7 @@ beforeEach(() => {
  * A task owned by user 1: its session has no parent and carries the user id,
  * which is exactly what `resolveTaskOwnerUserIdForTask` walks.
  */
-function createOwnedTask(input?: { status?: Task['status']; provider?: string; model?: string; agentId?: string; userId?: number }): Task {
+function createOwnedTask(input?: { status?: Task['status']; provider?: string; model?: string; agentId?: string; userId?: number; thinkingLevel?: Task['thinkingLevel'] }): Task {
   const userId = input?.userId ?? 1
   const sessionId = `sess-${Math.random().toString(36).slice(2)}`
   db.prepare(
@@ -144,6 +144,13 @@ function createOwnedTask(input?: { status?: Task['status']; provider?: string; m
     provider: input?.provider,
     model: input?.model,
     agentId: input?.agentId ?? 'main',
+    thinkingLevel: input?.thinkingLevel ?? null,
+    routing: input?.thinkingLevel
+      ? {
+        source: 'explicit', kind: null, difficulty: null, tier: null, family: null, modelId: input.model ?? '',
+        thinking: input.thinkingLevel, thinkingSource: 'explicit', reason: 'explicit model pin',
+      }
+      : undefined,
   })
   if (input?.status && input.status !== 'running') {
     store().update(task.id, {
@@ -228,6 +235,26 @@ describe('POST /api/tasks/:id/reply', () => {
     expect(startCalls).toEqual([
       { taskId: followUpId, providerName: 'TestProvider', parentSessionId: 'session-of-1-app' },
     ])
+  })
+
+  it('carries the thinking level of a model-pinned task into the follow-up (task policy)', async () => {
+    const task = createOwnedTask({ status: 'completed', provider: 'TestProvider', model: 'model-b', thinkingLevel: 'high' })
+
+    const res = await reply(task.id, { text: 'one more pass' })
+
+    expect(res.status).toBe(201)
+    const followUp = store().getById(res.body?.followUpTaskId as string)!
+    expect([followUp.model, followUp.thinkingLevel]).toEqual(['model-b', 'high'])
+    expect(followUp.routing).toMatchObject({ source: 'explicit', modelId: 'model-b' })
+  })
+
+  it('a follow-up on the default provider keeps the background thinking (NULL)', async () => {
+    const task = createOwnedTask({ status: 'failed', thinkingLevel: 'high' })
+
+    const res = await reply(task.id, { text: 'again' })
+
+    expect(res.status).toBe(201)
+    expect(store().getById(res.body?.followUpTaskId as string)!.thinkingLevel).toBeNull()
   })
 
   it('falls back to the default provider when the task pinned none', async () => {

@@ -1095,8 +1095,8 @@ export class TaskRunner {
     if (!['user', 'agent', 'cronjob'].includes(task.triggerType)) return null
 
     try {
-      const reviewerProvider =
-        (cfg?.providerId ? this.options.getProviderById?.(cfg.providerId) : null) ?? taskProvider
+      const dedicatedReviewer = cfg?.providerId ? this.options.getProviderById?.(cfg.providerId) ?? null : null
+      const reviewerProvider = dedicatedReviewer ?? taskProvider
       if (!reviewerProvider) return null
 
       const model = this.options.buildModel(reviewerProvider)
@@ -1119,9 +1119,13 @@ export class TaskRunner {
       }, {
         apiKey,
         temperature: 0,
-        // The reviewer judges with the thinking level of the task it reviews
-        // (task policy); tasks without one keep the background setting.
-        reasoning: task.thinkingLevel ? toPiAiReasoning(task.thinkingLevel) : resolveBackgroundReasoning(),
+        // When the reviewer runs on the task's own provider/model it judges
+        // with the task's thinking level (task policy). A dedicated reviewer
+        // provider is a different model: it keeps the background setting, as
+        // do tasks without a level of their own.
+        reasoning: task.thinkingLevel && !dedicatedReviewer
+          ? toPiAiReasoning(task.thinkingLevel)
+          : resolveBackgroundReasoning(),
       }), 120_000, 'Task result verification')
 
       const verdictText = response.content
@@ -2854,7 +2858,10 @@ Hint: Use /kill_task ${task.id} if the task needs to be cleaned up.
         triggerType: task.triggerType,
         triggerSourceId: task.triggerSourceId ?? undefined,
         provider: task.provider ?? undefined,
-        model: task.model ?? undefined,
+        // Record the model the resumed run actually uses: when the original
+        // pin was disabled meanwhile, that is the provider default, and the
+        // routing record says so instead of naming a model that never ran.
+        model: (task.model && !pinStillEnabled && baseProvider ? getProviderDefaultModel(provider) : task.model) ?? undefined,
         isDefaultModel: task.isDefaultModel ?? undefined,
         maxDurationMinutes: task.maxDurationMinutes ?? undefined,
         sessionId: task.sessionId ?? undefined,
@@ -2866,7 +2873,15 @@ Hint: Use /kill_task ${task.id} if the task needs to be cleaned up.
         agentId: task.agentId ?? undefined,
         // Task policy: the recovered run thinks exactly like the original.
         thinkingLevel: task.thinkingLevel ?? undefined,
-        routing: task.routing ?? undefined,
+        routing: task.routing
+          ? (task.model && !pinStillEnabled && baseProvider
+            ? {
+              ...task.routing,
+              modelId: getProviderDefaultModel(provider),
+              reason: `${task.routing.reason}; recovered after restart: "${task.model}" no longer enabled, provider default used`,
+            }
+            : task.routing)
+          : undefined,
       })
 
       // Mark the old task as failed

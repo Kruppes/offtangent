@@ -493,6 +493,12 @@ export class TasksService {
       isDefaultModel,
       maxDurationMinutes: overrides.maxDurationMinutes
         ?? (original.maxDurationMinutes ?? undefined),
+      // Task policy: a restart on the same provider and model thinks like the
+      // original and keeps its routing record. Another model drops both
+      // (NULL → background thinking setting), as for any re-pinned task.
+      ...(sameModelAsOriginal(original, provider)
+        ? { thinkingLevel: original.thinkingLevel ?? null, routing: original.routing ?? undefined }
+        : {}),
     })
 
     // Start the task. `startTask` now marks the row as `failed` on early
@@ -508,6 +514,13 @@ export class TasksService {
 
 export function createTasksService(options: TasksServiceOptions): TasksService {
   return new TasksService(options)
+}
+
+/** True when a restart runs on the original's provider AND model. */
+function sameModelAsOriginal(original: Task, provider: ProviderConfig): boolean {
+  return !!original.provider && !!original.model
+    && original.provider === provider.name
+    && original.model === getProviderDefaultModel(provider)
 }
 
 function safeParseJson(rawValue: string | null): unknown {

@@ -245,6 +245,8 @@ describe('task policy at create_task', () => {
     const task = taskByName('Fallback')!
     expect([task.model, task.thinkingLevel]).toEqual(['gpt-6-sol', 'low'])
     expect(task.routing?.thinkingSource).toBe('fallback')
+    // Chosen by the strand tie-breaker, not by the default chain.
+    expect(task.isDefaultModel).toBe(false)
   })
 
   it('rejects unknown classes, unknown thinking, xhigh without reason and disabled models — no task row', async () => {
@@ -319,6 +321,61 @@ describe('task policy at create_task', () => {
     expect(resumed.routing?.kind).toBe('extraction')
     expect(agentInits.at(-1)?.thinkingLevel).toBe('minimal')
     expect(builtFor.at(-1)).toBe('claude-sonnet-5-5')
+  })
+
+  it('recovery with a meanwhile disabled pin records the model that actually runs', async () => {
+    seedStrand('strand-a', { providerId: 'anth-id', modelId: 'claude-opus-5-5' })
+    await turn.run({ sessionId: 'strand-a' }, () =>
+      tool().execute('k', { prompt: 'p', name: 'Gone', task_kind: 'extraction', difficulty: 'medium' }))
+    expect(taskByName('Gone')!.model).toBe('claude-sonnet-5-5')
+
+    runner.dispose()
+    const builtFor: string[] = []
+    runner = new TaskRunner({
+      db,
+      buildModel: (p: ProviderConfig) => {
+        builtFor.push(p.enabledModels?.[0] ?? '')
+        return { cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 } } as unknown as ReturnType<TaskRunnerOptions['buildModel']>
+      },
+      getApiKey: async () => 'k',
+      tools: [],
+      memoryDir: undefined,
+      onTaskComplete: () => {},
+      sessionManager: new SessionManager({ db }),
+      backgroundThinkingLevel: 'off',
+    })
+    const opusOnly = { ...ANTH, enabledModels: ['claude-opus-5-5'] } as ProviderConfig
+    await runner.recoverTasks((id) => (id === 'anth' || id === 'anth-id' ? opusOnly : null), ANTH)
+    const resumed = runner.getStore().list().find((t) => t.name === 'Gone (resumed)')!
+    expect(builtFor.at(-1)).toBe('claude-opus-5-5')
+    expect(resumed.model).toBe('claude-opus-5-5')
+    expect(resumed.routing?.modelId).toBe('claude-opus-5-5')
+    expect(resumed.routing?.reason).toContain('"claude-sonnet-5-5" no longer enabled')
+  })
+
+  it('a dedicated reviewer provider keeps the background level, not the task level', async () => {
+    runner.dispose()
+    runner = new TaskRunner({
+      db,
+      buildModel: () => ({ cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 } } as unknown as ReturnType<TaskRunnerOptions['buildModel']>),
+      getApiKey: async () => 'k',
+      tools: [],
+      memoryDir: undefined,
+      onTaskComplete: () => {},
+      sessionManager: new SessionManager({ db }),
+      backgroundThinkingLevel: 'off',
+      verification: { enabled: true, providerId: 'oai-id' },
+      getProviderById: (id: string) => byIdOrName(id),
+    })
+    completeSimpleMock.mockResolvedValue({ content: [{ type: 'text', text: 'VERDICT: pass\nCRITIQUE: -' }] })
+    agentMessages.push({ role: 'assistant', content: [{ type: 'text', text: 'STATUS: completed\nSUMMARY: done' }] })
+    agentPrompt = async () => {}
+    seedStrand('strand-a', { providerId: 'anth-id', modelId: 'claude-opus-5-5' })
+    await turn.run({ sessionId: 'strand-a' }, () =>
+      tool().execute('l', { prompt: 'p', name: 'Reviewed', task_kind: 'coding', difficulty: 'high' }))
+    await vi.waitFor(() => expect(completeSimpleMock).toHaveBeenCalled())
+    const opts = completeSimpleMock.mock.calls[0][2] as { reasoning?: string }
+    expect(opts.reasoning).not.toBe('high')
   })
 
   it('the verifier reviews with the task thinking level', async () => {

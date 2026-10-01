@@ -206,7 +206,7 @@ export function createTaskTool(options: TaskToolsOptions): AgentTool {
       ),
       model: Type.Optional(
         Type.String({
-          description: 'Specific model id to use for this task (e.g. "kimi-k2.6", "gpt-5", "claude-sonnet-4-5"). Choose based on the descriptions in `<available_providers>` — prefer cost-effective models for simple work and stronger models for complex coding or research. Only pass this if you have a specific reason to deviate from the default task model. If `provider` is omitted, the provider is auto-detected from the configured providers (requires a unique match). If you omit both `provider` and `model`, the task inherits the model of the task that created it (or your active model at the top level), so sub-tasks and sub-sub-tasks stay on the same model unless you pin a different one here.',
+          description: 'Specific model id to use for this task (e.g. "kimi-k2.6", "gpt-5", "claude-sonnet-4-5"). Choose based on the descriptions in `<available_providers>` — prefer cost-effective models for simple work and stronger models for complex coding or research. Only pass this if you have a specific reason to deviate from the default task model. If `provider` is omitted, the provider is auto-detected from the configured providers (requires a unique match). If you omit both `provider` and `model`, a sub-task stays on the provider of the task that created it; at the top level the provider of this strand is used (falling back to the configured task default). Inside that provider `task_kind`/`difficulty` pick the model tier (without them: general/medium in the provider of this strand, or the inherited/default model).',
         })
       ),
       task_kind: Type.Optional(
@@ -335,7 +335,7 @@ export function createTaskTool(options: TaskToolsOptions): AgentTool {
         if (!explicitThinking.ok) {
           return { content: [{ type: 'text' as const, text: `Error: ${explicitThinking.error}` }], details: { error: true } }
         }
-        const isDefaultModel = !providerName && !modelName
+        const noExplicitPin = !providerName && !modelName
         // Bound to the session of THIS turn (AsyncLocalStorage in AgentCore),
         // not to whatever strand is active elsewhere; null inside tasks.
         const turnSessionId = options.getParentSessionId?.() ?? null
@@ -360,6 +360,11 @@ export function createTaskTool(options: TaskToolsOptions): AgentTool {
           return { content: [{ type: 'text' as const, text: `Error: ${policy.error}` }], details: { error: true } }
         }
         const provider: ProviderConfig = policy.provider
+        // "Default model" = nobody chose it: no explicit pin, no profile and no
+        // strand tie-breaker pick — i.e. exactly the inherited/default chain.
+        const isDefaultModel = noExplicitPin
+          && (policy.routing.source === 'default' || policy.routing.source === 'parent')
+          && policy.routing.kind === null
 
         // Cap max duration
         let maxDuration = max_duration_minutes ?? options.defaultMaxDurationMinutes

@@ -142,6 +142,10 @@ export function createTaskReply(deps: TaskReplyDeps): ReplyToTask {
       isDefaultModel: !task.provider,
       maxDurationMinutes: deps.getMaxDurationMinutes(),
       agentId,
+      // Same model as the answered task → same thinking level (task policy);
+      // NULL keeps the background setting, as before.
+      thinkingLevel: baseProvider && task.model ? task.thinkingLevel ?? null : null,
+      routing: baseProvider && task.model ? task.routing ?? undefined : undefined,
     })
 
     const parentSessionId = input.userId

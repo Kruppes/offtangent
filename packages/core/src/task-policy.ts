@@ -367,6 +367,15 @@ export function resolveTaskPolicy(input: ResolveTaskPolicyInput): TaskPolicyReso
     if (!resolved.ok) return { ok: false, error: resolved.error }
     const base = input.resolveProvider(resolved.providerId)
     if (!base) return { ok: false, error: `Provider "${resolved.providerName ?? resolved.providerId}" could not be loaded.` }
+    // The provider's own default model is used unless a tier model is picked;
+    // an exception model there needs the same justification as a model pin.
+    const exceptionDefault = isTaskPolicyExceptionModel(firstModel(base)) && !reasonText
+      ? {
+        ok: false as const,
+        error: `Provider "${base.name}" defaults to the exception model "${firstModel(base)}", which is only used with an `
+          + 'explicit model_reason. Pin a regular model of that provider, or give the reason.',
+      }
+      : null
     if (profile) {
       const pick = pickTierModel(base, profile, input.checkAutomatic)
       if (pick && !pick.ok) return pick
@@ -374,9 +383,11 @@ export function resolveTaskPolicy(input: ResolveTaskPolicyInput): TaskPolicyReso
         return done(pinModel(base, pick.modelId), 'explicit_provider', pick.cell, profile, false,
           `explicit provider; ${profile.kind}/${profile.difficulty} → ${pick.cell.tier}`)
       }
+      if (exceptionDefault) return exceptionDefault
       return done(base, 'explicit_provider', TASK_POLICY_MATRIX[profile.kind][profile.difficulty], profile, false,
         'explicit provider without policy matrix; provider default model kept')
     }
+    if (exceptionDefault) return exceptionDefault
     return done(base, 'explicit_provider', null, null, false, 'explicit provider pin')
   }
 
