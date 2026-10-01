@@ -7,6 +7,11 @@
  * quoted prefix term, implicit AND). Every value is bound as a parameter; the
  * user's text never becomes SQL or FTS syntax.
  *
+ * Fallback: when the FTS index cannot answer (an SQLite build without FTS5,
+ * a missing or broken index) or the query has no word characters at all
+ * (e.g. `%%`), message content is searched with a parameterised
+ * `LIKE ? ESCAPE '\'` substring match instead, wildcards escaped.
+ *
  * The result is an ID SET plus, per strand, a short excerpt of its best
  * matching message. Ordering and pagination stay with `listThreads`, exactly
  * like the attention/unread chips, so a search page never comes back short.
@@ -44,6 +49,22 @@ export function toFtsPrefixQuery(text: string): string | null {
   return tokens.map(token => `"${token}"*`).join(' ')
 }
 
+/** Characters of context on each side of a LIKE fallback match. */
+const SNIPPET_CONTEXT = 60
+
+/**
+ * Plain-text excerpt around the first case-insensitive occurrence of `needle`
+ * (used by the LIKE fallback, which has no FTS `snippet()`).
+ */
+export function excerptAround(content: string, needle: string): string {
+  const flat = content.replace(/\s+/g, ' ').trim()
+  const at = flat.toLowerCase().indexOf(needle.toLowerCase())
+  if (at < 0) return flat.slice(0, SNIPPET_CONTEXT * 2)
+  const start = Math.max(0, at - SNIPPET_CONTEXT)
+  const end = Math.min(flat.length, at + needle.length + SNIPPET_CONTEXT)
+  return `${start > 0 ? '…' : ''}${flat.slice(start, end)}${end < flat.length ? '…' : ''}`
+}
+
 /** Flatten an excerpt to one line; the client renders it as plain text. */
 function cleanSnippet(raw: string): string {
   return raw.replace(/\s+/g, ' ').trim()
@@ -62,8 +83,8 @@ export function searchStrands(
   const snippets = new Map<string, string>()
 
   const ftsQuery = toFtsPrefixQuery(q)
+  let rows: Array<{ id: string; snippet: string | null }> | null = null
   if (ftsQuery) {
-    let rows: Array<{ id: string; snippet: string | null }> = []
     try {
       rows = db.prepare(
         `SELECT cm.session_id AS id,
@@ -80,17 +101,32 @@ export function searchStrands(
          LIMIT ?`,
       ).all(ftsQuery, user, user, MESSAGE_HIT_CAP) as Array<{ id: string; snippet: string | null }>
     } catch {
-      // A malformed FTS expression cannot come from toFtsPrefixQuery; should
-      // the index be missing on an old database, the title search still works.
-      rows = []
+      // A malformed FTS expression cannot come from toFtsPrefixQuery, so this
+      // is a missing/unusable index: fall through to the LIKE search below.
+      rows = null
     }
-    for (const row of rows) {
-      if (seen.has(row.id)) continue
-      seen.add(row.id)
-      ids.push(row.id)
-      const snippet = row.snippet ? cleanSnippet(row.snippet) : ''
-      if (snippet) snippets.set(row.id, snippet)
-    }
+  }
+  if (rows === null) {
+    const likeRows = db.prepare(
+      `SELECT cm.session_id AS id, cm.content AS content
+       FROM chat_messages cm
+       JOIN sessions s ON s.id = cm.session_id
+       WHERE cm.content LIKE ? ESCAPE '\\'
+         AND cm.role IN ('user', 'assistant')
+         AND s.type = 'interactive'
+         AND (s.session_user = ? OR CAST(s.user_id AS TEXT) = ?)
+         ${archived}
+       ORDER BY cm.id DESC
+       LIMIT ?`,
+    ).all(`%${escapeLike(q)}%`, user, user, MESSAGE_HIT_CAP) as Array<{ id: string; content: string }>
+    rows = likeRows.map(row => ({ id: row.id, snippet: excerptAround(row.content, q) }))
+  }
+  for (const row of rows) {
+    if (seen.has(row.id)) continue
+    seen.add(row.id)
+    ids.push(row.id)
+    const snippet = row.snippet ? cleanSnippet(row.snippet) : ''
+    if (snippet) snippets.set(row.id, snippet)
   }
 
   const titleRows = db.prepare(

@@ -11,7 +11,7 @@ import express from 'express'
 import { initDatabase, SessionManager } from '@axiom/core'
 import type { AgentCore, Database, Thread } from '@axiom/core'
 import { createStrandsRouters } from './route.js'
-import { escapeLike, searchStrands, toFtsPrefixQuery } from './search.js'
+import { escapeLike, excerptAround, searchStrands, toFtsPrefixQuery } from './search.js'
 import { parseSearchQuery } from './schema.js'
 import { generateAccessToken } from '../../../auth.js'
 
@@ -104,6 +104,62 @@ describe('strand search query helpers', () => {
     expect(hits.ids).toEqual([byMessage.id, byTitle.id])
     expect(hits.snippets.get(byMessage.id)).toContain('lamp')
     expect(hits.snippets.has(byTitle.id)).toBe(false)
+  })
+})
+
+describe('strand search without a usable FTS index (LIKE fallback)', () => {
+  it('searches message content with an escaped, parameterised LIKE and builds an excerpt', () => {
+    const plain = initDatabase(':memory:')
+    try {
+      plain.exec(`
+        DROP TRIGGER IF EXISTS chat_messages_fts_insert;
+        DROP TRIGGER IF EXISTS chat_messages_fts_delete;
+        DROP TRIGGER IF EXISTS chat_messages_fts_update;
+        DROP TABLE IF EXISTS chat_messages_fts;
+      `)
+      plain.prepare('INSERT INTO users (id, username, password_hash, role) VALUES (?, ?, ?, ?)').run(1, 'first', 'x', 'admin')
+      const manager = new SessionManager({ db: plain, memoryDir: path.join(tempDataDir, 'memory-like'), timeoutMinutes: 0 })
+      const say = (id: string, content: string, role = 'user') => plain.prepare('INSERT INTO chat_messages (session_id, user_id, role, content, agent_id) VALUES (?, ?, ?, ?, ?)').run(id, 1, role, content, 'main')
+      const lamp = manager.createThread('1', 'main', 'Unrelated title')
+      say(lamp.id, 'We should replace the LAMP in the hallway before winter.')
+      const percent = manager.createThread('1', 'main', 'Second')
+      say(percent.id, 'The offer was 100% off for members.')
+      const digits = manager.createThread('1', 'main', 'Third')
+      say(digits.id, 'The offer was 1000 off for members.')
+      const tool = manager.createThread('1', 'main', 'Fourth')
+      say(tool.id, 'lamp inventory', 'tool')
+      const archived = manager.createThread('1', 'main', 'Fifth')
+      say(archived.id, 'old lamp receipt')
+      plain.prepare('UPDATE sessions SET archived = 1 WHERE id = ?').run(archived.id)
+
+      const hits = searchStrands(plain, 1, 'lamp', { includeArchived: false })
+      expect(hits.ids).toEqual([lamp.id])
+      expect(hits.snippets.get(lamp.id)).toBe('We should replace the LAMP in the hallway before winter.')
+      expect(searchStrands(plain, 1, 'lamp', { includeArchived: true }).ids.sort()).toEqual([lamp.id, archived.id].sort())
+      // `%` is literal: "100%" must not match "1000".
+      expect(searchStrands(plain, 1, '100%', { includeArchived: false }).ids).toEqual([percent.id])
+      expect(searchStrands(plain, 1, "x' OR '1'='1", { includeArchived: false }).ids).toEqual([])
+    } finally {
+      plain.close()
+    }
+  })
+
+  it('searches message content literally when the query has no word characters', () => {
+    const percent = strand('Plain title')
+    message(percent.id, 'Battery at 5%% right now')
+    strand('Another title')
+    const hits = searchStrands(db, 1, '%%', { includeArchived: false })
+    expect(hits.ids).toEqual([percent.id])
+    expect(hits.snippets.get(percent.id)).toContain('5%%')
+  })
+
+  it('cuts a long fallback excerpt around the match', () => {
+    const text = `${'a'.repeat(100)} needle ${'b'.repeat(100)}`
+    const excerpt = excerptAround(text, 'NEEDLE')
+    expect(excerpt.startsWith('…')).toBe(true)
+    expect(excerpt.endsWith('…')).toBe(true)
+    expect(excerpt).toContain('needle')
+    expect(excerpt.length).toBeLessThan(140)
   })
 })
 

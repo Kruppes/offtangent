@@ -7,7 +7,9 @@
  *        -> { strands: Strand[] }   Strand = Thread + { tags, nowRank, links }
  *        `q` searches the strand title (substring, LIKE with `%`/`_`/`\`
  *        escaped) and the user/assistant messages of the strand (FTS5 index
- *        `chat_messages_fts`, every word a prefix term, all words required).
+ *        `chat_messages_fts`, every word a prefix term, all words required;
+ *        without a usable index or for a query without word characters an
+ *        escaped, parameterised `LIKE` substring match on the message text).
  *        Trimmed length 2..200, otherwise 400 `invalid_q`; blank = no search.
  *        It resolves to an id set like the chips, so it combines with every
  *        other filter, keeps the list order (pinned, then latest activity)
