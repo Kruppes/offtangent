@@ -24,6 +24,8 @@
 #   PUBLISH_BRANCH  branch on the remote      (default: main)
 #   BLOCKLIST_FILE  regex rules               (default: /data/secrets/publish-blocklist.txt)
 #   GITLEAKS        gitleaks binary           (default: gitleaks, falls back to /data/bin/gitleaks)
+#   PUBLISH_EXCLUDE space separated paths left out of the public tree
+#                   (default: .forgejo — the private instance's own CI, not product)
 set -euo pipefail
 
 SOURCE_REF="${SOURCE_REF:-origin/main}"
@@ -31,6 +33,7 @@ PUBLISH_URL="${PUBLISH_URL:-git@github.com:Kruppes/offtangent.git}"
 PUBLISH_BRANCH="${PUBLISH_BRANCH:-main}"
 BLOCKLIST_FILE="${BLOCKLIST_FILE:-/data/secrets/publish-blocklist.txt}"
 GITLEAKS="${GITLEAKS:-gitleaks}"
+PUBLISH_EXCLUDE="${PUBLISH_EXCLUDE-.forgejo}"
 command -v "$GITLEAKS" >/dev/null 2>&1 || GITLEAKS=/data/bin/gitleaks
 
 log() { printf '[publish] %s\n' "$*" >&2; }
@@ -66,13 +69,28 @@ src_version=$(git show "$src_sha:package.json" | sed -n 's/.*"version": *"\([^"]
 [ -n "$src_version" ] || src_version=unknown
 log "source $SOURCE_REF = $src_sha"
 
-# --- export the exact tree that would be published -------------------------
+# --- the public tree: source tree minus the excluded private paths ----------
 work=$(mktemp -d)
-trap 'rm -rf "$work"' EXIT
-git archive --format=tar "$src_tree" | tar -x -C "$work"
+idxdir=$(mktemp -d)
+trap 'rm -rf "$work" "$idxdir"' EXIT
+pub_tree=$src_tree
+if [ -n "$PUBLISH_EXCLUDE" ]; then
+  export GIT_INDEX_FILE="$idxdir/index"
+  git read-tree "$src_tree"
+  for p in $PUBLISH_EXCLUDE; do
+    git rm -r -q --cached --ignore-unmatch -- "$p" >/dev/null
+  done
+  pub_tree=$(git write-tree)
+  unset GIT_INDEX_FILE
+  [ -z "$(git ls-tree -r --name-only "$pub_tree" -- $PUBLISH_EXCLUDE)" ] || die "excluded paths still in the public tree"
+  log "excluded from the public tree: $PUBLISH_EXCLUDE"
+fi
+
+# --- export the exact tree that would be published -------------------------
+git archive --format=tar "$pub_tree" | tar -x -C "$work"
 
 # --- gate 3: structural -----------------------------------------------------
-bad_files=$(git ls-tree -r --name-only "$src_tree" \
+bad_files=$(git ls-tree -r --name-only "$pub_tree" \
   | grep -E '(^|/)\.env($|\.[^e])|\.(pem|key|p12|jks|keystore|apk|db|sqlite|sqlite3)$|(^|/)secrets?\.json$' || true)
 [ -z "$bad_files" ] || die "tracked files that must not be published:
 $bad_files"
@@ -124,7 +142,7 @@ if [ -n "$remote_sha" ]; then
   bad=$(git log --format='%H %s' "$remote_sha" | grep -v ' offtangent snapshot ' || true)
   [ -z "$bad" ] || die "public $PUBLISH_BRANCH contains non-snapshot commits, refusing to build on it:
 $bad"
-  if [ "$(git rev-parse "${remote_sha}^{tree}")" = "$src_tree" ]; then
+  if [ "$(git rev-parse "${remote_sha}^{tree}")" = "$pub_tree" ]; then
     log "public $PUBLISH_BRANCH ($remote_sha) already has this tree, nothing to publish"
     exit 0
   fi
@@ -136,10 +154,10 @@ fi
 
 snap=$(GIT_AUTHOR_NAME=offtangent GIT_AUTHOR_EMAIL=snapshot@offtangent.local \
        GIT_COMMITTER_NAME=offtangent GIT_COMMITTER_EMAIL=snapshot@offtangent.local \
-       git commit-tree "$src_tree" "${parent_args[@]}" \
+       git commit-tree "$pub_tree" "${parent_args[@]}" \
          -m "offtangent snapshot $src_version ($(date -u +%Y-%m-%d))")
-log "snapshot commit $snap (tree $src_tree)"
-[ -z "$(git diff --stat "$src_sha" "$snap")" ] || die "snapshot tree differs from source (internal error)"
+log "snapshot commit $snap (tree $pub_tree)"
+[ -z "$(git diff --stat "$pub_tree" "$snap")" ] || die "snapshot tree differs from the public tree (internal error)"
 
 if [ "${PUBLISH_CONFIRM:-}" != "yes" ]; then
   log "dry run: set PUBLISH_CONFIRM=yes to push $snap to $PUBLISH_URL $PUBLISH_BRANCH"

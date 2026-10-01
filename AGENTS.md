@@ -118,7 +118,7 @@ Follow [Semantic Versioning](https://semver.org/) (while < 1.0.0, minor = breaki
 
 ## Publishing to the public mirror
 
-The GitHub repository is a **public, history-less mirror**. It only ever receives snapshot commits (`offtangent snapshot <version> (<date>)`) whose tree equals a commit on `main`; the internal history with its commit messages, branches and tags never goes there. The only sanctioned path is
+The GitHub repository is a **public, history-less mirror**. It only ever receives snapshot commits (`offtangent snapshot <version> (<date>)`) whose tree equals a commit on `main` minus the instance-private paths in `PUBLISH_EXCLUDE` (default `.forgejo`, the private CI); the internal history with its commit messages, branches and tags never goes there. The only sanctioned path is
 
 ```
 scripts/publish-snapshot.sh                    # dry run: scans and builds the commit
