@@ -35,9 +35,15 @@ coverage/
 docs/.vitepress/cache/
 docs/.vitepress/dist/
 
-# Git internals
+# Git internals and CI definitions
 .git/
 .github/
+.forgejo/
+
+# Host-local compose override (bind mounts of the live stack). It is gitignored
+# but sits next to the clone in the deploy stack directory, so without this
+# line `COPY . .` would bake it into the image.
+docker-compose.override.yml
 
 # Pi agent / claude code
 .pi/

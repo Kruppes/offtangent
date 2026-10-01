@@ -1,7 +1,10 @@
 services:
   axiom:
     build: .
-    image: ${IMAGE_NAME:-offtangent}:local
+    # IMAGE_REF pins a prebuilt image from the private registry, ideally by
+    # digest (registry/owner/offtangent@sha256:...). Unset = the previous
+    # behaviour: build here and tag ${IMAGE_NAME}:local.
+    image: ${IMAGE_REF:-${IMAGE_NAME:-offtangent}:local}
     container_name: ${CONTAINER_NAME:-offtangent}
     restart: unless-stopped
     ports:
