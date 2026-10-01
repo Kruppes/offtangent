@@ -568,6 +568,8 @@ describe('strand task tree', () => {
     // linked only via trigger_source_id.
     insertTask({ id: 'sub', name: 'Sub', parentTaskId: 'wave' })
     insertTask({ id: 'subsub', name: 'SubSub', parentTaskId: 'sub' })
+    db.prepare('UPDATE tasks SET provider = ?, model = ? WHERE id = ?').run('Anthropic', 'claude-opus-5-5', 'wave')
+    db.prepare('UPDATE tasks SET provider = ?, model = ? WHERE id = ?').run('OpenAI', 'gpt-6-sol', 'sub')
 
     const res = await api('GET', `/api/strands/${strand.id}/tasks`)
     expect(res.status).toBe(200)
@@ -575,6 +577,9 @@ describe('strand task tree', () => {
     expect(tasks.map(t => t.id)).toEqual(['wave', 'sub', 'subsub'])
     expect(tasks.map(t => t.depth)).toEqual([0, 1, 2])
     expect(tasks.map(t => t.parentTaskId)).toEqual([null, 'wave', 'sub'])
+    expect(tasks.map(t => [t.provider, t.model])).toEqual([
+      ['Anthropic', 'claude-opus-5-5'], ['OpenAI', 'gpt-6-sol'], [null, null],
+    ])
     expect(tasks[0]!.hasChildren).toBe(true)
     expect(tasks[2]!.hasChildren).toBe(false)
     expect(res.body.activeCount).toBe(3)

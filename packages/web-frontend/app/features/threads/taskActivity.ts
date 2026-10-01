@@ -36,6 +36,8 @@ export interface TaskActivityFrame {
   taskId?: string
   taskParentId?: string | null
   taskName?: string
+  taskProvider?: string | null
+  taskModel?: string | null
   taskStatus?: string
   taskResultStatus?: string | null
   taskTriggerType?: string
@@ -89,6 +91,8 @@ export function applyTaskActivityFrame(store: StrandTaskStore, frame: TaskActivi
     resultStatus: frame.taskResultStatus ?? existing?.resultStatus ?? null,
     triggerType: frame.taskTriggerType ?? existing?.triggerType ?? 'agent',
     agentId: frame.agentId ?? existing?.agentId ?? null,
+    provider: frame.taskProvider ?? existing?.provider ?? null,
+    model: frame.taskModel ?? existing?.model ?? null,
     parentTaskId: frame.taskParentId ?? existing?.parentTaskId ?? null,
     depth: existing?.depth ?? 0,
     hasChildren: existing?.hasChildren ?? false,

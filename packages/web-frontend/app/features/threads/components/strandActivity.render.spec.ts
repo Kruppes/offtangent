@@ -77,6 +77,30 @@ async function renderRow(row: StrandTaskRow, expanded: boolean, reducedMotion = 
   return await renderToString(app)
 }
 
+describe('per-task model label', () => {
+  it('renders the row identity without waiting for a detail request', async () => {
+    const [row] = rowsOf([node({ id: 'sub', provider: 'OpenAI', model: 'gpt-6-sol' })])
+    expect(await renderRow(row!, false)).toContain('OpenAI · gpt-6-sol')
+  })
+
+  it('never pairs a live provider with a stale detail model', async () => {
+    const [row] = rowsOf([node({ id: 'partial', provider: 'OpenAI', model: null })])
+    const html = await renderRow(row!, false, false, { provider: 'Anthropic', model: 'claude-opus-5-5' })
+    expect(html).toContain('OpenAI')
+    expect(html).not.toContain('claude-opus-5-5')
+  })
+
+  it('does not inherit a parent identity for a legacy child', async () => {
+    const roots = rowsOf([
+      node({ id: 'parent', provider: 'Anthropic', model: 'claude-opus-5-5' }),
+      node({ id: 'child', parentTaskId: 'parent' }),
+    ])
+    const html = await renderRow(roots[0]!.children[0]!, false)
+    expect(html).toContain('—')
+    expect(html).not.toContain('claude-opus-5-5')
+  })
+})
+
 describe('StrandActivityRow (rendered)', () => {
   it('renders name, running status, a live counter and a 44px touch target', async () => {
     const [row] = rowsOf([node({ id: 't1', name: 'Wave A' })])

@@ -33,6 +33,16 @@ function node(over: Partial<StrandTaskNode> & Pick<StrandTaskNode, 'id'>): Stran
   }
 }
 
+describe('task identity frames', () => {
+  it('keeps snapshot identity when an older frame omits it and uses later actual identity', () => {
+    let state = applyTaskTreeSnapshot({}, 's', [node({ id: 't', provider: 'Anthropic', model: 'claude-opus-5-5' })])
+    state = applyTaskActivityFrame(state, { type: 'task_progress', sessionId: 's', taskId: 't' })
+    expect(state.s!.nodes.t).toMatchObject({ provider: 'Anthropic', model: 'claude-opus-5-5' })
+    state = applyTaskActivityFrame(state, { type: 'task_started', sessionId: 's', taskId: 't', taskProvider: 'OpenAI', taskModel: 'gpt-6-sol' })
+    expect(state.s!.nodes.t).toMatchObject({ provider: 'OpenAI', model: 'gpt-6-sol' })
+  })
+})
+
 describe('applyTaskActivityFrame', () => {
   it('inserts a node from a task_started frame', () => {
     const store = applyTaskActivityFrame({}, {

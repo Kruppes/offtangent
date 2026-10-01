@@ -120,6 +120,7 @@ describe('ws-chat strand activity frames', () => {
       const store = new TaskStore(h.db)
       const task = store.create({ name: 'Counting', prompt: 'p', triggerType: 'agent', sessionId: 'task-ws', agentId: 'main' })
       store.update(task.id, {
+        provider: 'OpenAI', model: 'gpt-6-sol',
         promptTokens: 78,
         completionTokens: 8221,
         cacheRead: 1308532,
@@ -142,6 +143,8 @@ describe('ws-chat strand activity frames', () => {
       const frame = await client.nextOfType('task_progress')
       expect(frame.sessionId).toBe('strand-ws')
       expect(frame.taskId).toBe(task.id)
+      expect(frame.taskProvider).toBe('OpenAI')
+      expect(frame.taskModel).toBe('gpt-6-sol')
       expect(frame.taskPromptTokens).toBe(78)
       expect(frame.taskCompletionTokens).toBe(8221)
       expect(frame.taskCacheRead).toBe(1308532)

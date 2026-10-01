@@ -47,6 +47,17 @@ function task(over: { name?: string; sessionId?: string | null; triggerSourceId?
 }
 
 describe('broadcastTaskActivity', () => {
+  it('broadcasts the child task identity rather than its parent default', () => {
+    const strand = session('strand-model', 'interactive')
+    session('sess-model', 'task', strand)
+    const top = task({ name: 'Top', sessionId: 'sess-model' })
+    const child = task({ name: 'Child', triggerSourceId: top.id })
+    store.update(top.id, { provider: 'Anthropic', model: 'claude-opus-5-5' })
+    store.update(child.id, { provider: 'OpenAI', model: 'gpt-6-sol' })
+    expect(broadcastTaskActivity(deps(), 'started', store.getById(child.id)!)).toBe(true)
+    expect(events[0]).toMatchObject({ taskProvider: 'OpenAI', taskModel: 'gpt-6-sol' })
+  })
+
   it('emits task_started carrying strand, task and parent ids', () => {
     const strand = session('strand-a', 'interactive')
     session('sess-top', 'task', strand)
@@ -62,6 +73,8 @@ describe('broadcastTaskActivity', () => {
     expect(frame.taskParentId).toBe(top.id)
     expect(frame.taskName).toBe('Sub')
     expect(frame.taskStatus).toBe('running')
+    expect(frame.taskProvider).toBeNull()
+    expect(frame.taskModel).toBeNull()
     expect(frame.agentId).toBe('main')
     expect(frame.userId).toBe(1)
   })

@@ -57,6 +57,9 @@ export interface StrandTaskNode {
   resultStatus: TaskResultStatus | null
   triggerType: TaskTriggerType
   agentId: string | null
+  /** Persisted identity of this task, not its parent or the strand default. */
+  provider: string | null
+  model: string | null
   /** The task that delegated this one, or null for a task the strand started. */
   parentTaskId: string | null
   /** 0 for a task the strand started directly, +1 per delegation level. */
@@ -109,6 +112,8 @@ interface TaskTreeRow {
   trigger_type: string
   trigger_source_id: string | null
   agent_id: string | null
+  provider: string | null
+  model: string | null
   created_at: string
   started_at: string | null
   completed_at: string | null
@@ -127,7 +132,7 @@ interface TaskTreeRow {
  * `loadTask` — adding a field here is enough, there is no second list.
  */
 const TASK_TREE_COLUMNS =
-  'id, name, status, result_status, trigger_type, trigger_source_id, agent_id, created_at, started_at, completed_at, error_message, tool_call_count, prompt_tokens, completion_tokens, cache_read, cache_write, estimated_cost, session_id'
+  'id, name, status, result_status, trigger_type, trigger_source_id, agent_id, provider, model, created_at, started_at, completed_at, error_message, tool_call_count, prompt_tokens, completion_tokens, cache_read, cache_write, estimated_cost, session_id'
 
 /** A usage column that is NULL (legacy rows) counts as 0, never as null. */
 function usage(value: number | null | undefined): number {
@@ -199,6 +204,8 @@ function rowToNode(row: TaskTreeRow): StrandTaskNode {
     resultStatus: (row.result_status as TaskResultStatus | null) ?? null,
     triggerType: row.trigger_type as TaskTriggerType,
     agentId: row.agent_id,
+    provider: row.provider,
+    model: row.model,
     parentTaskId: null,
     depth: 0,
     hasChildren: false,
@@ -408,8 +415,8 @@ function loadTask(db: Database, id: string): Task | null {
     status: row.status as TaskStatus,
     triggerType: row.trigger_type as TaskTriggerType,
     triggerSourceId: row.trigger_source_id,
-    provider: null,
-    model: null,
+    provider: row.provider,
+    model: row.model,
     isDefaultModel: null,
     maxDurationMinutes: null,
     promptTokens: usage(row.prompt_tokens),
@@ -453,6 +460,8 @@ export interface TaskActivityFrame {
   resultStatus: TaskResultStatus | null
   triggerType: TaskTriggerType
   agentId: string | null
+  provider: string | null
+  model: string | null
   createdAt: string
   startedAt: string | null
   completedAt: string | null
@@ -496,6 +505,8 @@ export function buildTaskActivityFrame(
     resultStatus: task.resultStatus ?? null,
     triggerType: task.triggerType,
     agentId: task.agentId ?? null,
+    provider: task.provider,
+    model: task.model,
     createdAt: task.createdAt,
     startedAt: task.startedAt,
     completedAt: task.completedAt,

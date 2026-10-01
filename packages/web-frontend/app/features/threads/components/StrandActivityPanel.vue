@@ -101,16 +101,19 @@ const {
   isExpanded,
 } = useStrandTasks(() => props.strandId)
 
-// Metadata is intentionally separate: a stale detail response must never replace
-// token/cost/status values supplied by the strand's live frames.
+// Legacy backends may lack identity in the tree. Detail is only a fallback
+// for missing identity; it never replaces live usage, status or timestamps.
 const metadata = ref<Record<string, TaskMetadata | null>>({})
 let stopMetadataWatch: (() => void) | undefined
 let disposed = false
 onMounted(() => {
   const cache = createTaskMetadataCache(useTasksApi().getTask)
-  stopMetadataWatch = watch(() => visibleRows.value.map(row => row.id), ids => {
-    for (const id of ids) {
-      if (id in metadata.value) continue
+  stopMetadataWatch = watch(() => visibleRows.value.map(row => ({
+    id: row.id,
+    needsIdentity: !row.provider && !row.model,
+  })), rows => {
+    for (const { id, needsIdentity } of rows) {
+      if (!needsIdentity || id in metadata.value) continue
       metadata.value[id] = null
       void cache(id).then(value => { if (!disposed) metadata.value[id] = value })
     }

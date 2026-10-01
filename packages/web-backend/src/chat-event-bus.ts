@@ -116,6 +116,9 @@ export interface ChatEvent {
   taskCompletedAt?: string | null
   /** Tool calls the task has made so far. */
   taskToolCallCount?: number
+  /** Persisted provider/model of this task (not its parent's choice). */
+  taskProvider?: string | null
+  taskModel?: string | null
   /**
    * Live usage of the task at the moment the frame was built, mirrored from
    * the `tasks` row (`prompt_tokens`, `completion_tokens`, `cache_read`,

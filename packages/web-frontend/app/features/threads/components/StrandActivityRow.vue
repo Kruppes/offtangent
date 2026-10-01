@@ -65,7 +65,12 @@ defineEmits<{ toggle: [taskId: string] }>()
 
 const { t } = useI18n()
 
-const modelLabel = computed(() => [props.metadata?.provider, props.metadata?.model].filter(Boolean).join(' · ') || '—')
+// Never mix an identity from a live row with an older detail response.
+// Details only cover legacy backends where the row has no identity at all.
+const modelLabel = computed(() => {
+  const source = props.row.provider || props.row.model ? props.row : props.metadata
+  return [source?.provider, source?.model].filter(Boolean).join(' · ') || '—'
+})
 
 const isLive = computed(() => nodeIsLive(props.row))
 
@@ -92,7 +97,7 @@ const usageLabel = computed(() => `${t('tasks.tokensTooltip.input')}: ${props.ro
 const elapsedLabel = computed(() => formatElapsed(elapsedSeconds(props.row, props.nowMs)))
 
 const ariaLabel = computed(() =>
-  `${props.row.name}, ${statusLabel.value}, ${elapsedLabel.value}` +
+  `${props.row.name}${modelLabel.value !== '—' ? `, ${modelLabel.value}` : ''}, ${statusLabel.value}, ${elapsedLabel.value}` +
   (props.row.children.length > 0 ? `, ${t('strandActivity.subtaskCount', { count: props.row.children.length })}` : ''),
 )
 </script>

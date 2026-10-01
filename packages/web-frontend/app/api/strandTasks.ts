@@ -20,6 +20,9 @@ export interface StrandTaskNode {
   resultStatus: string | null
   triggerType: string
   agentId: string | null
+  /** Null on legacy rows; each task supplies its own persisted identity. */
+  provider?: string | null
+  model?: string | null
   /** The task that delegated this one, null for a task the strand started. */
   parentTaskId: string | null
   /** 0 for a direct task, +1 per delegation level (server hint). */

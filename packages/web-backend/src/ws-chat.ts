@@ -236,6 +236,8 @@ interface ChatResponse {
    * `taskParentId` the delegating task (null for a task the strand started).
    */
   taskParentId?: string | null
+  taskProvider?: string | null
+  taskModel?: string | null
   taskStatus?: string
   taskResultStatus?: string | null
   taskError?: string | null
@@ -960,6 +962,8 @@ export function setupWebSocketChat(
             taskId: event.taskId,
             taskParentId: event.taskParentId ?? null,
             taskName: event.taskName,
+            taskProvider: event.taskProvider ?? null,
+            taskModel: event.taskModel ?? null,
             taskStatus: event.taskStatus,
             taskResultStatus: event.taskResultStatus ?? null,
             taskTriggerType: event.taskTriggerType,

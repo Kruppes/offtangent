@@ -64,6 +64,21 @@ function task(over: {
   return store.getById(created.id)!
 }
 
+describe('task model identity contract', () => {
+  it('reads the model of each direct task and sub-task from its own persisted row', () => {
+    const strand = session('strand-models', 'interactive')
+    session('task-models', 'task', strand)
+    const parent = task({ name: 'Parent', sessionId: 'task-models' })
+    const child = task({ name: 'Child', triggerSourceId: parent.id })
+    store.update(parent.id, { provider: 'Anthropic', model: 'claude-opus-5-5' })
+    store.update(child.id, { provider: 'OpenAI', model: 'gpt-6-sol' })
+    const nodes = buildStrandTaskTree(db, strand, { include: 'all' }).tasks
+    expect(nodes.find(n => n.id === parent.id)).toMatchObject({ provider: 'Anthropic', model: 'claude-opus-5-5' })
+    expect(nodes.find(n => n.id === child.id)).toMatchObject({ provider: 'OpenAI', model: 'gpt-6-sol' })
+    expect(buildTaskActivityFrame(db, store.getById(child.id)!, 'started')).toMatchObject({ provider: 'OpenAI', model: 'gpt-6-sol' })
+  })
+})
+
 describe('buildStrandTaskTree', () => {
   it('shows a task the strand delegated (session lineage)', () => {
     const strand = session('strand-1', 'interactive')

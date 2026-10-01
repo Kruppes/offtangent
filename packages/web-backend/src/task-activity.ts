@@ -57,6 +57,8 @@ export function broadcastTaskActivity(
     taskId: frame.taskId,
     taskParentId: frame.parentTaskId,
     taskName: frame.name,
+    taskProvider: frame.provider,
+    taskModel: frame.model,
     taskStatus: frame.status,
     taskResultStatus: frame.resultStatus,
     taskTriggerType: frame.triggerType,
