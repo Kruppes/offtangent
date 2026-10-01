@@ -1,6 +1,6 @@
 {
   "name": "offtangent",
-  "version": "0.29.0",
+  "version": "0.30.0",
   "description": "Self-hosted agent backend with captures, strands and a router. Talk first, the system sorts.",
   "private": true,
   "type": "module",
