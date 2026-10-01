@@ -46,7 +46,10 @@ export function mapTasksListResponse(input: {
  *   "createdAt": "2026-09-15 12:46:38",  // SQLite UTC, NOT ISO-8601
  *   "startedAt": "2026-09-15 12:46:38", "completedAt": null,
  *   "sessionId": "0b106d9b-…",           // the task's OWN session
- *   "agentId": "coder", "outputSchema": null, "contextMode": "clean"
+ *   "agentId": "coder", "outputSchema": null, "contextMode": "clean",
+ *   "thinkingLevel": "medium",            // null = runner background setting
+ *   "routing": { "source": "strand", "kind": "research", "difficulty": "medium",
+ *                "tier": "standard", "modelId": "…", "thinking": "medium", … } // null for legacy rows
  * } }
  * ```
  *
@@ -84,7 +87,7 @@ export function mapTaskResponse(task: Task, cost?: TaskCostSummary | null) {
  *                     "model": "claude-opus-5", "thinking": "…" } }
  *   ],
  *   "task": { "id", "name", "status", "triggerType", "prompt", "provider",
- *             "model", "isDefaultModel", "maxDurationMinutes",
+ *             "model", "isDefaultModel", "thinkingLevel", "routing", "maxDurationMinutes",
  *             "resultSummary", "errorMessage",
  *             "promptTokens", "completionTokens", "cacheRead",
  *             "cacheWrite", "estimatedCost", "toolCallCount" } }
@@ -120,6 +123,8 @@ export function mapTaskEventsResponse(input: {
       provider: input.task.provider,
       model: input.task.model,
       isDefaultModel: input.task.isDefaultModel,
+      thinkingLevel: input.task.thinkingLevel,
+      routing: input.task.routing,
       maxDurationMinutes: input.task.maxDurationMinutes,
       resultSummary: input.task.resultSummary,
       errorMessage: input.task.errorMessage,

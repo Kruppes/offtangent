@@ -25,7 +25,7 @@
       <Badge variant="outline" class="shrink-0">
         {{ $t(`tasks.trigger.${task.triggerType}`) }}
       </Badge>
-      <span v-if="triggerModel" class="truncate" :title="triggerModel">{{ triggerModel }}</span>
+      <span v-if="triggerModel" class="truncate" :title="routingTooltip ?? triggerModel">{{ triggerModel }}</span>
     </div>
 
     <dl class="grid grid-cols-2 gap-x-4 gap-y-1.5 text-xs">
@@ -48,6 +48,7 @@ import {
   cacheSummary,
   formatTaskDuration,
   formatTaskTriggerModel,
+  formatTaskRoutingTooltip,
   hasCacheTokens,
   taskDisplayStatus,
   taskStatusVariant,
@@ -71,6 +72,7 @@ onMounted(() => { ticker = setInterval(() => { now.value = Date.now() }, 1000) }
 onBeforeUnmount(() => clearInterval(ticker))
 
 const triggerModel = computed(() => formatTaskTriggerModel(props.task, t))
+const routingTooltip = computed(() => formatTaskRoutingTooltip(props.task, t))
 // A task waiting for a free concurrency slot is stored as running without a
 // start time — show it as queued instead of pretending it works.
 const displayStatus = computed(() => taskDisplayStatus(props.task))

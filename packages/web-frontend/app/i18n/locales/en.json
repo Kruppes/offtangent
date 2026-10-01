@@ -1253,6 +1253,8 @@
     },
     "triggerModelDefault": "Default ({value})",
     "triggerModelDefaultTooltip": "Default provider and model from the task settings.",
+    "triggerModelThinking": "{value} · thinking {level}",
+    "routingTooltip": "Profile {profile}, thinking {thinking}: {reason}",
     "tokensTooltip": {
       "input": "Input",
       "output": "Output",

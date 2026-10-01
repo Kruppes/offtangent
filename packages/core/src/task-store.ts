@@ -1,6 +1,10 @@
 import { randomUUID } from 'node:crypto'
 import type { Database } from './database.js'
 import { sealText } from './secret-boundary.js'
+import type { SettingsThinkingLevel } from './contracts/settings.js'
+import { normalizeThinkingLevel } from './thinking-level.js'
+import { parseTaskRouting, serializeTaskRouting } from './task-policy.js'
+import type { TaskRouting } from './task-policy.js'
 
 export type TaskStatus = 'running' | 'paused' | 'completed' | 'failed'
 export type TaskTriggerType = 'user' | 'agent' | 'cronjob' | 'heartbeat' | 'consolidation'
@@ -53,6 +57,14 @@ export interface Task {
    * task-agent-notice.ts); NULL means "still owed to the agent".
    */
   agentNotifiedAt: string | null
+  /**
+   * Thinking level chosen for THIS task (task policy, plan 2026-10-01).
+   * `null` = the runner's `tasks.backgroundThinkingLevel` (legacy rows,
+   * cronjob/heartbeat/consolidation and calls without a profile).
+   */
+  thinkingLevel: SettingsThinkingLevel | null
+  /** Why this provider/model/thinking was chosen (task-policy.ts), or null. */
+  routing: TaskRouting | null
 }
 
 export type TaskContextMode = 'clean' | 'selected' | 'fork'
@@ -76,6 +88,10 @@ export interface CreateTaskInput {
   /** Serialised JSON schema for the SUMMARY (SPEC 11.6). */
   outputSchema?: string | null
   contextMode?: TaskContextMode | null
+  /** Per-task thinking level; omit for the runner's background setting. */
+  thinkingLevel?: SettingsThinkingLevel | null
+  /** Routing record of the task policy; omit for legacy paths. */
+  routing?: TaskRouting | null
 }
 
 export interface UpdateTaskInput {
@@ -189,6 +205,8 @@ interface TaskRow {
   context_mode?: string | null
   handoff?: string | null
   agent_notified_at?: string | null
+  thinking_level?: string | null
+  routing?: string | null
 }
 
 function rowToTask(row: TaskRow): Task {
@@ -224,6 +242,8 @@ function rowToTask(row: TaskRow): Task {
     contextMode: (row.context_mode as TaskContextMode | null | undefined) ?? null,
     handoff: row.handoff ?? null,
     agentNotifiedAt: row.agent_notified_at ?? null,
+    thinkingLevel: normalizeThinkingLevel(row.thinking_level) ?? null,
+    routing: parseTaskRouting(row.routing),
   }
 }
 
@@ -286,6 +306,9 @@ export function initTasksTable(db: Database): void {
     'ALTER TABLE tasks ADD COLUMN context_mode TEXT DEFAULT NULL',
     // W5/P2: handoff state of a run that ended with unfinished work.
     'ALTER TABLE tasks ADD COLUMN handoff TEXT DEFAULT NULL',
+    // Task policy (plan 2026-10-01): per-task thinking level + routing record.
+    'ALTER TABLE tasks ADD COLUMN thinking_level TEXT DEFAULT NULL',
+    'ALTER TABLE tasks ADD COLUMN routing TEXT DEFAULT NULL',
   ]) {
     try {
       db.exec(stmt)
@@ -328,8 +351,8 @@ export class TaskStore {
     const now = new Date().toISOString().replace('T', ' ').slice(0, 19)
 
     this.db.prepare(`
-      INSERT INTO tasks (id, name, prompt, status, trigger_type, trigger_source_id, provider, model, is_default_model, max_duration_minutes, session_id, agent_id, output_schema, context_mode, created_at)
-      VALUES (?, ?, ?, 'running', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      INSERT INTO tasks (id, name, prompt, status, trigger_type, trigger_source_id, provider, model, is_default_model, max_duration_minutes, session_id, agent_id, output_schema, context_mode, thinking_level, routing, created_at)
+      VALUES (?, ?, ?, 'running', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `).run(
       id,
       input.name,
@@ -344,6 +367,8 @@ export class TaskStore {
       input.agentId ?? null,
       input.outputSchema ?? null,
       input.contextMode ?? null,
+      normalizeThinkingLevel(input.thinkingLevel) ?? null,
+      input.routing ? serializeTaskRouting(input.routing) : null,
       now,
     )
 

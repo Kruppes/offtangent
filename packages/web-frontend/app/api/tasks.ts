@@ -28,6 +28,22 @@ export interface Task {
   startedAt: string | null
   completedAt: string | null
   sessionId: string | null
+  /** Thinking level chosen for this task; null = background setting. */
+  thinkingLevel?: string | null
+  /** Why this model/thinking was chosen (task policy); null for legacy rows. */
+  routing?: TaskRouting | null
+}
+
+/** Routing record of `create_task` (core `task-policy.ts`). */
+export interface TaskRouting {
+  source: 'explicit' | 'explicit_provider' | 'parent' | 'strand' | 'default'
+  kind: string | null
+  difficulty: string | null
+  tier: string | null
+  modelId: string
+  thinking: string | null
+  reason: string
+  modelReason?: string
 }
 
 export interface TaskProviderFilterOption {
@@ -66,6 +82,8 @@ export interface TaskInfo {
   provider?: string | null
   model?: string | null
   isDefaultModel?: boolean | null
+  thinkingLevel?: string | null
+  routing?: TaskRouting | null
   maxDurationMinutes?: number | null
   resultSummary?: string | null
   errorMessage?: string | null

@@ -587,6 +587,16 @@ export function initDatabase(dbPath?: string): Database {
     db.exec('ALTER TABLE tasks ADD COLUMN handoff TEXT DEFAULT NULL')
   }
 
+  // Migration (task policy, plan 2026-10-01): per-task thinking level and the
+  // routing record of `create_task`. Also done in initTasksTable for
+  // store-level callers. NULL keeps the legacy behaviour (background setting).
+  if (!taskColsForCache.find(c => c.name === 'thinking_level')) {
+    db.exec('ALTER TABLE tasks ADD COLUMN thinking_level TEXT DEFAULT NULL')
+  }
+  if (!taskColsForCache.find(c => c.name === 'routing')) {
+    db.exec('ALTER TABLE tasks ADD COLUMN routing TEXT DEFAULT NULL')
+  }
+
   // Migration (W5/P3): bookkeeping for outcomes that never reach a strand
   // (cronjob results). Existing rows are backfilled as "already announced",
   // so the deploy that adds the column does not replay a day of cronjobs

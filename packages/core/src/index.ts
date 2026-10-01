@@ -691,6 +691,17 @@ export type { TaskExecutionContext, TaskOrigin } from './task-execution-context.
 export { resolveTaskDefaultProvider } from './task-provider-resolution.js'
 export type { TaskDefaultProviderChainOptions } from './task-provider-resolution.js'
 export type { TaskToolsOptions } from './task-tools.js'
+export {
+  TASK_POLICY_KINDS,
+  TASK_POLICY_DIFFICULTIES,
+  TASK_POLICY_MATRIX,
+  TASK_POLICY_FAMILY_MODELS,
+  resolveTaskPolicy,
+  parseTaskProfile,
+  parseTaskRouting,
+  formatTaskRouting,
+} from './task-policy.js'
+export type { TaskRouting, TaskPolicyKind, TaskPolicyDifficulty, TaskPolicyTier, StrandModelPinRef } from './task-policy.js'
 export { createReadChatHistoryTool } from './chat-history-tools.js'
 export { createRecallMessageTool } from './recall-message-tool.js'
 export { formatMessageDigest, parseMessageDigestId, maskTranscript, stripRecalledLines, RECALLED_MARKER, DEFAULT_MASK_OPTIONS } from './message-digest.js'

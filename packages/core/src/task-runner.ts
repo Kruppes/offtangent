@@ -10,7 +10,8 @@ import type { Database } from './database.js'
 import { renderAttachedSkillsBlock } from './attached-skills.js'
 import { readTasksGuidelinesFile, resolveAgentMemoryDir } from './memory.js'
 import type { SettingsThinkingLevel } from './contracts/settings.js'
-import { readBackgroundThinkingLevelFromConfig, resolveBackgroundReasoning } from './thinking-level.js'
+import { formatTaskRouting } from './task-policy.js'
+import { readBackgroundThinkingLevelFromConfig, resolveBackgroundReasoning, toPiAiReasoning } from './thinking-level.js'
 import { parseOutputSchema, checkOutputAgainstSchema, buildSchemaCorrectionPrompt, buildOutputSchemaInstruction } from './task-output-schema.js'
 import { withTimeout } from './promise-utils.js'
 import { TaskStore } from './task-store.js'
@@ -534,10 +535,23 @@ function parseTaskOutput(text: string): { status: TaskResultStatus; summary: str
 }
 
 /**
+ * Model, thinking level and routing reason of a task chosen by the task
+ * policy, as extra `<task_injection>` attributes so the delegating agent sees
+ * what the sub-task ran on. Empty for tasks without a routing record
+ * (cronjob, heartbeat, legacy rows) — their injection stays byte-identical.
+ */
+function formatRoutingAttributes(task: Task): string {
+  const routing = task.routing
+  if (!routing) return ''
+  const attr = (value: string) => value.replace(/[&"<>]/g, (ch) => `&#${ch.charCodeAt(0)};`)
+  return ` model="${attr(task.model ?? routing.modelId)}" thinking="${attr(task.thinkingLevel ?? 'default')}" routing="${attr(formatTaskRouting(routing))}"`
+}
+
+/**
  * Format a task injection message for the main agent
  */
 export function formatTaskInjection(task: Task, durationMinutes: number): string {
-  return `<task_injection task_id="${task.id}" task_name="${task.name}" status="${task.resultStatus ?? task.status}" trigger="${task.triggerType}" duration_minutes="${durationMinutes}" tokens_used="${task.promptTokens + task.completionTokens}">
+  return `<task_injection task_id="${task.id}" task_name="${task.name}" status="${task.resultStatus ?? task.status}" trigger="${task.triggerType}" duration_minutes="${durationMinutes}" tokens_used="${task.promptTokens + task.completionTokens}"${formatRoutingAttributes(task)}>
 ${task.resultSummary ?? task.errorMessage ?? 'Task completed without summary.'}
 </task_injection>`
 }
@@ -599,6 +613,17 @@ export class TaskRunner {
     return this.options.backgroundThinkingLevel
       ?? readBackgroundThinkingLevelFromConfig()
       ?? 'off'
+  }
+
+  /**
+   * Thinking level of ONE task (task policy, plan 2026-10-01). A level chosen
+   * for the task at creation (`tasks.thinking_level`) wins; rows without one
+   * (cronjob, heartbeat, consolidation, legacy rows, calls without a profile)
+   * keep the background setting exactly as before. Used at start, recovery
+   * (the resumed row carries the column) and by the verifier.
+   */
+  private resolveTaskThinkingLevel(task: Pick<Task, 'thinkingLevel'> | null | undefined): SettingsThinkingLevel {
+    return task?.thinkingLevel ?? this.resolveBackgroundThinkingLevel()
   }
 
   /**
@@ -859,7 +884,7 @@ export class TaskRunner {
           systemPrompt,
           model,
           tools: effectiveTools,
-          thinkingLevel: this.resolveBackgroundThinkingLevel(),
+          thinkingLevel: this.resolveTaskThinkingLevel(task),
         },
         // The task session id is stable for the whole run — hand it to the
         // provider so a per-session prompt cache keeps hitting across the
@@ -1094,7 +1119,9 @@ export class TaskRunner {
       }, {
         apiKey,
         temperature: 0,
-        reasoning: resolveBackgroundReasoning(),
+        // The reviewer judges with the thinking level of the task it reviews
+        // (task policy); tasks without one keep the background setting.
+        reasoning: task.thinkingLevel ? toPiAiReasoning(task.thinkingLevel) : resolveBackgroundReasoning(),
       }), 120_000, 'Task result verification')
 
       const verdictText = response.content
@@ -2788,7 +2815,19 @@ Hint: Use /kill_task ${task.id} if the task needs to be cleaned up.
     // Handle running tasks — build summary from stored tool_calls and re-start
     const runningTasks = this.store.list({ status: 'running' })
     for (const task of runningTasks) {
-      const provider = (task.provider ? getProvider(task.provider) : null) ?? defaultProvider
+      const baseProvider = task.provider ? getProvider(task.provider) : null
+      // Keep the model pin of the interrupted run: `getProvider` returns the
+      // provider config whose first enabled model is its default, so without
+      // re-applying `task.model` a recovered task silently ran on a different
+      // model than the one recorded (and chosen by the task policy).
+      // A model that is no longer enabled is not revived: the run falls back
+      // to the provider's default model, as before.
+      const pinStillEnabled = !!task.model && (baseProvider?.enabledModels ?? []).includes(task.model)
+      const provider = baseProvider
+        ? (pinStillEnabled && baseProvider.enabledModels?.[0] !== task.model
+          ? { ...baseProvider, enabledModels: [task.model!] }
+          : baseProvider)
+        : defaultProvider
 
       // Note: rows that were still queued at shutdown (startedAt = NULL) are
       // recovered through the same "(resumed)" copy path as interrupted runs
@@ -2825,6 +2864,9 @@ Hint: Use /kill_task ${task.id} if the task needs to be cleaned up.
         // restarted analyst/coder/advisor task to main — wrong memory root, wrong
         // per-agent model and wrong result routing (multi-persona bleeding).
         agentId: task.agentId ?? undefined,
+        // Task policy: the recovered run thinks exactly like the original.
+        thinkingLevel: task.thinkingLevel ?? undefined,
+        routing: task.routing ?? undefined,
       })
 
       // Mark the old task as failed

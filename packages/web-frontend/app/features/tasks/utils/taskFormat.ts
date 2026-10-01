@@ -74,14 +74,35 @@ export function cacheSummary(task: Pick<Task, 'promptTokens' | 'cacheRead' | 'ca
 }
 
 export function formatTaskTriggerModel(
-  task: Pick<Task, 'provider' | 'model' | 'isDefaultModel'>,
+  task: Pick<Task, 'provider' | 'model' | 'isDefaultModel' | 'thinkingLevel'>,
   t: (key: string, values: Record<string, string>) => string,
 ): string | null {
   if (!task.provider && !task.model) return null
 
   const parts = [task.provider, task.model].filter(Boolean).join(' – ')
-  if (task.isDefaultModel === true) {
-    return t('tasks.triggerModelDefault', { value: parts })
-  }
-  return parts
+  const base = task.isDefaultModel === true
+    ? t('tasks.triggerModelDefault', { value: parts })
+    : parts
+  return task.thinkingLevel
+    ? t('tasks.triggerModelThinking', { value: base, level: task.thinkingLevel })
+    : base
+}
+
+/**
+ * Tooltip with the routing decision of the task policy (why this model and
+ * thinking level), or null for tasks without a routing record.
+ */
+export function formatTaskRoutingTooltip(
+  task: Pick<Task, 'routing'>,
+  t: (key: string, values: Record<string, string>) => string,
+): string | null {
+  const routing = task.routing
+  if (!routing) return null
+  const profile = routing.kind ? `${routing.kind}/${routing.difficulty}` : '–'
+  const text = t('tasks.routingTooltip', {
+    profile,
+    thinking: routing.thinking ?? '–',
+    reason: routing.reason,
+  })
+  return routing.modelReason ? `${text} (${routing.modelReason})` : text
 }

@@ -10,6 +10,16 @@ import { parseOutputSchema } from './task-output-schema.js'
 import { buildDelegationContext, briefTooThin } from './delegation-context.js'
 import type { DelegationContextSelection } from './delegation-context.js'
 import { getCurrentTaskExecutionContext } from './task-execution-context.js'
+import { checkAutomaticModelFor } from './data-policy.js'
+import {
+  TASK_POLICY_DIFFICULTIES,
+  TASK_POLICY_KINDS,
+  formatTaskRouting,
+  parseExplicitThinking,
+  parseTaskProfile,
+  resolveTaskPolicy,
+} from './task-policy.js'
+import type { StrandModelPinRef } from './task-policy.js'
 import { formatContinuationContext } from './task-handoff.js'
 import { getSubtreeCostForTasks } from './task-cost.js'
 import type { TaskCostSummary } from './task-cost.js'
@@ -53,6 +63,41 @@ export interface TaskToolsOptions {
   db?: Database
   /** Token budget for the delegation context block (SPEC 10.8, default 8000). */
   contextBudgetTokens?: number
+  /**
+   * Model pin of the strand whose turn calls `create_task` (task policy, plan
+   * 2026-10-01). Receives the session id of THIS turn (`getParentSessionId`),
+   * never a globally "active" strand, so two strands delegating at the same
+   * time each see their own pin. Defaults to reading `sessions` via `db`.
+   */
+  getStrandModelPin?: (sessionId: string) => StrandModelPinRef | null
+  /**
+   * Data-policy gate for a model the task policy picks automatically.
+   * Defaults to `checkAutomaticModelFor` (role `task:policy`).
+   */
+  checkAutomaticModel?: (provider: ProviderConfig, modelId: string) => { allowed: boolean; reason: string }
+}
+
+function readStrandModelPin(db: Database | undefined, sessionId: string): StrandModelPinRef | null {
+  if (!db) return null
+  try {
+    const row = db.prepare('SELECT model_provider_id, model_id FROM sessions WHERE id = ?')
+      .get(sessionId) as { model_provider_id: string | null; model_id: string | null } | undefined
+    return row?.model_provider_id && row.model_id
+      ? { providerId: row.model_provider_id, modelId: row.model_id }
+      : null
+  } catch {
+    return null
+  }
+}
+
+function defaultCheckAutomaticModel(provider: ProviderConfig, modelId: string): { allowed: boolean; reason: string } {
+  try {
+    const decision = checkAutomaticModelFor(provider, modelId, 'task:policy')
+    return { allowed: decision.allowed, reason: decision.reason }
+  } catch (err) {
+    // Fail closed: an automatic choice the gate cannot judge is not used.
+    return { allowed: false, reason: `gate_error: ${(err as Error)?.message ?? 'unknown'}` }
+  }
 }
 
 /**
@@ -144,7 +189,9 @@ export function createTaskTool(options: TaskToolsOptions): AgentTool {
       'that should continue in the background (e.g., building apps, substantial refactors, multi-step research, complex file operations). ' +
       'Do not use it for simple questions or quick checks you can finish in the current turn. ' +
       'Provide a self-contained prompt; the task runs in an isolated agent instance and reports back when complete, fails, or needs input. ' +
-      'Use `attached_skills` to bake the rules of specific skills into the task prompt instead of hoping the task agent discovers them.',
+      'Use `attached_skills` to bake the rules of specific skills into the task prompt instead of hoping the task agent discovers them. ' +
+      'Classify the work with `task_kind` and `difficulty`: the model tier and thinking level are then chosen deterministically ' +
+      'inside the provider the task runs on (an explicit provider/model pin always wins; otherwise the parent task\'s, then this strand\'s provider).',
     parameters: Type.Object({
       prompt: Type.String({
         description: 'Detailed, self-contained prompt describing what the task should accomplish. Include the goal, constraints, relevant files or URLs, required checks, and the expected final deliverable. Write it so the task can proceed without relying on hidden chat context.',
@@ -160,6 +207,26 @@ export function createTaskTool(options: TaskToolsOptions): AgentTool {
       model: Type.Optional(
         Type.String({
           description: 'Specific model id to use for this task (e.g. "kimi-k2.6", "gpt-5", "claude-sonnet-4-5"). Choose based on the descriptions in `<available_providers>` — prefer cost-effective models for simple work and stronger models for complex coding or research. Only pass this if you have a specific reason to deviate from the default task model. If `provider` is omitted, the provider is auto-detected from the configured providers (requires a unique match). If you omit both `provider` and `model`, the task inherits the model of the task that created it (or your active model at the top level), so sub-tasks and sub-sub-tasks stay on the same model unless you pin a different one here.',
+        })
+      ),
+      task_kind: Type.Optional(
+        Type.String({
+          description: `What kind of work this is: ${TASK_POLICY_KINDS.join(' | ')}. extraction = bounded, checkable pulling/sorting of data; research = finding and weighing sources; review = critique of a diff/text/plan; coding = changing code; ops = system work with side effects; general = anything else. Picks the model tier and thinking level together with \`difficulty\`.`,
+        })
+      ),
+      difficulty: Type.Optional(
+        Type.String({
+          description: `Difficulty AND risk of the task: ${TASK_POLICY_DIFFICULTIES.join(' | ')}. Use high for multi-step, multi-file, irreversible or security-relevant work; low for short, bounded, easily checked work. Omitted values default to general/medium (thrifty but capable).`,
+        })
+      ),
+      thinking: Type.Optional(
+        Type.String({
+          description: 'Optional explicit thinking level (off | minimal | low | medium | high | xhigh). Normally leave it out — task_kind/difficulty choose it. "xhigh" is never automatic and requires model_reason.',
+        })
+      ),
+      model_reason: Type.Optional(
+        Type.String({
+          description: 'Short justification, REQUIRED when pinning an exception model (the astra/fable lines) or thinking "xhigh". Shown in the task routing record.',
         })
       ),
       max_duration_minutes: Type.Optional(
@@ -196,11 +263,15 @@ export function createTaskTool(options: TaskToolsOptions): AgentTool {
       ),
     }),
     execute: async (_toolCallId, params) => {
-      const { prompt, name, provider: providerName, model: modelName, max_duration_minutes, attached_skills, output_schema, context_mode, context, continuation_of } = params as {
+      const { prompt, name, provider: providerName, model: modelName, max_duration_minutes, attached_skills, output_schema, context_mode, context, continuation_of, task_kind, difficulty, thinking, model_reason } = params as {
         prompt: string
         name: string
         provider?: string
         model?: string
+        task_kind?: string
+        difficulty?: string
+        thinking?: string
+        model_reason?: string
         max_duration_minutes?: number
         attached_skills?: string[]
         output_schema?: string
@@ -248,47 +319,47 @@ export function createTaskTool(options: TaskToolsOptions): AgentTool {
         // data pass-through, never re-inferred later.
         const taskAgentId = options.getCurrentAgentId?.() ?? undefined
 
-        // Resolve (provider, model) into a concrete provider config.
-        // - Both empty       → use default task provider (inheritance chain:
-        //                       parent task's model > agent default > system default)
-        // - Any combination  → run through the shared resolver so a bare
-        //                       model name ("kimi-k2.6") auto-selects its
-        //                       provider and an enabled-model guard runs.
-        const isDefaultModel = !providerName && !modelName
-        let provider: ProviderConfig
-        if (providerName || modelName) {
-          const resolved = resolveProviderModelInput({ provider: providerName, model: modelName })
-          if (!resolved.ok) {
-            return {
-              content: [{ type: 'text' as const, text: `Error: ${resolved.error}` }],
-              details: { error: true },
-            }
-          }
-          const base = options.resolveProvider(resolved.providerId)
-          if (!base) {
-            return {
-              content: [{ type: 'text' as const, text: `Error: Provider "${resolved.providerName}" could not be loaded.` }],
-              details: { error: true },
-            }
-          }
-          // Pin the requested model by cloning the provider config (same
-          // pattern as `getTaskDefaultProvider` and the cron scheduler).
-          provider = resolved.modelId === getProviderDefaultModel(base)
-            ? base
-            : { ...base, enabledModels: [resolved.modelId] }
-        } else {
-          // Fork: persona-aware default provider resolution (model inheritance
-          // chain keyed by the task's agentId). Upstream 0.27.0: null-guard when
-          // no default provider is configured. Keep BOTH.
-          const def = options.getDefaultProvider(taskAgentId)
-          if (!def) {
-            return {
-              content: [{ type: 'text' as const, text: 'Error: No default task provider is configured. Set one in Settings → Tasks, or pass an explicit provider/model.' }],
-              details: { error: true },
-            }
-          }
-          provider = def
+        // Task policy (plan 2026-10-01): resolve provider, model and thinking
+        // level deterministically from the structured profile — no second
+        // LLM call, no prompt parsing.
+        //   explicit model > explicit provider (+ tier) > parent task (ALS)
+        //   > pin of THIS turn's strand (tie-breaker) > default chain
+        //     (persona > task:agent role > tasks.defaultProvider > active)
+        // An automatically chosen model must be enabled and pass the data
+        // policy gate; otherwise the call fails with a clear error.
+        const profile = parseTaskProfile({ task_kind, difficulty })
+        if (!profile.ok) {
+          return { content: [{ type: 'text' as const, text: `Error: ${profile.error}` }], details: { error: true } }
         }
+        const explicitThinking = parseExplicitThinking(thinking)
+        if (!explicitThinking.ok) {
+          return { content: [{ type: 'text' as const, text: `Error: ${explicitThinking.error}` }], details: { error: true } }
+        }
+        const isDefaultModel = !providerName && !modelName
+        // Bound to the session of THIS turn (AsyncLocalStorage in AgentCore),
+        // not to whatever strand is active elsewhere; null inside tasks.
+        const turnSessionId = options.getParentSessionId?.() ?? null
+        const parentProvider = getCurrentTaskExecutionContext()?.provider ?? null
+        const strandPin = !parentProvider && turnSessionId
+          ? (options.getStrandModelPin ?? ((id: string) => readStrandModelPin(options.db, id)))(turnSessionId)
+          : null
+        const policy = resolveTaskPolicy({
+          explicitProvider: providerName?.trim() || undefined,
+          explicitModel: modelName?.trim() || undefined,
+          explicitThinking: explicitThinking.value,
+          modelReason: model_reason,
+          profile: profile.value,
+          parentProvider,
+          strandPin,
+          resolveProvider: options.resolveProvider,
+          resolveExplicit: (input) => resolveProviderModelInput(input),
+          getDefaultProvider: () => options.getDefaultProvider(taskAgentId),
+          checkAutomatic: options.checkAutomaticModel ?? defaultCheckAutomaticModel,
+        })
+        if (!policy.ok) {
+          return { content: [{ type: 'text' as const, text: `Error: ${policy.error}` }], details: { error: true } }
+        }
+        const provider: ProviderConfig = policy.provider
 
         // Cap max duration
         let maxDuration = max_duration_minutes ?? options.defaultMaxDurationMinutes
@@ -301,7 +372,7 @@ export function createTaskTool(options: TaskToolsOptions): AgentTool {
 
         // Delegation context (SPEC 10.8 / 11.6): resolved once and prepended
         // to the prompt so the task row shows exactly what was passed in.
-        const parentSessionId = options.getParentSessionId?.() ?? null
+        const parentSessionId = turnSessionId
         let effectivePrompt = prompt
         let droppedMessageIds: number[] = []
         let effectiveMode: 'clean' | 'selected' | 'fork' = contextMode
@@ -366,6 +437,8 @@ export function createTaskTool(options: TaskToolsOptions): AgentTool {
           agentId: taskAgentId,
           outputSchema,
           contextMode: effectiveMode,
+          thinkingLevel: policy.thinking,
+          routing: policy.routing,
         })
 
         // Start the task, linking its session to the current interactive session
@@ -379,6 +452,7 @@ export function createTaskTool(options: TaskToolsOptions): AgentTool {
           ? `Context mode: ${effectiveMode}${droppedMessageIds.length ? ` (dropped message ids: ${droppedMessageIds.join(', ')})` : ''}${outputSchema ? '; output_schema enforced' : ''}\n`
           : ''
         const continuationLine = continuationOfId ? `Continuation of: ${continuationOfId}\n` : ''
+        const routingLine = `Model: ${formatTaskRouting(policy.routing)}\n`
 
         // The per-provider limit (`tasks.maxConcurrentPerProvider`) or the
         // global cap (`tasks.maxConcurrent`) can put the task in a FIFO queue
@@ -402,12 +476,15 @@ export function createTaskTool(options: TaskToolsOptions): AgentTool {
         return {
           content: [{
             type: 'text' as const,
-            text: `${headline}\n\nTask ID: ${task.id}\nName: ${name}\nProvider: ${provider.name}\nMax Duration: ${maxDuration} minutes\n${attachedSkillsLine}${contextLine}${continuationLine}\n${closing}`,
+            text: `${headline}\n\nTask ID: ${task.id}\nName: ${name}\nProvider: ${provider.name}\n${routingLine}Max Duration: ${maxDuration} minutes\n${attachedSkillsLine}${contextLine}${continuationLine}\n${closing}`,
           }],
           details: {
             taskId: task.id,
             name,
             provider: provider.name,
+            model: policy.modelId,
+            thinkingLevel: policy.thinking,
+            routing: policy.routing,
             maxDurationMinutes: maxDuration,
             attachedSkills,
             contextMode: effectiveMode,

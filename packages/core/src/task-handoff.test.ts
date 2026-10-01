@@ -41,6 +41,8 @@ function makeTask(overrides: Partial<Task> = {}): Task {
     contextMode: null,
     handoff: null,
     agentNotifiedAt: null,
+    thinkingLevel: null,
+    routing: null,
     ...overrides,
   } as Task
 }

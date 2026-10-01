@@ -437,6 +437,8 @@ function loadTask(db: Database, id: string): Task | null {
     contextMode: null,
     handoff: null,
     agentNotifiedAt: null,
+    thinkingLevel: null,
+    routing: null,
   }
 }
 

@@ -184,7 +184,7 @@
                     <span
                       v-if="formatTaskTriggerModel(task, t)"
                       class="text-xs text-muted-foreground"
-                      :title="task.isDefaultModel ? $t('tasks.triggerModelDefaultTooltip') : undefined"
+                      :title="formatTaskRoutingTooltip(task, t) ?? (task.isDefaultModel ? $t('tasks.triggerModelDefaultTooltip') : undefined)"
                     >
                       {{ formatTaskTriggerModel(task, t) }}
                     </span>
@@ -301,6 +301,7 @@ import {
   cacheSummary,
   formatTaskDuration,
   formatTaskTriggerModel,
+  formatTaskRoutingTooltip,
   hasCacheTokens,
   taskDisplayStatus,
   taskStatusVariant,
