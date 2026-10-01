@@ -214,6 +214,18 @@ describe('resolveTaskPolicy', () => {
       .toMatchObject({ ok: true, modelId: 'claude-fable-5' })
   })
 
+  it('a default chain that lands on an exception model needs a reason (no silent top-line use)', () => {
+    const fableDefault = () => provider('fd', 'anthropic-oauth', ['claude-fable-5', 'claude-sonnet-5-5'])
+    const res = resolveTaskPolicy(base({ getDefaultProvider: fableDefault }))
+    expect(res.ok).toBe(false)
+    if (!res.ok) expect(res.error).toContain('model_reason')
+    // With a profile the tier model of that provider runs instead.
+    expect(resolveTaskPolicy(base({ getDefaultProvider: fableDefault, profile: profile('review', 'low') })))
+      .toMatchObject({ ok: true, modelId: 'claude-sonnet-5-5' })
+    expect(resolveTaskPolicy(base({ getDefaultProvider: fableDefault, modelReason: 'synthetic reason' })))
+      .toMatchObject({ ok: true, modelId: 'claude-fable-5' })
+  })
+
   it('parent case: profile picks the tier inside the parent provider; strand pin is ignored', () => {
     const parent = { ...OAI, enabledModels: ['gpt-6-luna'] }
     const res = resolveTaskPolicy(base({

@@ -20,7 +20,11 @@
  *  - `xhigh` is never chosen automatically. The highest automatic level is
  *    `high`; `xhigh` must be requested explicitly with a `model_reason`.
  *  - Exception models (the top "astra"/"fable" lines) are never chosen
- *    automatically and an explicit pin needs a `model_reason`.
+ *    automatically. An explicit model pin, an explicit provider whose default
+ *    is such a model, and a default chain that lands on one all need a
+ *    `model_reason`. A sub-task inheriting its parent's model without a
+ *    profile is the one exception: the parent was already started with that
+ *    model deliberately, and the child stays on it (no cross-talk).
  *  - An automatically chosen model must be enabled on its provider and pass
  *    the data-policy gate. Otherwise the call fails with a clear error — the
  *    policy never switches provider or model on its own. Single exception:
@@ -452,8 +456,22 @@ export function resolveTaskPolicy(input: ResolveTaskPolicyInput): TaskPolicyReso
       return done(pinModel(full, pick.modelId), 'default', pick.cell, profile, false,
         `${strandNote}default task provider; ${profile.kind}/${profile.difficulty} → ${pick.cell.tier}`)
     }
+    if (isTaskPolicyExceptionModel(firstModel(def)) && !reasonText) {
+      return {
+        ok: false,
+        error: `The default task model "${firstModel(def)}" is an exception model and is only used with an explicit `
+          + 'model_reason. Pin a regular model, or give the reason.',
+      }
+    }
     return done(def, 'default', TASK_POLICY_MATRIX[profile.kind][profile.difficulty], profile, false,
       `${strandNote}default task provider without policy matrix; default model kept`)
+  }
+  if (isTaskPolicyExceptionModel(firstModel(def)) && !reasonText) {
+    return {
+      ok: false,
+      error: `The default task model "${firstModel(def)}" is an exception model and is only used with an explicit `
+        + 'model_reason. Pass task_kind/difficulty or a regular model, or give the reason.',
+    }
   }
   return done(def, 'default', null, null, false, `${strandNote}default task model`)
 }

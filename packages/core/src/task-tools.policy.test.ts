@@ -22,6 +22,7 @@ import type { CreateTaskInput, Task, TaskListFilters, UpdateTaskInput } from './
 import type { TaskRuntimeTaskBoundary } from './task-runtime.js'
 import { setHeuristicsOverrideForTests } from './heuristics.js'
 import { runWithTaskExecutionContext } from './task-execution-context.js'
+import { resolveBackgroundReasoning } from './thinking-level.js'
 
 const ANTH: ProviderConfig = {
   id: 'anth-id',
@@ -323,15 +324,16 @@ describe('task policy at create_task', () => {
     expect(builtFor.at(-1)).toBe('claude-sonnet-5-5')
   })
 
-  it('recovery with a meanwhile disabled pin records the model that actually runs', async () => {
+  it('recovery does not resume a policy task whose model was disabled meanwhile — clear failure', async () => {
     seedStrand('strand-a', { providerId: 'anth-id', modelId: 'claude-opus-5-5' })
     await turn.run({ sessionId: 'strand-a' }, () =>
       tool().execute('k', { prompt: 'p', name: 'Gone', task_kind: 'extraction', difficulty: 'medium' }))
-    expect(taskByName('Gone')!.model).toBe('claude-sonnet-5-5')
+    const original = taskByName('Gone')!
+    expect(original.model).toBe('claude-sonnet-5-5')
 
     runner.dispose()
     const builtFor: string[] = []
-    runner = new TaskRunner({
+    const freshRunner = () => new TaskRunner({
       db,
       buildModel: (p: ProviderConfig) => {
         builtFor.push(p.enabledModels?.[0] ?? '')
@@ -344,13 +346,37 @@ describe('task policy at create_task', () => {
       sessionManager: new SessionManager({ db }),
       backgroundThinkingLevel: 'off',
     })
+    runner = freshRunner()
     const opusOnly = { ...ANTH, enabledModels: ['claude-opus-5-5'] } as ProviderConfig
-    await runner.recoverTasks((id) => (id === 'anth' || id === 'anth-id' ? opusOnly : null), ANTH)
-    const resumed = runner.getStore().list().find((t) => t.name === 'Gone (resumed)')!
-    expect(builtFor.at(-1)).toBe('claude-opus-5-5')
-    expect(resumed.model).toBe('claude-opus-5-5')
-    expect(resumed.routing?.modelId).toBe('claude-opus-5-5')
-    expect(resumed.routing?.reason).toContain('"claude-sonnet-5-5" no longer enabled')
+    const result = await runner.recoverTasks((id) => (id === 'anth' || id === 'anth-id' ? opusOnly : null), ANTH)
+    expect(result).toMatchObject({ resumed: 0 })
+    expect(runner.getStore().list().find((t) => t.name === 'Gone (resumed)')).toBeUndefined()
+    const failedRow = runner.getStore().getById(original.id)!
+    expect(failedRow.status).toBe('failed')
+    expect(failedRow.errorMessage).toContain('"claude-sonnet-5-5" is no longer enabled')
+    expect(builtFor).toEqual([])
+  })
+
+  it('recovery does not move a policy task to the default provider when its provider is gone', async () => {
+    seedStrand('strand-b', { providerId: 'oai-id', modelId: 'gpt-6-sol' })
+    await turn.run({ sessionId: 'strand-b' }, () =>
+      tool().execute('m', { prompt: 'p', name: 'Orphan', task_kind: 'review', difficulty: 'low' }))
+    const original = taskByName('Orphan')!
+    runner.dispose()
+    runner = new TaskRunner({
+      db,
+      buildModel: () => ({ cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 } } as unknown as ReturnType<TaskRunnerOptions['buildModel']>),
+      getApiKey: async () => 'k',
+      tools: [],
+      memoryDir: undefined,
+      onTaskComplete: () => {},
+      sessionManager: new SessionManager({ db }),
+      backgroundThinkingLevel: 'off',
+    })
+    const result = await runner.recoverTasks(() => null, ANTH)
+    expect(result).toMatchObject({ resumed: 0 })
+    expect(runner.getStore().list().find((t) => t.name === 'Orphan (resumed)')).toBeUndefined()
+    expect(runner.getStore().getById(original.id)!.errorMessage).toContain('provider "oai" is no longer configured')
   })
 
   it('a dedicated reviewer provider keeps the background level, not the task level', async () => {
@@ -375,7 +401,7 @@ describe('task policy at create_task', () => {
       tool().execute('l', { prompt: 'p', name: 'Reviewed', task_kind: 'coding', difficulty: 'high' }))
     await vi.waitFor(() => expect(completeSimpleMock).toHaveBeenCalled())
     const opts = completeSimpleMock.mock.calls[0][2] as { reasoning?: string }
-    expect(opts.reasoning).not.toBe('high')
+    expect(opts.reasoning).toBe(resolveBackgroundReasoning())
   })
 
   it('the verifier reviews with the task thinking level', async () => {

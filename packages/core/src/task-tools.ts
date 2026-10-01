@@ -216,7 +216,7 @@ export function createTaskTool(options: TaskToolsOptions): AgentTool {
       ),
       difficulty: Type.Optional(
         Type.String({
-          description: `Difficulty AND risk of the task: ${TASK_POLICY_DIFFICULTIES.join(' | ')}. Use high for multi-step, multi-file, irreversible or security-relevant work; low for short, bounded, easily checked work. Omitted values default to general/medium (thrifty but capable).`,
+          description: `Difficulty AND risk of the task: ${TASK_POLICY_DIFFICULTIES.join(' | ')}. Use high for multi-step, multi-file, irreversible or security-relevant work; low for short, bounded, easily checked work. If only one of task_kind/difficulty is given, the other defaults to general/medium. With neither, a top-level call in a pinned strand uses general/medium (thrifty but capable); sub-tasks and calls without strand keep the inherited/default model and the background thinking level.`,
         })
       ),
       thinking: Type.Optional(
@@ -226,7 +226,7 @@ export function createTaskTool(options: TaskToolsOptions): AgentTool {
       ),
       model_reason: Type.Optional(
         Type.String({
-          description: 'Short justification, REQUIRED when pinning an exception model (the astra/fable lines) or thinking "xhigh". Shown in the task routing record.',
+          description: 'Short justification, REQUIRED for an exception model (the astra/fable lines) — pinned directly, as the default of an explicit provider, or as the configured default task model — and for thinking "xhigh". Shown in the task routing record.',
         })
       ),
       max_duration_minutes: Type.Optional(

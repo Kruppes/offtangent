@@ -145,7 +145,9 @@ export function createTaskReply(deps: TaskReplyDeps): ReplyToTask {
       // Same model as the answered task → same thinking level (task policy);
       // NULL keeps the background setting, as before.
       thinkingLevel: baseProvider && task.model ? task.thinkingLevel ?? null : null,
-      routing: baseProvider && task.model ? task.routing ?? undefined : undefined,
+      routing: baseProvider && task.model && task.routing
+        ? { ...task.routing, reason: `reply follow-up of task ${task.id}; ${task.routing.reason}` }
+        : undefined,
     })
 
     const parentSessionId = input.userId

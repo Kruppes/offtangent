@@ -2824,9 +2824,29 @@ Hint: Use /kill_task ${task.id} if the task needs to be cleaned up.
       // provider config whose first enabled model is its default, so without
       // re-applying `task.model` a recovered task silently ran on a different
       // model than the one recorded (and chosen by the task policy).
-      // A model that is no longer enabled is not revived: the run falls back
-      // to the provider's default model, as before.
+      // A model that is no longer enabled is not revived. Legacy rows (no
+      // task-policy routing) fall back to the provider default, as before.
       const pinStillEnabled = !!task.model && (baseProvider?.enabledModels ?? []).includes(task.model)
+
+      // Task-policy rows were routed deliberately (model, thinking, data-policy
+      // gate). If their provider is gone or their model was disabled meanwhile,
+      // resuming them on some other model would be exactly the silent switch
+      // the policy forbids: fail them clearly instead, the user can restart.
+      if (task.routing && (!baseProvider || (task.model && !pinStillEnabled))) {
+        const missing = !baseProvider
+          ? `provider "${task.provider ?? '(none)'}" is no longer configured`
+          : `model "${task.model}" is no longer enabled on provider "${task.provider}"`
+        const now = new Date().toISOString().replace('T', ' ').slice(0, 19)
+        this.store.update(task.id, {
+          status: 'failed',
+          resultStatus: 'failed',
+          resultSummary: `server restart — not resumed: ${missing}. Restart the task with an available model.`,
+          errorMessage: `server restart; not resumed: ${missing}`,
+          completedAt: now,
+        })
+        failed++
+        continue
+      }
       const provider = baseProvider
         ? (pinStillEnabled && baseProvider.enabledModels?.[0] !== task.model
           ? { ...baseProvider, enabledModels: [task.model!] }
@@ -2858,9 +2878,8 @@ Hint: Use /kill_task ${task.id} if the task needs to be cleaned up.
         triggerType: task.triggerType,
         triggerSourceId: task.triggerSourceId ?? undefined,
         provider: task.provider ?? undefined,
-        // Record the model the resumed run actually uses: when the original
-        // pin was disabled meanwhile, that is the provider default, and the
-        // routing record says so instead of naming a model that never ran.
+        // Record the model the resumed run actually uses: for a legacy row
+        // whose pin was disabled meanwhile, that is the provider default.
         model: (task.model && !pinStillEnabled && baseProvider ? getProviderDefaultModel(provider) : task.model) ?? undefined,
         isDefaultModel: task.isDefaultModel ?? undefined,
         maxDurationMinutes: task.maxDurationMinutes ?? undefined,
@@ -2871,17 +2890,10 @@ Hint: Use /kill_task ${task.id} if the task needs to be cleaned up.
         // restarted analyst/coder/advisor task to main — wrong memory root, wrong
         // per-agent model and wrong result routing (multi-persona bleeding).
         agentId: task.agentId ?? undefined,
-        // Task policy: the recovered run thinks exactly like the original.
+        // Task policy: the recovered run (same provider and model, checked
+        // above) thinks exactly like the original.
         thinkingLevel: task.thinkingLevel ?? undefined,
-        routing: task.routing
-          ? (task.model && !pinStillEnabled && baseProvider
-            ? {
-              ...task.routing,
-              modelId: getProviderDefaultModel(provider),
-              reason: `${task.routing.reason}; recovered after restart: "${task.model}" no longer enabled, provider default used`,
-            }
-            : task.routing)
-          : undefined,
+        routing: task.routing ?? undefined,
       })
 
       // Mark the old task as failed

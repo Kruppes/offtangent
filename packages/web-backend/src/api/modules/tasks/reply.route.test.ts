@@ -246,6 +246,7 @@ describe('POST /api/tasks/:id/reply', () => {
     const followUp = store().getById(res.body?.followUpTaskId as string)!
     expect([followUp.model, followUp.thinkingLevel]).toEqual(['model-b', 'high'])
     expect(followUp.routing).toMatchObject({ source: 'explicit', modelId: 'model-b' })
+    expect(followUp.routing?.reason).toMatch(/^reply follow-up of task /)
   })
 
   it('a follow-up on the default provider keeps the background thinking (NULL)', async () => {
