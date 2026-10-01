@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onMounted, onUnmounted, ref, watch } from 'vue'
+import { computed, nextTick, onMounted, onUnmounted, ref, watch } from 'vue'
 import { useFeed } from '~/composables/useFeed'
 import { useChat } from '~/composables/useChat'
 import { useStorage } from '@vueuse/core'
@@ -79,20 +79,44 @@ function toggleSystem() {
 }
 
 /* Mobile: four main areas plus "More", which opens the System list as a sheet. */
+/* Modal sheet: focus moves in on open, Tab stays inside, Esc closes and */
+/* focus returns to "More" (unless a link inside navigated away).        */
 const sheetOpen = ref(false)
+const moreButton = ref<HTMLButtonElement | null>(null)
+const sheetPanel = ref<HTMLElement | null>(null)
+const sheetClose = ref<HTMLButtonElement | null>(null)
 function onSheetKeydown(event: KeyboardEvent) {
-  if (event.key === 'Escape') closeSheet()
+  if (event.key === 'Escape') {
+    event.preventDefault()
+    closeSheet()
+    return
+  }
+  if (event.key !== 'Tab' || !sheetPanel.value) return
+  const focusable = [...sheetPanel.value.querySelectorAll<HTMLElement>('a[href], button:not([disabled])')]
+  if (!focusable.length) return
+  const first = focusable[0]!
+  const last = focusable[focusable.length - 1]!
+  const current = document.activeElement
+  if (event.shiftKey && (current === first || !sheetPanel.value.contains(current))) {
+    event.preventDefault()
+    last.focus()
+  } else if (!event.shiftKey && (current === last || !sheetPanel.value.contains(current))) {
+    event.preventDefault()
+    first.focus()
+  }
 }
 function openSheet() {
   sheetOpen.value = true
   window.addEventListener('keydown', onSheetKeydown)
+  void nextTick(() => sheetClose.value?.focus())
 }
-function closeSheet() {
+function closeSheet(restoreFocus = true) {
   sheetOpen.value = false
   if (typeof window !== 'undefined') window.removeEventListener('keydown', onSheetKeydown)
+  if (restoreFocus) void nextTick(() => moreButton.value?.focus())
 }
 function navigateFromSheet() {
-  closeSheet()
+  closeSheet(false)
   emit('navigate')
 }
 </script>
@@ -106,7 +130,7 @@ function navigateFromSheet() {
       <span class="w-full truncate px-0.5 text-center">{{ $t(`nav.${item.label}`) }}</span>
       <span v-if="item.path === '/feed' && unreadCount > 0" class="h-2 w-2 shrink-0 rounded-full bg-primary" role="status"><span class="sr-only">{{ $t('feed.unreadCount', { count: unreadCount }) }}</span></span>
     </NuxtLink>
-    <button type="button" data-testid="nav-more" class="flex min-h-14 min-w-0 flex-col items-center justify-center gap-1 text-[10px] font-medium"
+    <button ref="moreButton" type="button" data-testid="nav-more" class="flex min-h-14 min-w-0 flex-col items-center justify-center gap-1 text-[10px] font-medium"
       :class="inSystem || sheetOpen ? 'bg-primary/10 text-primary' : 'text-muted-foreground'"
       :aria-expanded="sheetOpen" aria-controls="system-sheet" aria-haspopup="dialog" @click="sheetOpen ? closeSheet() : openSheet()">
       <AppIcon name="more" />
@@ -114,12 +138,12 @@ function navigateFromSheet() {
     </button>
     <Teleport to="body">
       <div v-if="sheetOpen" class="fixed inset-0 z-50 md:hidden">
-        <div class="absolute inset-0 bg-black/55" aria-hidden="true" @click="closeSheet" />
-        <div id="system-sheet" role="dialog" aria-modal="true" :aria-label="$t('nav.system')"
+        <div class="absolute inset-0 bg-black/55" aria-hidden="true" @click="closeSheet()" />
+        <div id="system-sheet" ref="sheetPanel" role="dialog" aria-modal="true" :aria-label="$t('nav.system')"
           class="absolute inset-x-0 bottom-0 max-h-[80vh] overflow-y-auto rounded-t-2xl border-t border-border bg-background p-3 pb-[calc(env(safe-area-inset-bottom)+0.75rem)] shadow-xl">
           <div class="mb-1 flex items-center justify-between gap-2 px-2">
             <h2 class="text-sm font-semibold text-muted-foreground">{{ $t('nav.system') }}</h2>
-            <button type="button" class="inline-flex h-11 w-11 items-center justify-center rounded-md text-muted-foreground hover:bg-accent focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring" :aria-label="$t('common.close')" @click="closeSheet">
+            <button ref="sheetClose" type="button" data-testid="nav-sheet-close" class="inline-flex h-11 w-11 items-center justify-center rounded-md text-muted-foreground hover:bg-accent focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring" :aria-label="$t('common.close')" @click="closeSheet()">
               <AppIcon name="close" />
             </button>
           </div>
