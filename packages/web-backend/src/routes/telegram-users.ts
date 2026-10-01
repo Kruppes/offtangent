@@ -5,6 +5,7 @@ import type { Database } from '@axiom/core'
 import type { TelegramBot } from '@axiom/telegram'
 import { jwtMiddleware, verifyAccessToken } from '../auth.js'
 import type { AuthenticatedRequest } from '../auth.js'
+import { findTelegramAvatarFile } from '../user-avatar.js'
 
 interface TelegramUserRow {
   id: number
@@ -36,24 +37,17 @@ export function createTelegramUsersRouter(options: TelegramUsersRouterOptions): 
    * Shared logic for both endpoints.
    */
   function serveAvatar(telegramId: string, res: import('express').Response): void {
-    const avatarDir = path.resolve(process.env.DATA_DIR ?? '/data', 'avatars')
-    try {
-      const files = fs.readdirSync(avatarDir)
-      const match = files.find(f => f.startsWith(`telegram-${telegramId}.`))
-      if (match) {
-        const filePath = path.resolve(avatarDir, match)
-        if (fs.existsSync(filePath)) {
-          const ext = path.extname(match).slice(1)
-          const mime = ext === 'png' ? 'image/png' : ext === 'webp' ? 'image/webp' : 'image/jpeg'
-          const data = fs.readFileSync(filePath)
-          res.setHeader('Content-Type', mime)
-          res.setHeader('Cache-Control', 'public, max-age=3600')
-          res.setHeader('Content-Length', data.length)
-          res.end(data)
-          return
-        }
-      }
-    } catch { /* directory doesn't exist */ }
+    const filePath = findTelegramAvatarFile(telegramId)
+    if (filePath) {
+      const ext = path.extname(filePath).slice(1)
+      const mime = ext === 'png' ? 'image/png' : ext === 'webp' ? 'image/webp' : 'image/jpeg'
+      const data = fs.readFileSync(filePath)
+      res.setHeader('Content-Type', mime)
+      res.setHeader('Cache-Control', 'public, max-age=3600')
+      res.setHeader('Content-Length', data.length)
+      res.end(data)
+      return
+    }
 
     res.status(404).json({ error: 'No avatar' })
   }

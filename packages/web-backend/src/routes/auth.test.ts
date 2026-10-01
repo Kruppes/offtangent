@@ -502,3 +502,38 @@ describe('access token middleware', () => {
     expect(res.status).toBe(200)
   })
 })
+
+describe('GET /api/auth/me avatar flag', () => {
+  async function me(username: string, password: string) {
+    const { body } = await login(username, password)
+    const res = await fetch(`${baseUrl}/api/auth/me`, {
+      headers: { Authorization: `Bearer ${body.accessToken}` },
+    })
+    return { res, body: (await res.json()) as { user: { id: number; hasAvatar?: boolean } } }
+  }
+
+  it('reports no avatar when no Telegram account is linked, so clients skip the image request', async () => {
+    const { res, body } = await me('admin', 'pw-admin')
+    expect(res.status).toBe(200)
+    expect(body.user).toEqual({ id: 1, username: 'admin', role: 'admin', hasAvatar: false })
+  })
+
+  it('reports an avatar only when the linked account has a stored picture', async () => {
+    db.prepare('UPDATE users SET telegram_id = ? WHERE id = 3').run('900001')
+    try {
+      expect((await me('bob', 'pw-bob')).body.user.hasAvatar).toBe(false)
+
+      const avatarDir = path.join(tempDataDir, 'avatars')
+      fs.mkdirSync(avatarDir, { recursive: true })
+      fs.writeFileSync(path.join(avatarDir, 'telegram-900001.jpg'), Buffer.from([0xff, 0xd8, 0xff]))
+      expect((await me('bob', 'pw-bob')).body.user.hasAvatar).toBe(true)
+
+      const avatar = await fetch(`${baseUrl}/api/telegram-users/avatar-by-user-id/3?token=${(await login('bob', 'pw-bob')).body.accessToken}`)
+      expect(avatar.status).toBe(200)
+      expect(avatar.headers.get('content-type')).toBe('image/jpeg')
+    } finally {
+      db.prepare('UPDATE users SET telegram_id = NULL WHERE id = 3').run()
+      fs.rmSync(path.join(tempDataDir, 'avatars'), { recursive: true, force: true })
+    }
+  })
+})

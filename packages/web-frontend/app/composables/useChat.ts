@@ -442,6 +442,13 @@ export function applyAttachmentFrame(
 }
 
 /**
+ * Frames of the open strand that never change its transcript. They must not
+ * bump the transcript revision, or a history load in flight is discarded for
+ * nothing (`pong` and `message_ack` are handled before the revision bump).
+ */
+const NON_TRANSCRIPT_FRAMES: ReadonlySet<WsMessage['type']> = new Set<WsMessage['type']>(['queued', 'turn_replay_end'])
+
+/**
  * Drop the trailing assistant/tool run so a replayed turn can be rebuilt from
  * scratch. Everything the running turn produced sits after the last user (or
  * system) message, so this removes exactly the partial turn — whether it came
@@ -855,6 +862,12 @@ let connectionOwners = 0
 let reconnectTimer: ReturnType<typeof setTimeout> | null = null
 let heartbeatInterval: ReturnType<typeof setInterval> | null = null
 let pongTimeout: ReturnType<typeof setTimeout> | null = null
+// A replayed turn (`turn_replay_start` … `turn_replay_end`) is in progress,
+// and whether its replayed frames already contained the terminal `done`.
+// Module level like the socket itself: the frame handler and `openThread` may
+// come from different `useChat()` callers.
+let replayingTurn = false
+let replayFinishedTurn = false
 /** Current reconnect delay in ms — doubles on each failed attempt (max 30 s) */
 let reconnectDelay = 2000
 /** Set to true during intentional disconnect (navigation away) to suppress auto-reconnect */
@@ -992,6 +1005,9 @@ export function useChat() {
 
     ws.onclose = () => {
       stopHeartbeat()
+      // An interrupted replay is restarted from scratch on the next subscribe.
+      replayingTurn = false
+      replayFinishedTurn = false
       connectionStatus.value = 'disconnected'
       for (const sid of Object.keys(turnProgress.value)) {
         if (turnProgress.value[sid]?.endedAt === undefined) updateProgress(sid, 'disconnect')
@@ -1093,7 +1109,11 @@ export function useChat() {
       return
     }
 
-    transcriptRevision.value++
+    // Only frames that change the transcript invalidate a history load in
+    // flight. Bookkeeping frames (queue position, end of a replay) must not:
+    // `turn_replay_end` arrives right after the replayed `done`, and counting
+    // it discarded the catch-up load that restores the persisted artifacts.
+    if (!NON_TRANSCRIPT_FRAMES.has(msg.type)) transcriptRevision.value++
     if (isTurnActive(turnProgress.value[assignedSession])) isStreaming.value = true
 
     // Binding failures are not chat content: the thread cannot be opened at
@@ -1358,6 +1378,12 @@ export function useChat() {
         isStreaming.value = false
         // Persisted rows carry artifact refs and interaction message ids. Do
         // not replace a newer turn/navigation with a late catch-up response.
+        // Inside a replay the catch-up waits for `turn_replay_end`, which
+        // closes the replayed frames.
+        if (replayingTurn) {
+          replayFinishedTurn = true
+          break
+        }
         if (boundSessionId.value) void loadThreadHistory(boundSessionId.value).catch(() => {})
         break
 
@@ -1457,12 +1483,24 @@ export function useChat() {
         if (msg.sessionId) sessionId.value = msg.sessionId
         messages.value = stripTrailingTurn(messages.value)
         isStreaming.value = true
+        replayingTurn = true
+        replayFinishedTurn = false
         break
 
-      case 'turn_replay_end':
+      case 'turn_replay_end': {
         // Buffer drained; live chunks follow (or the turn already ended, in
         // which case the replayed `done` already cleared the indicator).
+        // The replayed stream frames carry no artifacts or persisted ids, so
+        // a finished turn is reconciled with the stored rows, like the app
+        // does after its replay (sync history, drop the replayed copy). A
+        // turn that still runs is left alone: its rows are not complete yet
+        // and its own `done` triggers the catch-up.
+        const finished = replayFinishedTurn
+        replayingTurn = false
+        replayFinishedTurn = false
+        if (finished && boundSessionId.value) void loadThreadHistory(boundSessionId.value).catch(() => {})
         break
+      }
 
       case 'attachment':
         // A file the agent sent (via the `send_file_to_user` tool), either
@@ -1556,6 +1594,8 @@ export function useChat() {
    */
   async function openThread(threadSessionId: string, agentId?: string | null) {
     transcriptRevision.value++
+    replayingTurn = false
+    replayFinishedTurn = false
     boundSessionId.value = threadSessionId
     boundAgentId.value = agentId ?? null
     if (agentId) lastActiveByPersona.value = { ...lastActiveByPersona.value, [agentId]: threadSessionId }

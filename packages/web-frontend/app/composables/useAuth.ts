@@ -2,6 +2,11 @@ interface User {
   id: number
   username: string
   role: string
+  /**
+   * Whether the server has a profile picture for this user. Only
+   * `GET /api/auth/me` reports it; undefined means "not asked yet".
+   */
+  hasAvatar?: boolean
 }
 
 interface LoginResponse {
@@ -75,10 +80,38 @@ export function useAuth() {
 
   function setAuth(data: LoginResponse) {
     accessToken.value = data.accessToken
-    user.value = data.user
+    // Login/refresh do not report `hasAvatar`; keep what `/me` said about the
+    // same user so a token refresh does not hide the avatar again.
+    const previous = user.value
+    const next: User = data.user.hasAvatar === undefined && previous?.id === data.user.id && previous.hasAvatar !== undefined
+      ? { ...data.user, hasAvatar: previous.hasAvatar }
+      : data.user
+    user.value = next
     localStorage.setItem(TOKEN_KEY, data.accessToken)
     localStorage.setItem(REFRESH_TOKEN_KEY, data.refreshToken)
-    localStorage.setItem(USER_KEY, JSON.stringify(data.user))
+    localStorage.setItem(USER_KEY, JSON.stringify(next))
+  }
+
+  /**
+   * Re-read the current user from `GET /api/auth/me` (e.g. after a Telegram
+   * account was linked, which changes `hasAvatar`). Best effort: a failure
+   * keeps the cached user.
+   */
+  async function reloadUser(): Promise<void> {
+    const token = accessToken.value
+    if (!token) return
+    try {
+      const config = useRuntimeConfig()
+      const res = await fetch(`${config.public.apiBase}/api/auth/me`, {
+        headers: { Authorization: `Bearer ${token}` },
+      })
+      if (!res.ok) return
+      const data = (await res.json()) as { user: User }
+      user.value = data.user
+      localStorage.setItem(USER_KEY, JSON.stringify(data.user))
+    } catch {
+      // keep the cached user
+    }
   }
 
   function clearAuth() {
@@ -271,5 +304,6 @@ export function useAuth() {
     getAccessToken,
     refreshAccessToken,
     validateSession,
+    reloadUser,
   }
 }

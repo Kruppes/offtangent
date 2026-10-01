@@ -875,6 +875,81 @@ describe('useChat thread binding', () => {
     expect(chat.messages.value[0]?.artifacts).toEqual([{ id: 'artifact-1', title: 'Canvas' }])
   })
 
+  it('keeps artifacts of a turn the backend replays right after it ended', async () => {
+    const persisted = [
+      historyRow(1, 'user', 'older question'),
+      historyRow(2, 'assistant', 'older answer'),
+      historyRow(3, 'user', 'render a page'),
+      { ...historyRow(4, 'assistant', 'Here it is'), artifacts: [{ id: 'artifact-html', title: 'Page' }] },
+    ]
+    apiResponder = () => ({ messages: persisted })
+    const chat = useChat()
+    await chat.openThread('sess-a', 'coder')
+    chat.connect()
+
+    // The backend replays a turn that finished less than a minute ago: the
+    // stream frames carry no artifacts, only the persisted rows do.
+    receive({ type: 'turn_replay_start', sessionId: 'sess-a' })
+    receive({ type: 'text', text: 'Here it is', sessionId: 'sess-a' })
+    receive({ type: 'done', sessionId: 'sess-a' })
+    receive({ type: 'turn_replay_end', sessionId: 'sess-a' })
+    await new Promise(resolve => setTimeout(resolve, 0))
+
+    expect(chat.messages.value.map(m => m.content)).toEqual(['older question', 'older answer', 'render a page', 'Here it is'])
+    expect(chat.messages.value[3]?.id).toBe(4)
+    expect(chat.messages.value[3]?.artifacts).toEqual([{ id: 'artifact-html', title: 'Page' }])
+    expect(chat.isStreaming.value).toBe(false)
+  })
+
+  it('keeps older history when a finished turn is replayed while the first history load is pending', async () => {
+    const persisted = [
+      historyRow(1, 'user', 'older question'),
+      historyRow(2, 'assistant', 'older answer'),
+      historyRow(3, 'user', 'render a page'),
+      { ...historyRow(4, 'assistant', 'Here it is'), artifacts: [{ id: 'artifact-html', title: 'Page' }] },
+    ]
+    const pending: Array<(value: unknown) => void> = []
+    apiResponder = () => new Promise(resolve => { pending.push(resolve) })
+    const chat = useChat()
+    chat.connect()
+    const opening = chat.openThread('sess-a', 'coder')
+
+    receive({ type: 'turn_replay_start', sessionId: 'sess-a' })
+    receive({ type: 'text', text: 'Here it is', sessionId: 'sess-a' })
+    receive({ type: 'done', sessionId: 'sess-a' })
+    receive({ type: 'turn_replay_end', sessionId: 'sess-a' })
+
+    // Answer every history request (the initial one and any catch-up), the
+    // initial one last, so a stale response cannot win the race.
+    await new Promise(resolve => setTimeout(resolve, 0))
+    for (const resolve of pending.slice(1)) resolve({ messages: persisted })
+    await new Promise(resolve => setTimeout(resolve, 0))
+    pending[0]?.({ messages: persisted })
+    await opening
+    await new Promise(resolve => setTimeout(resolve, 0))
+
+    expect(chat.messages.value.map(m => m.content)).toEqual(['older question', 'older answer', 'render a page', 'Here it is'])
+    expect(chat.messages.value[3]?.artifacts).toEqual([{ id: 'artifact-html', title: 'Page' }])
+    expect(chat.loadingHistory.value).toBe(false)
+  })
+
+  it('does not install history in the middle of a replayed turn that is still running', async () => {
+    apiResponder = () => ({ messages: [historyRow(1, 'user', 'question')] })
+    const chat = useChat()
+    await chat.openThread('sess-a', 'coder')
+    chat.connect()
+    const callsBefore = apiCalls.length
+
+    receive({ type: 'turn_replay_start', sessionId: 'sess-a' })
+    receive({ type: 'text', text: 'partial', sessionId: 'sess-a' })
+    receive({ type: 'turn_replay_end', sessionId: 'sess-a' })
+    await new Promise(resolve => setTimeout(resolve, 0))
+
+    expect(apiCalls.length).toBe(callsBefore)
+    expect(chat.messages.value.map(m => m.content)).toEqual(['question', 'partial'])
+    expect(chat.isStreaming.value).toBe(true)
+  })
+
   it('tracks the queue position of another thread without touching the open one', async () => {
     apiResponder = () => ({ messages: [] })
     const chat = useChat()

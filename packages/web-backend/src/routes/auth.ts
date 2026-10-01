@@ -8,6 +8,7 @@ import {
   jwtMiddleware,
 } from '../auth.js'
 import type { AuthenticatedRequest } from '../auth.js'
+import { userHasAvatar } from '../user-avatar.js'
 import {
   findByToken,
   isExpired,
@@ -164,7 +165,7 @@ export function createAuthRouter(db: Database): Router {
 
   /**
    * GET /api/auth/me
-   * Returns: { user: { id, username, role } }
+   * Returns: { user: { id, username, role, hasAvatar } }
    * Validates the current access token and confirms the user still exists.
    */
   router.get('/me', jwtMiddleware, (req: AuthenticatedRequest, res) => {
@@ -181,7 +182,9 @@ export function createAuthRouter(db: Database): Router {
     }
 
     res.json({
-      user: { id: user.id, username: user.username, role: user.role },
+      // `hasAvatar` lets the web client skip the avatar request when there is
+      // no picture to serve (no Telegram account linked, nothing downloaded).
+      user: { id: user.id, username: user.username, role: user.role, hasAvatar: userHasAvatar(db, user.id) },
     })
   })
 
