@@ -37,6 +37,7 @@ import {
 import type { ChatEventBus } from '../../../chat-event-bus.js'
 import { resolveNowSetMax, resolveNowSetMode } from '../../../now-set-limit.js'
 import { describePendingTurn } from '../../../turn-queue.js'
+import { searchStrands } from './search.js'
 import type { DeleteStrandQuery, ListStrandsQuery, PatchStrandBody, PatchStrandModelBody, StrandTasksQuery } from './schema.js'
 import { effectiveModelForStrand, getProvider, modelMetadataFor } from '../../../model-selection.js'
 
@@ -170,7 +171,11 @@ export interface StrandTurnGuard {
  * Additive, exactly like the read state before it — `Thread` itself stays
  * untouched so every other consumer of the type is unaffected.
  */
-export type StrandWithReadState = Thread & StrandReadState & { attention: StrandAttention | null }
+export type StrandWithReadState = Thread & StrandReadState & {
+  attention: StrandAttention | null
+  /** `?q=` only: plain-text excerpt of the best matching message. */
+  matchSnippet?: string
+}
 
 export interface StrandsServiceOptions {
   db: Database
@@ -436,14 +441,17 @@ export function createStrandsService(options: StrandsServiceOptions) {
    * bounded by the user's own strand count, and both filters combine as AND.
    */
   function listStrands(userId: number, query: ListStrandsQuery): StrandWithReadState[] {
-    if (!query.attentionOnly && !query.unreadOnly) {
-      return withReadState(userId, manager().listThreads(String(userId), query))
+    const { q, ...listQuery } = query
+    if (!q && !query.attentionOnly && !query.unreadOnly) {
+      return withReadState(userId, manager().listThreads(String(userId), listQuery))
     }
 
-    const candidates = listStrandIdsForAttention(db, userId, { includeArchived: query.includeArchived })
-    let ids = candidates
+    // `?q=` resolves to an id set as well (title + message content), so it
+    // combines with the chips and every other filter as AND.
+    const hits = q ? searchStrands(db, userId, q, { includeArchived: query.includeArchived }) : null
+    let ids = hits ? hits.ids : listStrandIdsForAttention(db, userId, { includeArchived: query.includeArchived })
     if (query.attentionOnly) {
-      const attentions = getStrandAttentions(db, candidates, { userId })
+      const attentions = getStrandAttentions(db, ids, { userId })
       ids = ids.filter(id => attentions.has(id))
     }
     if (query.unreadOnly) {
@@ -451,7 +459,12 @@ export function createStrandsService(options: StrandsServiceOptions) {
       ids = ids.filter(id => states.get(id)?.unread)
     }
     if (ids.length === 0) return []
-    return withReadState(userId, manager().listThreads(String(userId), { ...query, ids }))
+    const strands = withReadState(userId, manager().listThreads(String(userId), { ...listQuery, ids }))
+    if (!hits) return strands
+    return strands.map(strand => {
+      const snippet = hits.snippets.get(strand.id)
+      return snippet ? { ...strand, matchSnippet: snippet } : strand
+    })
   }
 
   /**

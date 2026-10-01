@@ -22,8 +22,8 @@ async function render(props: Record<string, unknown> = {}) {
   app.config.globalProperties.$t = (key: string) => key
   return renderToString(app)
 }
-const primary = ['/', '/strands', '/feed', '/boards', '/projects', '/memory']
-const system = ['/dashboard', '/tasks', '/cronjobs', '/logs', '/usage', '/email', '/users', '/providers', '/connectors', '/skills', '/personas', '/instructions', '/settings']
+const primary = ['/', '/strands', '/feed', '/boards']
+const system = ['/projects', '/memory', '/dashboard', '/tasks', '/cronjobs', '/logs', '/usage', '/email', '/users', '/providers', '/connectors', '/skills', '/personas', '/instructions', '/settings']
 function links(html: string) { return [...html.matchAll(/href="([^"]+)"/g)].map(m => m[1]) }
 describe('Offtangent shell navigation', () => {
   it('shows an accessible unread dot in desktop and mobile navigation', async () => {
@@ -38,7 +38,8 @@ describe('Offtangent shell navigation', () => {
   it('orders primary destinations before the collapsed System group', async () => {
     storage.open = false
     const html = await render()
-    expect(links(html)).toEqual([...primary, ...system])
+    // Settings is pinned at the bottom in addition to its place in System.
+    expect(links(html)).toEqual([...primary, ...system, '/settings'])
     expect(html).toContain('aria-expanded="false"')
     expect(html).toContain('id="system-navigation"')
     expect(html).toContain('display:none')
@@ -48,17 +49,35 @@ describe('Offtangent shell navigation', () => {
     expect(await render()).toContain('aria-expanded="true"')
     storage.open = false
   })
-  it('has exactly six mobile targets, safe area and minimum target height', async () => {
+  it('has four mobile destinations plus More, safe area and minimum target height', async () => {
     const html = await render({ mobile: true })
     expect(links(html)).toEqual(primary)
-    expect(html).toContain('grid-cols-6')
+    expect(html).toContain('grid-cols-5')
+    expect(html).toContain('nav.more')
+    expect(html).toContain('aria-controls="system-sheet"')
+    expect(html).toContain('aria-expanded="false"')
     expect(html).toContain('safe-area-inset-bottom')
     expect(html).toContain('min-h-14')
     expect(html).not.toContain('system-navigation')
   })
-  it('retains access restrictions but always shows all six primary destinations', async () => {
-    expect(links(await render({ isAdmin: false }))).toEqual(primary)
-    expect(links(await render({ isAdmin: false, emailConfigured: true }))).toEqual([...primary, '/email'])
+  it('retains access restrictions: projects and memory for everyone, email when configured', async () => {
+    expect(links(await render({ isAdmin: false }))).toEqual([...primary, '/projects', '/memory'])
+    expect(links(await render({ isAdmin: false, emailConfigured: true }))).toEqual([...primary, '/projects', '/memory', '/email'])
+    expect(await render({ isAdmin: false })).not.toContain('nav-settings-pinned')
+  })
+  it('opens the System block by itself on a System route', async () => {
+    storage.open = false
+    const html = await render({ path: '/tasks/abc' })
+    expect(html).toContain('aria-expanded="true"')
+    expect(html).not.toContain('display:none')
+    expect(html.match(/aria-current="page"/g)).toHaveLength(1)
+    expect(html).toMatch(/href="\/tasks"[^>]*aria-current="page"/)
+  })
+  it('keeps Settings reachable at the bottom while System is collapsed', async () => {
+    storage.open = false
+    const html = await render({ path: '/' })
+    expect(html).toContain('data-testid="nav-settings-pinned"')
+    expect(html).toContain('display:none')
   })
   it('marks strand detail as Strands, not Home', async () => {
     const html = await render({ mobile: true, path: '/strands/abc' })

@@ -46,7 +46,8 @@
     "primary": "Primary navigation",
     "system": "System",
     "boards": "Integrations",
-    "connectors": "Connections"
+    "connectors": "Connections",
+    "more": "More"
   },
   "roles": {
     "admin": "Admin",
@@ -125,7 +126,7 @@
     "ttsBlocked": "The browser blocked playback. Tap Read aloud once more.",
     "ttsUnsupported": "This browser cannot play the audio format. Change it in Settings → Text-to-Speech.",
     "ttsLoading": "Generating speech...",
-    "micTooltip": "Hold to record",
+    "micTooltip": "Start dictation (Ctrl+M)",
     "thinkingLevelTooltip": "Thinking level for the next turn (applies to the main agent globally)",
     "thinkingLevelSaved": "Thinking level updated",
     "thinkingLevelSaveFailed": "Failed to update thinking level",
@@ -178,7 +179,37 @@
       "showLatest": "Show newest"
     },
     "secretsSealed": "{count} secret stored safely | {count} secrets stored safely",
-    "secretChipTooltip": "Stored secret — the value stays on this server and never reaches the model"
+    "secretChipTooltip": "Stored secret — the value stays on this server and never reaches the model",
+    "dictation": {
+      "start": "Start dictation (Ctrl+M)",
+      "stop": "Stop dictation and transcribe (Ctrl+M)",
+      "recording": "Recording",
+      "transcribing": "Transcribing …",
+      "cancel": "Cancel",
+      "done": "Done",
+      "retry": "Try again",
+      "dismiss": "Close",
+      "cancelled": "Dictation cancelled",
+      "inserted": "Dictation inserted into the message",
+      "level": "Input level",
+      "elapsed": "Recording time {time}",
+      "shortcutHint": "Esc cancels, Ctrl+M finishes",
+      "errors": {
+        "permission_denied": "Microphone access was denied.",
+        "permission_help": "Allow the microphone via the lock or camera icon in the address bar (site settings), then try again.",
+        "mic_error": "No microphone could be started. Check that one is connected and not used by another app.",
+        "too_short": "The recording was too short. Speak a little longer before you finish.",
+        "transcribe_error": "The transcription failed. The recording is kept, you can send it again.",
+        "no_speech": "No speech was recognised in the recording."
+      },
+      "audio": {
+        "label": "Dictation {n}",
+        "play": "Play dictation {n}",
+        "pause": "Pause dictation {n}",
+        "remove": "Remove dictation {n}",
+        "attached": "Recording is sent with the message"
+      }
+    }
   },
   "canvas": {
     "open": "Open canvas",
@@ -1813,7 +1844,13 @@
     "loaded": "{count} loaded",
     "truncated": "Only the first 3,000 strands are shown. Narrow the filters to see more.",
     "loadMore": "Load more",
-    "manage": "Manage"
+    "manage": "Manage",
+    "search": "Search strands",
+    "searchPlaceholder": "Search titles and messages …",
+    "searchClear": "Clear search",
+    "searchHint": "Press / to search, Esc clears. At least 2 characters.",
+    "searchEmpty": "No strand matches “{q}”.",
+    "searchReset": "Reset search"
   },
   "strandDetail": {
     "back": "Back to strands",

@@ -203,7 +203,7 @@
       <main class="flex flex-1 flex-col overflow-hidden">
         <slot />
       </main>
-      <ShellNavigation mobile :path="route.path" />
+      <ShellNavigation mobile :path="route.path" :is-admin="isAdmin" :email-configured="emailConfigured" />
     </div>
   </div>
 </template>

@@ -89,12 +89,13 @@ afterEach(() => {
 function setup() {
   const route = Vue.reactive({ query: {} as Record<string, string> })
   const replace = vi.fn(({ query }) => { route.query = query })
+  const push = vi.fn(({ query }) => { route.query = query })
   vi.stubGlobal('useRoute', () => route)
-  vi.stubGlobal('useRouter', () => ({ replace }))
+  vi.stubGlobal('useRouter', () => ({ replace, push }))
   vi.stubGlobal('useI18n', () => ({ locale: Vue.ref('en') }))
   const fetch = setupFetch()
   vi.stubGlobal('fetch', fetch)
-  return { fetch, route, replace }
+  return { fetch, route, replace, push }
 }
 describe('shared strand list', () => {
   it('shows loading and then empty state', async () => {
@@ -152,5 +153,59 @@ describe('shared strand list', () => {
     ;(input.props.onChange as (e: unknown) => void)({ target: { value: 'new' } }); await flush()
     expect(replace).toHaveBeenCalledWith({ query: { project_id: 'none', tag: 'new', now: '1', keep: 'yes' } })
     expect(fetch.mock.calls.some(call => String(call[0]).includes('tag=new'))).toBe(true)
+  })
+  it('debounces the search into ?q=, shows the excerpt with escaped highlight, and resets', async () => {
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] })
+    try {
+      const { fetch, route, push, replace } = setup()
+      route.query = { keep: 'yes' }
+      fetch.mockImplementation(async (url) => {
+        if (String(url).includes('/api/projects')) return new Response('{"projects":[]}')
+        const q = new URL(String(url)).searchParams.get('q')
+        if (q === 'nomatch') return new Response('{"strands":[]}')
+        if (q) return new Response(JSON.stringify({ strands: [{ id: 'hit', title: 'Synthetic needle strand', tags: [], pinned: false, agentId: 'main', messageCount: 1, lastActivity: '2026-09-01', projectId: null, matchSnippet: 'a <b>needle</b> in text' }] }))
+        return new Response('{"strands":[]}')
+      })
+      const { root } = mount(List); await flush()
+      const input = () => all(root).find(n => n.props['data-testid'] === 'strand-search')!
+      ;(input().props.onInput as (e: unknown) => void)({ target: { value: 'need' } })
+      ;(input().props.onInput as (e: unknown) => void)({ target: { value: 'needle' } })
+      await flush()
+      expect(push).not.toHaveBeenCalled()
+      vi.advanceTimersByTime(250); await flush()
+      // One navigation for two keystrokes, other query keys kept.
+      expect(push).toHaveBeenCalledTimes(1)
+      expect(push).toHaveBeenCalledWith({ query: { keep: 'yes', q: 'needle' } })
+      expect(fetch.mock.calls.some(call => String(call[0]).includes('q=needle'))).toBe(true)
+      const snippet = all(root).find(n => n.props['data-testid'] === 'strand-snippet')!
+      // The raw markup stays text; only the search word is a <mark>.
+      expect(text(snippet)).toContain('<b>')
+      expect(all(snippet).filter(n => n.tag === 'mark').map(text)).toEqual(['needle'])
+      expect(all(root).some(n => n.tag === 'b')).toBe(false)
+
+      ;(input().props.onInput as (e: unknown) => void)({ target: { value: 'nomatch' } })
+      await flush(); vi.advanceTimersByTime(250); await flush()
+      expect(replace).toHaveBeenCalledWith({ query: { keep: 'yes', q: 'nomatch' } })
+      expect(text(root)).toContain('strandsW3.searchEmpty')
+      const focus = vi.fn()
+      Object.assign(input(), { focus })
+      const reset = all(root).find(n => n.tag === 'button' && text(n).includes('strandsW3.searchReset'))!
+      ;(reset.props.onClick as () => void)(); await flush()
+      expect(focus).toHaveBeenCalled()
+      expect(input().props.value).toBe('')
+      expect(push).toHaveBeenLastCalledWith({ query: { keep: 'yes' } })
+      expect(text(root)).toContain('strandsW3.empty')
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+  it('restores the search field from the URL', async () => {
+    const { fetch, route } = setup()
+    route.query = { q: 'needle' }
+    fetch.mockImplementation(async url => new Response(String(url).includes('/api/projects') ? '{"projects":[]}' : '{"strands":[]}'))
+    const { root } = mount(List); await flush()
+    expect(all(root).find(n => n.props['data-testid'] === 'strand-search')!.props.value).toBe('needle')
+    expect(fetch.mock.calls.some(call => String(call[0]).includes('q=needle'))).toBe(true)
+    expect(text(root)).toContain('strandsW3.searchEmpty')
   })
 })

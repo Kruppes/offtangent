@@ -1595,12 +1595,18 @@ export function useChat() {
     return `web-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`
   }
 
-  async function sendMessage(content: string, files: File[] = []) {
+  /**
+   * `stored` are uploads the server already keeps (a dictation recording from
+   * `POST /api/stt/transcribe?keepAudio=1`). They are referenced through the
+   * multipart field `attachments` (JSON array of descriptors), not uploaded
+   * again — the same contract the app uses.
+   */
+  async function sendMessage(content: string, files: File[] = [], stored: ChatAttachment[] = []) {
     const trimmed = content.trim()
-    if (!trimmed && files.length === 0) return
+    if (!trimmed && files.length === 0 && stored.length === 0) return
     transcriptRevision.value++
 
-    if (files.length > 0) {
+    if (files.length > 0 || stored.length > 0) {
       const { apiFetch } = useApi()
       const formData = new FormData()
       formData.append('content', trimmed)
@@ -1608,6 +1614,7 @@ export function useChat() {
       // instead of resolving one heuristically.
       if (boundSessionId.value) formData.append('sessionId', boundSessionId.value)
       if (boundAgentId.value) formData.append('agentId', boundAgentId.value)
+      if (stored.length > 0) formData.append('attachments', JSON.stringify(stored))
       for (const file of files) formData.append('files', file)
 
       const response = await apiFetch<{

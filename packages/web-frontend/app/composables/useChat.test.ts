@@ -740,6 +740,29 @@ describe('useChat thread binding', () => {
     expect(sentFrames()[0]).toMatchObject({ type: 'message', sessionId: 'sess-a', skipSave: true })
   })
 
+  it('references a kept dictation recording as stored attachment instead of uploading it', async () => {
+    const recording = { kind: 'file' as const, originalName: 'recording.webm', storedName: 'rec-1.webm', relativePath: 'uploads/rec-1.webm', urlPath: '/api/uploads/rec-1.webm', mimeType: 'audio/webm', size: 1234 }
+    apiResponder = (path) => {
+      if (path === '/api/chat/message') {
+        return { message: { session_id: 'sess-a', role: 'user', content: 'spoken text', metadata: JSON.stringify({ files: [recording] }), timestamp: '2026-01-01T00:00:00.000Z' } }
+      }
+      return { messages: [] }
+    }
+    const chat = useChat()
+    await chat.openThread('sess-a', 'coder')
+    chat.connect()
+
+    await chat.sendMessage('spoken text', [], [recording])
+
+    const upload = apiCalls.find(call => call.path === '/api/chat/message')
+    const body = upload!.options!.body as FormData
+    expect(JSON.parse(body.get('attachments') as string)).toEqual([recording])
+    expect(body.getAll('files')).toEqual([])
+    expect(body.get('content')).toBe('spoken text')
+    expect(chat.messages.value.at(-1)!.attachments).toEqual([recording])
+    expect(sentFrames()[0]).toMatchObject({ type: 'message', skipSave: true, attachments: [recording] })
+  })
+
   it('shows the sealed-secret hint and the stored text after a message_ack', async () => {
     const chat = useChat()
     chat.connect()

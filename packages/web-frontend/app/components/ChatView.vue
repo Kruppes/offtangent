@@ -625,7 +625,7 @@
         <AppIcon name="clock" class="h-3.5 w-3.5 shrink-0" />
         <span>{{ $t('threads.queuedWithPosition', { position: queuePosition }) }}</span>
       </div>
-      <form class="relative flex flex-col gap-2" @submit.prevent="handleSend">
+      <form class="relative flex flex-col gap-2" data-testid="composer" @submit.prevent="handleSend" @keydown="handleComposerAreaKeydown">
         <ChatSkillAutocomplete
           v-if="skillAutocomplete.active.value"
           :suggestions="skillAutocomplete.suggestions.value"
@@ -633,6 +633,32 @@
           @select="handleSkillSelect"
           @hover="skillAutocomplete.selectedIndex.value = $event"
         />
+        <!-- Dictation: recording / transcribing / error, above the input field -->
+        <DictationBar
+          v-if="sttEnabled && dictationPhase !== 'idle'"
+          :phase="dictationPhase"
+          :elapsed-ms="dictationElapsed"
+          :levels="dictationLevels"
+          :error="dictationError"
+          :can-retry="dictationCanRetry"
+          :bars="DICTATION_LEVEL_BARS"
+          @cancel="cancelDictation"
+          @finish="finishDictation"
+          @retry="retryDictation"
+          @dismiss="dismissDictation"
+        />
+        <p class="sr-only" aria-live="polite">{{ dictationAnnouncement }}</p>
+        <!-- Kept dictation recordings, sent with the message -->
+        <div v-if="pendingAudio.length" class="flex flex-wrap gap-2">
+          <ComposerAudioChip
+            v-for="(item, index) in pendingAudio"
+            :key="item.attachment.relativePath"
+            :attachment="item.attachment"
+            :index="index + 1"
+            :duration-ms="item.durationMs"
+            @remove="removePendingAudio(index)"
+          />
+        </div>
         <!-- Pending files row -->
         <div v-if="pendingFiles.length" class="flex flex-wrap gap-2">
           <div
@@ -721,32 +747,32 @@
           </div>
 
           <!-- ── Mic button ─────────────────────────────────────────────────
-               Mobile: shown only when textarea is empty (swaps to send button
-               as soon as the user starts typing — Telegram/WhatsApp style).
-               Desktop (sm+): always shown alongside the send button. -->
+               Always shown when STT is on: a dictation is inserted into the
+               field (never sent), so a second dictation must stay reachable
+               while text is present, on mobile too. -->
           <button
             v-if="sttEnabled"
             type="button"
-            class="h-[42px] w-[42px] shrink-0 select-none items-center justify-center rounded-xl border transition-colors"
+            data-testid="dictation-mic"
+            class="h-[42px] w-[42px] shrink-0 select-none items-center justify-center rounded-xl border transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring max-sm:h-11 max-sm:w-11"
             :class="[
-              hasText ? 'hidden sm:inline-flex' : 'inline-flex',
-              sttRecording
-                ? 'border-destructive bg-destructive/10 text-destructive animate-pulse-recording'
-                : sttTranscribing
+              'inline-flex',
+              dictationPhase === 'recording' || dictationPhase === 'starting'
+                ? 'border-destructive bg-destructive/10 text-destructive'
+                : dictationPhase === 'transcribing'
                   ? 'border-primary bg-primary/10 text-primary'
-                  : sttError
+                  : dictationPhase === 'error'
                     ? 'border-destructive text-destructive'
                     : 'border-input text-muted-foreground hover:bg-muted',
             ]"
-            :title="sttRecording ? $t('chat.micRecording') : sttTranscribing ? $t('chat.micTranscribing') : sttError === 'permission_denied' ? $t('chat.micPermissionDenied') : sttError === 'recording_too_short' ? $t('chat.micTooShort') : sttError ? $t('chat.micError') : $t('chat.micTooltip')"
-            :disabled="sttTranscribing"
-            @mousedown="handleMicDown"
-            @mouseup="handleMicUp"
-            @mouseleave="handleMicUp"
-            @touchstart="handleMicDown"
-            @touchend="handleMicUp"
+            :title="micLabel"
+            :aria-label="micLabel"
+            :aria-pressed="dictationPhase === 'recording'"
+            :disabled="dictationPhase === 'transcribing' || dictationPhase === 'starting'"
+            @click="toggleDictation"
           >
-            <AppIcon v-if="sttTranscribing" name="loader" class="h-4 w-4 animate-spin" />
+            <AppIcon v-if="dictationPhase === 'transcribing'" name="loader" class="h-4 w-4 motion-safe:animate-spin" />
+            <AppIcon v-else-if="dictationPhase === 'recording'" name="square" class="h-4 w-4" />
             <AppIcon v-else name="mic" class="h-4 w-4" />
           </button>
 
@@ -775,7 +801,9 @@
 import TranscriptState from './content/TranscriptState.vue'
 import ToolActivityGroup from './content/ToolActivityGroup.vue'
 import { groupTranscript, transcriptState } from './content/transcript'
-import type { ChatMessage, ToolCallData } from '~/composables/useChat'
+import type { ChatAttachment, ChatMessage, ToolCallData } from '~/composables/useChat'
+import type { DictationResult } from '~/composables/useStt'
+import { insertAtCursor, isDictationShortcut } from '~/utils/dictation'
 import type { LoadableSkill } from '~/composables/useSkillAutocomplete'
 import { SETTINGS_THINKING_LEVELS, type SettingsThinkingLevel } from '@axiom/core/contracts'
 import { useSettingsApi } from '~/api/settings'
@@ -1157,7 +1185,10 @@ function handlePickerSelect(msg: ChatMessage, command: string) {
   resolvePicker(idx, command)
 }
 const { playingIndex: ttsPlayingIndex, loading: ttsLoading, ttsEnabled, error: ttsError, fetchTtsSettings, play: ttsPlay, stop: ttsStop, clearError: clearTtsError } = useTts()
-const { recording: sttRecording, transcribing: sttTranscribing, error: sttError, sttEnabled, fetchSttSettings, startRecording: sttStartRecording, stopAndTranscribe: sttStopAndTranscribe, cleanup: sttCleanup } = useStt()
+const {
+  phase: dictationPhase, error: dictationError, canRetry: dictationCanRetry, elapsedMs: dictationElapsed, levels: dictationLevels,
+  sttEnabled, fetchSttSettings, start: sttStart, stop: sttStop, retry: sttRetry, cancel: sttCancel, dismiss: sttDismiss, cleanup: sttCleanup,
+} = useStt()
 
 function handleTtsPlay(content: string, index: number) {
   ttsPlay(content, index)
@@ -1165,8 +1196,10 @@ function handleTtsPlay(content: string, index: number) {
 const chatStatusText = computed(() => connectionStatus.value === 'connected' ? t('chat.statusConnected') : connectionStatus.value === 'connecting' ? t('chat.statusConnecting') : t('chat.statusDisconnected'))
 const inputText = ref('')
 const pendingFiles = ref<File[]>([])
+/** Kept dictation recordings (already stored on the server), sent with the message. */
+const pendingAudio = ref<Array<{ attachment: ChatAttachment; durationMs: number }>>([])
 // True when there's text or pending files — drives mic↔send swap on mobile
-const hasText = computed(() => inputText.value.trim().length > 0 || pendingFiles.value.length > 0)
+const hasText = computed(() => inputText.value.trim().length > 0 || pendingFiles.value.length > 0 || pendingAudio.value.length > 0)
 const inputRef = ref<HTMLTextAreaElement | null>(null)
 const messagesContainer = ref<HTMLDivElement | null>(null)
 const historyError = ref(false)
@@ -1234,11 +1267,13 @@ function handleComposerKeydown(event: KeyboardEvent) {
 
 async function handleSend() {
   const files = [...pendingFiles.value]
+  const stored = pendingAudio.value.map(item => item.attachment)
   const text = inputText.value
-  if ((!text.trim() && files.length === 0) || connectionStatus.value !== 'connected') return
-  await sendMessage(text, files)
+  if ((!text.trim() && files.length === 0 && stored.length === 0) || connectionStatus.value !== 'connected') return
+  await sendMessage(text, files, stored)
   inputText.value = ''
   pendingFiles.value = []
+  pendingAudio.value = []
   if (inputRef.value) inputRef.value.style.height = 'auto'
 }
 const sessionResetting = ref(false)
@@ -1294,29 +1329,101 @@ function handleDrop(event: DragEvent) {
   pendingFiles.value = [...pendingFiles.value, ...files]
 }
 
-// ── STT push-to-talk ──────────────────────────────────────────────────
-const sttErrorTimeout = ref<ReturnType<typeof setTimeout> | null>(null)
+// ── Dictation (click to start, click / Ctrl+M / Done to finish) ─────
+// The phase logic is the pure reducer in utils/dictation.ts; useStt owns the
+// microphone. The text goes in at the caret and is never sent automatically.
+const DICTATION_LEVEL_BARS = 24
+/** Caret of the textarea when the dictation started (focus moves to the bar). */
+let dictationSelection: { start: number; end: number } | null = null
+const dictationAnnouncement = ref('')
+const micLabel = computed(() => dictationPhase.value === 'recording' ? t('chat.dictation.stop') : dictationPhase.value === 'transcribing' ? t('chat.dictation.transcribing') : t('chat.dictation.start'))
 
-function handleMicDown(event: MouseEvent | TouchEvent) {
-  event.preventDefault()
-  sttStartRecording()
+function rememberSelection() {
+  const el = inputRef.value
+  dictationSelection = el && typeof el.selectionStart === 'number'
+    ? { start: el.selectionStart, end: el.selectionEnd ?? el.selectionStart }
+    : { start: inputText.value.length, end: inputText.value.length }
 }
 
-async function handleMicUp() {
-  if (!sttRecording.value) return
-  const text = await sttStopAndTranscribe()
-  if (text) {
-    inputText.value = text
-    await handleSend()
-  }
+async function startDictation() {
+  rememberSelection()
+  dictationAnnouncement.value = ''
+  await sttStart()
 }
 
-// Auto-clear STT errors after 3 seconds
-watch(sttError, (val) => {
-  if (sttErrorTimeout.value) clearTimeout(sttErrorTimeout.value)
-  if (val) {
-    sttErrorTimeout.value = setTimeout(() => { sttError.value = null }, 3000)
+function applyDictation(result: DictationResult | null) {
+  if (!result) return
+  if (result.audio) pendingAudio.value = [...pendingAudio.value, { attachment: result.audio, durationMs: result.durationMs }]
+  if (!result.text) return
+  const selection = dictationSelection ?? { start: inputText.value.length, end: inputText.value.length }
+  const { value, caret } = insertAtCursor(inputText.value, result.text, selection.start, selection.end)
+  inputText.value = value
+  dictationSelection = { start: caret, end: caret }
+  dictationAnnouncement.value = t('chat.dictation.inserted')
+  nextTick(() => {
+    const el = inputRef.value
+    if (!el) return
+    el.focus()
+    el.setSelectionRange(caret, caret)
+    autoResize()
+  })
+}
+
+async function finishDictation() {
+  applyDictation(await sttStop())
+}
+
+async function retryDictation() {
+  applyDictation(await sttRetry())
+}
+
+function cancelDictation() {
+  sttCancel()
+  dictationAnnouncement.value = t('chat.dictation.cancelled')
+  nextTick(() => inputRef.value?.focus())
+}
+
+function dismissDictation() {
+  sttDismiss()
+  nextTick(() => inputRef.value?.focus())
+}
+
+async function toggleDictation() {
+  if (dictationPhase.value === 'recording') await finishDictation()
+  else if (dictationPhase.value === 'idle' || dictationPhase.value === 'error') await startDictation()
+}
+
+// Esc cancels a running recording even when the focus has left the composer.
+function handleGlobalDictationEscape(event: KeyboardEvent) {
+  if (event.key === 'Escape' && (dictationPhase.value === 'recording' || dictationPhase.value === 'starting')) {
+    event.preventDefault()
+    cancelDictation()
   }
+}
+watch(dictationPhase, (phase) => {
+  if (typeof window === 'undefined') return
+  if (phase === 'recording' || phase === 'starting') window.addEventListener('keydown', handleGlobalDictationEscape)
+  else window.removeEventListener('keydown', handleGlobalDictationEscape)
 })
+onUnmounted(() => { if (typeof window !== 'undefined') window.removeEventListener('keydown', handleGlobalDictationEscape) })
+
+function removePendingAudio(index: number) {
+  pendingAudio.value = pendingAudio.value.filter((_, i) => i !== index)
+}
+
+/** Ctrl+M toggles, Esc cancels — only while the composer is the active area. */
+function handleComposerAreaKeydown(event: KeyboardEvent) {
+  if (!sttEnabled.value) return
+  if (isDictationShortcut(event)) {
+    event.preventDefault()
+    void toggleDictation()
+    return
+  }
+  if (event.key === 'Escape' && (dictationPhase.value === 'recording' || dictationPhase.value === 'starting')) {
+    event.preventDefault()
+    event.stopPropagation()
+    cancelDictation()
+  }
+}
 
 </script>

@@ -3,8 +3,17 @@
  * from one service so they share the session manager lookup:
  *
  *   GET  /api/strands?tag=&now=1&agent_id=&project_id=&include_archived=&limit=&offset=
- *             &attention=1&unread=1
+ *             &attention=1&unread=1&q=
  *        -> { strands: Strand[] }   Strand = Thread + { tags, nowRank, links }
+ *        `q` searches the strand title (substring, LIKE with `%`/`_`/`\`
+ *        escaped) and the user/assistant messages of the strand (FTS5 index
+ *        `chat_messages_fts`, every word a prefix term, all words required).
+ *        Trimmed length 2..200, otherwise 400 `invalid_q`; blank = no search.
+ *        It resolves to an id set like the chips, so it combines with every
+ *        other filter, keeps the list order (pinned, then latest activity)
+ *        and paginates with limit/offset exactly. A strand found through a
+ *        message carries `matchSnippet`: a plain-text excerpt (no markup) of
+ *        its best ranked matching message. Title-only hits have none.
  *        `attention=1` / `unread=1` are server side filters (the two chips of
  *        plan 2026-09-26): the matching ids are resolved first and handed to
  *        the thread query, so order and pagination are unchanged. Both

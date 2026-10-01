@@ -1,4 +1,5 @@
 import { normalizeSessionId, resolveAgentId } from '../../../persona-request.js'
+import { STRAND_SEARCH_MAX_LENGTH, STRAND_SEARCH_MIN_LENGTH } from './search.js'
 
 export type ParseResult<T> = { ok: true; value: T } | { ok: false; error: string; code?: string }
 
@@ -37,6 +38,26 @@ export interface ListStrandsQuery {
   attentionOnly: boolean
   /** `?unread=1`: only strands with unread non-user activity. */
   unreadOnly: boolean
+  /** `?q=`: search in title and message content (2..200 characters, trimmed). */
+  q?: string
+}
+
+/**
+ * `?q=` of the strand search. Absent or blank means "no search". Anything that
+ * is not a single string, shorter than 2 or longer than 200 characters after
+ * trimming is a 400 — a silently dropped search would show the full list as
+ * if it were the result.
+ */
+export function parseSearchQuery(raw: unknown): ParseResult<string | undefined> {
+  if (raw === undefined) return { ok: true, value: undefined }
+  if (typeof raw !== 'string') return { ok: false, error: 'q must be a single string', code: 'invalid_q' }
+  const value = raw.trim()
+  if (value === '') return { ok: true, value: undefined }
+  const length = [...value].length
+  if (length < STRAND_SEARCH_MIN_LENGTH || length > STRAND_SEARCH_MAX_LENGTH) {
+    return { ok: false, error: `q must be ${STRAND_SEARCH_MIN_LENGTH} to ${STRAND_SEARCH_MAX_LENGTH} characters`, code: 'invalid_q' }
+  }
+  return { ok: true, value }
 }
 
 export function parseListStrandsQuery(query: Record<string, unknown>): ParseResult<ListStrandsQuery> {
@@ -56,6 +77,8 @@ export function parseListStrandsQuery(query: Record<string, unknown>): ParseResu
   if (!attentionOnly.ok) return attentionOnly
   const unreadOnly = parseStrictFlag(query.unread, 'unread')
   if (!unreadOnly.ok) return unreadOnly
+  const q = parseSearchQuery(query.q)
+  if (!q.ok) return q
   return {
     ok: true,
     value: {
@@ -68,6 +91,7 @@ export function parseListStrandsQuery(query: Record<string, unknown>): ParseResu
       nowOnly: parseFlag(query.now),
       attentionOnly: attentionOnly.value,
       unreadOnly: unreadOnly.value,
+      ...(q.value ? { q: q.value } : {}),
     },
   }
 }

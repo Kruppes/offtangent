@@ -1,6 +1,6 @@
 import { describe, it, expect, vi } from 'vitest'
 import type { Thread } from '@axiom/core'
-import { readFilters, filterQuery, useStrandPagination } from './pagination'
+import { readFilters, filterQuery, highlightParts, normalizeSearch, useStrandPagination } from './pagination'
 const rows = (start: number, count: number) => Array.from({ length: count }, (_, i) => ({ id: String(start + i) }) as Thread)
 describe('server strand pagination', () => {
   it('crosses the 100 boundary and stops on the short page', async () => {
@@ -40,5 +40,38 @@ describe('server strand pagination', () => {
     expect(readFilters(filterQuery(filters))).toEqual(filters)
     expect(readFilters({}, 'project-fixed').project_id).toBe('project-fixed')
     expect(filterQuery(readFilters({}))).toEqual({})
+  })
+  it('round trips the search and drops a too short one', () => {
+    expect(readFilters({ q: '  needle  ' }).q).toBe('needle')
+    expect(filterQuery(readFilters({ q: 'needle', tag: 't' }))).toEqual({ tag: 't', q: 'needle' })
+    expect(readFilters({ q: 'x' }).q).toBe('')
+    expect(filterQuery(readFilters({ q: ' x ' }))).toEqual({})
+    expect(readFilters({ q: ['a', 'b'] }).q).toBe('')
+  })
+})
+describe('search helpers', () => {
+  it('normalizes the search text to the backend bounds', () => {
+    expect(normalizeSearch('ab')).toBe('ab')
+    expect(normalizeSearch(' a ')).toBe('')
+    expect(normalizeSearch(42)).toBe('')
+    expect(normalizeSearch('y'.repeat(250))).toHaveLength(200)
+  })
+  it('splits text into highlighted parts, case-insensitively and per word', () => {
+    expect(highlightParts('Alpha beta ALPHA', 'alpha')).toEqual([
+      { text: 'Alpha', match: true }, { text: ' beta ', match: false }, { text: 'ALPHA', match: true },
+    ])
+    expect(highlightParts('one two three', 'three one')).toEqual([
+      { text: 'one', match: true }, { text: ' two ', match: false }, { text: 'three', match: true },
+    ])
+  })
+  it('treats regex and HTML characters in the query and text as plain text', () => {
+    expect(highlightParts('cost 50% (a+b) <b>x</b>', '50% (a+b)')).toEqual([
+      { text: 'cost ', match: false }, { text: '50%', match: true }, { text: ' ', match: false }, { text: '(a+b)', match: true }, { text: ' <b>x</b>', match: false },
+    ])
+    expect(highlightParts('a.c abc', 'a.c')).toEqual([{ text: 'a.c', match: true }, { text: ' abc', match: false }])
+  })
+  it('returns the whole text unmarked for an empty query and nothing for empty text', () => {
+    expect(highlightParts('plain', '  ')).toEqual([{ text: 'plain', match: false }])
+    expect(highlightParts('', 'x')).toEqual([])
   })
 })

@@ -46,7 +46,8 @@
     "primary": "Hauptnavigation",
     "system": "System",
     "boards": "Integrationen",
-    "connectors": "Anbindungen"
+    "connectors": "Anbindungen",
+    "more": "Mehr"
   },
   "roles": {
     "admin": "Admin",
@@ -125,7 +126,7 @@
     "ttsErrorDismiss": "Schließen",
     "ttsBlocked": "Der Browser hat die Wiedergabe blockiert. Tippe noch einmal auf Vorlesen.",
     "ttsUnsupported": "Dieser Browser kann das Audioformat nicht abspielen. Ändere das Format in den Einstellungen unter Text-to-Speech.",
-    "micTooltip": "Gedrückt halten zum Aufnehmen",
+    "micTooltip": "Diktat starten (Strg+M)",
     "thinkingLevelTooltip": "Denk-Level für den nächsten Zug (gilt global für den Haupt-Agent)",
     "thinkingLevelSaved": "Denk-Level aktualisiert",
     "thinkingLevelSaveFailed": "Denk-Level konnte nicht geändert werden",
@@ -178,7 +179,37 @@
       "showLatest": "Neueste zeigen"
     },
     "secretsSealed": "{count} Secret sicher abgelegt | {count} Secrets sicher abgelegt",
-    "secretChipTooltip": "Abgelegtes Secret – der Wert bleibt auf diesem Server und geht nie an das Modell"
+    "secretChipTooltip": "Abgelegtes Secret – der Wert bleibt auf diesem Server und geht nie an das Modell",
+    "dictation": {
+      "start": "Diktat starten (Strg+M)",
+      "stop": "Diktat beenden und transkribieren (Strg+M)",
+      "recording": "Aufnahme läuft",
+      "transcribing": "Wird transkribiert …",
+      "cancel": "Abbrechen",
+      "done": "Fertig",
+      "retry": "Erneut versuchen",
+      "dismiss": "Schließen",
+      "cancelled": "Diktat abgebrochen",
+      "inserted": "Diktat in die Nachricht eingefügt",
+      "level": "Eingangspegel",
+      "elapsed": "Aufnahmedauer {time}",
+      "shortcutHint": "Esc bricht ab, Strg+M beendet",
+      "errors": {
+        "permission_denied": "Der Zugriff aufs Mikrofon wurde verweigert.",
+        "permission_help": "Gib das Mikrofon über das Schloss- oder Kamera-Symbol in der Adressleiste frei (Website-Einstellungen) und versuche es dann erneut.",
+        "mic_error": "Es konnte kein Mikrofon gestartet werden. Prüfe, ob eines angeschlossen ist und nicht von einer anderen App belegt wird.",
+        "too_short": "Die Aufnahme war zu kurz. Sprich etwas länger, bevor du beendest.",
+        "transcribe_error": "Die Transkription ist fehlgeschlagen. Die Aufnahme ist noch da, du kannst sie erneut senden.",
+        "no_speech": "In der Aufnahme wurde keine Sprache erkannt."
+      },
+      "audio": {
+        "label": "Diktat {n}",
+        "play": "Diktat {n} abspielen",
+        "pause": "Diktat {n} anhalten",
+        "remove": "Diktat {n} entfernen",
+        "attached": "Die Aufnahme wird mit der Nachricht gesendet"
+      }
+    }
   },
   "canvas": {
     "open": "Canvas öffnen",
@@ -1813,7 +1844,13 @@
     "loaded": "{count} geladen",
     "truncated": "Nur die ersten 3.000 Strands werden angezeigt. Grenze die Filter weiter ein.",
     "loadMore": "Weitere laden",
-    "manage": "Verwalten"
+    "manage": "Verwalten",
+    "search": "Strands durchsuchen",
+    "searchPlaceholder": "Titel und Nachrichten durchsuchen …",
+    "searchClear": "Suche leeren",
+    "searchHint": "Mit / suchen, Esc leert. Mindestens 2 Zeichen.",
+    "searchEmpty": "Kein Strand passt zu „{q}“.",
+    "searchReset": "Suche zurücksetzen"
   },
   "strandDetail": {
     "back": "Zurück zu Strands",

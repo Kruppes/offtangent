@@ -154,7 +154,8 @@ describe('ChatView: the free text send path', () => {
     // Both the composer (`handleSend`) and the card (`handleOwnAnswer`) call the
     // single `sendMessage` pulled out of `useChat()`; no second send path, and
     // therefore no backend change.
-    expect(script).toMatch(/async function handleSend\(\)[\s\S]*?await sendMessage\(text, files\)/)
+    // The composer also passes the kept dictation recordings (stored uploads).
+    expect(script).toMatch(/async function handleSend\(\)[\s\S]*?await sendMessage\(text, files, stored\)/)
     expect(script).toMatch(/^\s{2}sendMessage,$/m)
     expect(script.match(/await sendMessage\(/g)?.length).toBe(2)
   })

@@ -75,6 +75,12 @@ import {
   Inbox,
   Pin,
   PinOff,
+  Search,
+  Play,
+  Pause,
+  Ellipsis,
+  MicOff,
+  RotateCcw,
 } from 'lucide-vue-next'
 
 const iconMap = {
@@ -144,6 +150,12 @@ const iconMap = {
   inbox: Inbox,
   pin: Pin,
   pinOff: PinOff,
+  search: Search,
+  play: Play,
+  pause: Pause,
+  more: Ellipsis,
+  micOff: MicOff,
+  retry: RotateCcw,
 } as const
 
 const props = withDefaults(defineProps<{
