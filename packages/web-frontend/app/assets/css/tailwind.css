@@ -370,10 +370,28 @@
   }
 }
 
-/* ─── Chat markdown prose ─── */
+/* ─── Markdown reading typesetting (`.prose-chat`) ───
+   Assistant answers, task reports, feed bodies and board summaries.
+
+   Every size is in em of the prose base, so a context that sets its own text
+   size on the same element (`text-sm` in feed cards, `text-xs` in task cards)
+   keeps the proportions. The chat bubble sets no size on the prose element,
+   so answers get the reading base of 16 / 26 (type scale "Lesesatz").
+   Small contexts (12 px) never drop code or tables below 12 px, and code
+   blocks never below 13 px.
+   Rhythm: a heading sits closer to its own text than to the block above it,
+   paragraphs and blocks share one bottom margin, nothing uses a top margin
+   except headings and rules. The measure (characters per line) is set where
+   the column is known, see `chat/ChatBubble.vue`.
+   Colours come from the existing theme variables only: tints of the
+   foreground keep inline code and table headers distinct on any surface
+   (bubble, card, page) in dark and light. */
 @layer components {
   .prose-chat {
-    /* Remove default margins from first/last children */
+    font-size: 1rem;
+    line-height: 1.625;
+    min-width: 0;
+
     & > *:first-child {
       margin-top: 0;
     }
@@ -381,16 +399,17 @@
       margin-bottom: 0;
     }
 
-    /* Paragraphs */
-    p {
-      margin: 0.35em 0;
-      line-height: 1.6;
-    }
-    p + p {
-      margin-top: 0.6em;
+    /* Text blocks: long URLs and unbroken words wrap instead of overflowing. */
+    p, li, h1, h2, h3, h4, h5, h6, blockquote, dt, dd, a {
+      overflow-wrap: anywhere;
     }
 
-    /* Bold & italic */
+    /* Paragraphs */
+    p {
+      margin: 0 0 1em;
+      line-height: 1.625;
+    }
+
     strong {
       font-weight: 600;
     }
@@ -398,28 +417,44 @@
       font-style: italic;
     }
 
-    /* Headings — subtle, no huge sizes in chat */
+    /* Headings: size, weight and spacing all step down; the top margin is
+       always larger than the bottom one. */
     h1, h2, h3, h4, h5, h6 {
       font-weight: 600;
-      line-height: 1.3;
-      margin: 0.8em 0 0.3em;
     }
-    h1 { font-size: 1.15em; }
-    h2 { font-size: 1.1em; }
-    h3 { font-size: 1.05em; }
-    h4, h5, h6 { font-size: 1em; }
-
-    & > h1:first-child,
-    & > h2:first-child,
-    & > h3:first-child,
-    & > h4:first-child {
-      margin-top: 0;
+    h1 {
+      font-size: 1.5em;          /* 24 */
+      line-height: 1.3333;       /* 32 */
+      letter-spacing: -0.01em;
+      margin: 1.3333em 0 0.5em;  /* 32 / 12 */
+    }
+    h2 {
+      font-size: 1.25em;         /* 20 */
+      line-height: 1.4;          /* 28 */
+      letter-spacing: -0.005em;
+      margin: 1.6em 0 0.4em;     /* 32 / 8 */
+    }
+    h3 {
+      font-size: 1.125em;        /* 18 */
+      line-height: 1.4444;       /* 26 */
+      margin: 1.3333em 0 0.4444em; /* 24 / 8 */
+    }
+    h4 {
+      font-size: 1em;            /* 16, set apart by weight and spacing */
+      line-height: 1.5;          /* 24 */
+      margin: 1.25em 0 0.5em;    /* 20 / 8 */
+    }
+    h5, h6 {
+      font-size: 0.875em;        /* 14 */
+      line-height: 1.4286;       /* 20 */
+      margin: 1.4286em 0 0.5714em; /* 20 / 8 */
+      color: hsl(var(--muted-foreground));
     }
 
     /* Lists */
     ul, ol {
-      margin: 0.4em 0;
-      padding-left: 1.4em;
+      margin: 0 0 1em;
+      padding-left: 1.5em;
     }
     ul {
       list-style-type: disc;
@@ -428,27 +463,45 @@
       list-style-type: decimal;
     }
     li {
-      margin: 0.15em 0;
-      line-height: 1.5;
+      margin: 0;
+      line-height: 1.625;
+    }
+    li + li {
+      margin-top: 0.375em;
+    }
+    li::marker {
+      color: hsl(var(--muted-foreground));
     }
     li > ul, li > ol {
-      margin: 0.1em 0;
+      margin: 0.375em 0 0;
+    }
+    li > p {
+      margin-bottom: 0.5em;
+    }
+    li > p:last-child {
+      margin-bottom: 0;
     }
 
-    /* Inline code */
+    /* Inline code: its own tinted surface on any background. */
     code {
-      @apply rounded bg-muted px-1 py-0.5 text-[0.85em] font-mono;
+      @apply rounded-md font-mono;
+      font-size: max(12px, 0.875em); /* 14 at the reading base */
+      padding: 0.125em 0.375em;
+      background-color: hsl(var(--foreground) / 0.09);
+      box-shadow: inset 0 0 0 1px hsl(var(--foreground) / 0.08);
+      overflow-wrap: anywhere;
     }
 
-    /* Code blocks */
+    /* Code blocks: at least 13 px, long lines scroll inside the block. */
     .code-block-wrapper {
-      @apply my-2 overflow-hidden rounded-lg border border-border/80 bg-muted/60 shadow-sm dark:border-border/90 dark:bg-background/55;
+      @apply mb-4 mt-0 max-w-full overflow-hidden rounded-lg border border-border/80 bg-muted/60 shadow-sm dark:border-border/90 dark:bg-background/55;
     }
     .code-block-header {
       @apply flex select-none items-center justify-between gap-2 rounded-t-lg border-b border-border/80 bg-muted px-3 py-1.5 dark:border-border/90 dark:bg-background/75;
     }
     .code-block-language {
-      @apply truncate font-mono text-[0.68rem] font-medium uppercase tracking-wide text-muted-foreground;
+      @apply truncate font-mono font-medium uppercase tracking-wide text-muted-foreground;
+      font-size: max(11px, 0.6875em);
     }
     .code-block-copy-button {
       @apply inline-flex h-6 w-6 shrink-0 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-background/70 hover:text-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring;
@@ -457,43 +510,107 @@
       @apply h-3.5 w-3.5;
     }
     pre {
-      @apply my-2 overflow-x-auto rounded-lg bg-muted p-3 text-xs leading-relaxed;
+      @apply mb-4 mt-0 max-w-full overflow-x-auto rounded-lg bg-muted p-3 font-mono;
+      font-size: max(13px, 0.8125em);
+      line-height: 1.54;
+      white-space: pre;
     }
     .code-block-wrapper pre {
       @apply my-0 rounded-t-none bg-muted/70 dark:bg-background/60;
     }
     pre code {
-      @apply bg-transparent p-0;
+      font-size: inherit;
+      padding: 0;
+      background-color: transparent;
+      box-shadow: none;
+      border-radius: 0;
+      overflow-wrap: normal;
     }
 
     /* Blockquotes */
     blockquote {
-      @apply my-2 border-l-2 border-muted-foreground/30 pl-3 italic text-muted-foreground;
+      margin: 0 0 1em;
+      padding-left: 1em;
+      border-left: 3px solid hsl(var(--muted-foreground) / 0.45);
+      color: hsl(var(--muted-foreground));
+    }
+    blockquote p {
+      margin-bottom: 0.5em;
+    }
+    blockquote > *:last-child {
+      margin-bottom: 0;
     }
 
     /* Horizontal rules */
     hr {
-      @apply my-3 border-t border-border;
+      @apply border-t border-border;
+      margin: 1.5em 0;
     }
 
     /* Links */
     a {
-      @apply text-primary underline decoration-primary/30 underline-offset-2 transition-colors;
+      @apply text-primary transition-colors;
+      text-decoration: underline;
+      text-decoration-thickness: 1px;
+      text-underline-offset: 3px;
+      text-decoration-color: hsl(var(--primary) / 0.4);
     }
     a:hover {
-      @apply decoration-primary/60;
+      text-decoration-color: hsl(var(--primary) / 0.8);
     }
 
-    /* Tables */
+    /* Images never leave the column. */
+    img, video {
+      max-width: 100%;
+      height: auto;
+      border-radius: 0.5rem;
+    }
+
+    /* Tables scroll inside their own wrapper (`useMarkdown` renders
+       `.table-scroll` around every table), never the column or the page. */
+    .table-scroll {
+      @apply mb-4 mt-0 max-w-full overflow-x-auto rounded-lg border border-border;
+      overscroll-behavior-x: contain;
+    }
+    .table-scroll:focus-visible {
+      @apply outline-none ring-2 ring-ring;
+    }
     table {
-      @apply my-2 w-full text-xs;
+      width: 100%;
+      margin: 0;
+      font-size: max(12px, 0.875em); /* 14 at the reading base */
+      line-height: 1.4286;       /* 20 */
       border-collapse: collapse;
+      font-variant-numeric: tabular-nums;
+    }
+    /* A table outside a wrapper (raw HTML) still scrolls on its own. */
+    & > table {
+      display: block;
+      overflow-x: auto;
+      max-width: 100%;
+      margin: 0 0 1em;
     }
     th, td {
-      @apply border border-border px-2 py-1 text-left;
+      padding: 0.5rem 0.75rem;   /* 8 / 12 */
+      text-align: left;
+      vertical-align: top;
+      border-bottom: 1px solid hsl(var(--border));
+    }
+    th + th, td + td {
+      border-left: 1px solid hsl(var(--border));
+    }
+    tbody tr:last-child td {
+      border-bottom: 0;
     }
     th {
-      @apply bg-muted font-semibold;
+      font-weight: 600;
+      background-color: hsl(var(--foreground) / 0.06);
+    }
+    th[align="right"], td[align="right"] {
+      text-align: right;
+    }
+    th[align="center"], td[align="center"] {
+      text-align: center;
     }
   }
 }

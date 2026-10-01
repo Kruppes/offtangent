@@ -63,7 +63,7 @@
         <div
           v-for="(segment, si) in messageTextSegments(msg)"
           :key="`${index}-${si}`"
-          class="prose-chat max-w-[70ch] break-words"
+          class="prose-chat max-w-[33em] break-words"
           v-html="renderMarkdown(segment.text)"
         />
       </template>

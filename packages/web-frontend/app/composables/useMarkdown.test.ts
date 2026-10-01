@@ -170,3 +170,27 @@ describe('safe renderer for agent-published text (feed bodies, boards)', () => {
     expect(renderSafeMarkdown(undefined)).toBe('')
   })
 })
+
+describe('tables in their own scroll container', () => {
+  const table = '| Name | Value |\n| --- | ---: |\n| alpha | 1 |\n| beta | 22 |'
+
+  it('wraps every chat table in one focusable .table-scroll element', () => {
+    const { renderMarkdown } = useMarkdown()
+    const html = renderMarkdown(`Intro\n\n${table}\n\nOutro`)
+    expect(html.match(/<div class="table-scroll" tabindex="0"><table>/g)).toHaveLength(1)
+    expect(html).toContain('</table>\n</div>')
+    // The table itself is still the ordinary marked output.
+    expect(html).toContain('<th>Name</th>')
+    expect(html).toContain('<th align="right">Value</th>')
+    expect(html).toContain('<td align="right">22</td>')
+    expect(html).toContain('<p>Outro</p>')
+  })
+
+  it('wraps tables of the safe renderer too and keeps escaping their cells', () => {
+    const html = renderSafeMarkdown('| a | b |\n| - | - |\n| <img src=x onerror=alert(1)> | [x](javascript:alert(1)) |')
+    expect(html).toContain('<div class="table-scroll" tabindex="0"><table>')
+    expect(html).not.toContain('<img')
+    expect(html).toContain('&lt;img src=x onerror=alert(1)&gt;')
+    expect(html).not.toContain('javascript:')
+  })
+})

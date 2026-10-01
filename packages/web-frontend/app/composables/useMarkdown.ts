@@ -98,6 +98,19 @@ renderer.code = ({ text, lang, escaped }: Tokens.Code) => {
 }
 
 /**
+ * Tables get their own horizontal scroll container, so a wide table scrolls
+ * inside the reading column instead of overflowing it (or the page). The
+ * wrapper is focusable so keyboard users can scroll it too. Shared by both
+ * renderers: `this` is the calling renderer, so the safe renderer keeps
+ * escaping the cell contents.
+ */
+const baseTable = marked.Renderer.prototype.table
+function scrollableTable(this: InstanceType<typeof marked.Renderer>, token: Tokens.Table): string {
+  return `<div class="table-scroll" tabindex="0">${baseTable.call(this, token)}</div>\n`
+}
+renderer.table = scrollableTable
+
+/**
  * Renderer for agent-published content (feed bodies, board summaries and
  * digests). It keeps the chat renderer's link and code handling but, unlike
  * chat, escapes raw HTML and drops non-http(s) link targets: this text comes
@@ -106,6 +119,7 @@ renderer.code = ({ text, lang, escaped }: Tokens.Code) => {
  */
 const safeRenderer = new marked.Renderer()
 safeRenderer.code = renderer.code
+safeRenderer.table = scrollableTable
 safeRenderer.html = ({ text }: Tokens.HTML | Tokens.Tag) => escapeHtml(text, true)
 safeRenderer.link = function ({ href, title, tokens }) {
   // `this.parser` keeps nested inline tokens on the safe renderer, so inline
