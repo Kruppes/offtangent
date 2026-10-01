@@ -1,12 +1,14 @@
 /**
- * Where the interaction card sits inside `ChatView.vue`.
+ * Where the interaction card sits inside the chat view.
  *
- * The full chat view cannot be rendered in this sandbox (it pulls in the
- * websocket, the router, the i18n plugin and a dozen Nuxt auto-imports), so
- * this spec checks the thing that actually changed: the position of
- * `<ChatInteractionBlock>` in the real template of the real file. The card
- * must be a SIBLING of the chat bubble, not a descendant of it, and a message
- * that is nothing but a card must not render an empty bubble.
+ * This spec checks the position of `<ChatInteractionBlock>` in the real
+ * template of the real file: since the W2a split the speaking row lives in
+ * `chat/ChatBubble.vue`, and the send path spans `ChatView.vue` (the card's
+ * free text answer), `chat/ChatComposer.vue` (the composer submit) and
+ * `useMessageSegments` (answered elsewhere). The card must be a SIBLING of
+ * the chat bubble, not a descendant of it, and a message that is nothing but
+ * a card must not render an empty bubble. The full surface is mounted in
+ * `chatView.render.spec.ts`.
  *
  * Run: npx vitest run packages/web-frontend/app/components/chatViewInteractionCard.render.spec.ts
  */
@@ -21,8 +23,14 @@ type Node = {
   children?: Node[]
 }
 
-const descriptor = parse(readFileSync(new URL('./ChatView.vue', import.meta.url), 'utf8')).descriptor
+const descriptor = parse(readFileSync(new URL('./chat/ChatBubble.vue', import.meta.url), 'utf8')).descriptor
 const template = descriptor.template!.ast as unknown as Node
+/** The script side of the send path, in the order the checks below expect it. */
+const sendPathScript = [
+  parse(readFileSync(new URL('./ChatView.vue', import.meta.url), 'utf8')).descriptor.scriptSetup!.content,
+  parse(readFileSync(new URL('./chat/ChatComposer.vue', import.meta.url), 'utf8')).descriptor.scriptSetup!.content,
+  readFileSync(new URL('../composables/chat/useMessageSegments.ts', import.meta.url), 'utf8'),
+].join('\n')
 
 function staticClassOf(node: Node): string {
   const attr = node.props?.find(p => p.type === 6 && p.name === 'class')
@@ -137,7 +145,7 @@ describe('ChatView: the interaction card next to the bubble', () => {
 })
 
 describe('ChatView: the free text send path', () => {
-  const script = descriptor.scriptSetup!.content
+  const script = sendPathScript
 
   it('sends free text as an ordinary user message through useChat().sendMessage', () => {
     expect(script).toMatch(/async function handleOwnAnswer\(text: string\)[\s\S]*?await sendMessage\(value\)/)
