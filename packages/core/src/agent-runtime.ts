@@ -243,11 +243,18 @@ interface ShellResult {
  *
  * Uses async spawn (not execSync) so the HTTP server stays responsive while a
  * command runs. stdin is closed so interactive prompts (ssh/sudo password) get
- * EOF immediately instead of hanging forever. On timeout the whole process
- * group is SIGKILLed, so backgrounded grandchildren (e.g. an ssh ControlMaster)
- * that hold the stdout pipe open cannot keep the call alive past the deadline.
+ * EOF immediately instead of hanging forever. The child leads its own process
+ * group (`detached`), and the whole group is SIGKILLed when
+ *  - the timeout fires,
+ *  - the tool call is cancelled (`signal`, e.g. the task was aborted) — also
+ *    when the signal is already aborted at the start, or
+ *  - the output exceeds SHELL_MAX_OUTPUT_BYTES (a runaway producer would
+ *    otherwise run on until the timeout while its output is discarded).
+ * Killing the group reaches pipelines, `&&` chains, npm wrappers and
+ * backgrounded grandchildren (e.g. an ssh ControlMaster) that hold the stdout
+ * pipe open, so none of them keeps the call alive past the kill.
  */
-function runShellCommand(command: string, timeout: number, cwd: string): Promise<ShellResult> {
+function runShellCommand(command: string, timeout: number, cwd: string, signal?: AbortSignal): Promise<ShellResult> {
   return new Promise((resolve) => {
     const child = spawn(command, {
       shell: true,
@@ -259,10 +266,12 @@ function runShellCommand(command: string, timeout: number, cwd: string): Promise
     let stdout = ''
     let stderr = ''
     let bytes = 0
-    let timedOut = false
+    let killReason: 'timeout' | 'abort' | 'maxOutput' | null = null
     let settled = false
 
-    const killGroup = () => {
+    const killGroup = (reason: NonNullable<typeof killReason>) => {
+      if (killReason !== null) return
+      killReason = reason
       if (child.pid === undefined) return
       try {
         process.kill(-child.pid, 'SIGKILL')
@@ -275,16 +284,17 @@ function runShellCommand(command: string, timeout: number, cwd: string): Promise
       }
     }
 
-    const timer = setTimeout(() => {
-      timedOut = true
-      killGroup()
-    }, timeout)
+    const timer = setTimeout(() => killGroup('timeout'), timeout)
+    const onAbort = () => killGroup('abort')
+    if (signal?.aborted) onAbort()
+    else signal?.addEventListener('abort', onAbort, { once: true })
 
     const append = (chunk: Buffer, toStderr: boolean) => {
       if (bytes >= SHELL_MAX_OUTPUT_BYTES) return
       bytes += chunk.length
       if (toStderr) stderr += chunk.toString('utf-8')
       else stdout += chunk.toString('utf-8')
+      if (bytes >= SHELL_MAX_OUTPUT_BYTES) killGroup('maxOutput')
     }
     child.stdout?.on('data', (chunk: Buffer) => append(chunk, false))
     child.stderr?.on('data', (chunk: Buffer) => append(chunk, true))
@@ -293,17 +303,25 @@ function runShellCommand(command: string, timeout: number, cwd: string): Promise
       if (settled) return
       settled = true
       clearTimeout(timer)
+      signal?.removeEventListener('abort', onAbort)
       const parts = [stdout, stderr].filter(Boolean)
-      if (timedOut) parts.push(`Command timed out after ${timeout}ms and was killed.`)
-      const output = parts.join('\n') || (exitCode === 0 ? '(no output)' : 'Command failed')
-      resolve({ output, exitCode, timedOut })
+      if (killReason === 'timeout') parts.push(`Command timed out after ${timeout}ms and was killed.`)
+      else if (killReason === 'abort') parts.push('Command aborted (the tool call was cancelled); its process group was killed.')
+      else if (killReason === 'maxOutput') {
+        parts.push(`Command output exceeded ${SHELL_MAX_OUTPUT_BYTES} bytes; the command was killed.`)
+      }
+      // A killed command never reports success, even if the shell managed to
+      // exit 0 in the race between the kill and the close event.
+      const finalExitCode = killReason !== null && exitCode === 0 ? 1 : exitCode
+      const output = parts.join('\n') || (finalExitCode === 0 ? '(no output)' : 'Command failed')
+      resolve({ output, exitCode: finalExitCode, timedOut: killReason === 'timeout' })
     }
 
     child.on('error', (err: Error) => {
       stderr += (stderr ? '\n' : '') + err.message
       finish(1)
     })
-    child.on('close', (code) => finish(code ?? (timedOut ? 124 : 1)))
+    child.on('close', (code) => finish(code ?? (killReason !== null ? 124 : 1)))
   })
 }
 
@@ -319,9 +337,12 @@ export function createYoloTools(): AgentTool[] {
       command: Type.String({ description: 'The shell command to execute' }),
       timeout: Type.Optional(Type.Number({ description: 'Timeout in milliseconds (default: 60000)' })),
     }),
-    execute: async (_toolCallId, params) => {
+    execute: async (_toolCallId, params, signal) => {
       const { command, timeout = 60000 } = params as { command: string; timeout?: number }
-      const { output, exitCode } = await runShellCommand(command, timeout, getWorkspaceDir())
+      // The signal fires when the tool call is cancelled (task abort, chat
+      // stop): the command's process group is killed right away instead of
+      // running on until the timeout.
+      const { output, exitCode } = await runShellCommand(command, timeout, getWorkspaceDir(), signal)
       // Prompt cap (token audit 2026-09-17): the 10 MB guard above only
       // protects memory. A 1,18 Mio char result used to enter the context in
       // full and was then re-sent with every following call.
