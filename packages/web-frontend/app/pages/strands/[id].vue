@@ -18,6 +18,7 @@ import ContextRing from '~/components/context/ContextRing.vue'
 import StrandContextDetails from '~/components/context/StrandContextDetails.vue'
 import { useStrandContext } from '~/composables/useStrandContext'
 import { formatTokens, gaugePercent } from '~/utils/contextGauge'
+import { overviewQueryOf } from '~/utils/strandOverview'
 const route = useRoute()
 const router = useRouter()
 const threadId = computed(() => String(route.params.id ?? ''))
@@ -29,7 +30,7 @@ const canvas = useStrandCanvas(() => threadId.value || null)
 const sheetOpen = ref(false)
 watch(threadId, id => { thread.value = null; activeThreadId.value = id; sheetOpen.value = false }, { immediate: true })
 onUnmounted(() => { activeThreadId.value = null })
-function backToInbox() { void router.push('/strands') }
+function backToInbox() { void router.push({ path: '/strands', query: overviewQueryOf(route.query) }) }
 function updated(value: StrandDetail) {
   if (value.id !== threadId.value) return
   thread.value = value

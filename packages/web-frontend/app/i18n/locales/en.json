@@ -2348,5 +2348,46 @@
       "readLast": "Read the last answer aloud",
       "summaryLast": "Audio summary of the last answer"
     }
+  },
+  "strandsW4d": {
+    "overview": "Strand overview",
+    "sideTitle": "Strands",
+    "backToOverview": "Back to overview",
+    "searchPlaceholder": "Search strands: titles and messages …",
+    "chips": "Filters",
+    "chip": {
+      "running": "Running now",
+      "pinned": "Pinned",
+      "unsorted": "Unsorted",
+      "archived": "Include archived",
+      "now": "Now set"
+    },
+    "projectChip": "Project",
+    "allProjects": "All projects",
+    "tagPlaceholder": "#tag",
+    "clearFilters": "Clear filters",
+    "sort": "Sort",
+    "sortBy": {
+      "activity": "Last activity",
+      "title": "Title",
+      "created": "Created"
+    },
+    "group": {
+      "now": "Now",
+      "today": "Today",
+      "week": "This week",
+      "older": "Older",
+      "all": "All strands"
+    },
+    "noStrands": "No strands yet. A conversation starts a new strand.",
+    "noMatches": "No strand matches these filters.",
+    "turnRunning": "Answer running",
+    "turnQueued": "queued",
+    "tasksRunning": "{count} task running | {count} tasks running",
+    "pinnedLabel": "pinned",
+    "noPreview": "No message yet",
+    "you": "You:",
+    "loadingAll": "Loading all strands for this sort order …",
+    "clientFilterHint": "Running now and Pinned filter the strands loaded so far."
   }
 }

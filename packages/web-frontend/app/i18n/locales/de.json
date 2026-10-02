@@ -2348,5 +2348,46 @@
       "readLast": "Letzte Antwort vorlesen",
       "summaryLast": "Audio-Zusammenfassung der letzten Antwort"
     }
+  },
+  "strandsW4d": {
+    "overview": "Strand-Übersicht",
+    "sideTitle": "Strands",
+    "backToOverview": "Zur Übersicht",
+    "searchPlaceholder": "Strands durchsuchen: Titel und Nachrichten …",
+    "chips": "Filter",
+    "chip": {
+      "running": "Läuft gerade",
+      "pinned": "Angeheftet",
+      "unsorted": "Unsortiert",
+      "archived": "Mit archivierten",
+      "now": "Now-Set"
+    },
+    "projectChip": "Projekt",
+    "allProjects": "Alle Projekte",
+    "tagPlaceholder": "#Tag",
+    "clearFilters": "Filter zurücksetzen",
+    "sort": "Sortieren",
+    "sortBy": {
+      "activity": "Letzte Aktivität",
+      "title": "Titel",
+      "created": "Erstellt"
+    },
+    "group": {
+      "now": "Jetzt",
+      "today": "Heute",
+      "week": "Diese Woche",
+      "older": "Älter",
+      "all": "Alle Strands"
+    },
+    "noStrands": "Noch keine Strands. Ein Gespräch beginnt einen neuen Strand.",
+    "noMatches": "Kein Strand passt zu diesen Filtern.",
+    "turnRunning": "Antwort läuft",
+    "turnQueued": "wartet",
+    "tasksRunning": "{count} Task läuft | {count} Tasks laufen",
+    "pinnedLabel": "angeheftet",
+    "noPreview": "Noch keine Nachricht",
+    "you": "Du:",
+    "loadingAll": "Alle Strands werden für die Sortierung geladen …",
+    "clientFilterHint": "Läuft gerade und Angeheftet filtern die bisher geladenen Strands."
   }
 }

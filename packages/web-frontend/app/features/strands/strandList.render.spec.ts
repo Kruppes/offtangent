@@ -8,6 +8,8 @@ import { readFileSync } from 'node:fs'
 import { parse, compileScript } from '@vue/compiler-sfc'
 import { transpileModule, ModuleKind } from 'typescript'
 import * as shellCommands from '../../composables/useShellCommands'
+import * as overview from '../../utils/strandOverview'
+import * as transition from '../../utils/strandTransition'
 
 // The existing render config compiles imports for SSR. Compile these four
 // SFCs for Vue's client renderer instead, so onMounted and clicks really run.
@@ -17,7 +19,7 @@ function loadPage(path: string): Component {
   const script = compileScript(descriptor, { id: path, inlineTemplate: true })
   const { outputText } = transpileModule(script.content, { compilerOptions: { module: ModuleKind.CommonJS } })
   const exports: { default?: Component } = {}
-  const modules: Record<string, unknown> = { vue: Vue, '~/composables/useShellCommands': shellCommands, './pagination': pagination, '~/utils/datetime': datetime, './StrandActions.vue': { default: defineComponent({ render: () => h('aside') }) } }
+  const modules: Record<string, unknown> = { vue: Vue, '~/composables/useShellCommands': shellCommands, './pagination': pagination, '~/utils/datetime': datetime, '~/utils/strandOverview': overview, '~/utils/strandTransition': transition, './StrandActions.vue': { default: defineComponent({ render: () => h('aside') }) } }
   new Function('require', 'exports', outputText)((name: string) => {
     if (!(name in modules)) throw new Error(`Unexpected import: ${name}`)
     return modules[name]
@@ -34,8 +36,10 @@ interface Node {
   props: Record<string, unknown>
   children: Node[]
   parent: Node | null
+  // v-show writes `el.style.display`.
+  style: Record<string, string>
 }
-const node = (tag: string, text = ''): Node => ({ tag, text, props: {}, children: [], parent: null })
+const node = (tag: string, text = ''): Node => ({ tag, text, props: {}, children: [], parent: null, style: {} })
 const renderer = createRenderer<Node, Node>({
   createElement: tag => node(tag),
   createText: text => node('#text', text),
@@ -106,7 +110,9 @@ describe('shared strand list', () => {
     const { root } = mount(List); await nextTick()
     expect(text(root)).toContain('common.loading')
     resolve(new Response('{"strands":[]}')); await flush()
-    expect(text(root)).toContain('strandsW3.empty')
+    // W4d: no strands at all is its own state, distinct from "no matches".
+    expect(text(root)).toContain('strandsW4d.noStrands')
+    expect(text(root)).not.toContain('strandsW3.empty')
     expect(text(root)).not.toContain('common.loading')
   })
   it('shows a localized error and retries into content', async () => {
@@ -195,7 +201,7 @@ describe('shared strand list', () => {
       expect(focus).toHaveBeenCalled()
       expect(input().props.value).toBe('')
       expect(push).toHaveBeenLastCalledWith({ query: { keep: 'yes' } })
-      expect(text(root)).toContain('strandsW3.empty')
+      expect(text(root)).toContain('strandsW4d.noStrands')
     } finally {
       vi.useRealTimers()
     }
@@ -222,12 +228,113 @@ describe('shared strand list', () => {
     const { root } = mount(Vue.defineComponent({ render: () => Vue.h(List, { compact: true, activeId: 'open-one', activity: { 'busy-one': { state: 'thinking' }, 'queued-one': { state: 'queued' } } }) }))
     await flush()
     const rows = all(root).filter(n => n.props['data-testid'] === 'strand-row')
-    expect(rows.map(r => r.props['data-strand-id'])).toEqual(['open-one', 'busy-one', 'queued-one'])
-    expect(rows[0]!.props['data-active']).toBe('true')
-    expect(rows[1]!.props['data-active']).toBeUndefined()
-    expect(text(rows[1]!)).toContain('strandsW3.state.running')
-    expect(text(rows[2]!)).toContain('strandsW3.state.queued')
-    expect(text(rows[0]!)).not.toContain('strandsW3.state')
-    expect(all(rows[0]!).some(n => n.props['aria-current'] === 'page')).toBe(true)
+    // W4d: the side column groups like the overview, live strands under "now".
+    expect(rows.map(r => r.props['data-strand-id'])).toEqual(['busy-one', 'queued-one', 'open-one'])
+    const [busy, queued, open] = rows as [Node, Node, Node]
+    expect(open.props['data-active']).toBe('true')
+    expect(busy.props['data-active']).toBeUndefined()
+    expect(text(busy)).toContain('strandsW3.state.running')
+    expect(text(queued)).toContain('strandsW3.state.queued')
+    expect(text(open)).not.toContain('strandsW3.state')
+    expect(all(open).some(n => n.props['aria-current'] === 'page')).toBe(true)
+    // Only the open row carries the morph name of the view transition.
+    expect((open.props.style as Record<string, string>).viewTransitionName).toBe('strand-active-row')
+    expect(busy.props.style).toBeUndefined()
+    // Row links carry the overview query along.
+    expect(all(open).find(n => n.props['data-testid'] === 'strand-row-link')!.props.to).toEqual({ path: '/strands/open-one', query: {} })
   })
 })
+
+describe('strand overview (W4d)', () => {
+  const hour = 3_600_000
+  const at = (msAgo: number) => new Date(Date.now() - msAgo).toISOString()
+  const strands = [
+    { id: 'today-a', title: 'Synthetic today', tags: ['alpha'], pinned: false, archived: false, lastActivity: at(0.1 * hour), startedAt: at(400 * 24 * hour), messageCount: 3, projectId: 'p1', lastMessage: { role: 'assistant', content: '## Heading\n\nA **bold** answer', timestamp: at(0.1 * hour) } },
+    { id: 'pinned-old', title: 'Beta pinned', tags: [], pinned: true, archived: false, lastActivity: at(60 * 24 * hour), startedAt: at(61 * 24 * hour), messageCount: 1, projectId: null, lastMessage: { role: 'user', content: 'A question', timestamp: at(60 * 24 * hour) } },
+    { id: 'live-old', title: 'Alpha live', tags: [], pinned: false, archived: false, lastActivity: at(90 * 24 * hour), startedAt: at(1 * hour), messageCount: 0, projectId: null, lastMessage: null },
+  ]
+  function overview(route: { query: Record<string, string> }, fetch: ReturnType<typeof setupFetch>, query: Record<string, string> = {}) {
+    route.query = query
+    fetch.mockImplementation(async url => new Response(String(url).includes('/api/projects')
+      ? JSON.stringify({ projects: [{ id: 'p1', name: 'Synthetic project', color: '#336699' }] })
+      : JSON.stringify({ strands })))
+    return mount(Vue.defineComponent({ render: () => Vue.h(List, { activity: { 'live-old': { state: 'thinking' } } }) }))
+  }
+  const ids = (root: Node) => all(root).filter(n => n.props['data-testid'] === 'strand-row').map(n => n.props['data-strand-id'])
+  const groups = (root: Node) => all(root).map(n => n.props['data-testid']).filter((id): id is string => typeof id === 'string' && id.startsWith('strand-group-'))
+  const click = (root: Node, testid: string) => (all(root).find(n => n.props['data-testid'] === testid)!.props.onClick as () => void)()
+
+  it('renders wide rows in time groups with live state, project, preview and pin', async () => {
+    const { fetch, route } = setup()
+    const { root } = overview(route, fetch); await flush()
+    expect(all(root).find(n => n.props['data-mode'] === 'overview')).toBeTruthy()
+    expect(groups(root)).toEqual(['strand-group-now', 'strand-group-today', 'strand-group-older'])
+    expect(ids(root)).toEqual(['live-old', 'today-a', 'pinned-old'])
+    const [live, today, pinned] = all(root).filter(n => n.props['data-testid'] === 'strand-row')
+    expect(live!.props['data-live']).toBe('true')
+    expect(all(live!).some(n => n.props['data-testid'] === 'strand-status')).toBe(true)
+    expect(text(live!)).toContain('strandsW4d.turnRunning')
+    expect(text(live!)).toContain('strandsW4d.noPreview')
+    expect(text(today!)).toContain('Synthetic project')
+    expect(text(all(today!).find(n => n.props['data-testid'] === 'strand-preview')!)).toContain('Heading A bold answer')
+    expect(text(pinned!)).toContain('strandsW4d.you')
+    expect(text(pinned!)).toContain('strandsW4d.pinnedLabel')
+    // No side-column decorations in the overview.
+    expect(all(root).some(n => n.props['aria-current'] === 'page')).toBe(false)
+    expect(all(root).some(n => n.props['data-testid'] === 'strand-filters-toggle')).toBe(false)
+    expect(all(root).find(n => n.props['data-testid'] === 'strand-filters')!.style.display).not.toBe('none')
+  })
+  it('filters by chips, writes the query and keeps foreign keys', async () => {
+    const { fetch, route, replace } = setup()
+    const { root } = overview(route, fetch, { keep: 'yes' }); await flush()
+    click(root, 'strand-chip-pinned'); await flush()
+    expect(replace).toHaveBeenLastCalledWith({ query: { keep: 'yes', pinned: '1' } })
+    expect(ids(root)).toEqual(['pinned-old'])
+    expect(all(root).find(n => n.props['data-testid'] === 'strand-chip-pinned')!.props['aria-pressed']).toBe(true)
+    click(root, 'strand-chip-pinned'); await flush()
+    click(root, 'strand-chip-running'); await flush()
+    expect(replace).toHaveBeenLastCalledWith({ query: { keep: 'yes', running: '1' } })
+    expect(ids(root)).toEqual(['live-old'])
+    // Server side chips go to the list endpoint.
+    click(root, 'strand-chip-unsorted'); await flush()
+    expect(replace).toHaveBeenLastCalledWith({ query: { keep: 'yes', running: '1', project_id: 'none' } })
+    expect(fetch.mock.calls.some(call => String(call[0]).includes('project_id=none'))).toBe(true)
+    click(root, 'strand-chip-archived'); await flush()
+    expect(fetch.mock.calls.some(call => String(call[0]).includes('include_archived=1'))).toBe(true)
+    click(root, 'strand-filters-clear'); await flush()
+    expect(replace).toHaveBeenLastCalledWith({ query: { keep: 'yes' } })
+  })
+  it('restores chips and sort from the URL and sorts flat by title or creation', async () => {
+    const { fetch, route, replace } = setup()
+    const { root } = overview(route, fetch, { sort: 'title' }); await flush()
+    expect(groups(root)).toEqual(['strand-group-all'])
+    expect(ids(root)).toEqual(['live-old', 'pinned-old', 'today-a'])
+    expect(all(root).find(n => n.props['data-testid'] === 'strand-sort-title')!.props['aria-pressed']).toBe(true)
+    click(root, 'strand-sort-created'); await flush()
+    expect(replace).toHaveBeenLastCalledWith({ query: { sort: 'created' } })
+    expect(ids(root)).toEqual(['live-old', 'pinned-old', 'today-a'])
+    click(root, 'strand-sort-activity'); await flush()
+    expect(replace).toHaveBeenLastCalledWith({ query: {} })
+    expect(groups(root)[0]).toBe('strand-group-now')
+  })
+  it('shows "no matches" with a reset when the chips leave nothing', async () => {
+    const { fetch, route, replace } = setup()
+    const { root } = overview(route, fetch, { pinned: '1', running: '1' }); await flush()
+    expect(ids(root)).toEqual([])
+    expect(all(root).some(n => n.props['data-testid'] === 'strand-empty')).toBe(true)
+    expect(text(root)).not.toContain('strandsW4d.noStrands')
+    const reset = all(all(root).find(n => n.props['data-testid'] === 'strand-empty')!).find(n => n.tag === 'button')!
+    ;(reset.props.onClick as () => void)(); await flush()
+    expect(replace).toHaveBeenLastCalledWith({ query: {} })
+    expect(ids(root)).toHaveLength(3)
+  })
+  it('shows a skeleton while the first page loads', async () => {
+    const { fetch, route } = setup()
+    route.query = {}
+    fetch.mockImplementation(url => String(url).includes('/api/projects') ? Promise.resolve(new Response('{"projects":[]}')) : new Promise(() => {}))
+    const { root } = mount(List); await flush()
+    expect(all(root).some(n => n.props['data-testid'] === 'strand-skeleton')).toBe(true)
+    expect(ids(root)).toEqual([])
+  })
+})
+

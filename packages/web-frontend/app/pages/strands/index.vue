@@ -1,11 +1,8 @@
 <script setup lang="ts">
-// The list lives in the parent page (`pages/strands.vue`). With two or three
-// columns this child fills the conversation column until a strand is chosen.
+// `/strands` without an open strand. The parent page (`pages/strands.vue`)
+// shows the list as the full-width overview then (W4d), so this child renders
+// nothing; it exists so that `/strands` stays a route of its own.
 </script>
 <template>
-  <div class="flex h-full flex-col items-center justify-center gap-2 p-6 text-center text-muted-foreground" data-testid="strand-placeholder">
-    <AppIcon name="chat" size="lg" />
-    <p class="text-sm font-semibold text-foreground">{{ $t('shell.pickStrand') }}</p>
-    <p class="max-w-xs text-sm">{{ $t('shell.pickStrandHint') }}</p>
-  </div>
+  <div class="hidden" data-testid="strand-placeholder" />
 </template>
