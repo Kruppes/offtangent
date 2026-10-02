@@ -164,7 +164,7 @@
           <span
             class="h-2 w-2 shrink-0 rounded-full"
             :class="statusDotClass"
-            :aria-label="statusText"
+            aria-hidden="true"
           />
           <span class="hidden text-sm text-muted-foreground sm:block">{{ statusText }}</span>
         </div>
