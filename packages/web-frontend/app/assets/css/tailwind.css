@@ -3,16 +3,52 @@
 /* ─── Dark mode via .dark class (shadcn convention) ─── */
 @custom-variant dark (&:is(.dark *));
 
-/* ─── Theme configuration ─── */
+/* ─── Theme configuration ───
+   Design tokens of the web redesign (draft v2): colours, type scale, radii,
+   shadows. Everything a component needs is a token here; components use the
+   semantic classes (`bg-card`, `text-muted-foreground`, `text-success`, …),
+   never palette colours or pixel sizes. */
 @theme {
-  /* Font families */
-  --font-sans: 'Manrope', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
-  --font-manrope: 'Manrope', sans-serif;
+  /* Type: the system font stack of the app (Roboto where installed, otherwise
+     the platform UI font). No web fonts are loaded. */
+  --font-sans: Roboto, "Segoe UI Variable Text", "Segoe UI", system-ui, -apple-system, BlinkMacSystemFont, "Helvetica Neue", Arial, sans-serif;
+  --font-mono: "Roboto Mono", ui-monospace, "SF Mono", "Cascadia Mono", Menlo, Consolas, "DejaVu Sans Mono", monospace;
 
-  /* Border radius */
-  --radius-lg: var(--radius);
-  --radius-md: calc(var(--radius) - 2px);
-  --radius-sm: calc(var(--radius) - 4px);
+  /* Type scale: 11 · 12 · 14 · 16 · 18 · 20 · 24, nothing in between.
+     `text-2xs` is the label size (times, counters, badges). */
+  --text-2xs: 11px;
+  --text-2xs--line-height: 16px;
+
+  /* Two cuts only: regular (400) and one emphasis cut (600). Every emphasis
+     utility resolves to the same cut, so `font-medium`, `font-semibold` and
+     `font-bold` can no longer drift into three weights. */
+  --font-weight-medium: 600;
+  --font-weight-semibold: 600;
+  --font-weight-bold: 600;
+  --font-weight-extrabold: 600;
+  --font-weight-black: 600;
+
+  /* Radii: two only. Controls (buttons, inputs, chips, tags, menu items)
+     use 8 px, containers (cards, artifact frames, dialogs, bubbles, sheets)
+     12 px. `rounded-full` stays for circles and pills (avatars, dots,
+     switches), which are shapes rather than a third corner radius. */
+  --radius-control: 8px;
+  --radius-container: 12px;
+  --radius-xs: var(--radius-control);
+  --radius-sm: var(--radius-control);
+  --radius: var(--radius-control);
+  --radius-md: var(--radius-control);
+  --radius-lg: var(--radius-container);
+  --radius-xl: var(--radius-container);
+  --radius-2xl: var(--radius-container);
+  --radius-3xl: var(--radius-container);
+
+  /* Reading measure: paragraphs, lists and quotes stop at 31rem (60-75
+     characters per line with the system font at 16 px); wide blocks
+     (tables, code, artifacts) may use the conversation width up to 720 px.
+     `max-w-reading`, `max-w-conversation`. */
+  --container-reading: 31rem;
+  --container-conversation: 720px;
 
   /* Colors — mapped from CSS variables for shadcn compatibility */
   --color-border: hsl(var(--border));
@@ -23,9 +59,15 @@
 
   --color-primary: hsl(var(--primary));
   --color-primary-foreground: hsl(var(--primary-foreground));
+  --color-primary-container: hsl(var(--primary-container));
+  --color-on-primary-container: hsl(var(--on-primary-container));
 
   --color-secondary: hsl(var(--secondary));
   --color-secondary-foreground: hsl(var(--secondary-foreground));
+
+  --color-tertiary: hsl(var(--tertiary));
+  --color-tertiary-container: hsl(var(--tertiary-container));
+  --color-on-tertiary-container: hsl(var(--on-tertiary-container));
 
   --color-destructive: hsl(var(--destructive));
   --color-destructive-foreground: hsl(var(--destructive-foreground));
@@ -50,20 +92,35 @@
   --color-warning: hsl(var(--warning));
   --color-warning-foreground: hsl(var(--warning-foreground));
 
+  /* Messenger source marker (brand hue, darker in light for >= 4.5:1). */
+  --color-telegram: hsl(var(--telegram));
+
+  /* Board values only: rising / falling figures. */
+  --color-gain: hsl(var(--gain));
+  --color-loss: hsl(var(--loss));
+
+  --color-badge: hsl(var(--badge));
+  --color-on-badge: hsl(var(--on-badge));
+
+  /* Context ring roles (see the theme blocks below). */
+  --color-ring-track: hsl(var(--ring-track));
+  --color-ring-fill: hsl(var(--ring-fill));
+  --color-ring-caution: hsl(var(--ring-caution));
+  --color-ring-full: hsl(var(--ring-full));
+
+  /* Dimmed backdrop behind modal layers. */
+  --color-scrim: var(--scrim);
+
   --color-sidebar: hsl(var(--sidebar));
   --color-sidebar-foreground: hsl(var(--sidebar-foreground));
   --color-sidebar-border: hsl(var(--sidebar-border));
   --color-sidebar-accent: hsl(var(--sidebar-accent));
   --color-sidebar-accent-foreground: hsl(var(--sidebar-accent-foreground));
 
-  /* Box shadows */
-  --shadow-xs: 0 1px 2px 0 hsl(var(--shadow-color) / 0.05);
-  --shadow-sm: 0 1px 3px 0 hsl(var(--shadow-color) / 0.1), 0 1px 2px -1px hsl(var(--shadow-color) / 0.1);
-  --shadow-md: 0 4px 6px -1px hsl(var(--shadow-color) / 0.1), 0 2px 4px -2px hsl(var(--shadow-color) / 0.1);
-  --shadow-lg: 0 10px 15px -3px hsl(var(--shadow-color) / 0.15), 0 4px 6px -4px hsl(var(--shadow-color) / 0.1);
-  --shadow-xl: 0 20px 25px -5px hsl(var(--shadow-color) / 0.2), 0 8px 10px -6px hsl(var(--shadow-color) / 0.1);
-  --shadow-2xl: 0 25px 50px -12px hsl(var(--shadow-color) / 0.35);
-  --shadow-inner: inset 0 2px 4px 0 hsl(var(--shadow-color) / 0.06);
+  /* Shadows: only real layers (menus, popovers, dialogs, sheets, toasts,
+     overlays) cast a shadow. Cards, artifact frames and columns separate by
+     surface step and a 1 px hairline. */
+  --shadow-overlay: var(--overlay-shadow);
 
   /* Keyframes */
   --animate-accordion-down: accordion-down 0.2s ease-out;
@@ -120,130 +177,63 @@
   }
 }
 
-/* Offtangent Android M3 light roles; HSL calculated from Theme.kt sRGB hex. */
-:root {
-  color-scheme: light;
-  --primary: 175.609756 28.275862% 28.431373%; /* #345D5A */
-  --on-primary: 0.000000 0.000000% 100.000000%; /* #FFFFFF */
-  --primary-container: 168.648649 48.051948% 84.901961%; /* #C6EBE4 */
-  --on-primary-container: 172.500000 52.173913% 9.019608%; /* #0B2320 */
-  --on-secondary: 0.000000 0.000000% 100.000000%; /* #FFFFFF */
-  --secondary-container: 169.090909 32.352941% 86.666667%; /* #D2E8E4 */
-  --on-secondary-container: 173.684211 46.341463% 8.039216%; /* #0B1E1C */
-  --tertiary: 247.058824 15.887850% 41.960784%; /* #5E5A7C */
-  --on-tertiary: 0.000000 0.000000% 100.000000%; /* #FFFFFF */
-  --tertiary-container: 249.375000 100.000000% 93.725490%; /* #E4DFFF */
-  --on-tertiary-container: 249.090909 44.000000% 14.705882%; /* #1A1536 */
-  --background: 150.000000 16.666667% 97.647059%; /* #F8FAF9 */
-  --on-background: 180.000000 5.660377% 10.392157%; /* #191C1C */
-  --surface: 150.000000 16.666667% 97.647059%; /* #F8FAF9 */
-  --on-surface: 180.000000 5.660377% 10.392157%; /* #191C1C */
-  --surface-variant: 165.000000 12.903226% 87.843137%; /* #DCE4E2 */
-  --on-surface-variant: 168.000000 7.352941% 26.666667%; /* #3F4947 */
-  --surface-container-lowest: 0.000000 0.000000% 100.000000%; /* #FFFFFF */
-  --surface-container-low: 150.000000 8.333333% 95.294118%; /* #F2F4F3 */
-  --surface-container: 150.000000 5.555556% 92.941176%; /* #ECEEED */
-  --surface-container-high: 160.000000 6.382979% 90.784314%; /* #E6E9E8 */
-  --surface-container-highest: 160.000000 5.084746% 88.431373%; /* #E0E3E2 */
-  --outline: 168.000000 4.310345% 45.490196%; /* #6F7977 */
-  --outline-variant: 163.636364 9.243697% 76.666667%; /* #BEC9C6 */
-  --error: 0.000000 75.471698% 41.568627%; /* #BA1A1A */
-  --on-error: 0.000000 0.000000% 100.000000%; /* #FFFFFF */
-  --error-container: 5.853659 100.000000% 91.960784%; /* #FFDAD6 */
-  --on-error-container: 358.153846 100.000000% 12.745098%; /* #410002 */
-  --inverse-surface: 180.000000 4.255319% 18.431373%; /* #2D3131 */
-  --inverse-on-surface: 150.000000 6.666667% 94.117647%; /* #EFF1F0 */
-  --inverse-primary: 167.586207 41.428571% 72.549020%; /* #9CD6CA */
-  --secondary-tone: 171.000000 11.235955% 34.901961%; /* #4F6360 */
-  --success: 123.037975 46.198830% 33.529412%; /* #2E7D32 */
-  --success-foreground: 0.000000 0.000000% 100.000000%; /* #FFFFFF */
-  --warning: 40.312500 100.000000% 25.098039%; /* #805600 */
-  --warning-foreground: 0.000000 0.000000% 100.000000%; /* #FFFFFF */
-  --foreground: var(--on-background);
-  --card: var(--surface-container-low);
-  --card-foreground: var(--on-surface);
-  --popover: var(--surface-container-high);
-  --popover-foreground: var(--on-surface);
-  --primary-foreground: var(--on-primary);
-  --secondary: var(--secondary-container);
-  --secondary-foreground: var(--on-secondary-container);
-  --muted: var(--surface-container-high);
-  --muted-foreground: var(--on-surface-variant);
-  --accent: var(--surface-container-high);
-  --accent-foreground: var(--on-surface);
-  --destructive: var(--error);
-  --destructive-foreground: var(--on-error);
-  --border: var(--outline-variant);
-  --input: var(--outline);
-  --ring: var(--primary);
-  --container: var(--surface-container);
-  --sidebar: var(--surface-container);
-  --sidebar-foreground: var(--on-surface);
-  --sidebar-border: var(--outline-variant);
-  --sidebar-accent: var(--primary-container);
-  --sidebar-accent-foreground: var(--on-primary-container);
-  --shadow-color: 0 0% 0%;
-  --color-bg: hsl(var(--background));
-  --color-bg-secondary: hsl(var(--card));
-  --color-bg-tertiary: hsl(var(--muted));
-  --color-border-legacy: hsl(var(--border));
-  --color-text: hsl(var(--foreground));
-  --color-text-secondary: hsl(var(--muted-foreground));
-  --color-text-muted: hsl(var(--muted-foreground));
-  --color-primary-legacy: hsl(var(--primary));
-  --color-danger: hsl(var(--destructive));
-  --color-success-legacy: hsl(var(--success));
-  --color-warning-legacy: hsl(var(--warning));
-  --color-user-bubble: hsl(var(--primary));
-  --color-assistant-bubble: hsl(var(--card));
-  --color-system-bubble: hsl(var(--container));
-  --color-primary-hover: hsl(var(--primary) / 0.9);
-  --color-primary-bg: hsl(var(--primary) / 0.1);
-  --radius: 0.625rem;
-  --sidebar-width: 260px;
-  --header-height: 56px;
-  --font-family: 'Manrope', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
-}
-
-/* Offtangent Android M3 dark roles; HSL calculated from Theme.kt sRGB hex. */
+/* Offtangent Android M3 roles, HSL calculated from the app's Theme.kt sRGB hex.
+   Dark is the default: with no theme class yet (before the app boots) the
+   page is already dark, so a dark-mode user never sees a white flash. The
+   theme class is set by an inline script in the document head and kept in
+   sync by `useTheme`. */
+:root,
 .dark {
   color-scheme: dark;
-  --primary: 168.785047 42.971888% 51.176471%; /* #4DB8A4 */
-  --on-primary: 170.357143 100.000000% 10.980392%; /* #00382F */
-  --primary-container: 171.818182 42.307692% 20.392157%; /* #1E4A44 */
-  --on-primary-container: 168.333333 70.588235% 80.000000%; /* #A8F0E2 */
-  --on-secondary: 170.400000 30.864198% 15.882353%; /* #1C3531 */
-  --secondary-container: 172.500000 19.047619% 24.705882%; /* #334B48 */
-  --on-secondary-container: 168.888889 36.986301% 85.686275%; /* #CDE8E3 */
-  --tertiary: 247.500000 48.780488% 83.921569%; /* #C7C2EA */
-  --on-tertiary: 245.454545 27.272727% 23.725490%; /* #2F2C4D */
-  --tertiary-container: 247.058824 20.481928% 32.549020%; /* #464264 */
-  --on-tertiary-container: 249.375000 100.000000% 93.725490%; /* #E4DFFF */
-  --background: 210.000000 20.000000% 7.843137%; /* #101418 */
-  --on-background: 180.000000 3.448276% 88.627451%; /* #E1E3E3 */
-  --surface: 210.000000 20.000000% 7.843137%; /* #101418 */
-  --on-surface: 180.000000 3.448276% 88.627451%; /* #E1E3E3 */
-  --surface-variant: 168.000000 7.352941% 26.666667%; /* #3F4947 */
-  --on-surface-variant: 163.636364 9.243697% 76.666667%; /* #BEC9C6 */
-  --surface-container-lowest: 205.714286 24.137931% 5.686275%; /* #0B0F12 */
-  --surface-container-low: 206.666667 16.363636% 10.784314%; /* #171C20 */
-  --surface-container: 204.000000 15.625000% 12.549020%; /* #1B2125 */
-  --surface-container-high: 204.000000 11.627907% 16.862745%; /* #262C30 */
-  --surface-container-highest: 201.818182 10.280374% 20.980392%; /* #30373B */
-  --outline: 168.000000 4.424779% 55.686275%; /* #899391 */
-  --outline-variant: 168.000000 7.352941% 26.666667%; /* #3F4947 */
-  --error: 6.428571 100.000000% 83.529412%; /* #FFB4AB */
-  --on-error: 357.142857 100.000000% 20.588235%; /* #690005 */
-  --error-container: 355.918367 100.000000% 28.823529%; /* #93000A */
-  --on-error-container: 5.853659 100.000000% 91.960784%; /* #FFDAD6 */
-  --inverse-surface: 180.000000 3.448276% 88.627451%; /* #E1E3E3 */
-  --inverse-on-surface: 180.000000 4.255319% 18.431373%; /* #2D3131 */
-  --inverse-primary: 175.609756 28.275862% 28.431373%; /* #345D5A */
-  --secondary-tone: 168.888889 20.930233% 74.705882%; /* #B1CCC7 */
-  --success: 122.571429 38.461538% 64.313725%; /* #81C784 */
-  --success-foreground: 136.842105 100.000000% 11.176471%; /* #003910 */
-  --warning: 40.150376 83.647799% 68.823529%; /* #F2C66D */
-  --warning-foreground: 39.402985 100.000000% 13.137255%; /* #432C00 */
+  --primary: 168.785 42.9719% 51.1765%; /* #4DB8A4 */
+  --on-primary: 170.3571 100% 10.9804%; /* #00382F */
+  --primary-container: 171.8182 42.3077% 20.3922%; /* #1E4A44 */
+  --on-primary-container: 168.3333 70.5882% 80%; /* #A8F0E2 */
+  --on-secondary: 170.4 30.8642% 15.8824%; /* #1C3531 */
+  --secondary-container: 172.5 19.0476% 24.7059%; /* #334B48 */
+  --on-secondary-container: 168.8889 36.9863% 85.6863%; /* #CDE8E3 */
+  --tertiary: 247.5 48.7805% 83.9216%; /* #C7C2EA */
+  --on-tertiary: 245.4545 27.2727% 23.7255%; /* #2F2C4D */
+  --tertiary-container: 247.0588 20.4819% 32.549%; /* #464264 */
+  --on-tertiary-container: 249.375 100% 93.7255%; /* #E4DFFF */
+  /* Neutral ramp: exactly seven steps (N0 ground … N6 text). Every neutral role
+     below is one of these, nothing in between. */
+  --n0: 210 16.6667% 7.0588%; /* #0F1215, ground */
+  --n1: 206.6667 16.3636% 10.7843%; /* #171C20, raised surface: cards, sidebar, composer */
+  --n2: 204 11.6279% 16.8627%; /* #262C30, high surface: hover, inputs, popovers, tags */
+  --n3: 168 7.3529% 26.6667%; /* #3F4947, hairline: dividers, card borders */
+  --n4: 168 4.4248% 55.6863%; /* #899391, outline: input borders, quote bar, ring track (>= 3:1) */
+  --n5: 163.6364 9.2437% 76.6667%; /* #BEC9C6, secondary text (>= 4.5:1) */
+  --n6: 180 4.1667% 90.5882%; /* #E6E8E8, text */
+  --background: var(--n0);
+  --on-background: var(--n6);
+  --surface: var(--n0);
+  --on-surface: var(--n6);
+  --surface-variant: var(--n3);
+  --on-surface-variant: var(--n5);
+  --surface-container-lowest: var(--n0);
+  --surface-container-low: var(--n1);
+  --surface-container: var(--n1);
+  --surface-container-high: var(--n2);
+  --surface-container-highest: var(--n2);
+  --outline: var(--n4);
+  --outline-variant: var(--n3);
+  --inverse-surface: var(--n6);
+  --inverse-on-surface: var(--n0);
+  --error: 6.4286 100% 83.5294%; /* #FFB4AB */
+  --on-error: 357.1429 100% 20.5882%; /* #690005 */
+  --error-container: 355.9184 100% 28.8235%; /* #93000A */
+  --on-error-container: 5.8537 100% 91.9608%; /* #FFDAD6 */
+  --inverse-primary: 175.6098 28.2759% 28.4314%; /* #345D5A */
+  --secondary-tone: 168.8889 20.9302% 74.7059%; /* #B1CCC7 */
+  --success: 122.5714 38.4615% 64.3137%; /* #81C784 */
+  --success-foreground: 136.8421 100% 11.1765%; /* #003910 */
+  --warning: 40.1504 83.6478% 68.8235%; /* #F2C66D */
+  --warning-foreground: 39.403 100% 13.1373%; /* #432C00 */
+  --gain: 145.8 53.1915% 63.1373%; /* #6FD39A */
+  --loss: 4.5763 79.7297% 70.9804%; /* #F0837A */
+  --badge: 247.8947 23.75% 68.6275%; /* #A19CC2 */
+  --on-badge: 245.4545 27.2727% 23.7255%; /* #2F2C4D */
   --foreground: var(--on-background);
   --card: var(--surface-container-low);
   --card-foreground: var(--on-surface);
@@ -267,7 +257,17 @@
   --sidebar-border: var(--outline-variant);
   --sidebar-accent: var(--primary-container);
   --sidebar-accent-foreground: var(--on-primary-container);
-  --shadow-color: 0 0% 0%;
+  /* Context ring (component lands in W4): the track is the outline step
+     (>= 3:1 on every surface), the fill is the signal colour, and from the
+     caution threshold on the ring also gets a tick mark at 70 %, so the state
+     never depends on colour alone. The percentage is always printed next to it
+     in tabular figures (`tabular-nums`). */
+  --ring-track: var(--outline);
+  --ring-fill: var(--primary);
+  --ring-caution: var(--warning);
+  --ring-full: var(--error);
+  --ring-threshold-caution: 0.7;
+  --ring-threshold-full: 0.9;
   --color-bg: hsl(var(--background));
   --color-bg-secondary: hsl(var(--card));
   --color-bg-tertiary: hsl(var(--muted));
@@ -284,6 +284,120 @@
   --color-system-bubble: hsl(var(--container));
   --color-primary-hover: hsl(var(--primary) / 0.9);
   --color-primary-bg: hsl(var(--primary) / 0.1);
+  --telegram: 200.5102 85.2174% 54.902%; /* #2AABEE */
+  --scrim: rgb(0 0 0 / 0.55);
+  --overlay-shadow: 0 16px 48px rgb(0 0 0 / 0.5), 0 2px 8px rgb(0 0 0 / 0.4);
+  --shadow-color: 0 0% 0%;
+  --sidebar-width: 260px;
+  --header-height: 56px;
+  --font-family: var(--font-sans);
+}
+
+:root.light {
+  color-scheme: light;
+  --primary: 175.6098 28.2759% 28.4314%; /* #345D5A */
+  --on-primary: var(--n0); /* on-colour = ground step, keeps the ramp at seven neutrals */
+  --primary-container: 168.6486 48.0519% 84.902%; /* #C6EBE4 */
+  --on-primary-container: 172.5 52.1739% 9.0196%; /* #0B2320 */
+  --on-secondary: var(--n0); /* on-colour = ground step, keeps the ramp at seven neutrals */
+  --secondary-container: 169.0909 32.3529% 86.6667%; /* #D2E8E4 */
+  --on-secondary-container: 173.6842 46.3415% 8.0392%; /* #0B1E1C */
+  --tertiary: 247.0588 15.8879% 41.9608%; /* #5E5A7C */
+  --on-tertiary: var(--n0); /* on-colour = ground step, keeps the ramp at seven neutrals */
+  --tertiary-container: 249.375 100% 93.7255%; /* #E4DFFF */
+  --on-tertiary-container: 249.0909 44% 14.7059%; /* #1A1536 */
+  /* Neutral ramp: exactly seven steps (N0 ground … N6 text). Every neutral role
+     below is one of these, nothing in between. */
+  --n0: 150 16.6667% 97.6471%; /* #F8FAF9, ground */
+  --n1: 150 8.3333% 95.2941%; /* #F2F4F3, raised surface: cards, sidebar, composer */
+  --n2: 160 6.383% 90.7843%; /* #E6E9E8, high surface: hover, inputs, popovers, tags */
+  --n3: 163.6364 9.2437% 76.6667%; /* #BEC9C6, hairline: dividers, card borders */
+  --n4: 168 4.3103% 45.4902%; /* #6F7977, outline: input borders, quote bar, ring track (>= 3:1) */
+  --n5: 168 7.3529% 26.6667%; /* #3F4947, secondary text (>= 4.5:1) */
+  --n6: 180 5.6604% 10.3922%; /* #191C1C, text */
+  --background: var(--n0);
+  --on-background: var(--n6);
+  --surface: var(--n0);
+  --on-surface: var(--n6);
+  --surface-variant: var(--n3);
+  --on-surface-variant: var(--n5);
+  --surface-container-lowest: var(--n0);
+  --surface-container-low: var(--n1);
+  --surface-container: var(--n1);
+  --surface-container-high: var(--n2);
+  --surface-container-highest: var(--n2);
+  --outline: var(--n4);
+  --outline-variant: var(--n3);
+  --inverse-surface: var(--n6);
+  --inverse-on-surface: var(--n0);
+  --error: 0 75.4717% 41.5686%; /* #BA1A1A */
+  --on-error: var(--n0); /* on-colour = ground step, keeps the ramp at seven neutrals */
+  --error-container: 5.8537 100% 91.9608%; /* #FFDAD6 */
+  --on-error-container: 358.1538 100% 12.7451%; /* #410002 */
+  --inverse-primary: 167.5862 41.4286% 72.549%; /* #9CD6CA */
+  --secondary-tone: 171 11.236% 34.902%; /* #4F6360 */
+  --success: 123.4783 48.2517% 28.0392%; /* #256A29 */
+  --success-foreground: var(--n0); /* on-colour = ground step, keeps the ramp at seven neutrals */
+  --warning: 40.3125 100% 25.098%; /* #805600 */
+  --warning-foreground: var(--n0); /* on-colour = ground step, keeps the ramp at seven neutrals */
+  --gain: 150.3614 63.3588% 25.6863%; /* #186B42 */
+  --loss: 3.913 64.486% 41.9608%; /* #B02F26 */
+  --badge: 247.0588 15.8879% 41.9608%; /* #5E5A7C */
+  --on-badge: var(--n0); /* on-colour = ground step, keeps the ramp at seven neutrals */
+  --foreground: var(--on-background);
+  --card: var(--surface-container-low);
+  --card-foreground: var(--on-surface);
+  --popover: var(--surface-container-high);
+  --popover-foreground: var(--on-surface);
+  --primary-foreground: var(--on-primary);
+  --secondary: var(--secondary-container);
+  --secondary-foreground: var(--on-secondary-container);
+  --muted: var(--surface-container-high);
+  --muted-foreground: var(--on-surface-variant);
+  --accent: var(--surface-container-high);
+  --accent-foreground: var(--on-surface);
+  --destructive: var(--error);
+  --destructive-foreground: var(--on-error);
+  --border: var(--outline-variant);
+  --input: var(--outline);
+  --ring: var(--primary);
+  --container: var(--surface-container);
+  --sidebar: var(--surface-container);
+  --sidebar-foreground: var(--on-surface);
+  --sidebar-border: var(--outline-variant);
+  --sidebar-accent: var(--primary-container);
+  --sidebar-accent-foreground: var(--on-primary-container);
+  /* Context ring (component lands in W4): the track is the outline step
+     (>= 3:1 on every surface), the fill is the signal colour, and from the
+     caution threshold on the ring also gets a tick mark at 70 %, so the state
+     never depends on colour alone. The percentage is always printed next to it
+     in tabular figures (`tabular-nums`). */
+  --ring-track: var(--outline);
+  --ring-fill: var(--primary);
+  --ring-caution: var(--warning);
+  --ring-full: var(--error);
+  --ring-threshold-caution: 0.7;
+  --ring-threshold-full: 0.9;
+  --color-bg: hsl(var(--background));
+  --color-bg-secondary: hsl(var(--card));
+  --color-bg-tertiary: hsl(var(--muted));
+  --color-border-legacy: hsl(var(--border));
+  --color-text: hsl(var(--foreground));
+  --color-text-secondary: hsl(var(--muted-foreground));
+  --color-text-muted: hsl(var(--muted-foreground));
+  --color-primary-legacy: hsl(var(--primary));
+  --color-danger: hsl(var(--destructive));
+  --color-success-legacy: hsl(var(--success));
+  --color-warning-legacy: hsl(var(--warning));
+  --color-user-bubble: hsl(var(--primary));
+  --color-assistant-bubble: hsl(var(--card));
+  --color-system-bubble: hsl(var(--container));
+  --color-primary-hover: hsl(var(--primary) / 0.9);
+  --color-primary-bg: hsl(var(--primary) / 0.1);
+  --telegram: 200.9302 70.4918% 35.8824%; /* #1B6F9C */
+  --scrim: rgb(16 20 24 / 0.4);
+  --overlay-shadow: 0 12px 32px rgb(16 20 24 / 0.18), 0 2px 6px rgb(16 20 24 / 0.12);
+  --shadow-color: 0 0% 0%;
 }
 
 /* ─── Base resets ─── */
@@ -303,7 +417,7 @@
   html,
   body {
     height: 100%;
-    font-family: var(--font-family);
+    font-family: var(--font-sans);
     @apply bg-background text-foreground;
     line-height: 1.5;
     -webkit-font-smoothing: antialiased;
@@ -312,6 +426,13 @@
 
   #__nuxt {
     height: 100%;
+  }
+
+  /* Two cuts only: the browser default `bolder` would render 700. */
+  b,
+  strong,
+  th {
+    font-weight: var(--font-weight-semibold);
   }
 
   a {
@@ -410,6 +531,17 @@
       line-height: 1.625;
     }
 
+    /* Reading measure: running text stops at 31em (= 31rem at the 16 px
+       reading base, 60-75 characters per line with the system font; in
+       smaller contexts the same character count). Tables, code and
+       artifacts are not capped and may use the whole column. */
+    & > :is(p, ul, ol, blockquote, dl) {
+      max-width: 31em;
+    }
+    & > :is(h1, h2, h3, h4, h5, h6) {
+      max-width: var(--container-reading);
+    }
+
     strong {
       font-weight: 600;
     }
@@ -487,42 +619,42 @@
       @apply rounded-md font-mono;
       font-size: max(12px, 0.875em); /* 14 at the reading base */
       padding: 0.125em 0.375em;
-      background-color: hsl(var(--foreground) / 0.09);
-      box-shadow: inset 0 0 0 1px hsl(var(--foreground) / 0.08);
+      background-color: hsl(var(--background));
+      border: 1px solid hsl(var(--border));
       overflow-wrap: anywhere;
     }
 
     /* Code blocks: at least 13 px, long lines scroll inside the block. */
     .code-block-wrapper {
-      @apply mb-4 mt-0 max-w-full overflow-hidden rounded-lg border border-border/80 bg-muted/60 shadow-sm dark:border-border/90 dark:bg-background/55;
+      @apply mb-4 mt-0 max-w-full overflow-hidden rounded-lg border border-border bg-background;
     }
     .code-block-header {
-      @apply flex select-none items-center justify-between gap-2 rounded-t-lg border-b border-border/80 bg-muted px-3 py-1.5 dark:border-border/90 dark:bg-background/75;
+      @apply flex select-none items-center justify-between gap-2 rounded-t-lg border-b border-border bg-card px-3 py-1.5;
     }
     .code-block-language {
       @apply truncate font-mono font-medium uppercase tracking-wide text-muted-foreground;
       font-size: max(11px, 0.6875em);
     }
     .code-block-copy-button {
-      @apply inline-flex h-6 w-6 shrink-0 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-background/70 hover:text-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring;
+      @apply inline-flex h-6 w-6 shrink-0 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-muted hover:text-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring;
     }
     .code-block-copy-button svg {
       @apply h-3.5 w-3.5;
     }
     pre {
-      @apply mb-4 mt-0 max-w-full overflow-x-auto rounded-lg bg-muted p-3 font-mono;
+      @apply mb-4 mt-0 max-w-full overflow-x-auto rounded-lg border border-border bg-background p-3 font-mono oa-scrollbar;
       font-size: max(13px, 0.8125em);
       line-height: 1.54;
       white-space: pre;
     }
     .code-block-wrapper pre {
-      @apply my-0 rounded-t-none bg-muted/70 dark:bg-background/60;
+      @apply my-0 rounded-t-none border-0 bg-background;
     }
     pre code {
       font-size: inherit;
       padding: 0;
       background-color: transparent;
-      box-shadow: none;
+      border: 0;
       border-radius: 0;
       overflow-wrap: normal;
     }
@@ -531,7 +663,7 @@
     blockquote {
       margin: 0 0 1em;
       padding-left: 1em;
-      border-left: 3px solid hsl(var(--muted-foreground) / 0.45);
+      border-left: 3px solid hsl(var(--outline));
       color: hsl(var(--muted-foreground));
     }
     blockquote p {
@@ -567,9 +699,12 @@
     }
 
     /* Tables scroll inside their own wrapper (`useMarkdown` renders
-       `.table-scroll` around every table), never the column or the page. */
+       `.table-scroll` around every table), never the column or the page.
+       No edge fade: the last visible column is simply cut at the frame and
+       the scrollbar stays visible (styled scrollbars are not overlay
+       scrollbars), so "there is more" is readable without a gradient. */
     .table-scroll {
-      @apply mb-4 mt-0 max-w-full overflow-x-auto rounded-lg border border-border;
+      @apply mb-4 mt-0 max-w-full overflow-x-auto rounded-lg border border-border oa-scrollbar;
       overscroll-behavior-x: contain;
     }
     .table-scroll:focus-visible {
@@ -604,7 +739,7 @@
     }
     th {
       font-weight: 600;
-      background-color: hsl(var(--foreground) / 0.06);
+      background-color: hsl(var(--card));
     }
     th[align="right"], td[align="right"] {
       text-align: right;

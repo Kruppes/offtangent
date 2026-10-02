@@ -2,6 +2,8 @@ import { readFileSync } from 'node:fs'
 import { resolve } from 'node:path'
 import tailwindcss from '@tailwindcss/vite'
 
+const THEME_BOOT_SCRIPT = "(function(){var m='auto';try{var s=localStorage,v=s.getItem('offtangent-color-mode');if(v===null)v=s.getItem('axiom-color-mode');if(v==='dark'||v==='light'||v==='auto')m=v}catch(e){}var d=m==='dark'||(m==='auto'&&!!window.matchMedia&&window.matchMedia('(prefers-color-scheme: dark)').matches);var c=document.documentElement.classList;c.toggle('dark',d);c.toggle('light',!d)})()"
+
 const rootPkg = JSON.parse(readFileSync(resolve(__dirname, '../../package.json'), 'utf-8'))
 
 // https://nuxt.com/docs/api/configuration/nuxt-config
@@ -71,11 +73,12 @@ export default defineNuxtConfig({
       ],
       link: [
         { rel: 'icon', type: 'image/svg+xml', href: '/favicon.svg' },
-        {
-          rel: 'stylesheet',
-          href: 'https://fonts.googleapis.com/css2?family=Manrope:wght@400;500;600;700;800&display=swap',
-        },
       ],
+      // Apply the stored colour mode before the first paint (the app is a
+      // client-only SPA, so without this the page would flash in the default
+      // theme until the bundle runs). Mirrors `initializeTheme` in
+      // composables/useTheme.ts, including the legacy storage key.
+      script: [{ innerHTML: THEME_BOOT_SCRIPT, tagPosition: 'head' }],
     },
   },
 })
