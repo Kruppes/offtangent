@@ -1,6 +1,6 @@
 ---
 name: tasks-and-cronjobs
-version: 1.1.1
+version: 1.2.0
 description: Use Offtangent's background-execution system — one-off background tasks (create_task), recurring cronjobs (create_cronjob), and static scheduled reminders (create_reminder). Load this skill before creating any of them, and ALWAYS load it when you receive a <task_injection> message so you respond correctly.
 ---
 
@@ -10,7 +10,7 @@ Offtangent has three related but distinct ways to run work outside the current c
 
 | Tool family | Lifecycle | Spawns an agent? | Typical use |
 |---|---|---|---|
-| **Tasks** (`create_task`, `resume_task`, `list_tasks`) | One-shot, async | **Yes** — full agent with all tools/skills, plus optional `attached_skills` | "Build this app." "Refactor X across the repo." "Research and write a report." |
+| **Tasks** (`create_task`, `resume_task`, `list_tasks`, `get_task`, `steer_task`, `cancel_task`) | One-shot, async | **Yes** — full agent with all tools/skills, plus optional `attached_skills` | "Build this app." "Refactor X across the repo." "Research and write a report." |
 | **Cronjobs** (`create_cronjob`, `edit_cronjob`, `list_cronjobs`, `get_cronjob`, `remove_cronjob`) | Recurring on a cron schedule | **Yes if `action_type: task`**, no if `action_type: injection` | "Every weekday at 9 summarize my GitHub notifications." "Daily sanity check on service X." |
 | **Reminders** (`create_reminder`) | Scheduled, can be one-shot or recurring | **No — static text only** | "Remind me at 17:30 to leave for the train." "Every Monday morning ping me 'standup at 10'." |
 
@@ -92,6 +92,22 @@ Use it whenever the task's work depends on a skill — it is more reliable than 
 ### Resuming a paused task
 
 When a task pauses with `status: question`, it's waiting for input via `resume_task`. See the next section.
+
+### Supervising a running task (check, correct, stop)
+
+You own the tasks you start — supervise them yourself instead of asking the user to kill them.
+
+- **Check:** `get_task(task_id, events?)` shows live status (running / queued with position / paused with its question / finished), model routing, runtime, tokens and cost (incl. sub-tasks), parent and strand, result or error, and the last tool calls and messages (truncated; `events` default 15, max 50).
+- **Correct:** `steer_task(task_id, message)` delivers a self-contained correction without stopping the task:
+  - *running* → injected as `<orchestrator_steer>` after the current step (in-flight tool calls finish first);
+  - *queued* (waiting for a slot) → appended to its brief, so it applies from the first step;
+  - *paused* → delivered as the answer that resumes it (like `resume_task`).
+  A finished task cannot be steered; start a new one with `continuation_of`.
+- **Stop:** `cancel_task(task_id, reason)` stops a running, queued or paused task. The reason (required, short) is recorded as "Cancelled by strand orchestrator: …" and shown to the user. **Active sub-tasks of that task are cancelled with it.** Finished tasks return an error.
+
+Typical triggers: the periodic status shows it doing the wrong thing, it duplicates another run, the user changed their mind, or it is burning budget in a loop. Prefer `steer_task` when a correction can save the run; `cancel_task` when it cannot. A `<task_injection status="failed">` for the cancelled task follows — acknowledge it briefly, don't treat it as a new failure.
+
+Scope: from a strand you can manage your user's tasks (a non-main persona only its own); inside a background task only the sub-tasks that task started.
 
 ---
 
@@ -316,6 +332,7 @@ create_cronjob(
 - **Reminder for dynamic content.** "Remind me each morning what the weather is" → that's a `create_cronjob` with `action_type: "task"`, not a reminder.
 - **Editing a cronjob's prompt without first calling `get_cronjob`.** You'll either overwrite something important or repeat a typo. Read first, then `edit_cronjob`.
 - **Forgetting timezone.** Cron schedules use the configured `TZ`. If the user is in a different timezone, ask before assuming.
+- **Telling the user to `/kill_task` a task you started.** Use `cancel_task` yourself (or `steer_task` if a correction is enough).
 - **Forwarding raw user text to `resume_task` without context.** The paused task has no chat history. Include the question + the user's answer + any relevant context in the `message`.
 - **Promising fresh data from a `create_reminder`.** A reminder is static text. If you say "I'll remind you with the latest weather", you're lying. Use `create_cronjob` task-type instead.
 - **Telling a task to `read_file` a skill instead of attaching it.** `create_task` accepts `attached_skills` — use it, the SKILL.md then ships inside the task prompt.
@@ -339,6 +356,9 @@ create_cronjob(
 | `create_task` | Spawn a one-shot background agent with a self-contained prompt. Optional `attached_skills` bakes the listed SKILL.md files into the task prompt. |
 | `resume_task` | Send a message to a paused task (used after a `status: question` injection). |
 | `list_tasks` | List background tasks with their status. |
+| `get_task` | Inspect one task in depth: status, queue position, cost, recent tool calls, result/question. |
+| `steer_task` | Course-correct a running (steer), queued (appended to brief) or paused (resumed) task. |
+| `cancel_task` | Stop a running, queued or paused task and its active sub-tasks; requires a short reason. |
 | `create_cronjob` | Schedule a recurring task or injection. |
 | `edit_cronjob` | Partial-update an existing cronjob (prompt, schedule, action_type, provider/model, enabled, attached_skills). |
 | `remove_cronjob` | Delete a cronjob. |

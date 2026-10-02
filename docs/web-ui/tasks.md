@@ -49,7 +49,9 @@ See [Tasks & Cronjobs → Triggers](../concepts/tasks-and-cronjobs#triggers) for
 
 Running tasks get a single inline icon button on the right: a red **Kill** icon. Click it to abort the task immediately. A confirmation dialog appears first — *"Kill running task? This will immediately abort the task. Any work in progress will be lost."*
 
-Killing marks the task as `failed` and emits a final `<task_injection>` to the parent chat session so the conversation can react. There is no *Pause* button — pausing is something the task agent does itself by emitting `STATUS: question` (see [Final-message format](../concepts/tasks-and-cronjobs#final-message-format)).
+Killing marks the task as `failed` and emits a final `<task_injection>` to the parent chat session so the conversation can react.
+
+The agent can do the same itself. It inspects a task with `get_task`, corrects a running, queued or paused one with `steer_task`, and stops it with `cancel_task`. A cancel needs a short reason, which shows up on the task as *"Cancelled by strand orchestrator: …"*, and it also stops the task's active sub-tasks. From a strand the agent can only reach tasks of its own user (a persona other than main only its own). Inside a background task it can only reach the sub-tasks that task started. There is no *Pause* button — pausing is something the task agent does itself by emitting `STATUS: question` (see [Final-message format](../concepts/tasks-and-cronjobs#final-message-format)).
 
 Completed and failed tasks have no inline action — open the detail view to **Edit & restart** instead.
 

@@ -1141,6 +1141,9 @@ ${sealSystemText(budgeted.text, 'recent-memory')}
       '- **create_task**: Start a background task for complex, long-running work.',
       '- **resume_task**: Resume a paused task by sending it a message.',
       '- **list_tasks**: List background tasks with their status.',
+      '- **get_task**: Inspect one background task in depth (status, queue position, cost, recent tool calls, result).',
+      '- **steer_task**: Send a course correction to a running, queued or paused task without stopping it.',
+      '- **cancel_task**: Stop a running, queued or paused task (and its sub-tasks) with a short reason.',
       '- **create_cronjob**: Create a recurring scheduled task.',
       '- **edit_cronjob**: Edit an existing cronjob.',
       '- **remove_cronjob**: Remove a cronjob.',
@@ -1321,6 +1324,8 @@ ${sealSystemText(skillEntries, 'available-skills')}${overflowNote}
 Background tasks (create_task), cronjobs (create_cronjob, edit_cronjob, remove_cronjob, list_cronjobs, get_cronjob), and reminders (create_reminder) are listed in the available_tools block. For when to use which, how to write task prompts, how to handle <task_injection> messages, how to route follow-up answers into paused tasks (resume_task), and cron expression / action_type / attached_skills conventions, load the **tasks-and-cronjobs** built-in skill (in the available_skills block).
 
 SAFETY: NEVER use OS-level schedulers (system crontab, launchd, at, or shell-spawned long-running processes via nohup / & / background loops). Always use the built-in cronjob and task tools instead.
+
+You own the tasks you start. Check one in depth with get_task (status, queue position, cost, last tool calls). If it goes in the wrong direction, correct it with steer_task; if it duplicates another run, is no longer needed or cannot be saved, stop it with cancel_task (a short reason is required and shown to the user; its sub-tasks stop with it). Do this yourself instead of asking the user to kill it.
 
 When you receive a <task_injection> block (signalling a background-task result with status="completed|failed|question"), load the tasks-and-cronjobs skill before responding to it.
 </task_system>`)

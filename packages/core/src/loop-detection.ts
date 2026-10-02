@@ -198,5 +198,5 @@ export function formatPeriodicStatusUpdate(
   toolCallCount: number,
   totalTokens: number,
 ): string {
-  return `<task_status task_id="${taskId}" type="periodic_update">Background task #${taskId.slice(0, 8)} "${taskName}" running for ${runtimeMinutes} min (${toolCallCount} tool calls, ~${totalTokens} tokens). /kill_task ${taskId} to stop.</task_status>`
+  return `<task_status task_id="${taskId}" type="periodic_update">Background task #${taskId.slice(0, 8)} "${taskName}" running for ${runtimeMinutes} min (${toolCallCount} tool calls, ~${totalTokens} tokens). Agent: inspect with get_task, correct with steer_task, stop with cancel_task. User: /kill_task ${taskId} to stop.</task_status>`
 }

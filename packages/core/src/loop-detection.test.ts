@@ -239,6 +239,9 @@ describe('formatPeriodicStatusUpdate', () => {
     expect(msg).toContain('42 tool calls')
     expect(msg).toContain('~8500 tokens')
     expect(msg).toContain('/kill_task abc-123-def')
+    expect(msg).toContain('get_task')
+    expect(msg).toContain('steer_task')
+    expect(msg).toContain('cancel_task')
   })
 
   it('uses truncated task ID in readable text', () => {
