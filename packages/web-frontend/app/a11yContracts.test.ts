@@ -21,6 +21,13 @@ describe('a11y contracts (W6a)', () => {
     expect(src('./features/capture/components/CaptureHome.vue')).not.toMatch(/<main[\s>]/)
   })
 
+  it('the floating sidebar drawer is a modal dialog that traps Tab', () => {
+    const layout = src('./layouts/default.vue')
+    expect(layout).toMatch(/:role="sidebarOpen \? 'dialog' : undefined"/)
+    expect(layout).toMatch(/:aria-modal="sidebarOpen \? 'true' : undefined"/)
+    expect(layout).toMatch(/@keydown\.tab="trapDrawerFocus"/)
+  })
+
   it('the page header keeps an h1 on mobile, where the visual bar is hidden', () => {
     const header = src('./components/PageHeader.vue')
     expect(header).toMatch(/<h1 v-if="title && isMobile && !ownMobileHeading" class="sr-only">/)

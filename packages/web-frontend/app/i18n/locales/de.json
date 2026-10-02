@@ -1521,7 +1521,8 @@
       },
       "approvedBy": "Freigegeben von {user}",
       "rejectedBy": "Abgelehnt von {user}",
-      "staleSending": "Seit über 15 Minuten im Versand — Ergebnis unbekannt. Postfach beim Empfänger bzw. den Gesendet-Ordner prüfen, nicht blind erneut senden."
+      "staleSending": "Seit über 15 Minuten im Versand — Ergebnis unbekannt. Postfach beim Empfänger bzw. den Gesendet-Ordner prüfen, nicht blind erneut senden.",
+      "listLabel": "Gesendete E-Mails"
     },
     "sentLogSubtitle": "Vom Agenten gesendete oder zur Freigabe vorgemerkte Mails."
   },

@@ -40,7 +40,11 @@
            Mobile: the labelled drawer as before. -->
       <aside
         v-show="sidebarOpen || effectiveMode !== 'hidden'"
+        ref="sidebarEl"
         data-testid="shell-sidebar"
+        :role="sidebarOpen ? 'dialog' : undefined"
+        :aria-modal="sidebarOpen ? 'true' : undefined"
+        @keydown.tab="trapDrawerFocus"
         :data-mode="sidebarOpen ? 'drawer' : effectiveMode"
         class="flex shrink-0 flex-col border-r border-sidebar-border bg-sidebar"
         :class="sidebarOpen ? 'fixed inset-y-0 left-0 z-50 w-64 shadow-overlay' : compact ? 'static w-14' : 'static w-64'"
@@ -142,7 +146,7 @@
         <!-- Mobile hamburger -->
         <button
           type="button"
-          class="inline-flex h-11 w-11 items-center justify-center rounded-md text-muted-foreground hover:bg-accent hover:text-accent-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring md:hidden"
+          class="inline-flex h-11 w-11 shrink-0 items-center justify-center rounded-md text-muted-foreground hover:bg-accent hover:text-accent-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring md:hidden"
           :aria-label="$t('aria.toggleSidebar')"
           @click="sidebarOpen = !sidebarOpen"
         >
@@ -213,7 +217,7 @@
         -->
         <div
           id="page-toolbar-actions"
-          class="flex items-center gap-1.5 md:hidden"
+          class="flex min-w-0 items-center gap-1.5 md:hidden"
         />
 
         <!-- Command palette: the keyboard way in (Ctrl/Cmd+K), also reachable by touch. -->
@@ -241,7 +245,7 @@
           <TooltipTrigger as-child>
             <button
               type="button"
-              class="inline-flex h-11 w-11 items-center justify-center rounded-md text-muted-foreground transition-colors hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring md:inline-flex"
+              class="inline-flex h-11 w-11 shrink-0 items-center justify-center rounded-md text-muted-foreground transition-colors hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring md:inline-flex"
               :aria-label="$t('aria.themeToggle')"
               @click="toggleTheme"
             >
@@ -324,6 +328,39 @@ onShortcut('dismiss', () => {
   if (!sidebarOpen.value) return false
   sidebarOpen.value = false
 })
+
+// The floating drawer is modal: focus moves into it, Tab stays inside, and on
+// close focus goes back to whatever opened it (hamburger, header button, Ctrl+B).
+const sidebarEl = ref<HTMLElement | null>(null)
+let drawerOpener: HTMLElement | null = null
+const drawerFocusables = () => Array.from(sidebarEl.value?.querySelectorAll<HTMLElement>(
+  'a[href], button:not([disabled]), input:not([disabled]), select:not([disabled]), [tabindex]:not([tabindex="-1"])',
+) ?? []).filter(el => el.offsetParent !== null || el === document.activeElement)
+watch(sidebarOpen, async (open) => {
+  if (!import.meta.client) return
+  if (open) {
+    drawerOpener = document.activeElement instanceof HTMLElement && document.activeElement !== document.body ? document.activeElement : null
+    await nextTick()
+    drawerFocusables()[0]?.focus({ preventScroll: true })
+    return
+  }
+  const opener = drawerOpener
+  drawerOpener = null
+  // Only restore when focus is still in the drawer (or lost): a route change already moved on.
+  const active = document.activeElement
+  if (opener?.isConnected && (!active || active === document.body || sidebarEl.value?.contains(active))) {
+    await nextTick()
+    opener.focus({ preventScroll: true })
+  }
+})
+function trapDrawerFocus(event: KeyboardEvent) {
+  if (!sidebarOpen.value) return
+  const items = drawerFocusables()
+  if (items.length === 0) return
+  const first = items[0]!, last = items[items.length - 1]!
+  if (event.shiftKey && document.activeElement === first) { event.preventDefault(); last.focus() }
+  else if (!event.shiftKey && document.activeElement === last) { event.preventDefault(); first.focus() }
+}
 
 const isAdmin = computed(() => user.value?.role === 'admin')
 

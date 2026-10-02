@@ -30,6 +30,8 @@
         </div>
       </div>
     </Transition>
+    <!-- The legacy chat has no visible title; a strand-bound chat gets its h1 from the strand page. -->
+    <h1 v-if="!boundToThread" class="sr-only">{{ $t('nav.chat') }}</h1>
     <ChatToolbar :bound-to-thread="boundToThread" :session-resetting="sessionResetting" @stop="handleStop" @new-session="handleNewSession" />
 
     <!-- Session binding failed: the thread cannot be opened at all, so we show

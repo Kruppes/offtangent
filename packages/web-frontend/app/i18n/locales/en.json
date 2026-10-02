@@ -1521,7 +1521,8 @@
       },
       "approvedBy": "Approved by {user}",
       "rejectedBy": "Rejected by {user}",
-      "staleSending": "Stuck in sending for more than 15 minutes — outcome unknown. Check the sent folder or the recipient before sending again."
+      "staleSending": "Stuck in sending for more than 15 minutes — outcome unknown. Check the sent folder or the recipient before sending again.",
+      "listLabel": "Sent emails"
     },
     "sentLogSubtitle": "Mails the agent sent or queued for approval."
   },

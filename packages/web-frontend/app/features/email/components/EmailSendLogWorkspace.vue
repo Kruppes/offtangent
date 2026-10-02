@@ -69,7 +69,8 @@
       </div>
     </div>
 
-    <div class="min-h-0 flex-1 overflow-y-auto">
+    <!-- Focusable scroll region: keyboard users can scroll the log even when it holds no controls. -->
+    <div class="min-h-0 flex-1 overflow-y-auto focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring" tabindex="0" role="region" :aria-label="$t('email.sentLog.listLabel')">
       <div v-if="loading && entries.length === 0" class="py-16 text-center text-sm text-muted-foreground">
         {{ $t('common.loading') }}
       </div>
