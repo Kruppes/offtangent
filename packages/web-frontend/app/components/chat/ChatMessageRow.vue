@@ -1,5 +1,6 @@
 <template>
   <div
+    class="group/msg"
     :class="[
       // Mobile: messages fill the available width (minus avatar + gap
       // or the pl-11 offset for tool cards). On sm+ screens we cap them

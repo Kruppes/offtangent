@@ -67,7 +67,8 @@
           v-html="renderMarkdown(segment.text)"
         />
       </template>
-      <p v-else class="max-w-reading whitespace-pre-wrap break-words">
+      <!-- A user message reads at the size of an answer (16 px), not 14. -->
+      <p v-else class="max-w-reading whitespace-pre-wrap break-words" :class="msg.role === 'user' ? 'text-base' : ''">
         <SecretHandleText :text="msg.content" />
       </p>
       <!-- Privacy step 1: a secret in this message was stored instead
@@ -85,20 +86,25 @@
       <ChatArtifactLinks v-if="msg.artifacts?.length" :artifacts="msg.artifacts" />
       <div v-if="msg.streaming" class="mt-1.5 flex items-center gap-1"><span class="h-1.5 w-1.5 animate-pulse rounded-full bg-current opacity-60" /><span class="h-1.5 w-1.5 animate-pulse rounded-full bg-current opacity-60" /><span class="h-1.5 w-1.5 animate-pulse rounded-full bg-current opacity-60" /></div>
       <div v-if="msg.timestamp && !msg.streaming" class="mt-1 flex items-center justify-end gap-1.5">
-        <button
-          v-if="ttsEnabled && msg.role === 'assistant' && msg.content"
-          type="button"
-          class="inline-flex items-center justify-center rounded-md p-0.5 text-muted-foreground/50 transition-colors hover:text-muted-foreground"
-          :title="ttsPlayingIndex === index ? $t('chat.ttsStop') : $t('chat.ttsPlay')"
-          @click.stop="handleTtsPlay(msg.content, index)"
-        >
-          <AppIcon v-if="ttsLoading && ttsPlayingIndex === index" name="loader" size="sm" class="animate-spin" />
-          <AppIcon v-else-if="ttsPlayingIndex === index" name="square" size="sm" />
-          <AppIcon v-else name="volume" size="sm" />
-        </button>
-        <span class="text-2xs leading-none text-muted-foreground/70">{{ formatTimeShort(msg.timestamp) }}</span>
+        <span class="text-2xs leading-none text-muted-foreground">{{ formatTimeShort(msg.timestamp) }}</span>
       </div>
     </div>
+    <ChatMessageActions v-if="msg.role === 'assistant' && !msg.streaming && msg.content.trim()" :markdown="msg.content">
+      <button
+        v-if="ttsEnabled"
+        type="button"
+        class="inline-flex min-h-11 items-center gap-1.5 rounded-md px-2 text-sm text-muted-foreground transition-colors hover:bg-muted hover:text-foreground focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary pointer-fine:min-h-8"
+        :title="ttsPlayingIndex === index ? $t('chat.ttsStop') : $t('chat.ttsPlay')"
+        :aria-pressed="ttsPlayingIndex === index"
+        data-action="read-aloud"
+        @click.stop="handleTtsPlay(msg.content, index)"
+      >
+        <AppIcon v-if="ttsLoading && ttsPlayingIndex === index" name="loader" size="sm" class="animate-spin motion-reduce:animate-none" />
+        <AppIcon v-else-if="ttsPlayingIndex === index" name="square" size="sm" />
+        <AppIcon v-else name="volume" size="sm" />
+        <span>{{ ttsPlayingIndex === index ? $t('chat.ttsStop') : $t('chat.ttsPlay') }}</span>
+      </button>
+    </ChatMessageActions>
     <ChatInteractionBlock
       v-if="interactionCard(msg)"
       class="mt-2 w-full max-w-xl"
@@ -116,6 +122,7 @@ import type { ChatMessage } from '~/composables/useChat'
 import { useChatView } from '~/composables/chat/chatViewContext'
 import SecretHandleText from '../SecretHandleText.vue'
 import ChatArtifactLinks from './ChatArtifactLinks.vue'
+import ChatMessageActions from './ChatMessageActions.vue'
 
 /**
  * A speaking row: avatar, the message bubble (speaker, body, attachments,

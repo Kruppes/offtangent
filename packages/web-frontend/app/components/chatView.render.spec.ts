@@ -853,13 +853,35 @@ describe('ChatView: scrolling and message actions', () => {
     expect(box.scrollTop).toBe(2600)
   })
 
-  it('reads an assistant answer aloud from its time line', async () => {
+  it('reads an assistant answer aloud from its action row', async () => {
     history = [row(1, 'user', 'q'), row(2, 'assistant', 'Read me')]
     const { root } = await mountChat()
-    const play = all(root).find(n => n.tag === 'button' && n.props.title === 'chat.ttsPlay')!
+    const actions = all(root).filter(n => 'data-message-actions' in n.props)
+    // One action row, under the answer only (not under the question).
+    expect(actions).toHaveLength(1)
+    expect(attr(actions[0]!, 'role')).toBe('toolbar')
+    const play = all(actions[0]!).find(n => n.tag === 'button' && n.props['data-action'] === 'read-aloud')!
     expect(play).toBeDefined()
+    expect(play.props.title).toBe('chat.ttsPlay')
     click(play)
     expect(tts.play).toHaveBeenCalledWith('Read me', 1)
+  })
+
+  it('copies an answer as Markdown from its action row and says so', async () => {
+    history = [row(1, 'user', 'q'), row(2, 'assistant', '**Bold** and `code`')]
+    const writeText = vi.fn(async () => {})
+    const original = Object.getOwnPropertyDescriptor(globalThis, 'navigator')
+    Object.defineProperty(globalThis, 'navigator', { configurable: true, value: { ...globalThis.navigator, clipboard: { writeText } } })
+    try {
+      const { root } = await mountChat()
+      const copy = all(root).find(n => n.tag === 'button' && n.props['data-action'] === 'copy')!
+      click(copy)
+      await flush()
+      expect(writeText).toHaveBeenCalledWith('**Bold** and `code`')
+      expect(textOf(all(root).find(n => 'data-copy-status' in n.props)!)).toContain('w4a.actions.copied')
+    } finally {
+      if (original) Object.defineProperty(globalThis, 'navigator', original)
+    }
   })
 
   it('copies markdown from the transcript and wires code copy buttons', async () => {
