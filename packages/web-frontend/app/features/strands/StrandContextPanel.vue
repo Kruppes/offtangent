@@ -28,7 +28,9 @@ function when(value: string | null | undefined) {
         <AppIcon name="close" />
       </button>
     </div>
-    <div class="min-h-0 flex-1 space-y-6 overflow-y-auto p-3">
+    <!-- Focusable so the column can be scrolled by keyboard once the context
+         details make it taller than the viewport (axe scrollable-region-focusable). -->
+    <div class="min-h-0 flex-1 space-y-6 overflow-y-auto p-3 focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-primary" tabindex="0" role="region" aria-labelledby="strand-context-title">
       <section aria-labelledby="ctx-canvas">
         <h3 id="ctx-canvas" class="mb-2 text-xs font-semibold uppercase tracking-wide text-muted-foreground">{{ $t('shell.contextCanvas') }}</h3>
         <ul v-if="views.length" class="space-y-1">
