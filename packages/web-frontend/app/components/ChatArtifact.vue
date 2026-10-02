@@ -1,7 +1,7 @@
 <template>
   <!-- Inline artifact (W4a): the canvas runs right in the strand, in the same
-       sandbox as before (srcdoc + own CSP, sandbox="allow-scripts", never
-       allow-same-origin). Lazy: the frame mounts when it comes near the
+       sandbox as before (srcdoc + own CSP, scripts only, no shared origin
+       with the app). Lazy: the frame mounts when it comes near the
        viewport and is unloaded again far away, so a strand with many
        artifacts never runs many frames. The body has a fixed height in every
        state, so loading never shifts the text around it. Frame without
