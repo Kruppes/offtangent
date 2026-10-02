@@ -775,3 +775,60 @@
     @apply truncate;
   }
 }
+
+/* ─── Strand overview <-> strand transition (W4d) ───
+   Set by `plugins/strandViewTransition.client.ts` on <html> only while an
+   overview <-> strand view transition runs. The opened row morphs into its
+   side-column row (`strand-active-row`), the conversation column slides in
+   from the right (`strand-conversation`), everything else cross-fades.
+   Standard easing, 240 ms. Reduced motion never starts a transition (the
+   plugin checks it); the media query below is the belt to those braces. */
+html[data-strand-transition] {
+  --strand-transition-duration: 240ms;
+  --strand-transition-easing: cubic-bezier(0.2, 0, 0, 1);
+}
+html[data-strand-transition]::view-transition-group(*) {
+  animation-duration: var(--strand-transition-duration);
+  animation-timing-function: var(--strand-transition-easing);
+}
+html[data-strand-transition]::view-transition-old(root),
+html[data-strand-transition]::view-transition-new(root) {
+  animation-duration: var(--strand-transition-duration);
+  animation-timing-function: var(--strand-transition-easing);
+}
+/* The row keeps its text size while its box changes: no squashed letters,
+   the box clips instead. */
+html[data-strand-transition]::view-transition-group(strand-active-row) {
+  overflow: clip;
+  border-radius: var(--radius-control);
+}
+html[data-strand-transition]::view-transition-old(strand-active-row),
+html[data-strand-transition]::view-transition-new(strand-active-row) {
+  width: 100%;
+  height: 100%;
+  object-fit: none;
+  object-position: left top;
+  animation-duration: var(--strand-transition-duration);
+  animation-timing-function: var(--strand-transition-easing);
+}
+html[data-strand-transition="open"]::view-transition-new(strand-conversation) {
+  animation: var(--strand-transition-duration) var(--strand-transition-easing) both strand-slide-in;
+}
+html[data-strand-transition="close"]::view-transition-old(strand-conversation) {
+  animation: var(--strand-transition-duration) var(--strand-transition-easing) both strand-slide-out;
+}
+@keyframes strand-slide-in {
+  from { transform: translateX(48px); opacity: 0; }
+  to { transform: none; opacity: 1; }
+}
+@keyframes strand-slide-out {
+  from { transform: none; opacity: 1; }
+  to { transform: translateX(48px); opacity: 0; }
+}
+@media (prefers-reduced-motion: reduce) {
+  ::view-transition-group(*),
+  ::view-transition-old(*),
+  ::view-transition-new(*) {
+    animation: none !important;
+  }
+}
