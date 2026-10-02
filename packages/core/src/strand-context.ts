@@ -286,6 +286,12 @@ export interface StrandContextStats {
   retrieved: number
   hasNotes: boolean
   blockChars: number
+  /**
+   * Ids of the older rows this turn pulled back into the prompt
+   * (`<retrieved_messages>`). Persisted with the `strand_context` metric row
+   * so the context panel can list what was actually recalled.
+   */
+  retrievedIds: number[]
 }
 
 export function assembleStrandContextWithStats(
@@ -309,6 +315,7 @@ export function assembleStrandContextWithStats(
       retrieved: retrieved.length,
       hasNotes: notes !== null,
       blockChars: block?.length ?? 0,
+      retrievedIds: retrieved.map(r => r.id),
     },
   }
 }

@@ -21,6 +21,7 @@ import {
   getNowSet,
   hasLiveTaskForStrand,
   listChildStrandIds,
+  getStrandForkLineage,
   listResurfaceItems,
   listTags,
   lastCompactionForStrand,
@@ -33,7 +34,13 @@ import {
   setStrandTags,
   snoozeStrand,
   updateTag,
+  FORK_SEED_MAX,
+  ForkStrandError,
+  forkStrand,
+  listRecalledMessages,
+  toIsoUtc,
 } from '@axiom/core'
+import type { RecalledMessage, StrandFork } from '@axiom/core'
 import type { ChatEventBus } from '../../../chat-event-bus.js'
 import { resolveNowSetMax, resolveNowSetMode } from '../../../now-set-limit.js'
 import { describePendingTurn } from '../../../turn-queue.js'
@@ -131,8 +138,58 @@ export interface StrandContextReport {
   transcript: StrandTranscriptStatus
   lastCompaction: { at: string; droppedMessages: number; keptTokens: number | null; budgetTokens: number | null } | null
   model: (EffectiveModel & { displayName: string | null; providerName: string | null }) | null
+  /**
+   * W5b, additive: the older messages the agent actually pulled back into
+   * this strand's prompt (recall_message calls and the strand-context
+   * retrieval), newest first, excerpt only.
+   */
+  recalled: RecalledMessage[]
   generatedAt: string
 }
+
+/** One fact of the slim `GET /api/strands/:id/facts` list (W5b). */
+export interface StrandFactItem {
+  id: number
+  text: string
+  createdAt: string
+  status: 'active' | 'superseded'
+}
+
+export interface StrandFactsList {
+  strandId: string
+  facts: StrandFactItem[]
+  total: number
+  truncated: boolean
+  /** Session summaries of the strand (same count the delete preview shows). */
+  summaries: number
+  /** Tool calls logged under the strand (same count the delete preview shows). */
+  toolCalls: number
+}
+
+/** Body of `POST /api/strands/:id/fork` after validation (W5b). */
+export interface ForkAtMessageBody {
+  messageId: number
+  title?: string
+}
+
+/** What a web fork answers besides the new strand. */
+export interface ForkAtMessageResult {
+  strandId: string
+  title: string
+  parentStrandId: string
+  parentTitle: string | null
+  forkedAt: string
+  forkedFromMessageId: number
+  seedMessageId: number | null
+  noticeMessageId: number
+  depth: number
+}
+
+/** Upper bound of the slim facts list; the panel shows a handful anyway. */
+export const STRAND_FACTS_MAX = 200
+/** Characters of the forked message copied into the seed. */
+const FORK_MESSAGE_CHARS = 4000
+const FORK_DEFAULT_TITLE_CHARS = 60
 
 export class StrandServiceError extends Error {
   constructor(readonly status: number, readonly code: string, message: string) {
@@ -348,7 +405,34 @@ export function createStrandsService(options: StrandsServiceOptions) {
        */
       parentStrandTitle: strand.parentStrandId ? parentTitleOf(strand.parentStrandId) : null,
       childStrandIds: listChildStrandIds(db, strandId),
+      /**
+       * W5b, additive: the parent message this strand was forked at (null for
+       * a root strand), so "forked from" can jump to the exact message.
+       */
+      forkedFromMessageId: strand.parentStrandId ? getStrandForkLineage(db, strandId).forkedFromMessageId : null,
+      /**
+       * W5b, additive: the direct children with their titles, oldest first
+       * (same order as `childStrandIds`), so the parent can show
+       * "Branch: <title>" links without one request per child. Same owner by
+       * construction (a fork never crosses users).
+       */
+      childStrands: childStrandsOf(strandId),
     }
+  }
+
+  function childStrandsOf(strandId: string): Array<{ id: string; title: string | null; forkedAt: string | null; forkedFromMessageId: number | null }> {
+    const ids = listChildStrandIds(db, strandId)
+    if (ids.length === 0) return []
+    const read = db.prepare('SELECT title, forked_at, forked_from_message_id FROM sessions WHERE id = ?')
+    return ids.map((id) => {
+      const row = read.get(id) as { title: string | null; forked_at: string | null; forked_from_message_id: number | null } | undefined
+      return {
+        id,
+        title: row?.title ?? null,
+        forkedAt: row?.forked_at ? toIsoUtc(row.forked_at) : null,
+        forkedFromMessageId: row?.forked_from_message_id ?? null,
+      }
+    })
   }
 
   /**
@@ -609,7 +693,119 @@ export function createStrandsService(options: StrandsServiceOptions) {
       model: effective
         ? { ...effective, displayName: meta?.displayName ?? null, providerName: meta?.providerName ?? null }
         : null,
+      recalled: listRecalledMessages(db, userId, strandId),
       generatedAt: new Date().toISOString(),
+    }
+  }
+
+  /**
+   * Slim fact list for the context panel (W5b): the facts that carry this
+   * strand as their source, owner scoped exactly like the delete preview,
+   * without counting the whole cascade on every panel open.
+   */
+  function strandFacts(userId: number, strandId: string): StrandFactsList {
+    requireStrand(userId, strandId)
+    const user = String(userId)
+    const total = (db.prepare(
+      'SELECT COUNT(*) AS c FROM memories WHERE session_id = ? AND CAST(user_id AS TEXT) = ?',
+    ).get(strandId, user) as { c: number }).c
+    const rows = db.prepare(
+      `SELECT id, content, timestamp, status FROM memories
+        WHERE session_id = ? AND CAST(user_id AS TEXT) = ?
+        ORDER BY id ASC LIMIT ?`,
+    ).all(strandId, user, STRAND_FACTS_MAX) as Array<{ id: number; content: string; timestamp: string; status: string | null }>
+    return {
+      strandId,
+      facts: rows.map(row => ({
+        id: row.id,
+        text: row.content,
+        createdAt: toIsoUtc(row.timestamp),
+        status: row.status === 'superseded' ? 'superseded' : 'active',
+      })),
+      total,
+      truncated: total > rows.length,
+      summaries: (db.prepare('SELECT COUNT(*) AS c FROM session_summaries WHERE session_id = ?').get(strandId) as { c: number }).c,
+      toolCalls: (db.prepare('SELECT COUNT(*) AS c FROM tool_calls WHERE session_id = ?').get(strandId) as { c: number }).c,
+    }
+  }
+
+  /**
+   * "Fork at this message" from the web (W5b). Same mechanism as the agent's
+   * `fork_strand` (core `forkStrand`): lineage columns, seed row, the
+   * "forked into" row in the parent and the reference link. The seed is the
+   * chosen message plus a `[msg:<id>]` pointer the agent can recall. No turn
+   * is started; the user writes first.
+   */
+  function forkAtMessage(userId: number, strandId: string, body: ForkAtMessageBody): { strand: ReturnType<typeof getStrand>; fork: ForkAtMessageResult } {
+    requireStrand(userId, strandId)
+    const message = db.prepare(
+      `SELECT id, role, content FROM chat_messages
+        WHERE id = ? AND session_id = ? AND role IN ('user', 'assistant')`,
+    ).get(body.messageId, strandId) as { id: number; role: string; content: string | null } | undefined
+    if (!message) throw new StrandServiceError(404, 'message_not_found', 'Message not found in this strand')
+    const flat = (message.content ?? '').trim()
+    if (!flat) throw new StrandServiceError(400, 'message_empty', 'This message has no text to fork from')
+
+    const body_ = flat.length > FORK_MESSAGE_CHARS ? `${flat.slice(0, FORK_MESSAGE_CHARS - 1)}…` : flat
+    const seed = `${body_}\n\n[msg:${message.id}]`.slice(0, FORK_SEED_MAX)
+    const title = body.title ?? defaultForkTitle(flat)
+
+    let fork: StrandFork
+    try {
+      fork = forkStrand({
+        db,
+        sessions: manager(),
+        userId,
+        parentStrandId: strandId,
+        title,
+        seed,
+        forkedFromMessageId: message.id,
+        autoRun: false,
+      })
+    } catch (err) {
+      if (err instanceof ForkStrandError) {
+        if (err.code === 'parent_not_found') throw new StrandServiceError(404, 'strand_not_found', 'Strand not found')
+        if (err.code === 'parent_archived') throw new StrandServiceError(409, 'strand_archived', 'An archived strand cannot be forked')
+        if (err.code === 'fork_depth_exceeded' || err.code === 'fork_lineage_cycle') {
+          throw new StrandServiceError(409, 'fork_depth_exceeded', 'This branch is already nested too deep')
+        }
+        throw new StrandServiceError(400, err.code, err.code === 'invalid_title' ? 'Invalid title' : 'Invalid fork request')
+      }
+      throw err
+    }
+
+    // Same live event the agent tool sends, so other tabs and the app show
+    // the "forked into" row and the new strand without a reload.
+    options.chatEventBus?.broadcast({
+      type: 'strand_forked',
+      userId,
+      source: 'web',
+      sessionId: fork.parentStrandId,
+      agentId: fork.agentId,
+      fork: {
+        strandId: fork.strandId,
+        title: fork.title,
+        parentStrandId: fork.parentStrandId,
+        forkedAt: fork.forkedAt,
+        agentId: fork.agentId,
+        projectId: fork.projectId,
+        runStarted: false,
+      },
+    })
+
+    return {
+      strand: getStrand(userId, fork.strandId),
+      fork: {
+        strandId: fork.strandId,
+        title: fork.title,
+        parentStrandId: fork.parentStrandId,
+        parentTitle: fork.parentTitle,
+        forkedAt: fork.forkedAt,
+        forkedFromMessageId: message.id,
+        seedMessageId: fork.seedMessageId,
+        noticeMessageId: fork.noticeMessageId,
+        depth: fork.depth,
+      },
     }
   }
 
@@ -757,6 +953,8 @@ export function createStrandsService(options: StrandsServiceOptions) {
     removeStrand,
     strandTasks,
     strandContext,
+    strandFacts,
+    forkAtMessage,
     setTags,
     tags,
     createTag: createTagFor,
@@ -773,3 +971,11 @@ export function createStrandsService(options: StrandsServiceOptions) {
 }
 
 export type StrandsService = ReturnType<typeof createStrandsService>
+
+/** First line of the message, cut to a readable title. */
+export function defaultForkTitle(text: string): string {
+  const line = text.split('\n').map(part => part.trim()).find(Boolean) ?? ''
+  const flat = line.replace(/\s+/g, ' ').replace(/^[#>*\-\s]+/, '').trim()
+  if (!flat) return 'Fork'
+  return flat.length > FORK_DEFAULT_TITLE_CHARS ? `${flat.slice(0, FORK_DEFAULT_TITLE_CHARS - 1)}…` : flat
+}

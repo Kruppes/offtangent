@@ -97,6 +97,13 @@ export interface ForkStrandInput {
   inheritProject?: boolean
   /** Whether a turn is going to run in the new strand (only recorded here). */
   autoRun?: boolean
+  /**
+   * The message of the parent the branch starts at. The agent tool forks at
+   * the end of the strand and leaves this out (latest message); the web's
+   * "fork at this message" passes the chosen id. The caller has verified that
+   * the message belongs to the parent strand.
+   */
+  forkedFromMessageId?: number
 }
 
 export interface StrandFork {
@@ -327,7 +334,7 @@ export function forkStrand(input: ForkStrandInput): StrandFork {
     ? renderSummary(getLatestSessionSummary(db, parent.id)?.summary ?? { goal: '', decisions: [], open: [], artifacts: [], next: [] })
     : null
   const seedText = buildForkSeedText({ seed, parentTitle: parent.title, parentSummary })
-  const forkedFromMessageId = lastMessageIdOf(db, parent.id)
+  const forkedFromMessageId = input.forkedFromMessageId ?? lastMessageIdOf(db, parent.id)
   const autoRun = input.autoRun === true
 
   // The project is validated by `createThread`; an unusable one must not cost

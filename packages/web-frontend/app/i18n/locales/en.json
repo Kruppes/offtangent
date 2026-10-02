@@ -2389,5 +2389,47 @@
     "you": "You:",
     "loadingAll": "Loading all strands for this sort order …",
     "clientFilterHint": "Running now and Pinned filter the strands loaded so far."
+  },
+  "fork": {
+    "action": "Fork",
+    "actionLabel": "Fork from this message",
+    "toolbarLabel": "Message actions",
+    "working": "Forking …",
+    "done": "Fork created",
+    "error": "Fork failed.",
+    "errorRate": "Too many forks, please wait a moment.",
+    "errorArchived": "An archived strand cannot be forked.",
+    "errorNotFound": "Message or strand not found.",
+    "errorOffline": "No connection to the server.",
+    "lineageLabel": "Strand lineage",
+    "forkedFrom": "forked from",
+    "untitledParent": "Untitled strand",
+    "branches": "Forks:",
+    "untitledChild": "Untitled fork"
+  },
+  "search": {
+    "inMessages": "In messages",
+    "loading": "Searching messages …",
+    "error": "Message search failed.",
+    "errorRate": "Too many searches, please wait a moment.",
+    "retry": "Retry",
+    "noMessages": "No matches in messages.",
+    "more": "First {count} matches; refine the search for more.",
+    "roleUser": "You",
+    "roleAssistant": "Answer"
+  },
+  "context": {
+    "recalled": {
+      "title": "Recalled messages",
+      "loading": "Loading recalled messages …",
+      "error": "Recalled messages could not be loaded.",
+      "empty": "No older messages recalled yet.",
+      "byRecall": "recalled on purpose",
+      "byContext": "automatically in context",
+      "roleUser": "You",
+      "roleAssistant": "Answer",
+      "noText": "(no text)",
+      "open": "Jump to message: {role}, {excerpt}"
+    }
   }
 }

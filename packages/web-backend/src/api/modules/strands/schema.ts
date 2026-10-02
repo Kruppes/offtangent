@@ -221,3 +221,31 @@ export function parseSnoozeBody(body: unknown): ParseResult<number> {
   if (!Number.isFinite(days) || days < 1 || days > 365) return { ok: false, error: 'days must be between 1 and 365', code: 'invalid_days' }
   return { ok: true, value: Math.trunc(days) }
 }
+
+/** Longest title a web fork may set; the core cap of `fork_strand`. */
+export const FORK_BODY_TITLE_MAX = 80
+
+/**
+ * Body of `POST /api/strands/:id/fork` (W5b): `{ messageId, title? }`.
+ * `messageId` is a positive integer (a JSON number; a numeric string is not
+ * accepted, the clients send numbers). `title` is optional, trimmed, 1..80
+ * characters; blank means "derive it from the message".
+ */
+export function parseForkBody(raw: unknown): ParseResult<{ messageId: number; title?: string }> {
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) {
+    return { ok: false, error: 'Body must be a JSON object', code: 'invalid_body' }
+  }
+  const body = raw as Record<string, unknown>
+  const id = body.messageId
+  if (typeof id !== 'number' || !Number.isSafeInteger(id) || id <= 0) {
+    return { ok: false, error: 'messageId must be a positive integer', code: 'invalid_message_id' }
+  }
+  if (body.title === undefined || body.title === null) return { ok: true, value: { messageId: id } }
+  if (typeof body.title !== 'string') return { ok: false, error: 'title must be a string', code: 'invalid_title' }
+  const title = body.title.replace(/\s+/g, ' ').trim()
+  if (title === '') return { ok: true, value: { messageId: id } }
+  if ([...title].length > FORK_BODY_TITLE_MAX) {
+    return { ok: false, error: `title must be at most ${FORK_BODY_TITLE_MAX} characters`, code: 'invalid_title' }
+  }
+  return { ok: true, value: { messageId: id, title } }
+}

@@ -10,7 +10,7 @@ import { computed, nextTick, onBeforeUnmount, ref, watch } from 'vue'
 import { DialogContent, DialogOverlay, DialogPortal, DialogRoot, DialogTitle } from 'reka-ui'
 import type { Thread } from '@axiom/core'
 import {
-  PALETTE_SEARCH_DEBOUNCE_MS, PALETTE_STRAND_LIMIT, buildPaletteList, createLatestRequest, groupPaletteList,
+  PALETTE_MESSAGE_LIMIT, PALETTE_SEARCH_DEBOUNCE_MS, PALETTE_STRAND_LIMIT, buildPaletteList, createLatestRequest, groupPaletteList,
   keepCursor, moveCursor, paletteSearchTerm, type PaletteEntry, type PaletteKey,
 } from '~/utils/commandPalette'
 import { PRIMARY_NAV_ITEMS, SYSTEM_NAV_ITEMS, navItemAllowed } from '~/utils/shellNav'
@@ -18,6 +18,7 @@ import { displayKeys, isMacPlatform } from '~/utils/shortcuts'
 import { parseBackendTimestamp } from '~/utils/datetime'
 import { useShellCommands } from '~/composables/useShellCommands'
 import { useShortcutOverlay } from '~/composables/useShortcuts'
+import { messageRoute, messageSearchTerm, snippetParts, useStrandW5bApi, type MessageHit } from '~/api/strandW5b'
 
 const props = defineProps<{ open: boolean; isAdmin: boolean; emailConfigured: boolean }>()
 const emit = defineEmits<{ 'update:open': [value: boolean]; toggleSidebar: []; openHelp: [] }>()
@@ -40,6 +41,32 @@ const listEl = ref<HTMLElement | null>(null)
 const strands = ref<Thread[]>([])
 const strandState = ref<'idle' | 'loading' | 'ready' | 'error'>('idle')
 const latest = createLatestRequest()
+// W5b: message full text, a second request beside the strand search.
+const w5b = useStrandW5bApi()
+const messageHits = ref<MessageHit[]>([])
+const messageState = ref<'idle' | 'loading' | 'ready' | 'error'>('idle')
+const latestMessages = createLatestRequest()
+async function loadMessages(term: string) {
+  const search = messageSearchTerm(term)
+  if (!search) {
+    latestMessages.cancel()
+    messageHits.value = []
+    messageState.value = 'idle'
+    return
+  }
+  const request = latestMessages.start()
+  messageState.value = 'loading'
+  try {
+    const result = await w5b.search(search, PALETTE_MESSAGE_LIMIT, request.signal)
+    if (!latestMessages.isCurrent(request.id)) return
+    messageHits.value = result.hits
+    messageState.value = 'ready'
+  } catch {
+    if (!latestMessages.isCurrent(request.id)) return
+    messageHits.value = []
+    messageState.value = 'error'
+  }
+}
 let debounce: ReturnType<typeof setTimeout> | null = null
 
 function date(value: string | undefined) {
@@ -66,8 +93,8 @@ async function loadStrands(term: string) {
 function scheduleSearch(immediate = false) {
   if (debounce) clearTimeout(debounce)
   const term = paletteSearchTerm(query.value)
-  if (immediate) void loadStrands(term)
-  else debounce = setTimeout(() => void loadStrands(term), PALETTE_SEARCH_DEBOUNCE_MS)
+  if (immediate) { void loadStrands(term); void loadMessages(term) }
+  else debounce = setTimeout(() => { void loadStrands(term); void loadMessages(term) }, PALETTE_SEARCH_DEBOUNCE_MS)
 }
 
 function go(path: string) {
@@ -108,7 +135,13 @@ const strandEntries = computed<Entry[]>(() => strands.value.map(strand => ({
   id: `strand:${strand.id}`, group: 'strands' as const, label: strand.title || t('strandsW3.untitled'), hint: date(strand.lastActivity), icon: 'chat',
   run: () => go(`/strands/${encodeURIComponent(strand.id)}`),
 })))
-const list = computed(() => buildPaletteList({ strands: strandEntries.value, pages: pages.value, actions: actions.value, query: query.value }))
+const messageEntries = computed<Entry[]>(() => messageHits.value.map(hit => ({
+  id: `message:${hit.messageId}`, group: 'messages' as const, label: hit.snippet,
+  hint: hit.strandTitle ?? t('strandsW3.untitled'), icon: hit.role === 'assistant' ? 'bot' : 'user',
+  parts: snippetParts(hit),
+  run: () => go(messageRoute(hit.strandId, hit.messageId)),
+})))
+const list = computed(() => buildPaletteList({ strands: strandEntries.value, messages: messageEntries.value, pages: pages.value, actions: actions.value, query: query.value }))
 const sections = computed(() => groupPaletteList(list.value))
 const activeId = computed(() => (cursor.value >= 0 && list.value[cursor.value] ? `palette-option-${cursor.value}` : undefined))
 const searching = computed(() => paletteSearchTerm(query.value).length > 0)
@@ -133,12 +166,14 @@ watch(() => props.open, (open, wasOpen) => {
   } else {
     if (debounce) clearTimeout(debounce)
     latest.cancel()
+    latestMessages.cancel()
   }
 }, { immediate: true })
 onBeforeUnmount(() => {
   if (props.open) overlay.setOverlayOpen(false)
   if (debounce) clearTimeout(debounce)
   latest.cancel()
+  latestMessages.cancel()
 })
 
 function close() {
@@ -206,7 +241,7 @@ function retry() {
 
         <div id="palette-list" ref="listEl" role="listbox" :aria-label="t('palette.results')" class="min-h-0 flex-1 overflow-y-auto p-2" data-testid="palette-list">
           <div v-for="section in sections" :key="section.group" role="group" :aria-labelledby="`palette-group-${section.group}`">
-            <div :id="`palette-group-${section.group}`" role="presentation" class="px-3 pb-1 pt-2 text-xs font-semibold text-muted-foreground">{{ t(`palette.group.${section.group}`) }}</div>
+            <div :id="`palette-group-${section.group}`" role="presentation" class="px-3 pb-1 pt-2 text-xs font-semibold text-muted-foreground">{{ section.group === 'messages' ? t('search.inMessages') : t(`palette.group.${section.group}`) }}</div>
             <div
               v-for="{ entry, index } in section.items"
               :id="`palette-option-${index}`"
@@ -220,8 +255,9 @@ function retry() {
               @mousemove="cursor = index"
             >
               <AppIcon :name="entry.icon" size="sm" class="shrink-0" :class="index === cursor ? '' : 'text-muted-foreground'" aria-hidden="true" />
-              <span class="min-w-0 flex-1 truncate">{{ entry.label }}</span>
-              <span v-if="entry.hint" class="shrink-0 text-xs" :class="index === cursor ? '' : 'text-muted-foreground'">{{ entry.hint }}</span>
+              <span v-if="entry.parts" class="min-w-0 flex-1 truncate" data-message-snippet><template v-for="(part, pi) in entry.parts" :key="pi"><mark v-if="part.match" class="rounded-sm bg-primary/25 px-0.5 text-foreground">{{ part.text }}</mark><template v-else>{{ part.text }}</template></template></span>
+              <span v-else class="min-w-0 flex-1 truncate">{{ entry.label }}</span>
+              <span v-if="entry.hint" class="shrink-0 text-xs" :class="[index === cursor ? '' : 'text-muted-foreground', entry.parts ? 'max-w-[40%] truncate' : '']">{{ entry.hint }}</span>
             </div>
           </div>
 
@@ -234,7 +270,16 @@ function retry() {
             <button type="button" class="min-h-11 rounded-md border border-border px-3 hover:bg-accent focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring" @click="retry">{{ t('palette.retry') }}</button>
           </div>
           <p v-else-if="strandState === 'ready' && searching && !strands.length && list.length" class="px-3 py-2 text-sm text-muted-foreground" data-testid="palette-no-strands">{{ t('palette.noStrands') }}</p>
-          <div v-if="!list.length && strandState !== 'loading' && strandState !== 'error'" class="px-3 py-8 text-center" data-testid="palette-empty">
+          <!-- W5b message search states (the hits themselves are a group above). -->
+          <div v-if="messageState === 'loading' && !messageHits.length" class="flex min-h-11 items-center gap-2 px-3 text-sm text-muted-foreground" data-testid="palette-messages-loading">
+            <AppIcon name="loader" size="sm" class="motion-safe:animate-spin" aria-hidden="true" />{{ t('search.loading') }}
+          </div>
+          <div v-else-if="messageState === 'error'" class="flex flex-wrap items-center gap-2 px-3 py-2 text-sm" data-testid="palette-messages-error" role="alert">
+            <span class="min-w-0 flex-1 text-destructive">{{ t('search.error') }}</span>
+            <button type="button" class="min-h-11 rounded-md border border-border px-3 hover:bg-accent focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring" @click="retry">{{ t('palette.retry') }}</button>
+          </div>
+          <p v-else-if="messageState === 'ready' && !messageHits.length && list.length" class="px-3 py-2 text-sm text-muted-foreground" data-testid="palette-no-messages">{{ t('search.noMessages') }}</p>
+          <div v-if="!list.length && messageState !== 'loading' && strandState !== 'loading' && strandState !== 'error'" class="px-3 py-8 text-center" data-testid="palette-empty">
             <p class="text-sm font-semibold">{{ t('palette.empty') }}</p>
             <p class="mt-1 break-words text-sm text-muted-foreground [overflow-wrap:anywhere]">{{ t('palette.emptyHint', { q: paletteSearchTerm(query) }) }}</p>
           </div>

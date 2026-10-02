@@ -94,7 +94,19 @@
     </div>
     <ChatMessageActions v-if="msg.role === 'assistant' && !msg.streaming && msg.content.trim()" :markdown="msg.content">
       <MessageSpeechActions :message-id="msg.id" :text="msg.content" :has-voice-note="!!voiceNoteOf(msg)" />
+      <MessageForkAction v-if="forkable(msg)" :strand-id="boundSessionId!" :message-id="msg.id!" />
     </ChatMessageActions>
+    <!-- W5b: a stored user message can be forked too; same hover/focus rule
+         as the answer actions, always visible on touch. -->
+    <div
+      v-if="msg.role === 'user' && forkable(msg)"
+      role="toolbar"
+      :aria-label="$t('fork.toolbarLabel')"
+      class="mt-1 flex flex-wrap items-center justify-end gap-1 transition-opacity motion-reduce:transition-none pointer-fine:opacity-0 pointer-fine:group-hover/msg:opacity-100 pointer-fine:group-focus-within/msg:opacity-100"
+      data-user-message-actions
+    >
+      <MessageForkAction :strand-id="boundSessionId!" :message-id="msg.id!" />
+    </div>
     <MessageSpeechPanel v-if="msg.role === 'assistant' && !msg.streaming && msg.content.trim()" :message-id="msg.id" :text="msg.content" />
     <ChatInteractionBlock
       v-if="interactionCard(msg)"
@@ -116,6 +128,7 @@ import ChatArtifactLinks from './ChatArtifactLinks.vue'
 import ChatMessageActions from './ChatMessageActions.vue'
 import MessageSpeechActions from './MessageSpeechActions.vue'
 import MessageSpeechPanel from './MessageSpeechPanel.vue'
+import MessageForkAction from './MessageForkAction.vue'
 import VoiceNoteBubble from '../audio/VoiceNoteBubble.vue'
 import { useMessageSpeech } from '~/composables/useMessageSpeech'
 
@@ -131,7 +144,13 @@ const { renderMarkdown } = useMarkdown()
 const {
   user, avatar, persona,
   interactionCard, messageTextSegments, hasBubbleBody, answeredElsewhere, artifactFences, handleOwnAnswer,
+  boundSessionId,
 } = useChatView()
+
+/** W5b: only a stored message (numeric id) of a bound strand can be forked. */
+function forkable(msg: ChatMessage): boolean {
+  return typeof msg.id === 'number' && msg.id > 0 && !msg.streaming && !!boundSessionId.value && !!msg.content.trim()
+}
 const { userAvatarUrl, avatarFailed, userInitial, onAvatarError } = avatar
 const { label: personaLabel, initials: personaInitials, color: personaColor } = persona
 const speech = useMessageSpeech()

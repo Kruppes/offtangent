@@ -1647,6 +1647,8 @@ export type {
   StrandForkLineage,
 } from './strand-fork.js'
 export { FORK_STRAND_TOOL_NAME, createForkStrandTool } from './strand-fork-tool.js'
+export { listRecalledMessages, RECALLED_DEFAULT_LIMIT, RECALLED_EXCERPT_CHARS } from './strand-recalled.js'
+export type { RecalledMessage, RecalledSource } from './strand-recalled.js'
 export type { ForkStrandToolOptions } from './strand-fork-tool.js'
 export {
   resolveTaskStrandOrigin,

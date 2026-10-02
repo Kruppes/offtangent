@@ -2389,5 +2389,47 @@
     "you": "Du:",
     "loadingAll": "Alle Strands werden für die Sortierung geladen …",
     "clientFilterHint": "Läuft gerade und Angeheftet filtern die bisher geladenen Strands."
+  },
+  "fork": {
+    "action": "Abzweigen",
+    "actionLabel": "Ab dieser Nachricht abzweigen",
+    "toolbarLabel": "Aktionen der Nachricht",
+    "working": "Zweige ab …",
+    "done": "Abzweigung angelegt",
+    "error": "Abzweigen fehlgeschlagen.",
+    "errorRate": "Zu viele Abzweigungen, bitte kurz warten.",
+    "errorArchived": "Ein archivierter Strand kann nicht abgezweigt werden.",
+    "errorNotFound": "Nachricht oder Strand nicht gefunden.",
+    "errorOffline": "Keine Verbindung zum Server.",
+    "lineageLabel": "Herkunft des Strands",
+    "forkedFrom": "abgezweigt von",
+    "untitledParent": "Unbenannter Strand",
+    "branches": "Abzweigungen:",
+    "untitledChild": "Unbenannte Abzweigung"
+  },
+  "search": {
+    "inMessages": "In Nachrichten",
+    "loading": "Durchsuche Nachrichten …",
+    "error": "Nachrichtensuche fehlgeschlagen.",
+    "errorRate": "Zu viele Suchanfragen, bitte kurz warten.",
+    "retry": "Erneut versuchen",
+    "noMessages": "Keine Treffer in Nachrichten.",
+    "more": "Die ersten {count} Treffer; Suche verfeinern für mehr.",
+    "roleUser": "Du",
+    "roleAssistant": "Antwort"
+  },
+  "context": {
+    "recalled": {
+      "title": "Zurückgeholte Nachrichten",
+      "loading": "Lade zurückgeholte Nachrichten …",
+      "error": "Zurückgeholte Nachrichten konnten nicht geladen werden.",
+      "empty": "Noch keine älteren Nachrichten zurückgeholt.",
+      "byRecall": "gezielt geholt",
+      "byContext": "automatisch im Kontext",
+      "roleUser": "Du",
+      "roleAssistant": "Antwort",
+      "noText": "(ohne Text)",
+      "open": "Zur Nachricht springen: {role}, {excerpt}"
+    }
   }
 }

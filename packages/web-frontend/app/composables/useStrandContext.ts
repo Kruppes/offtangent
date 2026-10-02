@@ -5,8 +5,8 @@
  * read one request. `refresh()` re-reads after a finished turn.
  */
 import { shallowRef, watch, type MaybeRefOrGetter, toValue } from 'vue'
-import type { StrandDeletePreview } from '@axiom/core'
-import { PROJECTS_PATH, STRAND_CONTEXT_PATH, STRAND_FACTS_PREVIEW_PATH } from '~/api/strandContext'
+import { PROJECTS_PATH, STRAND_CONTEXT_PATH } from '~/api/strandContext'
+import { STRAND_FACTS_PATH, mapFacts, mapRecalled, type RecalledMessage } from '~/api/strandW5b'
 import { mapContextReport, type StrandContextView } from '~/utils/contextGauge'
 import { ApiError } from '~/composables/useApi'
 
@@ -18,13 +18,18 @@ export type LoadState<T> =
 
 export interface StrandBelongings {
   facts: Array<{ id: number; text: string }>
+  /** All facts of the strand; `facts` may be capped by the server. */
+  factsTotal?: number
   summaries: number
   toolCalls: number
-  messages: number
+  /** No longer filled since W5b (the fact list carries no message count). */
+  messages?: number
   projectName: string | null
 }
 
 const gauges = shallowRef(new Map<string, LoadState<StrandContextView>>())
+/** W5b: messages the agent fetched back for this strand, from the same context report. */
+const recalledLists = shallowRef(new Map<string, RecalledMessage[]>())
 const belongings = shallowRef(new Map<string, LoadState<StrandBelongings>>())
 
 function put<T>(store: typeof gauges | typeof belongings, id: string, value: LoadState<T>) {
@@ -46,6 +51,9 @@ export function useStrandContext(strandId: MaybeRefOrGetter<string | null>, proj
     if (!gauges.value.has(id)) put(gauges, id, { status: 'loading' })
     try {
       const raw = await apiFetch<unknown>(STRAND_CONTEXT_PATH(id))
+      const nextRecalled = new Map(recalledLists.value)
+      nextRecalled.set(id, mapRecalled(raw))
+      recalledLists.value = nextRecalled
       put(gauges, id, { status: 'ready', data: mapContextReport(raw) })
     } catch (error) {
       put(gauges, id, failure(error))
@@ -56,17 +64,20 @@ export function useStrandContext(strandId: MaybeRefOrGetter<string | null>, proj
     if (!belongings.value.has(id)) put(belongings, id, { status: 'loading' })
     try {
       const pid = toValue(projectId) ?? null
-      const [preview, projects] = await Promise.all([
-        apiFetch<StrandDeletePreview>(STRAND_FACTS_PREVIEW_PATH(id)),
+      // W5b: the slim fact list replaces the delete preview here; the preview
+      // itself stays untouched for the delete dialog.
+      const [rawFacts, projects] = await Promise.all([
+        apiFetch<unknown>(STRAND_FACTS_PATH(id)),
         pid ? apiFetch<{ projects: Array<{ id: string; name: string }> }>(PROJECTS_PATH).catch(() => ({ projects: [] })) : Promise.resolve({ projects: [] }),
       ])
+      const preview = mapFacts(rawFacts)
       put(belongings, id, {
         status: 'ready',
         data: {
-          facts: Array.isArray(preview.facts) ? preview.facts : [],
-          summaries: preview.summaries ?? 0,
-          toolCalls: preview.toolCalls ?? 0,
-          messages: preview.messages ?? 0,
+          facts: preview.facts.map(f => ({ id: f.id, text: f.text })),
+          factsTotal: preview.total,
+          summaries: preview.summaries,
+          toolCalls: preview.toolCalls,
           projectName: pid ? projects.projects.find(p => p.id === pid)?.name ?? null : null,
         },
       })
@@ -79,6 +90,17 @@ export function useStrandContext(strandId: MaybeRefOrGetter<string | null>, proj
     gauge: () => {
       const id = toValue(strandId)
       return id ? gauges.value.get(id) ?? { status: 'loading' as const } : { status: 'loading' as const }
+    },
+    /**
+     * Recalled messages of the strand, with the gauge's load state: they come
+     * from the same request, so loading and errors are shared.
+     */
+    recalled: (): LoadState<RecalledMessage[]> => {
+      const id = toValue(strandId)
+      const state = id ? gauges.value.get(id) : undefined
+      if (!id || !state) return { status: 'loading' }
+      if (state.status !== 'ready') return state
+      return { status: 'ready', data: recalledLists.value.get(id) ?? [] }
     },
     belongings: () => {
       const id = toValue(strandId)
@@ -93,7 +115,10 @@ export function useStrandContext(strandId: MaybeRefOrGetter<string | null>, proj
 }
 
 /** Test seam: preset the state of one strand (render specs). */
-export function setStrandContextForTest(id: string, gauge: LoadState<StrandContextView> | null, owned: LoadState<StrandBelongings> | null): void {
+export function setStrandContextForTest(id: string, gauge: LoadState<StrandContextView> | null, owned: LoadState<StrandBelongings> | null, recalled: RecalledMessage[] = []): void {
+  const r = new Map(recalledLists.value)
+  r.set(id, recalled)
+  recalledLists.value = r
   const g = new Map(gauges.value)
   const b = new Map(belongings.value)
   if (gauge) g.set(id, gauge); else g.delete(id)

@@ -3,6 +3,7 @@ import { computed, ref, watch, onMounted, onUnmounted } from 'vue'
 import type { Thread, Project } from '@axiom/core'
 import { SEARCH_MAX_LENGTH, filterQuery, highlightParts, normalizeSearch, readFilters, useStrandPagination, type StrandRow } from './pagination'
 import StrandActions from './StrandActions.vue'
+import MessageSearchResults from './MessageSearchResults.vue'
 import { parseBackendTimestamp } from '~/utils/datetime'
 import { useShellCommands } from '~/composables/useShellCommands'
 import {
@@ -320,6 +321,7 @@ const chipClass = 'inline-flex min-h-11 items-center gap-1.5 rounded-full border
             </article>
           </template>
         </template>
+        <MessageSearchResults v-if="searchActive" :query="filters.q" :limit="compact ? 8 : 20" />
         <p v-if="(state.running || state.pinned) && !ended" class="px-3 pt-2 text-xs text-muted-foreground">{{ $t('strandsW4d.clientFilterHint') }}</p>
         <p data-testid="loaded-count" role="status" :class="compact ? 'px-3 pt-2 text-xs text-muted-foreground' : 'px-3 pt-4 text-xs text-muted-foreground'">{{ $t('strandsW3.loaded', { count: rows.length }) }}</p>
         <p v-if="truncated" role="status" class="rounded-md border p-3">{{ $t('strandsW3.truncated') }}</p>

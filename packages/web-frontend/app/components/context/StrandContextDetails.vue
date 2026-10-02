@@ -55,13 +55,43 @@
         <dt class="text-muted-foreground">{{ $t('w4b.context.summaries') }}</dt><dd class="tabular-nums">{{ belongings.data.summaries }}</dd>
         <dt class="text-muted-foreground">{{ $t('w4b.context.toolCalls') }}</dt><dd class="tabular-nums">{{ belongings.data.toolCalls }}</dd>
       </dl>
-      <h5 class="mb-1 mt-3 text-sm font-medium">{{ $t('w4b.context.facts', { count: belongings.data.facts.length }) }}</h5>
+      <h5 class="mb-1 mt-3 text-sm font-medium">{{ $t('w4b.context.facts', { count: belongings.data.factsTotal ?? belongings.data.facts.length }) }}</h5>
       <ul v-if="belongings.data.facts.length" class="space-y-1 text-sm" data-context-facts>
         <li v-for="fact in belongings.data.facts.slice(0, 8)" :key="fact.id" class="rounded-md bg-muted/50 px-2 py-1">{{ fact.text }}</li>
-        <li v-if="belongings.data.facts.length > 8" class="px-2 text-muted-foreground">{{ $t('w4b.context.moreFacts', { count: belongings.data.facts.length - 8 }) }}</li>
+        <li v-if="(belongings.data.factsTotal ?? belongings.data.facts.length) > 8" class="px-2 text-muted-foreground">{{ $t('w4b.context.moreFacts', { count: (belongings.data.factsTotal ?? belongings.data.facts.length) - 8 }) }}</li>
       </ul>
       <p v-else class="text-sm text-muted-foreground" data-context-facts-empty>{{ $t('w4b.context.noFacts') }}</p>
     </template>
+  </section>
+
+  <!-- W5b: messages the agent fetched back into this strand (recall_message
+       or the automatic strand context). Same request as the gauge, so its
+       loading and error states are the gauge's. A click jumps to the message. -->
+  <section aria-labelledby="ctx-recalled" data-context-recalled :data-state="recalled.status">
+    <h4 id="ctx-recalled" class="mb-2 text-xs font-semibold uppercase tracking-wide text-muted-foreground">{{ $t('context.recalled.title') }}</h4>
+    <p v-if="recalled.status === 'loading'" class="text-sm text-muted-foreground" role="status">{{ $t('context.recalled.loading') }}</p>
+    <p v-else-if="recalled.status === 'unsupported'" class="text-sm text-muted-foreground">{{ $t('w4b.context.unsupported') }}</p>
+    <div v-else-if="recalled.status === 'error'" class="flex flex-wrap items-center gap-2" role="alert">
+      <span class="text-sm text-destructive">{{ $t('context.recalled.error') }}</span>
+      <button type="button" class="inline-flex min-h-11 items-center gap-1 rounded-md px-2 text-sm font-medium hover:bg-accent focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring" data-recalled-retry @click="refreshGauge">
+        <AppIcon name="retry" size="sm" />{{ $t('w4b.speech.retry') }}
+      </button>
+    </div>
+    <p v-else-if="!recalled.data.length" class="text-sm text-muted-foreground" data-recalled-empty>{{ $t('context.recalled.empty') }}</p>
+    <ul v-else class="space-y-1" data-recalled-list>
+      <li v-for="item in recalled.data" :key="`${item.source}-${item.messageId}`">
+        <NuxtLink :to="messageRoute(item.strandId, item.messageId)" class="flex min-h-11 min-w-0 flex-col gap-0.5 rounded-lg px-2 py-1.5 text-sm hover:bg-accent focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring" :data-recalled-message="item.messageId"
+          :aria-label="$t('context.recalled.open', { role: roleLabel(item.role), excerpt: item.excerpt })">
+          <span class="flex min-w-0 items-center gap-2 text-xs text-muted-foreground">
+            <span class="font-semibold">{{ roleLabel(item.role) }}</span>
+            <span>·</span>
+            <span>{{ $t(item.source === 'recall' ? 'context.recalled.byRecall' : 'context.recalled.byContext') }}</span>
+            <time v-if="item.recalledAt" class="ml-auto shrink-0 tabular-nums" :datetime="item.recalledAt">{{ when(item.recalledAt) }}</time>
+          </span>
+          <span class="line-clamp-2 min-w-0 break-words [overflow-wrap:anywhere]">{{ item.excerpt || $t('context.recalled.noText') }}</span>
+        </NuxtLink>
+      </li>
+    </ul>
   </section>
 </template>
 
@@ -70,14 +100,24 @@ import { computed } from 'vue'
 import ContextRing from './ContextRing.vue'
 import { useStrandContext } from '~/composables/useStrandContext'
 import { formatTokens, gaugeBand, gaugePercent, type StrandContextView } from '~/utils/contextGauge'
+import { messageRoute } from '~/api/strandW5b'
+import { parseBackendTimestamp } from '~/utils/datetime'
 
 const props = defineProps<{ strandId: string; projectId?: string | null }>()
-const { t } = useI18n()
+const { t, locale } = useI18n()
 const ctx = useStrandContext(() => props.strandId, () => props.projectId)
 ctx.watchGauge()
 ctx.watchBelongings()
 const gauge = computed(() => ctx.gauge())
 const belongings = computed(() => ctx.belongings())
+const recalled = computed(() => ctx.recalled())
+function roleLabel(role: string): string {
+  return role === 'assistant' ? t('context.recalled.roleAssistant') : t('context.recalled.roleUser')
+}
+function when(value: string): string {
+  const date = parseBackendTimestamp(value)
+  return date ? date.toLocaleString(locale.value, { dateStyle: 'short', timeStyle: 'short' }) : ''
+}
 const refreshGauge = () => ctx.refreshGauge()
 const refreshBelongings = () => ctx.refreshBelongings()
 

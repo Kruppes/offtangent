@@ -2,6 +2,7 @@ import type { Response } from 'express'
 import type { AuthenticatedRequest } from '../../../auth.js'
 import {
   parseDeleteStrandQuery,
+  parseForkBody,
   parseFlag,
   parseListStrandsQuery,
   parseNowSetBody,
@@ -26,6 +27,8 @@ export interface StrandsController {
   deleteStrand: (req: AuthenticatedRequest, res: Response) => void
   strandTasks: (req: AuthenticatedRequest, res: Response) => void
   strandContext: (req: AuthenticatedRequest, res: Response) => void
+  strandFacts: (req: AuthenticatedRequest, res: Response) => void
+  forkStrand: (req: AuthenticatedRequest, res: Response) => void
   setStrandTags: (req: AuthenticatedRequest, res: Response) => void
   listTags: (req: AuthenticatedRequest, res: Response) => void
   createTag: (req: AuthenticatedRequest, res: Response) => void
@@ -48,6 +51,23 @@ function run(res: Response, context: string, fn: () => void): void {
     }
     console.error(`[strands] ${context}:`, err)
     res.status(500).json({ error: `${context}: ${(err as Error).message}` })
+  }
+}
+
+/**
+ * {@link run} for the W5b routes: an unexpected error is logged and answered
+ * with a generic 500, never with the internal message.
+ */
+function runSafe(res: Response, context: string, fn: () => void): void {
+  try {
+    fn()
+  } catch (err) {
+    if (err instanceof StrandServiceError) {
+      res.status(err.status).json({ error: err.message, code: err.code })
+      return
+    }
+    console.error(`[strands] ${context}:`, err)
+    res.status(500).json({ error: context, code: 'internal_error' })
   }
 }
 
@@ -138,6 +158,23 @@ export function createStrandsController(service: StrandsService): StrandsControl
     strandContext(req, res) {
       run(res, 'Failed to read strand context', () => {
         res.json(service.strandContext(req.user!.userId, String(req.params.id)))
+      })
+    },
+
+    strandFacts(req, res) {
+      runSafe(res, 'Failed to list strand facts', () => {
+        res.json(service.strandFacts(req.user!.userId, String(req.params.id)))
+      })
+    },
+
+    forkStrand(req, res) {
+      const parsed = parseForkBody(req.body)
+      if (!parsed.ok) {
+        res.status(400).json({ error: parsed.error, code: parsed.code })
+        return
+      }
+      runSafe(res, 'Failed to fork strand', () => {
+        res.status(201).json(service.forkAtMessage(req.user!.userId, String(req.params.id), parsed.value))
       })
     },
 

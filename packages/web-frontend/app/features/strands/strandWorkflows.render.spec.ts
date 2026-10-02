@@ -7,6 +7,7 @@ import { readFileSync } from 'node:fs'
 import { parse, compileScript } from '@vue/compiler-sfc'
 import { transpileModule, ModuleKind } from 'typescript'
 import * as shellCommands from '../../composables/useShellCommands'
+import * as strandW5b from '~/api/strandW5b'
 
 // The existing render config compiles imports for SSR. Compile these four
 // SFCs for Vue's client renderer instead, so onMounted and clicks really run.
@@ -16,7 +17,7 @@ function loadPage(path: string): Component {
   const script = compileScript(descriptor, { id: path, inlineTemplate: true })
   const { outputText } = transpileModule(script.content, { compilerOptions: { module: ModuleKind.CommonJS } })
   const exports: { default?: Component } = {}
-  const modules: Record<string, unknown> = { vue: Vue, '~/composables/useShellCommands': shellCommands, './detailApi': detailApi, '~/api/models': { useModelsApi: () => ({ listModels: async () => [] }) }, '~/api/projects': { useProjectsApi: () => ({ list: async () => [] }) }, './StrandActions.vue': { default: defineComponent({ render: () => h('aside') }) } }
+  const modules: Record<string, unknown> = { vue: Vue, '~/composables/useShellCommands': shellCommands, './detailApi': detailApi, '~/api/strandW5b': strandW5b, '~/api/models': { useModelsApi: () => ({ listModels: async () => [] }) }, '~/api/projects': { useProjectsApi: () => ({ list: async () => [] }) }, './StrandActions.vue': { default: defineComponent({ render: () => h('aside') }) } }
   new Function('require', 'exports', outputText)((name: string) => {
     if (!(name in modules)) throw new Error(`Unexpected import: ${name}`)
     return modules[name]
@@ -175,6 +176,26 @@ describe('strand mutation workflows', () => {
     expect(api.mock.calls).toEqual([['/api/strands/s'], ['/api/strands/s']])
     expect(text(root)).toContain('gpt-6-astra')
     expect(text(root)).not.toContain('strandDetail.answeringWith')
+  })
+
+  it('W5b: shows the lineage both ways, linked, only when present', async () => {
+    const api = setup()
+    api.mockResolvedValueOnce({ strand: { id: 'child', title: 'Child', tags: [], projectId: null, pinned: false, parentStrandId: 'parent', parentStrandTitle: 'Parent strand', forkedFromMessageId: 12, childStrands: [{ id: 'grandchild', title: 'Grandchild', forkedAt: null, forkedFromMessageId: 3 }] } })
+    const { root } = mount(Header, { strandId: 'child' }); await flush()
+    expect(text(root)).toContain('fork.forkedFrom')
+    expect(text(root)).toContain('Parent strand')
+    expect(text(root)).toContain('fork.branches')
+    expect(text(root)).toContain('Grandchild')
+    const nav = all(root).find(n => n.tag === 'nav')
+    expect(nav?.props['aria-label']).toBe('fork.lineageLabel')
+    const links = all(root).filter(n => n.tag === 'a').map(n => n.props.to)
+    expect(links).toContain('/strands/parent#msg-12')
+    expect(links).toContain('/strands/grandchild')
+
+    const plain = setup()
+    plain.mockResolvedValueOnce({ strand: { id: 'solo', title: 'Solo', tags: [], projectId: null, pinned: false, parentStrandId: null } })
+    const second = mount(Header, { strandId: 'solo' }); await flush()
+    expect(all(second.root).some(n => n.tag === 'nav')).toBe(false)
   })
 
   it.each(['accept', 'dismiss'])('only %ss a project suggestion after explicit action', async action => {

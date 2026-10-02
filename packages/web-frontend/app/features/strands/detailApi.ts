@@ -2,7 +2,14 @@ import type { Thread, StrandDeletePreview } from '@axiom/core'
 import type { StrandModelDetail } from '~/api/models'
 import { ApiError } from '~/composables/useApi'
 
-export type StrandDetail = Thread & StrandModelDetail
+/** Lineage fields of the strand detail (W5b additions are optional: older servers omit them). */
+export interface StrandLineageDetail {
+  parentStrandTitle?: string | null
+  childStrandIds?: string[]
+  forkedFromMessageId?: number | null
+  childStrands?: Array<{ id: string; title: string | null; forkedAt: string | null; forkedFromMessageId: number | null }>
+}
+export type StrandDetail = Thread & StrandModelDetail & StrandLineageDetail
 export function strandErrorKey(error: unknown): string {
   if (error instanceof ApiError) {
     if (error.body?.code === 'strand_busy') return 'strandDetail.busy'

@@ -41,6 +41,7 @@ import type { CaptureTurnStarter } from './api/modules/captures/service.js'
 import type { StrandTurnGuard } from './api/modules/strands/service.js'
 import type { PersonaTurnGuard } from './api/modules/personas/service.js'
 import { createStrandsRouters } from './api/modules/strands/route.js'
+import { createSearchRouter } from './api/modules/search/route.js'
 import { createPushRouter } from './api/modules/push/route.js'
 import type { PushSender } from './push/sender.js'
 import { sendCaptureDoorbell } from './push/triggers.js'
@@ -238,6 +239,8 @@ export function createApp(options?: AppOptions): express.Express {
     app.use('/api/tags', strandRouters.tags)
     app.use('/api/now', strandRouters.now)
     app.use('/api/resurface', strandRouters.resurface)
+    // W5b: full text over the user's own messages (existing chat_messages_fts).
+    app.use('/api/search', createSearchRouter({ db: options.db }))
     // Offtangent (SPEC 7.4b): canvas artifacts. Its content route brings its
     // own capability-token auth, so it is NOT behind the generic JWT gate.
     app.use('/api/artifacts', createArtifactsRouter({ db: options.db }))

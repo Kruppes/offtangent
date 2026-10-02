@@ -276,6 +276,8 @@ function stubRuntime() {
   vi.stubGlobal('useStrandCanvas', useStrandCanvas)
   vi.stubGlobal('useStt', () => stt.api)
   vi.stubGlobal('useTts', () => tts)
+  // W5b: the fork action of a message row opens the new strand.
+  vi.stubGlobal('useRouter', () => ({ push: async () => {} }))
   for (const [name, fn] of Object.entries({ ...memoryFileDetection, ...toolNameFormat })) vi.stubGlobal(name, fn)
 
   class FakeWebSocket implements FakeSocket {

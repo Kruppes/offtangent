@@ -19,16 +19,22 @@ import StrandContextDetails from '~/components/context/StrandContextDetails.vue'
 import { useStrandContext } from '~/composables/useStrandContext'
 import { formatTokens, gaugePercent } from '~/utils/contextGauge'
 import { overviewQueryOf } from '~/utils/strandOverview'
+import { useMessageAnchor } from '~/composables/useMessageAnchor'
 const route = useRoute()
 const router = useRouter()
 const threadId = computed(() => String(route.params.id ?? ''))
 const thread = ref<StrandDetail | null>(null)
+// W5b: `#msg-<id>` opens the strand at that message (search, recalled, lineage).
+useMessageAnchor(() => route.hash, () => threadId.value)
 const { threads, activeThreadId } = useThreads()
 const shell = useShellLayout()
 const canvas = useStrandCanvas(() => threadId.value || null)
 /** Context sheet below the three-column width; always starts closed. */
 const sheetOpen = ref(false)
 watch(threadId, id => { thread.value = null; activeThreadId.value = id; sheetOpen.value = false }, { immediate: true })
+// W5b: a recalled-message link jumps inside this strand; the overlay sheet
+// would cover the target, so it closes (the inline dock stays).
+watch(() => route.hash, hash => { if (hash && !inline.value) sheetOpen.value = false })
 onUnmounted(() => { activeThreadId.value = null })
 function backToInbox() { void router.push({ path: '/strands', query: overviewQueryOf(route.query) }) }
 function updated(value: StrandDetail) {
@@ -141,6 +147,13 @@ const ringLabel = computed(() => {
 </template>
 
 <style scoped>
+/* W5b: the message a link pointed at is marked briefly after the jump. */
+:deep([data-anchored='true']) {
+  border-radius: 0.75rem;
+  outline: 2px solid hsl(var(--primary) / 0.6);
+  outline-offset: 4px;
+}
+
 /* Keep the existing conversation intact; only bring its legacy hit areas up
    to the shell's accessibility baseline while W4 owns content changes. */
 :deep(button), :deep(textarea), :deep(select) {

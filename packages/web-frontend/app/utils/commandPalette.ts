@@ -7,8 +7,11 @@
  * filtered and ranked there; pages and actions are filtered here.
  */
 
-export type PaletteGroup = 'strands' | 'pages' | 'actions'
-export const PALETTE_GROUPS: readonly PaletteGroup[] = ['strands', 'pages', 'actions']
+export type PaletteGroup = 'strands' | 'messages' | 'pages' | 'actions'
+/** `messages` (W5b): message full text hits, right below the strands. */
+export const PALETTE_GROUPS: readonly PaletteGroup[] = ['strands', 'messages', 'pages', 'actions']
+/** Message hits shown at once in the palette. */
+export const PALETTE_MESSAGE_LIMIT = 6
 
 export interface PaletteEntry {
   /** Unique across all groups, used as DOM id suffix. */
@@ -20,6 +23,8 @@ export interface PaletteEntry {
   icon: string
   /** Extra words that should find this entry (e.g. the English and German name). */
   keywords?: readonly string[]
+  /** Message hits (W5b): the snippet split into plain/marked parts, rendered as text. */
+  parts?: ReadonlyArray<{ text: string; match: boolean }>
 }
 
 /** Debounce of the strand search while typing. */
@@ -66,9 +71,10 @@ export function filterEntries<T extends PaletteEntry>(entries: readonly T[], que
  * The flat, ordered list the palette shows: strands (as returned by the
  * server, capped), then matching pages, then matching actions.
  */
-export function buildPaletteList<T extends PaletteEntry>(input: { strands: readonly T[]; pages: readonly T[]; actions: readonly T[]; query: string }): T[] {
+export function buildPaletteList<T extends PaletteEntry>(input: { strands: readonly T[]; messages?: readonly T[]; pages: readonly T[]; actions: readonly T[]; query: string }): T[] {
   return [
     ...input.strands.slice(0, PALETTE_STRAND_LIMIT),
+    ...(input.messages ?? []).slice(0, PALETTE_MESSAGE_LIMIT),
     ...filterEntries(input.pages, input.query),
     ...filterEntries(input.actions, input.query),
   ]

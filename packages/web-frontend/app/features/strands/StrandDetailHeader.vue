@@ -5,6 +5,7 @@ import { useModelsApi, type ModelSelection, type SelectableModel } from '~/api/m
 import { useProjectsApi } from '~/api/projects'
 import StrandActions from './StrandActions.vue'
 import { strandErrorKey, useStrandDetailApi, type StrandDetail } from './detailApi'
+import { messageRoute } from '~/api/strandW5b'
 const props = withDefaults(defineProps<{ strandId: string; showBack?: boolean }>(), { showBack: true })
 const emit = defineEmits<{ back: []; updated: [strand: StrandDetail]; deleted: [id: string] }>()
 const { t } = useI18n()
@@ -124,6 +125,29 @@ onMounted(() => { void load(); void loadProjects() })
       <slot name="actions" />
     </div>
     <p v-if="loading" role="status" class="text-sm text-muted-foreground">{{ t('strandDetail.loading') }}</p>
+    <!-- W5b lineage: where this strand was forked from, and its forks. -->
+    <nav v-if="strand && (strand.parentStrandId || strand.childStrands?.length)" class="mt-1 flex min-w-0 flex-col gap-0.5 text-sm text-muted-foreground" :aria-label="t('fork.lineageLabel')" data-strand-lineage>
+      <p v-if="strand.parentStrandId" class="flex min-w-0 flex-wrap items-center gap-x-1" data-lineage-parent>
+        <AppIcon name="gitBranch" size="sm" class="shrink-0" />
+        <span>{{ t('fork.forkedFrom') }}</span>
+        <NuxtLink :to="strand.forkedFromMessageId ? messageRoute(strand.parentStrandId, strand.forkedFromMessageId) : `/strands/${encodeURIComponent(strand.parentStrandId)}`"
+          class="inline-flex min-h-11 min-w-0 max-w-full items-center rounded-md px-1 font-medium text-foreground underline-offset-2 hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring pointer-fine:min-h-8">
+          <span class="truncate">{{ strand.parentStrandTitle || t('fork.untitledParent') }}</span>
+        </NuxtLink>
+      </p>
+      <div v-if="strand.childStrands?.length" class="flex min-w-0 flex-wrap items-center gap-x-1" data-lineage-children>
+        <AppIcon name="gitBranch" size="sm" class="shrink-0" />
+        <span>{{ t('fork.branches') }}</span>
+        <ul class="flex min-w-0 flex-wrap items-center gap-x-1">
+          <li v-for="child in strand.childStrands" :key="child.id" class="min-w-0 max-w-full">
+            <NuxtLink :to="`/strands/${encodeURIComponent(child.id)}`"
+              class="inline-flex min-h-11 min-w-0 max-w-full items-center rounded-md px-1 font-medium text-foreground underline-offset-2 hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring pointer-fine:min-h-8">
+              <span class="truncate">{{ child.title || t('fork.untitledChild') }}</span>
+            </NuxtLink>
+          </li>
+        </ul>
+      </div>
+    </nav>
     <Alert v-if="error" variant="destructive" role="alert" class="my-2"><AlertDescription>{{ error }}</AlertDescription><Button class="min-h-11" variant="ghost" :disabled="saving" @click="load">{{ t('strandDetail.retry') }}</Button><Button v-if="strand" class="min-h-11" variant="ghost" @click="error = ''">{{ t('strandDetail.dismiss') }}</Button></Alert>
     <template v-if="strand">
       <div class="mt-2 flex flex-wrap items-center gap-2 text-sm [overflow-wrap:anywhere]">

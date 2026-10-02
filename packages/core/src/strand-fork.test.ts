@@ -94,6 +94,19 @@ describe('forkStrand', () => {
     })
   })
 
+  it('records an explicit fork point instead of the latest message when one is given', () => {
+    const parent = parentStrand()
+    const first = (db.prepare('SELECT MIN(id) AS id FROM chat_messages WHERE session_id = ?')
+      .get(parent) as { id: number }).id
+    const fork = forkStrand({
+      db, sessions, userId: 1, parentStrandId: parent,
+      title: 'Fork at the first message', seed: 'Synthetic seed.',
+      forkedFromMessageId: first,
+    })
+    expect(fork.forkedFromMessageId).toBe(first)
+    expect(getStrandForkLineage(db, fork.strandId).forkedFromMessageId).toBe(first)
+  })
+
   it('persists the lineage on the child and a readable pointer in the parent', () => {
     const parent = parentStrand()
     const lastParentMessageId = (db.prepare('SELECT MAX(id) AS id FROM chat_messages WHERE session_id = ?')

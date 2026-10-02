@@ -43,6 +43,25 @@
  *        cache write), the current model's window/answer reserve and the
  *        runtime trim threshold. Unknown values are null, never 0. 404 for a
  *        foreign or unknown strand.
+ *        W5b, additive: `recalled: [{ messageId, strandId, role, excerpt,
+ *        recalledAt, source: 'recall'|'context' }]`, the older messages the
+ *        agent pulled back (recall_message / strand-context retrieval),
+ *        newest first, at most 20, excerpt <= 160 chars, owner scoped.
+ *   GET  /api/strands/:id/facts
+ *        -> { strandId, facts: [{ id, text, createdAt, status }], total, truncated,
+ *             summaries, toolCalls }
+ *        Slim fact list of the context panel (W5b), at most 200, oldest first.
+ *        404 strand_not_found for a foreign or unknown strand.
+ *   POST /api/strands/:id/fork { messageId, title? }
+ *        -> 201 { strand: StrandDetail, fork: { strandId, title, parentStrandId,
+ *           parentTitle, forkedAt, forkedFromMessageId, seedMessageId,
+ *           noticeMessageId, depth } }
+ *        "Fork at this message" (W5b), the `fork_strand` mechanism: seed =
+ *        the message (<= 4000 chars) + `[msg:<id>]`, no turn starts.
+ *        400 invalid_body / invalid_message_id / invalid_title / message_empty,
+ *        404 strand_not_found / message_not_found (message of another strand
+ *        or not a user/assistant row), 409 strand_archived /
+ *        fork_depth_exceeded, 429 fork_rate_limited (20 per minute).
  *   GET  /api/strands/:id/tasks?include=active|all
  *        -> { strandId, include, tasks: StrandTaskNode[], activeCount, truncated, maxDepth, generatedAt }
  *        The delegated tasks of a strand and, recursively, their sub-tasks.
@@ -72,6 +91,10 @@ import type { ProviderQuotaContract } from '@axiom/core/contracts'
 import { jwtMiddleware } from '../../../auth.js'
 import type { ChatEventBus } from '../../../chat-event-bus.js'
 import { createStrandsController } from './controller.js'
+import { perUserRateLimit } from '../../rate-limit.js'
+
+/** Web forks per user and minute; a fork is a human click, not a loop. */
+export const FORK_PER_MINUTE = 20
 import { createStrandsService, type StrandTurnGuard } from './service.js'
 
 export interface StrandsRouterOptions {
@@ -107,6 +130,8 @@ export function createStrandsRouters(options: StrandsRouterOptions): StrandsRout
   strands.patch('/:id/model', controller.patchStrandModel)
   strands.get('/:id/tasks', controller.strandTasks)
   strands.get('/:id/context', controller.strandContext)
+  strands.get('/:id/facts', controller.strandFacts)
+  strands.post('/:id/fork', perUserRateLimit({ windowMs: 60_000, max: FORK_PER_MINUTE, code: 'fork_rate_limited' }), controller.forkStrand)
   strands.patch('/:id', controller.patchStrand)
   strands.delete('/:id', controller.deleteStrand)
   strands.put('/:id/tags', controller.setStrandTags)
