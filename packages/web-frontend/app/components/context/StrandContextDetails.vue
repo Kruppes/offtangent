@@ -3,7 +3,7 @@
        + counters, like the app's ContextDetailsSheet) and what belongs to
        the strand (project, linked facts, summaries, tool calls). -->
   <section aria-labelledby="ctx-usage" data-context-usage :data-state="gauge.status">
-    <h3 id="ctx-usage" class="mb-2 text-xs font-semibold uppercase tracking-wide text-muted-foreground">{{ $t('w4b.context.usage') }}</h3>
+    <h4 id="ctx-usage" class="mb-2 text-xs font-semibold uppercase tracking-wide text-muted-foreground">{{ $t('w4b.context.usage') }}</h4>
     <p v-if="gauge.status === 'loading'" class="text-sm text-muted-foreground" role="status">{{ $t('w4b.context.loading') }}</p>
     <p v-else-if="gauge.status === 'unsupported'" class="text-sm text-muted-foreground">{{ $t('w4b.context.unsupported') }}</p>
     <div v-else-if="gauge.status === 'error'" class="flex flex-wrap items-center gap-2" role="alert">
@@ -40,7 +40,7 @@
   </section>
 
   <section aria-labelledby="ctx-belongings" data-context-belongings :data-state="belongings.status">
-    <h3 id="ctx-belongings" class="mb-2 text-xs font-semibold uppercase tracking-wide text-muted-foreground">{{ $t('w4b.context.belongings') }}</h3>
+    <h4 id="ctx-belongings" class="mb-2 text-xs font-semibold uppercase tracking-wide text-muted-foreground">{{ $t('w4b.context.belongings') }}</h4>
     <p v-if="belongings.status === 'loading'" class="text-sm text-muted-foreground" role="status">{{ $t('common.loading') }}</p>
     <p v-else-if="belongings.status === 'unsupported'" class="text-sm text-muted-foreground">{{ $t('w4b.context.unsupported') }}</p>
     <div v-else-if="belongings.status === 'error'" class="flex flex-wrap items-center gap-2" role="alert">
@@ -55,7 +55,7 @@
         <dt class="text-muted-foreground">{{ $t('w4b.context.summaries') }}</dt><dd class="tabular-nums">{{ belongings.data.summaries }}</dd>
         <dt class="text-muted-foreground">{{ $t('w4b.context.toolCalls') }}</dt><dd class="tabular-nums">{{ belongings.data.toolCalls }}</dd>
       </dl>
-      <h4 class="mb-1 mt-3 text-sm font-medium">{{ $t('w4b.context.facts', { count: belongings.data.facts.length }) }}</h4>
+      <h5 class="mb-1 mt-3 text-sm font-medium">{{ $t('w4b.context.facts', { count: belongings.data.facts.length }) }}</h5>
       <ul v-if="belongings.data.facts.length" class="space-y-1 text-sm" data-context-facts>
         <li v-for="fact in belongings.data.facts.slice(0, 8)" :key="fact.id" class="rounded-md bg-muted/50 px-2 py-1">{{ fact.text }}</li>
         <li v-if="belongings.data.facts.length > 8" class="px-2 text-muted-foreground">{{ $t('w4b.context.moreFacts', { count: belongings.data.facts.length - 8 }) }}</li>

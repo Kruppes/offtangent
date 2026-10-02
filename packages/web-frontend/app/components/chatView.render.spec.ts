@@ -388,6 +388,18 @@ describe('ChatView: transcript from history', () => {
   })
 })
 
+describe('ChatView: strand activity placement (W4c)', () => {
+  it('keeps the activity out of the transcript, also while a turn streams', async () => {
+    history = [row(1, 'user', 'Tell me')]
+    const { root } = await mountChat()
+    receive({ type: 'text', text: 'Working' })
+    await flush()
+    // The activity lives in the strand dock now, not below the last message.
+    expect(byTag(root, 'strand-activity-panel')).toHaveLength(0)
+    expect(byTag(messagesContainer(root), 'strand-activity-panel')).toHaveLength(0)
+  })
+})
+
 describe('ChatView: streaming', () => {
   it('appends streamed text into one bubble and finalizes it on done', async () => {
     history = [row(1, 'user', 'Tell me')]

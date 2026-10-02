@@ -7,35 +7,61 @@
     here with a status dot and a counter that keeps ticking. The counter is
     the anti-freeze signal: as long as it moves, the user knows the system is
     alive even when no text streams.
+
+    W4c: the panel is the "Activity" section of the strand dock (right
+    column), no longer the tail of the transcript. Its header line stays when
+    the section is folded, with the live dot and the counter, so folding can
+    never hide the signal.
   -->
   <section
-    v-if="visible"
-    class="border-t border-border bg-muted/20 px-3 py-2"
-    :aria-label="$t('strandActivity.title')"
+    class="flex min-h-0 flex-col"
+    data-testid="dock-activity"
+    :data-open="open ? 'true' : 'false'"
+    aria-labelledby="strand-activity-title"
   >
-    <button
-      type="button"
-      class="flex min-h-[44px] w-full items-center gap-2 rounded-lg px-1 text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring sm:py-1"
-      :aria-expanded="open"
-      aria-controls="strand-activity-body"
-      @click="open = !open"
-    >
-      <AppIcon :name="open ? 'chevronDown' : 'chevronRight'" class="h-4 w-4 shrink-0 text-muted-foreground" />
-      <span class="text-xs font-semibold uppercase tracking-wider text-muted-foreground">
-        {{ $t('strandActivity.title') }}
-      </span>
-      <span
-        v-if="headline"
-        class="min-w-0 flex-1 truncate text-xs text-muted-foreground"
-      >{{ headline }}</span>
-      <span v-else class="flex-1" />
-      <span
-        v-if="turnRunning"
-        class="shrink-0 rounded-full bg-success/15 px-2 py-0.5 text-2xs font-medium text-success"
-      >{{ $t('strandActivity.turnRunning') }}</span>
-    </button>
+    <h3 id="strand-activity-title" class="shrink-0">
+      <button
+        type="button"
+        class="flex min-h-11 w-full items-center gap-2 px-3 text-left hover:bg-accent focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring"
+        :aria-expanded="open"
+        :aria-controls="bodyElementId"
+        data-testid="dock-activity-toggle"
+        @click="open = !open"
+      >
+        <AppIcon :name="open ? 'chevronDown' : 'chevronRight'" class="h-4 w-4 shrink-0 text-muted-foreground" />
+        <span class="shrink-0 text-xs font-semibold uppercase tracking-wider text-muted-foreground">
+          {{ $t('strandActivity.title') }}
+        </span>
+        <!-- Live dot: pulses while anything runs; reduced motion keeps it still. -->
+        <span
+          aria-hidden="true"
+          data-testid="dock-activity-dot"
+          :data-live="live ? 'true' : 'false'"
+          class="h-2 w-2 shrink-0 rounded-full"
+          :class="live ? ['bg-success', reducedMotion ? '' : 'motion-safe:animate-pulse'] : 'bg-border'"
+        />
+        <span
+          v-if="headline"
+          class="min-w-0 flex-1 truncate text-xs tabular-nums text-muted-foreground"
+          data-testid="dock-activity-count"
+        >{{ headline }}</span>
+        <span v-else class="flex-1" />
+        <span
+          v-if="turnRunning"
+          class="shrink-0 rounded-full bg-success/15 px-2 py-0.5 text-2xs font-medium text-success"
+        >{{ $t('strandActivity.turnRunning') }}</span>
+      </button>
+    </h3>
 
-    <div v-if="open" id="strand-activity-body" class="mt-1">
+    <!-- Focusable so a long task tree can be scrolled by keyboard (axe scrollable-region-focusable). -->
+    <div
+      v-if="open"
+      :id="bodyElementId"
+      class="min-h-0 flex-1 overflow-y-auto px-3 pb-2 focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-primary"
+      tabindex="0"
+      role="region"
+      aria-labelledby="strand-activity-title"
+    >
       <!-- Loading -->
       <div v-if="status === 'loading'" class="flex flex-col gap-1 px-2 py-1">
         <Skeleton class="h-4 w-40 rounded-md" />
@@ -86,7 +112,13 @@ const props = defineProps<{
   strandId: string | null
   /** True while a turn streams in this strand. */
   turnRunning?: boolean
+  /** Id of the folding body, for the header's aria-controls. */
+  bodyId?: string
 }>()
+
+/** Fold state of the section; the dock owns and remembers it. */
+const open = defineModel<boolean>('open', { default: true })
+const bodyElementId = computed(() => props.bodyId ?? 'strand-activity-body')
 
 const { t } = useI18n()
 
@@ -121,16 +153,8 @@ onMounted(() => {
 })
 onBeforeUnmount(() => { disposed = true; stopMetadataWatch?.() })
 
-const open = ref(true)
-
-/**
- * The panel hides itself only when there is genuinely nothing to say: no
- * tasks at all and no turn running. It stays visible during loading and on
- * error, so a failure is never silently equivalent to "nothing runs".
- */
-const visible = computed(() =>
-  Boolean(props.strandId) && (props.turnRunning || totalCount.value > 0 || status.value === 'error' || status.value === 'loading'),
-)
+/** Something runs: the dot in the header line pulses. */
+const live = computed(() => Boolean(props.turnRunning) || liveCount.value > 0)
 
 const headline = computed(() => {
   if (liveCount.value > 0) return t('strandActivity.liveCount', { count: liveCount.value })

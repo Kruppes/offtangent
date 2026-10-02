@@ -208,10 +208,10 @@ vi.mock('../composables/useStrandTasks', () => ({
   }),
 }))
 
-async function renderPanel(turnRunning = false): Promise<string> {
+async function renderPanel(turnRunning = false, open = true): Promise<string> {
   const { default: StrandActivityPanel } = await import('./StrandActivityPanel.vue')
   const app = createSSRApp({
-    render: () => h(StrandActivityPanel, { strandId: 'strand-1', turnRunning }),
+    render: () => h(StrandActivityPanel, { strandId: 'strand-1', turnRunning, open }),
   })
   stubs(app)
   return await renderToString(app)
@@ -239,8 +239,12 @@ describe('StrandActivityPanel (rendered)', () => {
     panelState.rows.value = []
     panelState.total.value = 0
     const idle = await renderPanel(false)
-    // Nothing at all to show and no turn: the panel hides itself.
-    expect(idle).not.toContain('strandActivity.title')
+    // W4c: the panel is a dock section now and keeps its header; nothing
+    // runs, so it says so calmly and the live dot stays off.
+    expect(idle).toContain('strandActivity.title')
+    expect(idle).toContain('strandActivity.empty')
+    expect(idle).not.toContain('strandActivity.turnRunning')
+    expect(idle).toContain('data-live="false"')
 
     const duringTurn = await renderPanel(true)
     expect(duringTurn).toContain('strandActivity.emptyWhileTurn')
@@ -274,6 +278,35 @@ describe('StrandActivityPanel (rendered)', () => {
   })
 })
 
+describe('StrandActivityPanel as a dock section (W4c)', () => {
+  it('folded keeps the header line with the live dot and the counter (anti-freeze)', async () => {
+    panelState.status.value = 'ready'
+    panelState.rows.value = rowsOf([node({ id: 'wave', name: 'Wave A' })])
+    panelState.live.value = 1
+    panelState.total.value = 1
+    const folded = await renderPanel(true, false)
+    expect(folded).toContain('aria-expanded="false"')
+    expect(folded).toContain('aria-controls="strand-activity-body"')
+    expect(folded).toContain('data-live="true"')
+    expect(folded).toContain('strandActivity.liveCount({&quot;count&quot;:1})')
+    expect(folded).toContain('strandActivity.turnRunning')
+    // The body is gone, the rows with it.
+    expect(folded).not.toContain('id="strand-activity-body"')
+    expect(folded).not.toContain('Wave A')
+
+    const open = await renderPanel(false, true)
+    expect(open).toContain('aria-expanded="true"')
+    expect(open).toContain('id="strand-activity-body"')
+    expect(open).toContain('Wave A')
+  })
+
+  it('keeps loading and error states inside the section', async () => {
+    panelState.status.value = 'error'
+    expect(await renderPanel(false, true)).toContain('strandActivity.errorDescription')
+    panelState.status.value = 'loading'
+    expect(await renderPanel(false, true)).toContain('skeleton')
+  })
+})
 
 describe('task usage display', () => {
   it('shows input/output separately and the current USD cost', async () => {

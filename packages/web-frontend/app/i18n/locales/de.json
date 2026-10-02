@@ -2168,14 +2168,18 @@
     "pickStrand": "Kein Strand geöffnet",
     "pickStrandHint": "Wähle links einen Strand oder öffne mit Strg+K die Befehlspalette.",
     "context": "Kontext",
-    "contextToggle": "Kontextspalte ein- oder ausblenden",
-    "contextClose": "Kontextspalte schließen",
+    "contextToggle": "Aktivität und Kontext ein- oder ausblenden",
+    "contextClose": "Spalte Aktivität und Kontext schließen",
     "contextCanvas": "Canvas und Artefakte",
     "contextCanvasEmpty": "In diesem Strand gibt es noch keine Canvas-Ansichten.",
     "contextStrand": "Strand",
     "contextMessages": "Nachrichten",
     "contextStarted": "Begonnen",
-    "contextLastActivity": "Zuletzt aktiv"
+    "contextLastActivity": "Zuletzt aktiv",
+    "dock": "Aktivität und Kontext",
+    "dockResize": "Breite der Spalte Aktivität und Kontext",
+    "dockSplit": "Höhe von Aktivität und Kontext aufteilen",
+    "dockOpenActivity": "Aktivität öffnen"
   },
   "palette": {
     "title": "Command-Palette",

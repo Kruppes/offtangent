@@ -2168,14 +2168,18 @@
     "pickStrand": "No strand open",
     "pickStrandHint": "Pick a strand on the left or press Ctrl+K for the command palette.",
     "context": "Context",
-    "contextToggle": "Show or hide context column",
-    "contextClose": "Close context column",
+    "contextToggle": "Show or hide activity and context",
+    "contextClose": "Close the activity and context column",
     "contextCanvas": "Canvas and artifacts",
     "contextCanvasEmpty": "This strand has no canvas views yet.",
     "contextStrand": "Strand",
     "contextMessages": "Messages",
     "contextStarted": "Started",
-    "contextLastActivity": "Last activity"
+    "contextLastActivity": "Last activity",
+    "dock": "Activity and context",
+    "dockResize": "Width of the activity and context column",
+    "dockSplit": "Split the height of activity and context",
+    "dockOpenActivity": "open activity"
   },
   "palette": {
     "title": "Command palette",

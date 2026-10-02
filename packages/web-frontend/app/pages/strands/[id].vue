@@ -1,13 +1,19 @@
 <script setup lang="ts">
 import { DialogContent, DialogOverlay, DialogPortal, DialogRoot, DialogTitle } from 'reka-ui'
 import StrandDetailHeader from '~/features/strands/StrandDetailHeader.vue'
-import StrandContextPanel from '~/features/strands/StrandContextPanel.vue'
+import StrandDock from '~/features/strands/StrandDock.vue'
+import StrandRunningHint from '~/features/strands/StrandRunningHint.vue'
+import StrandActivityProbe from '~/features/threads/components/StrandActivityProbe.vue'
+import DockSeparator from '~/components/shell/DockSeparator.vue'
+import { countLive } from '~/features/threads/taskActivity'
 import type { StrandDetail } from '~/features/strands/detailApi'
 import { useThreads } from '~/features/threads/composables/useThreads'
 import { useShellLayout } from '~/composables/useShellLayout'
 import { useStrandCanvas } from '~/composables/useStrandCanvas'
 import { onShortcut } from '~/composables/useShortcuts'
-import { CONTEXT_WIDTH } from '~/utils/shellLayout'
+import { dockMaxWidth, inlineDockWidth } from '~/utils/shellLayout'
+import { dockWidthBounds, runningHint } from '~/utils/strandDock'
+import { useStrandDock } from '~/composables/useStrandDock'
 import ContextRing from '~/components/context/ContextRing.vue'
 import StrandContextDetails from '~/components/context/StrandContextDetails.vue'
 import { useStrandContext } from '~/composables/useStrandContext'
@@ -51,6 +57,24 @@ function closeContext() {
 }
 onShortcut('context.toggle', toggleContext)
 
+// Dock (W4c): width by the handle on its left edge, never past what the
+// conversation's reading measure leaves (`dockMaxWidth`).
+const dock = useStrandDock()
+const dockBounds = computed(() => dockWidthBounds(dockMaxWidth(shell.width.value, shell.sidebarWidth.value)))
+const dockWidth = computed(() => inlineDockWidth(dock.state.value.width, shell.width.value, shell.sidebarWidth.value))
+
+// Anti-freeze signal while the dock is closed: the strand head says what runs.
+const chat = useChat()
+const turnRunning = computed(() => chat.sessionActivity.value[threadId.value]?.state === 'running'
+  || (chat.boundSessionId.value === threadId.value && chat.isStreaming.value))
+const liveTasks = computed(() => countLive(chat.strandTasks.value[threadId.value]))
+const hint = computed(() => runningHint(contextOpen.value, turnRunning.value, liveTasks.value))
+function openActivity() {
+  dock.setSectionOpen('activity', true)
+  if (inline.value) shell.setContextOpen(threadId.value, true)
+  else sheetOpen.value = true
+}
+
 // Context ring in the header (N2): the gauge of the last request, re-read
 // whenever the strand's activity moves (a finished turn) or the panel opens.
 const { t } = useI18n()
@@ -76,6 +100,7 @@ const ringLabel = computed(() => {
     <div class="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden">
       <StrandDetailHeader :key="threadId" :strand-id="threadId" :show-back="shell.tier.value === 'one'" @back="backToInbox" @updated="updated" @deleted="deleted">
         <template #actions>
+          <StrandRunningHint :hint="hint" @open="openActivity" />
           <button type="button" data-testid="context-toggle"
             class="inline-flex h-11 w-11 shrink-0 items-center justify-center rounded-lg text-muted-foreground hover:bg-accent hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
             :class="contextOpen ? 'bg-accent text-foreground' : ''"
@@ -90,23 +115,27 @@ const ringLabel = computed(() => {
       </div>
     </div>
     <aside v-if="inline && inlineOpen" id="strand-context-column" data-testid="context-column" data-placement="inline"
-      class="shrink-0 border-l border-border bg-background" :style="{ width: `${CONTEXT_WIDTH}px` }" aria-labelledby="strand-context-title">
-      <StrandContextPanel :strand-id="threadId" :strand="thread" @close="closeContext">
-        <template #extra><StrandContextDetails :strand-id="threadId" :project-id="thread?.projectId ?? null" /></template>
-      </StrandContextPanel>
+      class="relative shrink-0 border-l border-border bg-background" :style="{ width: `${dockWidth}px` }" aria-labelledby="strand-context-title">
+      <DockSeparator orientation="vertical" :value="dockWidth" :min="dockBounds.min" :max="dockBounds.max" :label="$t('shell.dockResize')"
+        controls="strand-context-column" @update="dock.setWidth($event)" @reset="dock.resetWidth()" />
+      <StrandDock :strand-id="threadId" :strand="thread" :turn-running="turnRunning" resizable @close="closeContext">
+        <template #context-extra><StrandContextDetails :strand-id="threadId" :project-id="thread?.projectId ?? null" /></template>
+      </StrandDock>
     </aside>
     <DialogRoot v-if="!inline" :open="sheetOpen" @update:open="sheetOpen = $event">
       <DialogPortal>
         <DialogOverlay class="fixed inset-0 z-40 bg-scrim" />
         <DialogContent id="strand-context-column" data-testid="context-column" data-placement="overlay" :aria-describedby="undefined"
           class="fixed inset-y-0 right-0 z-50 w-[min(20rem,100vw)] border-l border-border bg-background shadow-overlay focus:outline-none">
-          <DialogTitle class="sr-only">{{ $t('shell.context') }}</DialogTitle>
-          <StrandContextPanel :strand-id="threadId" :strand="thread" @close="closeContext">
-            <template #extra><StrandContextDetails :strand-id="threadId" :project-id="thread?.projectId ?? null" /></template>
-          </StrandContextPanel>
+          <DialogTitle class="sr-only">{{ $t('shell.dock') }}</DialogTitle>
+          <StrandDock :strand-id="threadId" :strand="thread" :turn-running="turnRunning" :resizable="false" @close="closeContext">
+            <template #context-extra><StrandContextDetails :strand-id="threadId" :project-id="thread?.projectId ?? null" /></template>
+          </StrandDock>
         </DialogContent>
       </DialogPortal>
     </DialogRoot>
+    <!-- Dock closed: keep the task tree current for the head's hint. -->
+    <StrandActivityProbe v-if="!contextOpen" :strand-id="threadId || null" />
   </div>
 </template>
 

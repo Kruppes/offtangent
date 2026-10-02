@@ -10,11 +10,6 @@
         :turn-end="turnEnd"
       />
     </TranscriptState>
-    <StrandActivityPanel
-      class="shrink-0"
-      :strand-id="boundSessionId"
-      :turn-running="isStreaming"
-    />
   </div>
 </template>
 
@@ -22,17 +17,16 @@
 import type { TranscriptRow, transcriptState } from '../content/transcript'
 import { useChatView } from '~/composables/chat/chatViewContext'
 import TranscriptState from '../content/TranscriptState.vue'
-import StrandActivityPanel from '~/features/threads/components/StrandActivityPanel.vue'
 import ChatMessageRow from './ChatMessageRow.vue'
 
 /**
- * The scrolling transcript: loading / empty / error state, one row per
- * transcript entry, and the strand activity panel below the last message.
+ * The scrolling transcript: loading / empty / error state and one row per
+ * transcript entry. The strand activity lives in the strand dock (W4c).
  */
 defineProps<{ rows: TranscriptRow[]; state: ReturnType<typeof transcriptState> }>()
 defineEmits<{ retry: [] }>()
 
-const { scroll, isStreaming, boundSessionId } = useChatView()
+const { scroll } = useChatView()
 const { messagesContainer, onMessagesScroll } = scroll
 const { handleCopyAsMarkdown, handleMarkdownCodeCopy } = useMarkdown()
 </script>
