@@ -665,12 +665,24 @@ export interface ListCapturesOptions {
   status?: CaptureStatus | 'all'
   limit?: number
   offset?: number
+  /**
+   * Only captures created at or after this instant (W6b, additive). A value
+   * `Date` can parse; compared as a julian day so both the stored
+   * `YYYY-MM-DD HH:MM:SS` (UTC) and ISO strings line up. Bound, never spliced.
+   */
+  since?: string
 }
 
 /** WHERE clause of the capture listing, shared by the page and its count. */
-function captureListFilter(userId: string, status: ListCapturesOptions['status']): { where: string; params: unknown[] } {
+function captureListFilter(userId: string, status: ListCapturesOptions['status'], since?: string): { where: string; params: unknown[] } {
   const where = ['user_id = ?']
   const params: unknown[] = [userId]
+  if (since !== undefined) {
+    const at = new Date(since)
+    if (Number.isNaN(at.getTime())) throw new RangeError('since must be a valid instant')
+    where.push('julianday(created_at) >= julianday(?)')
+    params.push(at.toISOString().slice(0, 19).replace('T', ' '))
+  }
   if (status && status !== 'all') {
     where.push('status = ?')
     params.push(status)
@@ -690,7 +702,7 @@ function captureListFilter(userId: string, status: ListCapturesOptions['status']
 export function listCaptures(db: Database, userId: string, options: ListCapturesOptions = {}): Capture[] {
   const limit = Math.min(200, Math.max(1, Math.trunc(options.limit ?? 50)))
   const offset = Math.max(0, Math.trunc(options.offset ?? 0))
-  const { where, params } = captureListFilter(userId, options.status)
+  const { where, params } = captureListFilter(userId, options.status, options.since)
   const rows = db.prepare(
     `SELECT ${CAPTURE_COLUMNS} FROM captures WHERE ${where}
      ORDER BY created_at DESC, rowid DESC LIMIT ? OFFSET ?`,
@@ -699,8 +711,8 @@ export function listCaptures(db: Database, userId: string, options: ListCaptures
 }
 
 /** Number of captures `listCaptures` pages through for the same filter (ignores limit/offset). */
-export function countCaptures(db: Database, userId: string, options: Pick<ListCapturesOptions, 'status'> = {}): number {
-  const { where, params } = captureListFilter(userId, options.status)
+export function countCaptures(db: Database, userId: string, options: Pick<ListCapturesOptions, 'status' | 'since'> = {}): number {
+  const { where, params } = captureListFilter(userId, options.status, options.since)
   const row = db.prepare(`SELECT COUNT(*) AS n FROM captures WHERE ${where}`).get(...params) as { n: number }
   return row.n
 }

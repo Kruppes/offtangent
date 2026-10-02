@@ -46,6 +46,26 @@ describe('Week page', () => {
     expect(text(root)).not.toContain('never shown')
   })
 
+  it('W6b: reads the whole week page by page with since, beyond 200 captures, exactly', async () => {
+    const many = Array.from({ length: 450 }, (_, i) => capture(`m${i}`, `2026-01-0${5 + (i % 3)}T0${i % 10}:00:00Z`, 'filed', 's1'))
+    const urls: string[] = []
+    vi.stubGlobal('fetch', vi.fn(async (url: string) => {
+      if (url.includes('/api/captures?')) {
+        urls.push(url)
+        const q = new URL(url).searchParams
+        const offset = Number(q.get('offset'))
+        return new Response(JSON.stringify({ captures: many.slice(offset, offset + 200), decisions: [], total: many.length }))
+      }
+      return new Response(JSON.stringify({ strand: { id: 's1', title: 'Synthetic strand s1' } }))
+    }))
+    const root = mountNode(WeekPage); await flush()
+    expect(urls).toHaveLength(3)
+    const q = new URL(urls[0]!).searchParams
+    expect(q.get('since')).toBe('2025-12-30T12:00:00.000Z')
+    expect(urls.map(u => new URL(u).searchParams.get('offset'))).toEqual(['0', '200', '400'])
+    expect(text(byTestId(root, 'week-tiles')[0]!)).toMatch(/week\.tiles\.captures\s+450/)
+  })
+
   it('explains an empty week and points to Home', async () => {
     page = { captures: [], decisions: [] }
     const root = mountNode(WeekPage); await flush()

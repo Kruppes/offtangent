@@ -147,7 +147,12 @@ export interface ListCapturesQuery {
   status: CaptureStatus | 'all'
   limit: number
   offset: number
+  /** W6b, additive: ISO 8601 instant with a zone, normalized to `toISOString()`. */
+  since?: string
 }
+
+/** `YYYY-MM-DDTHH:MM[:SS[.fff]]` plus `Z` or `±HH:MM` — an instant, never a local time. */
+const SINCE_PATTERN = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}(:\d{2}(\.\d{1,3})?)?(Z|[+-]\d{2}:\d{2})$/
 
 export function parseListCapturesQuery(query: Record<string, unknown>): ParseResult<ListCapturesQuery> {
   const status = query.status === undefined || query.status === '' ? 'all' : query.status
@@ -156,7 +161,14 @@ export function parseListCapturesQuery(query: Record<string, unknown>): ParseRes
   const limit = Math.min(200, Math.max(1, Number.isFinite(rawLimit) ? rawLimit : 50))
   const rawOffset = parseInt(String(query.offset ?? ''), 10)
   const offset = Math.max(0, Number.isFinite(rawOffset) ? rawOffset : 0)
-  return { ok: true, value: { status: status as CaptureStatus | 'all', limit, offset } }
+  let since: string | undefined
+  if (query.since !== undefined && query.since !== '') {
+    const raw = query.since
+    const at = typeof raw === 'string' && raw.length <= 40 && SINCE_PATTERN.test(raw) ? new Date(raw) : null
+    if (!at || Number.isNaN(at.getTime())) return { ok: false, error: 'since must be an ISO 8601 instant with a time zone', code: 'invalid_since' }
+    since = at.toISOString()
+  }
+  return { ok: true, value: { status: status as CaptureStatus | 'all', limit, offset, ...(since ? { since } : {}) } }
 }
 
 export interface ApplyCaptureBody {

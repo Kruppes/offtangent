@@ -2,7 +2,7 @@
 import { computed, onMounted, ref } from 'vue'
 import { useCapturesApi, type Capture, type Decision } from '~/api/captures'
 import { useNowApi } from '~/api/now'
-import { barHeights, weekClaim, weekStats } from './weekStats'
+import { barHeights, loadWeekWindow, weekClaim, weekStats } from './weekStats'
 import { addDays } from '~/utils/localDay'
 
 /**
@@ -31,10 +31,12 @@ function dateLabel(day: string) {
 async function load() {
   loading.value = true; loadError.value = false
   try {
-    const page = await api.recent(200)
+    // W6b: the whole week, exact, instead of the newest 200 captures.
+    const at = Date.now()
+    const page = await loadWeekWindow((since, offset) => api.since(since, offset), at)
     captures.value = page.captures
     decisions.value = page.decisions
-    nowMs.value = Date.now()
+    nowMs.value = at
     const ids = weekStats(page.captures, page.decisions, nowMs.value).strandIds
     await Promise.all(ids.filter(id => !(id in titles.value)).map(async (id) => {
       try { titles.value[id] = (await nowApi.strand(id)).title } catch { titles.value[id] = null }

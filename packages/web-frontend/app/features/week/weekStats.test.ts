@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import type { Capture, Decision } from '@axiom/core'
-import { barHeights, currentDecision, userDecided, weekClaim, weekStats } from './weekStats'
+import { barHeights, currentDecision, loadWeekWindow, userDecided, WEEK_MAX_PAGES, weekClaim, weekStats } from './weekStats'
 import { addDays, dayKey, isoWeek, parseInstant, weekdayIndex } from '~/utils/localDay'
 
 const cap = (id: string, createdAt: string, status: Capture['status'], strandId: string | null = 's1') => ({ id, text: 'synthetic', kind: 'note', source: 'web', agentId: null, strandId, messageId: null, status, createdAt, filedAt: null, attachments: [], clientMessageId: null }) as unknown as Capture
@@ -83,5 +83,34 @@ describe('weekClaim / barHeights', () => {
     expect(weekClaim({ captures: 2 })).toBe('dayOne')
     expect(weekClaim({ captures: 9 })).toBe('many')
     expect(barHeights([0, 2, 4, 0, 0, 0, 1])).toEqual([6, 50, 100, 6, 6, 6, 25])
+  })
+})
+
+describe('loadWeekWindow (W6b)', () => {
+  const NOW_MS = Date.parse('2026-01-07T12:00:00Z')
+  const row = (id: string, createdAt = '2026-01-06T08:00:00Z') => cap(id, createdAt, 'filed')
+  it('pages until the exact total and drops duplicates', async () => {
+    const all = Array.from({ length: 401 }, (_, i) => row(`r${i}`))
+    const calls: Array<[string, number]> = []
+    const result = await loadWeekWindow(async (since, offset) => { calls.push([since, offset]); return { captures: all.slice(offset, offset + 200), decisions: [], total: all.length } }, NOW_MS)
+    expect(calls).toEqual([['2025-12-30T12:00:00.000Z', 0], ['2025-12-30T12:00:00.000Z', 200], ['2025-12-30T12:00:00.000Z', 400]])
+    expect(result.captures).toHaveLength(401)
+    expect(result.exact).toBe(true)
+  })
+  it('an older server (no total, or rows before the window) keeps the single first page', async () => {
+    let calls = 0
+    const noTotal = await loadWeekWindow(async () => { calls++; return { captures: [row('a')], decisions: [] } }, NOW_MS)
+    expect([calls, noTotal.exact, noTotal.captures.length]).toEqual([1, false, 1])
+    calls = 0
+    const ignored = await loadWeekWindow(async () => { calls++; return { captures: [row('a'), row('old', '2025-11-01T00:00:00Z')], decisions: [], total: 5000 } }, NOW_MS)
+    expect([calls, ignored.exact, ignored.captures.length]).toEqual([1, false, 2])
+  })
+  it('stops on an empty page and at the page cap', async () => {
+    const empty = await loadWeekWindow(async () => ({ captures: [], decisions: [], total: 3 }), NOW_MS)
+    expect(empty).toEqual({ captures: [], decisions: [], exact: true })
+    let n = 0
+    const capped = await loadWeekWindow(async () => { const page = [row(`x${n++}`)]; return { captures: page, decisions: [], total: 1_000_000 } }, NOW_MS)
+    expect(capped.captures).toHaveLength(WEEK_MAX_PAGES)
+    expect(capped.exact).toBe(false)
   })
 })

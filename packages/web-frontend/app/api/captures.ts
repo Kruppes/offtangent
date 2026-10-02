@@ -40,6 +40,8 @@ export function useCapturesApi() {
     list: (status: Capture['status'], offset = 0) => apiFetch<CaptureListPage>(`/api/captures?status=${status}&limit=50&offset=${offset}`),
     /** Newest captures of every status (the server caps `limit` at 200). */
     recent: (limit = 200) => apiFetch<CaptureListPage>(`/api/captures?status=all&limit=${limit}&offset=0`),
+    /** W6b: one page of every capture created at or after `since` (ISO instant); `total` is exact for that window. */
+    since: (since: string, offset = 0, limit = 200) => apiFetch<CaptureListPage>(`/api/captures?${new URLSearchParams({ status: 'all', limit: String(limit), offset: String(offset), since })}`),
     apply: (id: string, body: ApplyCaptureInput) => apiFetch<CaptureResult>(`/api/captures/${encodeURIComponent(id)}/apply`, { method: 'POST', body: JSON.stringify(body) }),
     undo: (id: string, partIndex?: number) => apiFetch<CaptureResult>(`/api/captures/${encodeURIComponent(id)}/undo`, { method: 'POST', body: partIndex === undefined ? '{}' : JSON.stringify({ partIndex }) }),
     /** Undo every part and route the original text as one capture. */

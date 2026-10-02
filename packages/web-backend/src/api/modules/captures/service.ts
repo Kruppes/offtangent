@@ -1564,11 +1564,13 @@ export function createCapturesService(options: CapturesServiceOptions) {
    * decision of part 0), which is what every client built before parts reads;
    * `parts` carries every part of every capture in the same response.
    * `total` (additive) is the number of captures matching the status filter
-   * across all pages, so a client can show an exact count.
+   * across all pages, so a client can show an exact count. With `since`
+   * (W6b, additive) both the page and `total` only cover captures created at
+   * or after that instant, so the week view can count exactly.
    */
-  function list(userId: number, query: { status: Capture['status'] | 'all'; limit: number; offset: number }) {
+  function list(userId: number, query: { status: Capture['status'] | 'all'; limit: number; offset: number; since?: string }) {
     const captures = listCaptures(db, String(userId), query)
-    const total = countCaptures(db, String(userId), { status: query.status })
+    const total = countCaptures(db, String(userId), { status: query.status, since: query.since })
     const ids = captures.map(c => c.id)
     const decisions = listDecisionsForCaptures(db, ids)
     const all = listAllCurrentDecisions(db, ids)

@@ -96,3 +96,38 @@ export function barHeights(perDay: readonly number[]): number[] {
   const max = Math.max(1, ...perDay)
   return perDay.map(value => Math.max(6, Math.round(value / max * 100)))
 }
+
+/** Window the week view asks the server for: eight days back covers the whole week in every zone and across DST. */
+export const WEEK_WINDOW_MS = 8 * 86_400_000
+/** Upper bound of pages the week view reads (200 each); the server's `total` normally ends the loop first. */
+export const WEEK_MAX_PAGES = 50
+
+export interface WeekPage { captures: Capture[]; decisions: Decision[]; total?: number }
+
+/**
+ * Read every capture of the window, page by page, until the exact `total`
+ * of the server is reached. A server without `since` (older backend) sends
+ * captures from before the window or no `total`: then the first page is all
+ * there is, exactly as before W6b.
+ */
+export async function loadWeekWindow(fetchPage: (since: string, offset: number) => Promise<WeekPage>, nowMs: number): Promise<{ captures: Capture[]; decisions: Decision[]; exact: boolean }> {
+  const sinceMs = nowMs - WEEK_WINDOW_MS
+  const since = new Date(sinceMs).toISOString()
+  const captures: Capture[] = []
+  const decisions: Decision[] = []
+  const seen = new Set<string>()
+  for (let page = 0; page < WEEK_MAX_PAGES; page++) {
+    const result = await fetchPage(since, captures.length)
+    for (const capture of result.captures) {
+      if (seen.has(capture.id)) continue
+      seen.add(capture.id)
+      captures.push(capture)
+    }
+    decisions.push(...result.decisions)
+    const total = result.total
+    const honoured = typeof total === 'number' && result.captures.every(c => { const ms = Date.parse(c.createdAt); return Number.isNaN(ms) || ms >= sinceMs - 1000 })
+    if (!honoured) return { captures, decisions, exact: false }
+    if (captures.length >= total || result.captures.length === 0) return { captures, decisions, exact: true }
+  }
+  return { captures, decisions, exact: false }
+}
