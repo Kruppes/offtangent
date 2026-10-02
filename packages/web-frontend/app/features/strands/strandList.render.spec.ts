@@ -328,6 +328,18 @@ describe('strand overview (W4d)', () => {
     expect(replace).toHaveBeenLastCalledWith({ query: {} })
     expect(ids(root)).toHaveLength(3)
   })
+  it('does not reload when only client side state or foreign keys change', async () => {
+    const { fetch, route } = setup()
+    const { root } = overview(route, fetch); await flush()
+    const listCalls = () => fetch.mock.calls.filter(call => String(call[0]).includes('/api/strands')).length
+    const settled = listCalls()
+    route.query = { pinned: '1', other: 'x' }; await flush()
+    expect(ids(root)).toEqual(['pinned-old'])
+    route.query = { pinned: '1', other: 'y' }; await flush()
+    expect(listCalls()).toBe(settled)
+    route.query = { pinned: '1', other: 'y', project_id: 'p1' }; await flush()
+    expect(listCalls()).toBe(settled + 1)
+  })
   it('shows a skeleton while the first page loads', async () => {
     const { fetch, route } = setup()
     route.query = {}

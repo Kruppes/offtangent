@@ -158,7 +158,10 @@ function onSearchKeydown(event: KeyboardEvent) {
 }
 // `/` (focus search) and j/k are bound by the page through the central
 // shortcut composable (`useShortcuts`), not by a listener of this list.
-watch(filters, () => { void pager.reset() }, { deep: true })
+// Only a real change of the server side filters reloads. Opening a strand
+// changes the route too (and `filters` is a fresh object each time); a reload
+// then would empty the list mid-transition and refetch for nothing.
+watch(() => JSON.stringify(filterQuery(filters.value)), () => { void pager.reset() })
 onMounted(() => {
   void pager.reset(); void loadProjects()
   clock = setInterval(() => { now.value = new Date() }, 60_000)
