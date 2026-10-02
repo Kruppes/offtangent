@@ -42,6 +42,19 @@ function messageFor(error: unknown): string {
   return t('fork.error')
 }
 
+/**
+ * W6b: this button unmounts with the old strand. Put the keyboard focus on
+ * the composer of the new strand (where the next step happens), falling back
+ * to the main landmark, instead of leaving it on <body>.
+ */
+function focusNewStrand(tries = 20) {
+  if (typeof document === 'undefined') return
+  const field = document.querySelector<HTMLElement>('#main-content textarea:not([disabled])')
+  if (field) { field.focus(); return }
+  if (tries > 0) { requestAnimationFrame(() => focusNewStrand(tries - 1)); return }
+  document.getElementById('main-content')?.focus()
+}
+
 async function fork() {
   if (state.value === 'loading') return
   state.value = 'loading'
@@ -50,6 +63,7 @@ async function fork() {
     const result = await api.fork(props.strandId, props.messageId)
     state.value = 'done'
     await router.push(`/strands/${encodeURIComponent(result.strandId)}`)
+    focusNewStrand()
   } catch (error) {
     errorText.value = messageFor(error)
     state.value = 'error'

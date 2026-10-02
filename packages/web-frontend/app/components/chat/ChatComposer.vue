@@ -103,7 +103,7 @@
           :title="micLabel"
           :aria-label="micLabel"
           :aria-pressed="dictationPhase === 'recording'"
-          :disabled="dictationPhase === 'transcribing' || dictationPhase === 'starting'"
+          :aria-disabled="dictationPhase === 'transcribing' || dictationPhase === 'starting' ? 'true' : undefined"
           @click="toggleDictation"
         >
           <AppIcon v-if="dictationPhase === 'transcribing'" name="loader" class="h-4 w-4 motion-safe:animate-spin" />

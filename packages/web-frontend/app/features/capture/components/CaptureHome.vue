@@ -293,7 +293,8 @@ onMounted(() => {
           :title="$t(micLabel)"
           :aria-label="$t(micLabel)"
           :aria-pressed="dictationPhase === 'recording'"
-          :disabled="busy || dictationPhase === 'transcribing' || dictationPhase === 'starting'"
+          :disabled="busy"
+          :aria-disabled="dictationPhase === 'transcribing' || dictationPhase === 'starting' ? 'true' : undefined"
           @click="toggleDictation"
         >
           <AppIcon :name="dictationPhase === 'transcribing' ? 'loader' : dictationPhase === 'recording' ? 'square' : 'mic'" :class="dictationPhase === 'transcribing' ? 'motion-safe:animate-spin' : ''" aria-hidden="true" />

@@ -653,7 +653,11 @@ describe('Capture Home dictation', () => {
   const bar = byTestId(root, 'dictation-bar')[0]!
   expect(bar.props['data-phase']).toBe('transcribing')
   expect(text(bar)).toContain('chat.dictation.transcribing')
-  expect(mic(root).props.disabled).toBe(true)
+  // W6b: inert via aria-disabled instead of `disabled`, so keyboard focus stays on the mic.
+  expect(mic(root).props['aria-disabled']).toBe('true')
+  expect(mic(root).props.disabled).toBeFalsy()
+  await tapMic(root)
+  expect(byTestId(root, 'dictation-bar')[0]!.props['data-phase']).toBe('transcribing')
   expect(mic(root).props['aria-label']).toBe('capture.dictation.transcribing')
   expect(button(root, 'capture.send').props.disabled).toBe(true)
   expect(field(root).props.value).toBe('Typed start')

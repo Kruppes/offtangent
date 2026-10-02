@@ -56,9 +56,14 @@ function toggleContext() {
   if (inline.value) shell.setContextOpen(threadId.value, !inlineOpen.value)
   else sheetOpen.value = !sheetOpen.value
 }
+const contextToggleRef = ref<HTMLButtonElement | null>(null)
 function closeContext() {
+  // W6b: the close button disappears with the dock; hand the keyboard focus
+  // back to the toggle that opened it instead of dropping it on <body>.
+  const hadFocus = !!document.activeElement?.closest('[data-testid="strand-dock"]')
   if (inline.value) shell.setContextOpen(threadId.value, false)
   else sheetOpen.value = false
+  if (hadFocus) void nextTick(() => contextToggleRef.value?.focus())
 }
 onShortcut('context.toggle', toggleContext)
 
@@ -110,7 +115,7 @@ const ringLabel = computed(() => {
       <StrandDetailHeader :key="threadId" :strand-id="threadId" :show-back="shell.tier.value === 'one'" @back="backToInbox" @updated="updated" @deleted="deleted">
         <template #actions>
           <StrandRunningHint :hint="hint" @open="openActivity" />
-          <button type="button" data-testid="context-toggle"
+          <button ref="contextToggleRef" type="button" data-testid="context-toggle"
             class="inline-flex h-11 w-11 shrink-0 items-center justify-center rounded-lg text-muted-foreground hover:bg-accent hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
             :class="contextOpen ? 'bg-accent text-foreground' : ''"
             :aria-label="headerGauge ? `${$t('shell.contextToggle')} · ${ringLabel}` : $t('shell.contextToggle')" :aria-pressed="contextOpen" :aria-controls="contextOpen ? 'strand-context-column' : undefined" @click="toggleContext">
