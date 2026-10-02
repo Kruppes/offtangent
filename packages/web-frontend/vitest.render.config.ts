@@ -25,6 +25,10 @@ export default defineConfig({
     globals: true,
     environment: 'node',
     root: __dirname,
+    // Same caps as the root config: these runs share the live container.
+    pool: 'forks',
+    maxWorkers: 2,
+    poolOptions: { forks: { execArgv: ['--max-old-space-size=2048'] } },
     include: ['app/**/*.render.spec.ts'],
   },
 })

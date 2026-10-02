@@ -18,6 +18,11 @@ export default defineConfig({
   test: {
     globals: true,
     environment: 'node',
+    // Agent runs execute this suite inside the live container. Uncapped, one
+    // worker per core grew to ~4 GB each and starved the server next to it.
+    pool: 'forks',
+    maxWorkers: 2,
+    poolOptions: { forks: { execArgv: ['--max-old-space-size=2048'] } },
     // Every test file gets its own empty DATA_DIR and WORKSPACE_DIR, so a run
     // never reads the live /data of the machine it runs on.
     setupFiles: ['./vitest.setup.ts'],

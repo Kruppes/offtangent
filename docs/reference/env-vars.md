@@ -21,6 +21,7 @@ These three must be set for any non-development deployment.
 | `HOST` | `0.0.0.0` | Interface the backend binds to. Inside Docker, leave at `0.0.0.0`. |
 | `PORT` | `3000` | Port the backend listens on inside the container. |
 | `HOST_PORT` | `3000` | (Compose-only) Host-side port mapped to the container's `3000`. Set this if `3000` is already taken on the host. |
+| `MEM_LIMIT` | `0` (no limit) | (Compose-only) Memory cap for the container, e.g. `8g`. The agent runs test suites and headless browsers in the same container as the server; with a cap, a runaway process is OOM-killed inside the container instead of starving the host. Leave room for the server (~400 MB) above what a task needs. |
 | `PUBLIC_BASE_URL` | _(unset; falls back to the request host)_ | Public origin of this instance, e.g. `https://instance.example`. Connector OAuth redirect URIs are derived from it ([Connectors](../concepts/connectors)) and must be registered verbatim at the provider, so set it on any deployment behind a proxy. |
 
 ## Storage

@@ -7,6 +7,10 @@ services:
     image: ${IMAGE_REF:-${IMAGE_NAME:-offtangent}:local}
     container_name: ${CONTAINER_NAME:-offtangent}
     restart: unless-stopped
+    # Agent work (test runs, headless browsers) shares this container with the
+    # server. A cap makes the kernel kill the runaway process inside it instead
+    # of letting the whole host thrash. 0 = no limit.
+    mem_limit: ${MEM_LIMIT:-0}
     ports:
       - "${HOST_PORT:-3000}:3000"
     volumes:
