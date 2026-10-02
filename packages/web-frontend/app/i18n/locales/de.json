@@ -1850,7 +1850,12 @@
     "searchClear": "Suche leeren",
     "searchHint": "Mit / suchen, Esc leert. Mindestens 2 Zeichen.",
     "searchEmpty": "Kein Strand passt zu „{q}“.",
-    "searchReset": "Suche zurücksetzen"
+    "searchReset": "Suche zurücksetzen",
+    "filters": "Filter",
+    "state": {
+      "running": "läuft",
+      "queued": "wartet"
+    }
   },
   "strandDetail": {
     "back": "Zurück zu Strands",
@@ -2155,5 +2160,21 @@
       "reachableYes": "· erreichbar: ja",
       "reachableNo": "· erreichbar: nein"
     }
+  },
+  "shell": {
+    "sidebar": "Seitenleiste",
+    "sidebarCollapse": "Seitenleiste auf Symbole verkleinern",
+    "sidebarExpand": "Seitenleiste ausklappen",
+    "pickStrand": "Kein Strand geöffnet",
+    "pickStrandHint": "Wähle links einen Strand oder öffne mit Strg+K die Befehlspalette.",
+    "context": "Kontext",
+    "contextToggle": "Kontextspalte ein- oder ausblenden",
+    "contextClose": "Kontextspalte schließen",
+    "contextCanvas": "Canvas und Artefakte",
+    "contextCanvasEmpty": "In diesem Strand gibt es noch keine Canvas-Ansichten.",
+    "contextStrand": "Strand",
+    "contextMessages": "Nachrichten",
+    "contextStarted": "Begonnen",
+    "contextLastActivity": "Zuletzt aktiv"
   }
 }

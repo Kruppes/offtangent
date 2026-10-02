@@ -4,8 +4,8 @@ import { useFeed } from '~/composables/useFeed'
 import { useChat } from '~/composables/useChat'
 import { useStorage } from '@vueuse/core'
 
-const props = withDefaults(defineProps<{ mobile?: boolean; isAdmin?: boolean; emailConfigured?: boolean; path: string }>(), {
-  mobile: false, isAdmin: false, emailConfigured: false,
+const props = withDefaults(defineProps<{ mobile?: boolean; compact?: boolean; isAdmin?: boolean; emailConfigured?: boolean; path: string }>(), {
+  mobile: false, compact: false, isAdmin: false, emailConfigured: false,
 })
 const { unreadCount, refreshCount } = useFeed()
 const chat = useChat()
@@ -115,6 +115,20 @@ function closeSheet(restoreFocus = true) {
   if (typeof window !== 'undefined') window.removeEventListener('keydown', onSheetKeydown)
   if (restoreFocus) void nextTick(() => moreButton.value?.focus())
 }
+/**
+ * Desktop entries. Active = filled surface plus a 3 px marker on the leading
+ * edge (shape, not colour alone); icons-only mode keeps a 44 px target and
+ * names the entry through `aria-label` and a tooltip.
+ */
+function entryClass(isActive: boolean) {
+  return [
+    'relative flex min-h-11 items-center rounded-lg text-sm font-medium focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring',
+    props.compact ? 'w-11 justify-center' : 'gap-3 px-3 py-2',
+    isActive
+      ? 'bg-primary-container text-on-primary-container before:absolute before:inset-y-2 before:-left-1.5 before:w-[3px] before:rounded-full before:bg-primary'
+      : 'text-sidebar-foreground hover:bg-accent',
+  ]
+}
 function navigateFromSheet() {
   closeSheet(false)
   emit('navigate')
@@ -124,8 +138,8 @@ function navigateFromSheet() {
 <template>
   <nav v-if="mobile" :aria-label="$t('nav.primary')" class="grid shrink-0 grid-cols-5 border-t border-border bg-background pb-[env(safe-area-inset-bottom)] md:hidden">
     <NuxtLink v-for="item in primary" :key="item.path" :to="item.path" :aria-current="active(path, item.path) ? 'page' : undefined"
-      class="flex min-h-14 min-w-0 flex-col items-center justify-center gap-1 text-2xs font-medium"
-      :class="active(path, item.path) ? 'bg-primary/10 text-primary' : 'text-muted-foreground'" @click="emit('navigate')">
+      class="relative flex min-h-14 min-w-0 flex-col items-center justify-center gap-1 text-2xs font-medium"
+      :class="active(path, item.path) ? 'bg-primary-container text-on-primary-container before:absolute before:inset-x-4 before:top-0 before:h-[3px] before:rounded-full before:bg-primary' : 'text-muted-foreground'" @click="emit('navigate')">
       <AppIcon :name="item.icon" />
       <span class="w-full truncate px-0.5 text-center">{{ $t(`nav.${item.label}`) }}</span>
       <span v-if="item.path === '/feed' && unreadCount > 0" class="h-2 w-2 shrink-0 rounded-full bg-primary" role="status"><span class="sr-only">{{ $t('feed.unreadCount', { count: unreadCount }) }}</span></span>
@@ -158,32 +172,70 @@ function navigateFromSheet() {
       </div>
     </Teleport>
   </nav>
-  <nav v-else :aria-label="$t('nav.primary')" class="flex flex-1 flex-col gap-1 overflow-y-auto p-2.5 py-3.5">
+  <nav v-else :aria-label="$t('nav.primary')" data-testid="nav-desktop" :data-compact="compact ? 'true' : undefined"
+    class="flex flex-1 flex-col gap-1 overflow-y-auto overflow-x-hidden py-3.5" :class="compact ? 'items-center px-1.5' : 'p-2.5'">
     <div class="hidden space-y-1 md:block">
-      <NuxtLink v-for="item in primary" :key="item.path" :to="item.path" :aria-current="active(path, item.path) ? 'page' : undefined"
-        class="flex min-h-11 items-center gap-3 rounded-lg px-3 py-2 text-sm font-medium"
-        :class="active(path, item.path) ? 'bg-primary/10 text-primary ring-1 ring-primary/20' : 'text-sidebar-foreground hover:bg-sidebar-accent'" @click="emit('navigate')">
-        <AppIcon :name="item.icon" /><span>{{ $t(`nav.${item.label}`) }}</span>
-      <span v-if="item.path === '/feed' && unreadCount > 0" class="h-2 w-2 shrink-0 rounded-full bg-primary" role="status"><span class="sr-only">{{ $t('feed.unreadCount', { count: unreadCount }) }}</span></span>
-      </NuxtLink>
+      <template v-for="item in primary" :key="item.path">
+        <Tooltip v-if="compact">
+          <TooltipTrigger as-child>
+            <NuxtLink :to="item.path" :aria-current="active(path, item.path) ? 'page' : undefined" :aria-label="$t(`nav.${item.label}`)"
+              :class="entryClass(active(path, item.path))" @click="emit('navigate')">
+              <AppIcon :name="item.icon" />
+              <span v-if="item.path === '/feed' && unreadCount > 0" class="absolute right-1.5 top-1.5 h-2 w-2 rounded-full bg-primary" role="status"><span class="sr-only">{{ $t('feed.unreadCount', { count: unreadCount }) }}</span></span>
+            </NuxtLink>
+          </TooltipTrigger>
+          <TooltipContent side="right">{{ $t(`nav.${item.label}`) }}</TooltipContent>
+        </Tooltip>
+        <NuxtLink v-else :to="item.path" :aria-current="active(path, item.path) ? 'page' : undefined"
+          :class="entryClass(active(path, item.path))" @click="emit('navigate')">
+          <AppIcon :name="item.icon" /><span>{{ $t(`nav.${item.label}`) }}</span>
+          <span v-if="item.path === '/feed' && unreadCount > 0" class="h-2 w-2 shrink-0 rounded-full bg-primary" role="status"><span class="sr-only">{{ $t('feed.unreadCount', { count: unreadCount }) }}</span></span>
+        </NuxtLink>
+      </template>
     </div>
     <template v-if="systemItems.length">
-      <button type="button" data-testid="nav-system-toggle" class="mt-2 flex min-h-11 items-center gap-3 rounded-lg px-3 text-sm font-medium text-muted-foreground hover:bg-sidebar-accent hover:text-sidebar-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring" :aria-expanded="expanded" aria-controls="system-navigation" @click="toggleSystem">
+      <Tooltip v-if="compact">
+        <TooltipTrigger as-child>
+          <button type="button" data-testid="nav-system-toggle" class="mt-2 flex min-h-11 w-11 items-center justify-center rounded-lg text-muted-foreground hover:bg-accent hover:text-sidebar-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring" :aria-expanded="expanded" aria-controls="system-navigation" :aria-label="$t('nav.system')" @click="toggleSystem">
+            <AppIcon :name="expanded ? 'chevronDown' : 'more'" />
+          </button>
+        </TooltipTrigger>
+        <TooltipContent side="right">{{ $t('nav.system') }}</TooltipContent>
+      </Tooltip>
+      <button v-else type="button" data-testid="nav-system-toggle" class="mt-2 flex min-h-11 items-center gap-3 rounded-lg px-3 text-sm font-medium text-muted-foreground hover:bg-accent hover:text-sidebar-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring" :aria-expanded="expanded" aria-controls="system-navigation" @click="toggleSystem">
         <AppIcon :name="expanded ? 'chevronDown' : 'chevronRight'" /><span>{{ $t('nav.system') }}</span>
       </button>
       <div v-show="expanded" id="system-navigation" class="space-y-1">
-        <NuxtLink v-for="item in systemItems" :key="item.path" :to="item.path" :aria-current="active(path, item.path) ? 'page' : undefined"
-          class="flex min-h-11 items-center gap-3 rounded-lg px-3 py-2 text-sm font-medium"
-          :class="active(path, item.path) ? 'bg-primary/10 text-primary' : 'text-sidebar-foreground hover:bg-sidebar-accent'" @click="emit('navigate')">
-          <AppIcon :name="item.icon" /><span>{{ $t(`nav.${item.label}`) }}</span>
-        </NuxtLink>
+        <template v-for="item in systemItems" :key="item.path">
+          <Tooltip v-if="compact">
+            <TooltipTrigger as-child>
+              <NuxtLink :to="item.path" :aria-current="active(path, item.path) ? 'page' : undefined" :aria-label="$t(`nav.${item.label}`)"
+                :class="entryClass(active(path, item.path))" @click="emit('navigate')">
+                <AppIcon :name="item.icon" />
+              </NuxtLink>
+            </TooltipTrigger>
+            <TooltipContent side="right">{{ $t(`nav.${item.label}`) }}</TooltipContent>
+          </Tooltip>
+          <NuxtLink v-else :to="item.path" :aria-current="active(path, item.path) ? 'page' : undefined"
+            :class="entryClass(active(path, item.path))" @click="emit('navigate')">
+            <AppIcon :name="item.icon" /><span>{{ $t(`nav.${item.label}`) }}</span>
+          </NuxtLink>
+        </template>
       </div>
     </template>
     <!-- Settings stays one click away, whatever the System block does. -->
-    <div v-if="settingsItem" class="mt-auto border-t border-sidebar-border/60 pt-2">
-      <NuxtLink :to="settingsItem.path" data-testid="nav-settings-pinned" :aria-current="!expanded && active(path, settingsItem.path) ? 'page' : undefined"
-        class="flex min-h-11 items-center gap-3 rounded-lg px-3 py-2 text-sm font-medium"
-        :class="active(path, settingsItem.path) ? 'bg-primary/10 text-primary' : 'text-sidebar-foreground hover:bg-sidebar-accent'" @click="emit('navigate')">
+    <div v-if="settingsItem" class="mt-auto border-t border-sidebar-border pt-2" :class="compact ? 'flex justify-center' : ''">
+      <Tooltip v-if="compact">
+        <TooltipTrigger as-child>
+          <NuxtLink :to="settingsItem.path" data-testid="nav-settings-pinned" :aria-current="!expanded && active(path, settingsItem.path) ? 'page' : undefined" :aria-label="$t(`nav.${settingsItem.label}`)"
+            :class="entryClass(active(path, settingsItem.path))" @click="emit('navigate')">
+            <AppIcon :name="settingsItem.icon" />
+          </NuxtLink>
+        </TooltipTrigger>
+        <TooltipContent side="right">{{ $t(`nav.${settingsItem.label}`) }}</TooltipContent>
+      </Tooltip>
+      <NuxtLink v-else :to="settingsItem.path" data-testid="nav-settings-pinned" :aria-current="!expanded && active(path, settingsItem.path) ? 'page' : undefined"
+        :class="entryClass(active(path, settingsItem.path))" @click="emit('navigate')">
         <AppIcon :name="settingsItem.icon" /><span>{{ $t(`nav.${settingsItem.label}`) }}</span>
       </NuxtLink>
     </div>

@@ -10,13 +10,15 @@
   >
     <div
       v-if="sidebarOpen"
-      class="fixed inset-0 z-40 bg-scrim md:hidden"
+      class="fixed inset-0 z-40 bg-scrim"
       aria-hidden="true"
       @click="sidebarOpen = false"
     />
   </Transition>
 
   <div class="flex h-full overflow-hidden">
+    <!-- Keeps the page still while the labelled sidebar floats over the icon rail. -->
+    <div v-if="sidebarOpen && effectiveMode === 'rail'" class="w-14 shrink-0" aria-hidden="true" />
     <!-- Sidebar -->
     <Transition
       enter-active-class="transition-transform duration-250 ease-out"
@@ -26,14 +28,21 @@
       leave-from-class="translate-x-0"
       leave-to-class="-translate-x-full"
     >
+      <!-- Desktop: labelled 256 px, icons 56 px or hidden (remembered per
+           device, Ctrl+B / Ctrl+\ hides it and brings back the last mode).
+           Mobile: the labelled drawer as before. -->
       <aside
-        v-show="sidebarOpen || !isMobile"
-        class="fixed inset-y-0 left-0 z-50 flex w-[260px] flex-col border-r border-sidebar-border bg-sidebar md:static md:z-auto"
+        v-show="sidebarOpen || effectiveMode !== 'hidden'"
+        data-testid="shell-sidebar"
+        :data-mode="sidebarOpen ? 'drawer' : effectiveMode"
+        class="flex shrink-0 flex-col border-r border-sidebar-border bg-sidebar"
+        :class="sidebarOpen ? 'fixed inset-y-0 left-0 z-50 w-64 shadow-overlay' : compact ? 'static w-14' : 'static w-64'"
+        :aria-label="$t('shell.sidebar')"
       >
         <!-- Sidebar header -->
-        <div class="flex items-center gap-3 border-b border-sidebar-border/60 px-5 py-[18px]">
+        <div class="flex items-center gap-3 border-b border-sidebar-border py-4" :class="compact ? 'justify-center px-1' : 'px-5'">
           <AppLogo />
-          <div class="min-w-0">
+          <div v-if="!compact" class="min-w-0">
             <span class="block truncate text-lg font-bold text-sidebar-foreground">
               {{ $t('app.title') }}
             </span>
@@ -44,14 +53,16 @@
         </div>
 
         <!-- Navigation -->
-        <ShellNavigation :path="route.path" :is-admin="isAdmin" :email-configured="emailConfigured" @navigate="closeSidebarOnMobile" />
+        <ShellNavigation :path="route.path" :compact="compact" :is-admin="isAdmin" :email-configured="emailConfigured" @navigate="closeSidebarOnMobile" />
 
         <!-- Sidebar footer — user menu -->
-        <div class="border-t border-sidebar-border/60">
+        <div class="border-t border-sidebar-border">
           <DropdownMenu>
             <DropdownMenuTrigger as-child>
-              <div
-                class="flex w-full cursor-pointer items-center gap-2.5 px-4 py-[15px] hover:bg-sidebar-accent transition-colors"
+              <button
+                type="button"
+                class="flex w-full cursor-pointer items-center gap-2.5 py-3.5 text-left transition-colors hover:bg-accent focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring"
+                :class="compact ? 'justify-center px-1' : 'px-4'"
                 :aria-label="$t('aria.userMenu')"
               >
                 <!-- Avatar -->
@@ -69,17 +80,17 @@
                   {{ userInitial }}
                 </span>
                 <!-- Name + role -->
-                <div class="flex min-w-0 flex-1 flex-col">
+                <div v-if="!compact" class="flex min-w-0 flex-1 flex-col">
                   <span class="truncate text-sm font-medium text-sidebar-foreground leading-none">{{ user?.username }}</span>
                   <span class="mt-1 text-2xs uppercase tracking-wide text-muted-foreground">
                     {{ isAdmin ? $t('roles.admin') : $t('roles.user') }}
                   </span>
                 </div>
                 <!-- Open indicator -->
-                <AppIcon name="chevronsUpDown" size="sm" class="shrink-0 text-muted-foreground" />
-              </div>
+                <AppIcon v-if="!compact" name="chevronsUpDown" size="sm" class="shrink-0 text-muted-foreground" />
+              </button>
             </DropdownMenuTrigger>
-            <DropdownMenuContent align="center" side="top" class="w-[calc(260px-1.5rem)]">
+            <DropdownMenuContent :align="compact ? 'start' : 'center'" :side="compact ? 'right' : 'top'" class="w-56">
               <DropdownMenuLabel>
                 {{ user?.username }}
               </DropdownMenuLabel>
@@ -130,6 +141,23 @@
         >
           <AppIcon name="menu" size="xl" />
         </button>
+
+        <!-- Desktop sidebar toggle: labelled <-> icons; brings a hidden sidebar back. -->
+        <Tooltip>
+          <TooltipTrigger as-child>
+            <button
+              type="button"
+              data-testid="sidebar-toggle"
+              class="-ml-3 hidden h-11 w-11 items-center justify-center rounded-md text-muted-foreground hover:bg-accent hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring md:inline-flex"
+              :aria-label="sidebarToggleLabel"
+              :aria-pressed="labelled"
+              @click="toggleSidebarCompact"
+            >
+              <AppIcon :name="labelled ? 'panelLeftClose' : 'panelLeftOpen'" />
+            </button>
+          </TooltipTrigger>
+          <TooltipContent side="bottom">{{ sidebarToggleLabel }} (Ctrl+B)</TooltipContent>
+        </Tooltip>
 
         <!-- Connection status (desktop only) -->
         <div v-if="globalHealthMonitorEnabled" class="hidden items-center gap-2 md:flex">
@@ -211,6 +239,8 @@
 <script setup lang="ts">
 import { useMediaQuery } from '@vueuse/core'
 import { useEmailApi } from '~/api/email'
+import { useShellLayout } from '~/composables/useShellLayout'
+import { onShortcut } from '~/composables/useShortcuts'
 
 const route = useRoute()
 const runtimeConfig = useRuntimeConfig()
@@ -223,6 +253,28 @@ const { isDark, toggle: toggleTheme } = useTheme()
 
 const sidebarOpen = ref(false)
 const isMobile = useMediaQuery('(max-width: 767px)')
+const shell = useShellLayout()
+/** Mode drawn at this width: icons below 1280 px even when "labelled" is stored. */
+const effectiveMode = shell.effectiveMode
+const compact = computed(() => !sidebarOpen.value && effectiveMode.value === 'rail')
+const labelled = computed(() => sidebarOpen.value || effectiveMode.value === 'full')
+const sidebarToggleLabel = computed(() => (labelled.value ? t('shell.sidebarCollapse') : t('shell.sidebarExpand')))
+/** Header button: labelled <-> icons. Where the window is too narrow for a labelled column it floats over the page. */
+function toggleSidebarCompact() {
+  if (sidebarOpen.value) sidebarOpen.value = false
+  else if (shell.sidebarMode.value === 'full' && effectiveMode.value === 'rail') sidebarOpen.value = true
+  else shell.toggleSidebarCompact()
+}
+/** Ctrl+B / Ctrl+\: desktop hides the sidebar completely and back; mobile opens the drawer. */
+function toggleSidebar() {
+  if (isMobile.value || sidebarOpen.value) sidebarOpen.value = !sidebarOpen.value
+  else shell.toggleSidebarHidden()
+}
+onShortcut('sidebar.toggle', toggleSidebar)
+onShortcut('dismiss', () => {
+  if (!sidebarOpen.value) return false
+  sidebarOpen.value = false
+})
 
 const isAdmin = computed(() => user.value?.role === 'admin')
 
@@ -280,19 +332,15 @@ onUnmounted(() => {
 })
 
 function closeSidebarOnMobile() {
-  if (isMobile.value) {
-    sidebarOpen.value = false
-  }
+  sidebarOpen.value = false
 }
 
 function handleLogout() {
   void logout()
 }
 
-// Close sidebar when route changes on mobile
+// Close the floating sidebar (drawer / overlay) when the route changes
 watch(route, () => {
-  if (isMobile.value) {
-    sidebarOpen.value = false
-  }
+  sidebarOpen.value = false
 })
 </script>

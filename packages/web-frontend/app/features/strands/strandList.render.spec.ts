@@ -208,4 +208,25 @@ describe('shared strand list', () => {
     expect(fetch.mock.calls.some(call => String(call[0]).includes('q=needle'))).toBe(true)
     expect(text(root)).toContain('strandsW3.searchEmpty')
   })
+  it('compact column marks the open strand and shows the turn state of the others', async () => {
+    const { fetch } = setup()
+    fetch.mockImplementation(async url => {
+      if (String(url).includes('/api/projects')) return new Response('{"projects":[]}')
+      return new Response(JSON.stringify({ strands: [
+        { id: 'open-one', title: 'Open strand', tags: [], pinned: false, archived: false, lastActivity: '2026-09-01', messageCount: 1 },
+        { id: 'busy-one', title: 'Busy strand', tags: [], pinned: false, archived: false, lastActivity: '2026-09-01', messageCount: 1 },
+        { id: 'queued-one', title: 'Queued strand', tags: [], pinned: false, archived: false, lastActivity: '2026-09-01', messageCount: 1 },
+      ] }))
+    })
+    const { root } = mount(Vue.defineComponent({ render: () => Vue.h(List, { compact: true, activeId: 'open-one', activity: { 'busy-one': { state: 'thinking' }, 'queued-one': { state: 'queued' } } }) }))
+    await flush()
+    const rows = all(root).filter(n => n.props['data-testid'] === 'strand-row')
+    expect(rows.map(r => r.props['data-strand-id'])).toEqual(['open-one', 'busy-one', 'queued-one'])
+    expect(rows[0]!.props['data-active']).toBe('true')
+    expect(rows[1]!.props['data-active']).toBeUndefined()
+    expect(text(rows[1]!)).toContain('strandsW3.state.running')
+    expect(text(rows[2]!)).toContain('strandsW3.state.queued')
+    expect(text(rows[0]!)).not.toContain('strandsW3.state')
+    expect(all(rows[0]!).some(n => n.props['aria-current'] === 'page')).toBe(true)
+  })
 })

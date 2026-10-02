@@ -4,7 +4,11 @@
       // Mobile: messages fill the available width (minus avatar + gap
       // or the pl-11 offset for tool cards). On sm+ screens we cap them
       // so bubbles don't span edge-to-edge on wider viewports.
-      msg.role === 'divider' ? 'w-full' : (msg.role === 'tool' || (msg.role === 'system' && (msg.isTaskResult || msg.isTaskStatusUpdate || msg.stallInfo || msg.errorInfo || msg.picker || msg.chatAction)) || msg.isThinking) ? 'self-start w-full max-w-full sm:max-w-[75%] pl-11' : 'flex max-w-full gap-3 sm:max-w-[75%]',
+      msg.role === 'divider' ? 'w-full' : (msg.role === 'tool' || (msg.role === 'system' && (msg.isTaskResult || msg.isTaskStatusUpdate || msg.stallInfo || msg.errorInfo || msg.picker || msg.chatAction)) || msg.isThinking) ? 'self-start w-full max-w-full sm:max-w-[75%] pl-11' : msg.role === 'assistant'
+        // Answers keep their reading measure (~31rem of text) when the shell's
+        // columns make the conversation narrow (two/three columns, W3).
+        ? 'flex max-w-full gap-3 sm:max-w-[min(100%,max(75%,34rem))]'
+        : 'flex max-w-full gap-3 sm:max-w-[75%]',
       {
         'self-end flex-row-reverse': msg.role === 'user',
         'self-start': msg.role === 'assistant' && !msg.isThinking,

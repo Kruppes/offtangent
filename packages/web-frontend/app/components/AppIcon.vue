@@ -81,6 +81,12 @@ import {
   Ellipsis,
   MicOff,
   RotateCcw,
+  PanelLeft,
+  PanelLeftClose,
+  PanelLeftOpen,
+  PanelRight,
+  Keyboard,
+  Command,
 } from 'lucide-vue-next'
 
 const iconMap = {
@@ -156,6 +162,12 @@ const iconMap = {
   more: Ellipsis,
   micOff: MicOff,
   retry: RotateCcw,
+  panelLeft: PanelLeft,
+  panelLeftClose: PanelLeftClose,
+  panelLeftOpen: PanelLeftOpen,
+  panelRight: PanelRight,
+  keyboard: Keyboard,
+  command: Command,
 } as const
 
 const props = withDefaults(defineProps<{

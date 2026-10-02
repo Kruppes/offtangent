@@ -19,6 +19,8 @@ async function render(props: Record<string, unknown> = {}) {
   const app = createSSRApp(ShellNavigation, { path: '/strands', isAdmin: true, ...props })
   app.component('NuxtLink', Link)
   app.component('AppIcon', defineComponent({ setup: () => () => h('i') }))
+  for (const name of ['Tooltip', 'TooltipTrigger']) app.component(name, defineComponent({ setup: (_, { slots }) => () => slots.default?.() }))
+  app.component('TooltipContent', defineComponent({ setup: (_, { slots }) => () => h('span', { role: 'tooltip' }, slots.default?.()) }))
   app.config.globalProperties.$t = (key: string) => key
   return renderToString(app)
 }
@@ -83,5 +85,24 @@ describe('Offtangent shell navigation', () => {
     const html = await render({ mobile: true, path: '/strands/abc' })
     expect(html.match(/aria-current="page"/g)).toHaveLength(1)
     expect(html).toMatch(/href="\/strands"[^>]*aria-current="page"/)
+  })
+  it('icons-only mode names every entry and keeps 44 px targets', async () => {
+    storage.open = false
+    const html = await render({ path: '/feed', compact: true })
+    expect(html).toContain('data-compact="true"')
+    for (const label of ['nav.home', 'nav.strands', 'nav.feed', 'nav.boards', 'nav.system', 'nav.settings']) {
+      expect(html).toContain(`aria-label="${label}"`)
+    }
+    expect(html).toMatch(/role="tooltip"[^>]*>\s*nav\.strands/)
+    expect(html.match(/w-11 justify-center/g)!.length).toBeGreaterThanOrEqual(6)
+  })
+  it('marks the active entry with a surface and a leading marker, not colour alone', async () => {
+    for (const compact of [false, true]) {
+      const html = await render({ path: '/boards', compact })
+      const link = html.match(/<a href="\/boards"[^>]*>/)![0]
+      expect(link).toContain('aria-current="page"')
+      expect(link).toContain('bg-primary-container')
+      expect(link).toContain('before:bg-primary')
+    }
   })
 })

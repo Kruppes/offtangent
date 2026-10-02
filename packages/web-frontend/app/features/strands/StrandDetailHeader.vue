@@ -5,7 +5,7 @@ import { useModelsApi, type ModelSelection, type SelectableModel } from '~/api/m
 import { useProjectsApi } from '~/api/projects'
 import StrandActions from './StrandActions.vue'
 import { strandErrorKey, useStrandDetailApi, type StrandDetail } from './detailApi'
-const props = defineProps<{ strandId: string }>()
+const props = withDefaults(defineProps<{ strandId: string; showBack?: boolean }>(), { showBack: true })
 const emit = defineEmits<{ back: []; updated: [strand: StrandDetail]; deleted: [id: string] }>()
 const { t } = useI18n()
 const api = useStrandDetailApi()
@@ -114,9 +114,11 @@ onMounted(() => { void load(); void loadProjects() })
 <template>
   <header class="max-h-[50dvh] shrink-0 overflow-y-auto border-b border-border bg-background px-3 py-3 md:px-6" :aria-busy="loading || saving">
     <div class="flex items-center gap-3">
-      <Button class="min-h-11 min-w-11" variant="ghost" :aria-label="t('strandDetail.back')" @click="emit('back')"><AppIcon name="arrowLeft" class="h-5 w-5" /></Button>
+      <Button v-if="showBack" class="min-h-11 min-w-11" variant="ghost" :aria-label="t('strandDetail.back')" @click="emit('back')"><AppIcon name="arrowLeft" class="h-5 w-5" /></Button>
       <h1 class="min-w-0 flex-1 break-words text-lg font-semibold">{{ strand?.title || t('strandDetail.untitled') }}</h1>
       <Button v-if="strand" class="min-h-11" variant="outline" :disabled="saving" :aria-expanded="editing" @click="editing ? editing = false : edit()">{{ t('strandDetail.edit') }}</Button>
+      <!-- Shell controls of the strand view (context column toggle, W3). -->
+      <slot name="actions" />
     </div>
     <p v-if="loading" role="status" class="text-sm text-muted-foreground">{{ t('strandDetail.loading') }}</p>
     <Alert v-if="error" variant="destructive" role="alert" class="my-2"><AlertDescription>{{ error }}</AlertDescription><Button class="min-h-11" variant="ghost" :disabled="saving" @click="load">{{ t('strandDetail.retry') }}</Button><Button v-if="strand" class="min-h-11" variant="ghost" @click="error = ''">{{ t('strandDetail.dismiss') }}</Button></Alert>

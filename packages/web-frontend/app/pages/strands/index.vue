@@ -1,9 +1,11 @@
 <script setup lang="ts">
-import StrandList from '~/features/strands/StrandList.vue'
+// The list lives in the parent page (`pages/strands.vue`). With two or three
+// columns this child fills the conversation column until a strand is chosen.
 </script>
 <template>
-  <div class="flex h-full min-h-0 min-w-0 flex-col overflow-hidden">
-    <h1 class="px-3 pt-3 text-xl font-bold md:px-6">{{ $t('strandsW3.title') }}</h1>
-    <StrandList />
+  <div class="flex h-full flex-col items-center justify-center gap-2 p-6 text-center text-muted-foreground" data-testid="strand-placeholder">
+    <AppIcon name="chat" size="lg" />
+    <p class="text-sm font-semibold text-foreground">{{ $t('shell.pickStrand') }}</p>
+    <p class="max-w-xs text-sm">{{ $t('shell.pickStrandHint') }}</p>
   </div>
 </template>

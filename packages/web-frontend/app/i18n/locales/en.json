@@ -1850,7 +1850,12 @@
     "searchClear": "Clear search",
     "searchHint": "Press / to search, Esc clears. At least 2 characters.",
     "searchEmpty": "No strand matches “{q}”.",
-    "searchReset": "Reset search"
+    "searchReset": "Reset search",
+    "filters": "Filters",
+    "state": {
+      "running": "running",
+      "queued": "queued"
+    }
   },
   "strandDetail": {
     "back": "Back to strands",
@@ -2155,5 +2160,21 @@
       "reachableYes": "· reachable: yes",
       "reachableNo": "· reachable: no"
     }
+  },
+  "shell": {
+    "sidebar": "Sidebar",
+    "sidebarCollapse": "Collapse sidebar to icons",
+    "sidebarExpand": "Expand sidebar",
+    "pickStrand": "No strand open",
+    "pickStrandHint": "Pick a strand on the left or press Ctrl+K for the command palette.",
+    "context": "Context",
+    "contextToggle": "Show or hide context column",
+    "contextClose": "Close context column",
+    "contextCanvas": "Canvas and artifacts",
+    "contextCanvasEmpty": "This strand has no canvas views yet.",
+    "contextStrand": "Strand",
+    "contextMessages": "Messages",
+    "contextStarted": "Started",
+    "contextLastActivity": "Last activity"
   }
 }
