@@ -7,6 +7,8 @@
  * localStorage and the window size.
  */
 
+import { DOCK_DEFAULT_WIDTH, DOCK_MAX_WIDTH, DOCK_MIN_WIDTH, clampDockWidth } from './strandDock'
+
 /** Labelled (256 px), icons only (56 px) or gone (0 px). */
 export type SidebarMode = 'full' | 'rail' | 'hidden'
 export type VisibleSidebarMode = Exclude<SidebarMode, 'hidden'>
@@ -79,10 +81,17 @@ export const TWO_COLUMN_MIN = 768
 export const THREE_COLUMN_MIN = 1024
 /** Strand list column (approved draft: 320 px; 304 px leaves the reading column its 31rem). */
 export const LIST_WIDTH = 304
-/** Context column on the right. */
-export const CONTEXT_WIDTH = 320
-/** Below this the conversation cannot hold the 31rem reading measure plus its padding. */
-export const MIN_CONVERSATION_WIDTH = 528
+/** Default width of the right column (the dock; W4c makes it draggable, see `strandDock.ts`). */
+export const CONTEXT_WIDTH = DOCK_DEFAULT_WIDTH
+/**
+ * Below this the conversation cannot hold its reading measure. An answer row
+ * is capped at 34rem (31rem of running text plus avatar and bubble padding,
+ * see `ChatMessageRow`); the transcript adds 2 x 16 px around it, so the
+ * column needs 36rem = 576 px. W3 counted only the transcript padding
+ * (528 px); measured at 528 px the answers dropped to 46-58 characters per
+ * line, at 576 px they hold 59-64 (W4c report).
+ */
+export const MIN_CONVERSATION_WIDTH = 576
 
 export function columnTier(viewport: number): ColumnTier {
   if (viewport >= THREE_COLUMN_MIN) return 'three'
@@ -91,13 +100,29 @@ export function columnTier(viewport: number): ColumnTier {
 }
 
 /**
- * Where the context column goes. Inline only when the conversation keeps its
- * reading width next to sidebar, list and context; otherwise it opens as a
- * sheet over the conversation (also on two-column and phone widths).
+ * The widest the right column may get at this window width: what is left
+ * after sidebar, list and the conversation's reading measure (31rem plus its
+ * padding), and never more than 560 px. This is the hard rule of W4c: dragging
+ * the column can never squeeze the conversation below its measure.
+ */
+export function dockMaxWidth(viewport: number, sidebarWidth: number): number {
+  return Math.min(DOCK_MAX_WIDTH, viewport - sidebarWidth - LIST_WIDTH - MIN_CONVERSATION_WIDTH)
+}
+
+/**
+ * Where the right column (context dock) goes. Inline only when the
+ * conversation keeps its reading width next to sidebar, list and the column
+ * at its minimum width; otherwise it opens as a sheet over the conversation
+ * (also on two-column and phone widths).
  */
 export function contextPlacement(viewport: number, sidebarWidth: number): 'inline' | 'overlay' {
   if (columnTier(viewport) !== 'three') return 'overlay'
-  return viewport - sidebarWidth - LIST_WIDTH - CONTEXT_WIDTH >= MIN_CONVERSATION_WIDTH ? 'inline' : 'overlay'
+  return dockMaxWidth(viewport, sidebarWidth) >= DOCK_MIN_WIDTH ? 'inline' : 'overlay'
+}
+
+/** The width the inline column is drawn with: the stored width, clamped to the window. */
+export function inlineDockWidth(storedWidth: number, viewport: number, sidebarWidth: number): number {
+  return clampDockWidth(storedWidth, dockMaxWidth(viewport, sidebarWidth))
 }
 
 /** Which panes a strand route shows at this tier. */

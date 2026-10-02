@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest'
+import { DOCK_MAX_WIDTH } from './strandDock'
 import {
-  CONTEXT_WIDTH, LIST_WIDTH, effectiveSidebarMode, SIDEBAR_WIDTH, columnTier, contextPlacement, isContextOpen, parseContextOverrides,
+  CONTEXT_WIDTH, LIST_WIDTH, MIN_CONVERSATION_WIDTH, dockMaxWidth, inlineDockWidth, effectiveSidebarMode, SIDEBAR_WIDTH, columnTier, contextPlacement, isContextOpen, parseContextOverrides,
   parseSidebarState, rememberContext, setSidebarMode, toggleSidebarCompact, toggleSidebarHidden, visiblePanes,
 } from './shellLayout'
 
@@ -66,10 +67,28 @@ describe('column tiers', () => {
     expect(visiblePanes('two', true)).toEqual({ list: true, conversation: true })
     expect(visiblePanes('three', false)).toEqual({ list: true, conversation: true })
   })
+  it('lets the dock grow only into what the reading measure leaves', () => {
+    // 1440 with the labelled sidebar: 1440 - 256 - 304 - 576 = 304.
+    expect(dockMaxWidth(1440, 256)).toBe(304)
+    expect(dockMaxWidth(1440, 56)).toBe(504)
+    expect(dockMaxWidth(1920, 56)).toBe(560)
+    expect(inlineDockWidth(320, 1440, 256)).toBe(304)
+    expect(inlineDockWidth(560, 1440, 56)).toBe(504)
+    expect(inlineDockWidth(200, 1920, 56)).toBe(280)
+    // The conversation keeps MIN_CONVERSATION_WIDTH at every inline width.
+    for (const [viewport, sidebar] of [[1440, 256], [1440, 56], [1280, 56], [1600, 256], [1920, 0]] as const) {
+      if (contextPlacement(viewport, sidebar) !== 'inline') continue
+      const conversation = viewport - sidebar - LIST_WIDTH - inlineDockWidth(DOCK_MAX_WIDTH, viewport, sidebar)
+      expect(conversation).toBeGreaterThanOrEqual(MIN_CONVERSATION_WIDTH)
+    }
+  })
   it('puts the context column inline only when the conversation keeps its reading width', () => {
     expect(LIST_WIDTH + CONTEXT_WIDTH).toBe(624)
     expect(contextPlacement(1440, 256)).toBe('inline')
     expect(contextPlacement(1440, 56)).toBe('inline')
+    // Just below: the dock at its 280 px minimum would squeeze the conversation.
+    expect(contextPlacement(1415, 256)).toBe('overlay')
+    expect(contextPlacement(1416, 256)).toBe('inline')
     expect(contextPlacement(1280, 256)).toBe('overlay')
     expect(contextPlacement(1280, 56)).toBe('inline')
     expect(contextPlacement(1024, 0)).toBe('overlay')
