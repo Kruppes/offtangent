@@ -2176,5 +2176,59 @@
     "contextMessages": "Messages",
     "contextStarted": "Started",
     "contextLastActivity": "Last activity"
+  },
+  "palette": {
+    "title": "Command palette",
+    "open": "Search and jump (command palette)",
+    "trigger": "Search and jump",
+    "inputLabel": "Search strands, pages and actions",
+    "placeholder": "Strand, page or action",
+    "results": "Results",
+    "loading": "Searching strands…",
+    "error": "Strand search failed. Pages and actions still work.",
+    "retry": "Retry",
+    "noStrands": "No strand matches.",
+    "empty": "Nothing found",
+    "emptyHint": "No strand, page or action matches “{q}”.",
+    "count": "{count} results",
+    "footMove": "select",
+    "footRun": "open",
+    "footClose": "close",
+    "newStrand": "New strand",
+    "dictation": "Start dictation",
+    "archive": "Archive this strand",
+    "sidebar": "Toggle sidebar",
+    "shortcuts": "Keyboard shortcuts",
+    "group": {
+      "strands": "Strands",
+      "pages": "Pages",
+      "actions": "Actions"
+    }
+  },
+  "shortcuts": {
+    "title": "Keyboard shortcuts",
+    "description": "Single-key shortcuts do not fire while you type in a field.",
+    "or": "or",
+    "group": {
+      "general": "General",
+      "navigation": "Strand list",
+      "strand": "Open strand"
+    },
+    "action": {
+      "palette_toggle": "Command palette",
+      "help_open": "This help",
+      "sidebar_toggle": "Sidebar: show or hide",
+      "search_focus": "Search strands",
+      "list_next": "Next strand",
+      "list_previous": "Previous strand",
+      "list_open": "Open strand",
+      "canvas_toggle": "Canvas: show or hide",
+      "dismiss": "Close overlay or panel",
+      "context_toggle": "Context column: show or hide",
+      "dictation_toggle": "Dictation: start or stop",
+      "dictation_cancel": "Cancel recording",
+      "palette_move": "Move in palette",
+      "palette_run": "Run palette entry"
+    }
   }
 }

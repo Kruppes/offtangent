@@ -77,7 +77,40 @@ export const EXTERNAL_SHORTCUT_HINTS: readonly ShortcutHint[] = [
   { id: 'list.open', group: 'navigation', display: ['Enter'] },
   { id: 'dictation.toggle', group: 'strand', display: ['Ctrl', 'M'] },
   { id: 'dictation.cancel', group: 'strand', display: ['Esc'] },
+  { id: 'palette.move', group: 'general', display: ['↑', '↓'] },
+  { id: 'palette.run', group: 'general', display: ['Enter'] },
 ]
+
+export const SHORTCUT_GROUPS: readonly ShortcutGroup[] = ['general', 'navigation', 'strand']
+
+export interface HelpRow { id: string; combos: string[][] }
+
+/**
+ * Rows of the help overlay: every binding and every hint, one row per id
+ * (alternatives such as Ctrl+B / Ctrl+\ become one row with two combos),
+ * grouped in display order.
+ */
+export function helpSections(
+  bindings: readonly ShortcutBinding[] = SHORTCUT_BINDINGS,
+  hints: readonly ShortcutHint[] = EXTERNAL_SHORTCUT_HINTS,
+): Array<{ group: ShortcutGroup; rows: HelpRow[] }> {
+  return SHORTCUT_GROUPS.map(group => {
+    const rows: HelpRow[] = []
+    for (const entry of [...bindings, ...hints]) {
+      if (entry.group !== group) continue
+      const row = rows.find(r => r.id === entry.id)
+      if (row) row.combos.push([...entry.display])
+      else rows.push({ id: entry.id, combos: [[...entry.display]] })
+    }
+    return { group, rows }
+  }).filter(section => section.rows.length > 0)
+}
+
+/** macOS shows ⌘ instead of Ctrl (both are accepted everywhere). */
+export function isMacPlatform(nav: { platform?: string; userAgent?: string } | undefined): boolean {
+  if (!nav) return false
+  return /mac|iphone|ipad|ipod/i.test(nav.platform || nav.userAgent || '')
+}
 
 /** Browser/OS combinations the shell must never take over. */
 export const RESERVED_BROWSER_COMBOS = ['f', 'l', 't', 'w', 'n', 'r', 'p', 's', 'd', 'h', 'o', 'u', 'g', 'e', 'a', 'c', 'v', 'x', 'z', 'y', 'q', 'tab', '+', '-', '0'] as const

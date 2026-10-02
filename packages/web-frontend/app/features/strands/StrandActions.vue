@@ -2,8 +2,10 @@
 import { computed, onUnmounted, ref } from 'vue'
 import type { StrandDeletePreview } from '@axiom/core'
 import { strandErrorKey, useStrandDetailApi } from './detailApi'
-const props = defineProps<{ strandId: string; archived: boolean; disabled?: boolean }>()
-const emit = defineEmits<{ 'update:archived': [value: boolean]; changed: []; deleted: [id: string] }>()
+import { provideCommand, useShellCommands } from '~/composables/useShellCommands'
+const props = defineProps<{ strandId: string; archived: boolean; disabled?: boolean; offerCommand?: boolean }>()
+const emit = defineEmits<{ 'update:archived': [value: boolean]; changed: []; deleted: [id: string]; commandRun: [] }>()
+const shellCommands = useShellCommands()
 const { t } = useI18n()
 const api = useStrandDetailApi()
 const pending = ref(false)
@@ -27,10 +29,15 @@ async function archive(value: boolean, isUndo = false) {
     if (undoTimer) clearTimeout(undoTimer)
     if (!isUndo) undoTimer = setTimeout(() => { undo.value = null }, 8000)
     emit('changed')
+    if (props.offerCommand) shellCommands.strandsChanged()
   } catch (cause) {
     emit('update:archived', previous)
     error.value = t(strandErrorKey(cause))
   } finally { pending.value = false }
+}
+// The open strand offers "archive" to the command palette; the undo stays here.
+if (props.offerCommand) {
+  provideCommand('strand.archive', async () => { emit('commandRun'); await archive(true) }, () => !props.archived && !props.disabled && !pending.value)
 }
 async function loadPreview() {
   pending.value = true

@@ -209,6 +209,26 @@
           class="flex items-center gap-1.5 md:hidden"
         />
 
+        <!-- Command palette: the keyboard way in (Ctrl/Cmd+K), also reachable by touch. -->
+        <Tooltip>
+          <TooltipTrigger as-child>
+            <button
+              type="button"
+              data-testid="palette-trigger"
+              class="inline-flex h-11 min-w-11 items-center justify-center gap-2 rounded-md text-muted-foreground transition-colors hover:bg-accent hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring lg:border lg:border-border lg:px-3"
+              :aria-label="$t('palette.open')"
+              aria-haspopup="dialog"
+              :aria-expanded="paletteOpen"
+              @click="paletteOpen = true"
+            >
+              <AppIcon name="search" />
+              <span class="hidden text-sm lg:inline">{{ $t('palette.trigger') }}</span>
+              <kbd class="hidden rounded-md border border-border bg-muted px-1.5 font-mono text-xs lg:inline">{{ paletteKeys }}</kbd>
+            </button>
+          </TooltipTrigger>
+          <TooltipContent side="bottom">{{ $t('palette.open') }} ({{ paletteKeys }})</TooltipContent>
+        </Tooltip>
+
         <!-- Theme toggle preserves the user preference on every screen size. -->
         <Tooltip>
           <TooltipTrigger as-child>
@@ -232,6 +252,8 @@
         <slot />
       </main>
       <ShellNavigation mobile :path="route.path" :is-admin="isAdmin" :email-configured="emailConfigured" />
+      <CommandPalette v-model:open="paletteOpen" :is-admin="isAdmin" :email-configured="emailConfigured" @toggle-sidebar="toggleSidebar" @open-help="openHelp" />
+      <ShortcutHelp v-model:open="helpOpen" />
     </div>
   </div>
 </template>
@@ -241,6 +263,7 @@ import { useMediaQuery } from '@vueuse/core'
 import { useEmailApi } from '~/api/email'
 import { useShellLayout } from '~/composables/useShellLayout'
 import { onShortcut } from '~/composables/useShortcuts'
+import { isMacPlatform } from '~/utils/shortcuts'
 
 const route = useRoute()
 const runtimeConfig = useRuntimeConfig()
@@ -271,6 +294,20 @@ function toggleSidebar() {
   else shell.toggleSidebarHidden()
 }
 onShortcut('sidebar.toggle', toggleSidebar)
+const paletteOpen = ref(false)
+const helpOpen = ref(false)
+const paletteKeys = ref('Ctrl K')
+onMounted(() => { if (isMacPlatform(navigator)) paletteKeys.value = '⌘ K' })
+/** Ctrl/Cmd+K toggles the palette from anywhere, also from fields and over the help. */
+onShortcut('palette.toggle', () => {
+  helpOpen.value = false
+  paletteOpen.value = !paletteOpen.value
+})
+function openHelp() {
+  paletteOpen.value = false
+  helpOpen.value = true
+}
+onShortcut('help.open', openHelp)
 onShortcut('dismiss', () => {
   if (!sidebarOpen.value) return false
   sidebarOpen.value = false

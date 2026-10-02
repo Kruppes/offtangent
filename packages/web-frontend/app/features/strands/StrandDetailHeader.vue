@@ -25,6 +25,9 @@ const modelOpen = ref(false)
 const modelLoading = ref(false)
 const modelError = ref<string | null>(null)
 const models = ref<SelectableModel[]>([])
+const actionsDetails = ref<HTMLDetailsElement | null>(null)
+/** A palette "archive" opens the actions so its undo is visible. */
+function openActions() { if (actionsDetails.value) actionsDetails.value.open = true }
 const projectName = computed(() => projects.value.find(p => p.id === strand.value?.projectId)?.name ?? strand.value?.projectId)
 
 /*
@@ -143,7 +146,7 @@ onMounted(() => { void load(); void loadProjects() })
         <label class="grid gap-1 text-sm">{{ t('strandDetail.tags') }}<input v-model="tags" :disabled="saving" class="min-h-11 min-w-0 w-full rounded-md border border-input bg-background px-3 focus-visible:outline-ring"></label>
         <div class="flex gap-2"><Button class="min-h-11" type="submit" :disabled="saving">{{ t('common.save') }}</Button><Button class="min-h-11" variant="outline" type="button" :disabled="saving" @click="editing = false">{{ t('common.cancel') }}</Button></div>
       </form>
-      <details class="mt-2"><summary class="flex min-h-11 cursor-pointer items-center text-sm font-medium focus-visible:outline-ring">{{ t('strandDetail.actions') }}</summary><StrandActions :key="strandId" :strand-id="strandId" :archived="strand.archived" :disabled="saving || loading" @changed="load" @update:archived="update({ archived: $event })" @deleted="emit('deleted', $event)" /></details>
+      <details ref="actionsDetails" class="mt-2"><summary class="flex min-h-11 cursor-pointer items-center text-sm font-medium focus-visible:outline-ring">{{ t('strandDetail.actions') }}</summary><StrandActions :key="strandId" :strand-id="strandId" :archived="strand.archived" :disabled="saving || loading" offer-command @command-run="openActions" @changed="load" @update:archived="update({ archived: $event })" @deleted="emit('deleted', $event)" /></details>
     </template>
     <ModelPickerDialog :open="modelOpen" :models="models" :pinned="strand?.pinnedModel ?? null" :loading="modelLoading" :error="modelError" :saving="saving" @close="!saving && (modelOpen = false)" @retry="loadModels" @select="chooseModel" />
   </header>

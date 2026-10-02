@@ -4,6 +4,7 @@ import type { Thread, Project } from '@axiom/core'
 import { SEARCH_MAX_LENGTH, filterQuery, highlightParts, normalizeSearch, readFilters, useStrandPagination, type StrandRow } from './pagination'
 import StrandActions from './StrandActions.vue'
 import { parseBackendTimestamp } from '~/utils/datetime'
+import { useShellCommands } from '~/composables/useShellCommands'
 /** Turn state of other strands as reported by the chat socket (`sessionActivity`). */
 type Activity = Record<string, { state: string } | undefined>
 const props = withDefaults(defineProps<{ projectId?: string; compact?: boolean; activeId?: string | null; activity?: Activity }>(), {
@@ -32,6 +33,8 @@ const pager = useStrandPagination(async offset => {
   return (await apiFetch<{ strands: StrandRow[] }>(`/api/strands?${query}`)).strands
 })
 const { rows, loading, error, ended, truncated } = pager
+// A palette action (archive) changed strand data: reload the visible list.
+watch(useShellCommands().strandsVersion, () => { void pager.reset() })
 const visibleRows = computed(() => rows.value.filter(row => filters.value.include_archived || !(selected.value?.id === row.id ? selected.value.archived : row.archived)))
 const groups = computed(() => [
   { key: 'pinned', rows: visibleRows.value.filter(row => row.pinned) },

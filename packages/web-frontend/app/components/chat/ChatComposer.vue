@@ -132,6 +132,7 @@
 import type { LoadableSkill } from '~/composables/useSkillAutocomplete'
 import { useChatView } from '~/composables/chat/chatViewContext'
 import { DICTATION_LEVEL_BARS, useComposerDictation } from '~/composables/chat/useComposerDictation'
+import { provideCommand } from '~/composables/useShellCommands'
 import ChatThinkingLevelPicker from './ChatThinkingLevelPicker.vue'
 
 /**
@@ -149,6 +150,9 @@ const {
   announcement: dictationAnnouncement, micLabel, finish: finishDictation, retry: retryDictation,
   cancel: cancelDictation, dismiss: dismissDictation, toggle: toggleDictation, handleComposerAreaKeydown,
 } = useComposerDictation(draft, stt, t)
+
+// The command palette can start a dictation while this composer is on screen.
+provideCommand('dictation.start', async () => { inputRef.value?.focus(); await toggleDictation() }, () => sttEnabled.value && (dictationPhase.value === 'idle' || dictationPhase.value === 'error'))
 
 const skillAutocomplete = useSkillAutocomplete(inputText)
 

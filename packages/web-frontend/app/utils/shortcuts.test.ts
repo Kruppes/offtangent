@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { RESERVED_BROWSER_COMBOS, SHORTCUT_BINDINGS, displayKeys, isEditableElement, resolveShortcut, stepIndex, type KeyLike } from './shortcuts'
+import { EXTERNAL_SHORTCUT_HINTS, RESERVED_BROWSER_COMBOS, SHORTCUT_BINDINGS, displayKeys, helpSections, isEditableElement, isMacPlatform, resolveShortcut, stepIndex, type KeyLike } from './shortcuts'
 
 const key = (k: string, mods: Partial<KeyLike> = {}): KeyLike => ({ key: k, ctrlKey: false, metaKey: false, altKey: false, shiftKey: false, ...mods })
 const idle = { editable: false, overlayOpen: false }
@@ -79,5 +79,25 @@ describe('helpers', () => {
     expect(stepIndex(2, 5, 1)).toBe(3)
     expect(stepIndex(4, 5, 1)).toBe(4)
     expect(stepIndex(0, 5, -1)).toBe(0)
+  })
+})
+
+describe('help overlay sections', () => {
+  it('lists every binding and hint once per id, alternatives merged', () => {
+    const sections = helpSections()
+    const ids = sections.flatMap(section => section.rows.map(row => row.id))
+    for (const binding of SHORTCUT_BINDINGS) expect(ids).toContain(binding.id)
+    for (const hint of EXTERNAL_SHORTCUT_HINTS) expect(ids).toContain(hint.id)
+    expect(new Set(ids).size).toBe(ids.length)
+    const sidebar = sections.flatMap(section => section.rows).find(row => row.id === 'sidebar.toggle')
+    expect(sidebar?.combos).toEqual([['Ctrl', 'B'], ['Ctrl', '\\']])
+    expect(sections.map(section => section.group)).toEqual(['general', 'navigation', 'strand'])
+  })
+
+  it('detects macOS for the ⌘ display', () => {
+    expect(isMacPlatform({ platform: 'MacIntel' })).toBe(true)
+    expect(isMacPlatform({ platform: 'Linux x86_64' })).toBe(false)
+    expect(isMacPlatform({ userAgent: 'Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X)' })).toBe(true)
+    expect(isMacPlatform(undefined)).toBe(false)
   })
 })

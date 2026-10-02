@@ -2176,5 +2176,59 @@
     "contextMessages": "Nachrichten",
     "contextStarted": "Begonnen",
     "contextLastActivity": "Zuletzt aktiv"
+  },
+  "palette": {
+    "title": "Command-Palette",
+    "open": "Suchen und springen (Command-Palette)",
+    "trigger": "Suchen und springen",
+    "inputLabel": "Strands, Seiten und Aktionen suchen",
+    "placeholder": "Strand, Seite oder Aktion",
+    "results": "Ergebnisse",
+    "loading": "Suche Strands …",
+    "error": "Strand-Suche fehlgeschlagen. Seiten und Aktionen gehen weiter.",
+    "retry": "Erneut versuchen",
+    "noStrands": "Kein Strand passt.",
+    "empty": "Nichts gefunden",
+    "emptyHint": "Kein Strand, keine Seite, keine Aktion passt zu „{q}“.",
+    "count": "{count} Ergebnisse",
+    "footMove": "wählen",
+    "footRun": "öffnen",
+    "footClose": "schließen",
+    "newStrand": "Neuer Strand",
+    "dictation": "Diktat starten",
+    "archive": "Diesen Strand archivieren",
+    "sidebar": "Leiste ein/aus",
+    "shortcuts": "Tastenkürzel",
+    "group": {
+      "strands": "Strands",
+      "pages": "Seiten",
+      "actions": "Aktionen"
+    }
+  },
+  "shortcuts": {
+    "title": "Tastenkürzel",
+    "description": "Einzeltasten-Kürzel feuern nicht, während du in einem Feld tippst.",
+    "or": "oder",
+    "group": {
+      "general": "Allgemein",
+      "navigation": "Strand-Liste",
+      "strand": "Offener Strand"
+    },
+    "action": {
+      "palette_toggle": "Command-Palette",
+      "help_open": "Diese Hilfe",
+      "sidebar_toggle": "Leiste ein/aus",
+      "search_focus": "Strands durchsuchen",
+      "list_next": "Nächster Strand",
+      "list_previous": "Voriger Strand",
+      "list_open": "Strand öffnen",
+      "canvas_toggle": "Canvas ein/aus",
+      "dismiss": "Overlay oder Bereich schließen",
+      "context_toggle": "Kontextspalte ein/aus",
+      "dictation_toggle": "Diktat starten / beenden",
+      "dictation_cancel": "Aufnahme abbrechen",
+      "palette_move": "In der Palette wählen",
+      "palette_run": "Palette-Eintrag ausführen"
+    }
   }
 }
