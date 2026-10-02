@@ -86,8 +86,8 @@ export function serializeOverviewState(state: OverviewState): Record<string, str
  * The next route query after a change of the overview state: foreign keys of
  * the current query stay, the overview's own keys are rewritten.
  */
-export function mergeOverviewQuery(current: QueryLike, state: OverviewState): Record<string, unknown> {
-  const next: Record<string, unknown> = {}
+export function mergeOverviewQuery<T>(current: Record<string, T>, state: OverviewState): Record<string, T | string> {
+  const next: Record<string, T | string> = {}
   for (const [key, value] of Object.entries(current)) {
     if (!(OVERVIEW_QUERY_KEYS as readonly string[]).includes(key)) next[key] = value
   }
