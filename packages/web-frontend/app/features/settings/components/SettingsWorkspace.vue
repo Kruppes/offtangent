@@ -759,7 +759,7 @@
                         <span class="font-medium">{{ $t('settings.consolidationLastRun') }}:</span>
                         {{ consolidationStatus.lastRun ? formatDateTime(consolidationStatus.lastRun) : $t('settings.consolidationNeverRun') }}
                         <template v-if="consolidationStatus.lastResult">
-                          · <span :class="consolidationStatus.lastResult.updated ? 'text-green-600 dark:text-green-400' : ''">
+                          · <span :class="consolidationStatus.lastResult.updated ? 'text-success' : ''">
                             {{ consolidationStatus.lastResult.updated ? $t('settings.consolidationResultUpdated') : $t('settings.consolidationResultNoChange') }}
                           </span>
                         </template>

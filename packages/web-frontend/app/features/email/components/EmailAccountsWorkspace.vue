@@ -45,7 +45,7 @@
         <p class="text-sm">{{ $t('email.empty') }}</p>
       </div>
 
-      <div v-else class="overflow-hidden rounded-xl border border-border bg-card shadow-sm">
+      <div v-else class="overflow-hidden rounded-xl border border-border bg-card">
         <div class="overflow-x-auto">
           <Table>
             <TableHeader>
@@ -73,7 +73,7 @@
                 </TableCell>
                 <TableCell>
                   <div class="flex flex-wrap gap-1">
-                    <Badge v-for="badge in permissionBadges(account)" :key="badge" variant="secondary" class="text-[10px]">
+                    <Badge v-for="badge in permissionBadges(account)" :key="badge" variant="secondary" class="text-2xs">
                       {{ $t(`email.form.${badge}`) }}
                     </Badge>
                     <span v-if="permissionBadges(account).length === 0" class="text-xs text-muted-foreground">

@@ -62,11 +62,11 @@
         <span class="font-mono text-muted-foreground">{{ cronjob.schedule }}</span>
       </div>
       <div class="min-w-0">
-        <dt class="text-[10px] font-medium uppercase tracking-wide text-muted-foreground/70">
+        <dt class="text-2xs font-medium uppercase tracking-wide text-muted-foreground/70">
           {{ $t('cronjobs.columns.lastRun') }}
         </dt>
         <dd v-if="cronjob.lastRunAt" class="flex min-w-0 flex-col items-start gap-0.5">
-          <Badge :variant="cronjobLastRunVariant(cronjob.lastRunStatus)" class="px-1.5 py-0 text-[10px]">
+          <Badge :variant="cronjobLastRunVariant(cronjob.lastRunStatus)" class="px-1.5 py-0 text-2xs">
             {{ cronjob.lastRunStatus ?? '—' }}
           </Badge>
           <span class="truncate text-muted-foreground">{{ formatTimestamp(cronjob.lastRunAt) }}</span>
@@ -77,7 +77,7 @@
 
     <div class="flex items-end justify-between gap-3 text-xs">
       <div v-if="cronjob.actionType === 'task'" class="min-w-0 flex-1">
-        <div class="text-[10px] font-medium uppercase tracking-wide text-muted-foreground/70">
+        <div class="text-2xs font-medium uppercase tracking-wide text-muted-foreground/70">
           {{ $t('cronjobs.columns.provider') }}
         </div>
         <div class="truncate text-foreground">{{ providerLabel }}</div>

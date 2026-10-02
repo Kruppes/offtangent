@@ -49,7 +49,7 @@
       </div>
 
       <!-- Users table -->
-      <div v-else class="overflow-hidden rounded-xl border border-border bg-card shadow-sm">
+      <div v-else class="overflow-hidden rounded-xl border border-border bg-card">
         <div class="overflow-x-auto">
           <Table>
             <TableHeader>
@@ -89,7 +89,7 @@
                     <div class="min-w-0">
                       <div class="flex items-center gap-2">
                         <span class="font-semibold text-foreground">{{ entry.username }}</span>
-                        <Badge v-if="entry.id === currentUserId" variant="secondary" class="px-1.5 py-0 text-[10px]">
+                        <Badge v-if="entry.id === currentUserId" variant="secondary" class="px-1.5 py-0 text-2xs">
                           {{ $t('users.you') }}
                         </Badge>
                       </div>

@@ -72,7 +72,7 @@
       <section
         v-for="connector in connectors"
         :key="connector.id"
-        class="rounded-xl border border-border bg-card p-4 shadow-sm"
+        class="rounded-xl border border-border bg-card p-4"
         :aria-labelledby="`connector-${connector.id}-name`"
       >
         <header class="flex flex-wrap items-start justify-between gap-2">

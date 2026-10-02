@@ -27,7 +27,7 @@ const shape = computed(() => {
 
 <template>
   <svg v-if="shape" viewBox="0 0 100 28" preserveAspectRatio="none" role="img" :aria-label="label"
-    class="h-10 w-full" :class="shape.rising ? 'text-emerald-600 dark:text-emerald-400' : 'text-rose-600 dark:text-rose-400'">
+    class="h-10 w-full" :class="shape.rising ? 'text-gain' : 'text-loss'">
     <polyline :points="shape.line" fill="none" stroke="currentColor" stroke-width="1.5" vector-effect="non-scaling-stroke"
       stroke-linejoin="round" stroke-linecap="round" />
   </svg>

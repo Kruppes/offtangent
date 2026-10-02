@@ -11,7 +11,7 @@
             <Button variant="outline" class="flex-1 justify-start gap-2">
               <AppIcon name="filter" size="sm" />
               {{ $t('tasks.filters.button') }}
-              <Badge v-if="activeFilterCount > 0" variant="default" class="ml-auto px-1.5 py-0 text-[10px]">
+              <Badge v-if="activeFilterCount > 0" variant="default" class="ml-auto px-1.5 py-0 text-2xs">
                 {{ activeFilterCount }}
               </Badge>
             </Button>

@@ -15,7 +15,7 @@
         <span
           class="h-2 w-2 shrink-0 rounded-full"
           :class="{
-            'bg-success shadow-[0_0_6px_hsl(var(--success))]': connectionStatus === 'connected',
+            'bg-success': connectionStatus === 'connected',
             'bg-warning animate-pulse': connectionStatus === 'connecting',
             'bg-muted-foreground': connectionStatus === 'disconnected',
           }"

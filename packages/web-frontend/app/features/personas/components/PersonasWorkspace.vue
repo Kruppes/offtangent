@@ -87,7 +87,7 @@
             <article
               v-for="persona in visiblePersonas"
               :key="persona.id"
-              class="group flex flex-col rounded-xl border border-border bg-card p-4 shadow-sm transition-shadow hover:shadow-md"
+              class="group flex flex-col rounded-xl border border-border bg-card p-4"
               :class="persona.archived ? 'opacity-70' : ''"
             >
               <div class="flex items-start gap-3">

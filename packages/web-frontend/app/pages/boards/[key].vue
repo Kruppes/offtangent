@@ -102,7 +102,7 @@ onMounted(load)
         </NuxtLink>
 
         <header v-if="board && renderer !== 'news_digest'" class="flex flex-wrap items-start gap-3">
-          <span v-if="board.icon" class="text-3xl leading-none" aria-hidden="true">{{ board.icon }}</span>
+          <span v-if="board.icon" class="text-2xl leading-none" aria-hidden="true">{{ board.icon }}</span>
           <div class="min-w-0 flex-1">
             <h1 class="text-xl font-bold tracking-tight [overflow-wrap:anywhere]">{{ board.title }}</h1>
             <p class="text-xs text-muted-foreground">

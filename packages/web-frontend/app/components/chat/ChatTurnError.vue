@@ -3,7 +3,7 @@
     <div class="flex items-center gap-2 border-b border-destructive/20 px-3 py-1.5 text-xs">
       <AppIcon name="warning" class="h-3 w-3 shrink-0 text-destructive" />
       <span class="font-medium text-destructive">{{ $t('chat.turnError') }}</span>
-      <span v-if="msg.errorInfo!.attempts > 0" class="ml-auto shrink-0 text-[10px] text-muted-foreground/80">
+      <span v-if="msg.errorInfo!.attempts > 0" class="ml-auto shrink-0 text-2xs text-muted-foreground/80">
         {{ $t('chat.turnErrorRetried', { count: msg.errorInfo!.attempts }) }}
       </span>
     </div>

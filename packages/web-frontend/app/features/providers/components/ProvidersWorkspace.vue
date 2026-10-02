@@ -61,7 +61,7 @@
       </div>
 
       <!-- Providers table -->
-      <div v-if="providers.length > 0" class="overflow-hidden rounded-xl border border-border bg-card shadow-sm">
+      <div v-if="providers.length > 0" class="overflow-hidden rounded-xl border border-border bg-card">
         <div class="overflow-x-auto">
           <Table>
             <TableHeader>
@@ -97,7 +97,7 @@
                   <TableCell class="align-top" @click.stop>
                     <div class="flex flex-col gap-1.5">
                       <span
-                        class="w-fit rounded px-1.5 py-0.5 text-[10px] font-semibold uppercase"
+                        class="w-fit rounded px-1.5 py-0.5 text-2xs font-semibold uppercase"
                         :class="dataPolicyBadgeClass(provider)"
                         :title="$t(`providers.dataPolicy.source.${provider.effectiveDataPolicy?.source ?? 'derived'}`)"
                       >
@@ -220,10 +220,10 @@
                     <div class="flex items-center gap-2">
                       <span class="text-xs text-muted-foreground">└</span>
                       <span class="text-sm text-foreground">{{ modelId }}</span>
-                      <Badge v-if="isActiveModel(provider.id, modelId)" variant="default" class="px-1.5 py-0 text-[10px]">
+                      <Badge v-if="isActiveModel(provider.id, modelId)" variant="default" class="px-1.5 py-0 text-2xs">
                         {{ $t('providers.active') }}
                       </Badge>
-                      <Badge v-if="isFallbackModel(provider.id, modelId)" variant="outline" class="px-1.5 py-0 text-[10px]">
+                      <Badge v-if="isFallbackModel(provider.id, modelId)" variant="outline" class="px-1.5 py-0 text-2xs">
                         {{ $t('providers.fallback') }}
                       </Badge>
 
@@ -662,10 +662,10 @@ function dataPolicyBadgeLabel(provider: Provider): string {
 function dataPolicyBadgeClass(provider: Provider): string {
   const effective = provider.effectiveDataPolicy
   if (!effective) return 'bg-muted text-muted-foreground'
-  if (effective.region === 'local') return 'bg-emerald-500/15 text-emerald-700 dark:text-emerald-300'
+  if (effective.region === 'local') return 'bg-success/15 text-success'
   if (effective.region === 'cn') return 'bg-destructive/15 text-destructive'
-  if (effective.training === 'no') return 'bg-sky-500/15 text-sky-700 dark:text-sky-300'
-  return 'bg-amber-500/15 text-amber-700 dark:text-amber-300'
+  if (effective.training === 'no') return 'bg-primary/15 text-primary'
+  return 'bg-warning/15 text-warning'
 }
 
 async function saveDataPolicy(provider: Provider, field: 'region' | 'training', value: string): Promise<void> {

@@ -24,7 +24,7 @@
 
     <template v-else-if="stats">
       <!-- File reads -->
-      <section class="overflow-hidden rounded-xl border border-border bg-card shadow-sm">
+      <section class="overflow-hidden rounded-xl border border-border bg-card">
         <div class="border-b border-border px-4 py-3">
           <h3 class="text-sm font-semibold text-foreground">{{ $t('memory.statsFileReadsTitle') }}</h3>
         </div>
@@ -55,7 +55,7 @@
       </section>
 
       <!-- Fact searches -->
-      <section class="overflow-hidden rounded-xl border border-border bg-card shadow-sm">
+      <section class="overflow-hidden rounded-xl border border-border bg-card">
         <div class="border-b border-border px-4 py-3">
           <h3 class="text-sm font-semibold text-foreground">{{ $t('memory.statsSearchesTitle') }}</h3>
         </div>

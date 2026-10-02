@@ -37,8 +37,8 @@ export function deltaDirection(value: number | null | undefined): -1 | 0 | 1 {
 
 export function deltaClass(value: number | null | undefined): string {
   const direction = deltaDirection(value)
-  if (direction === 1) return 'text-emerald-600 dark:text-emerald-400'
-  if (direction === -1) return 'text-rose-600 dark:text-rose-400'
+  if (direction === 1) return 'text-gain'
+  if (direction === -1) return 'text-loss'
   return 'text-muted-foreground'
 }
 

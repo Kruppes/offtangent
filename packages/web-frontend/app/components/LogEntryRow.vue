@@ -37,7 +37,7 @@ const skillLoad = computed(() => isEntrySkillLoad(props.entry))
     <!-- Tool badge -->
     <Badge
       :class="toolBadgeClass(displayName)"
-      class="h-[22px] shrink-0 gap-1 px-2 py-0 font-mono text-[11px] leading-none"
+      class="h-[22px] shrink-0 gap-1 px-2 py-0 font-mono text-2xs leading-none"
     >
       <AppIcon :name="toolIcon(displayName)" class="h-3 w-3" />
       {{ displayName }}
@@ -46,7 +46,7 @@ const skillLoad = computed(() => isEntrySkillLoad(props.entry))
     <!-- Source badge (only for task sessions) -->
     <Badge
       v-if="isTaskSession(entry)"
-      class="hidden h-[22px] shrink-0 border-transparent bg-amber-500/15 px-2 py-0 text-[11px] leading-none text-amber-600 sm:inline-flex dark:text-amber-400"
+      class="hidden h-[22px] shrink-0 border-transparent bg-warning/15 px-2 py-0 text-2xs leading-none text-warning sm:inline-flex"
     >
       {{ getSourceLabel(entry) }}
     </Badge>
@@ -54,13 +54,13 @@ const skillLoad = computed(() => isEntrySkillLoad(props.entry))
     <!-- Input preview as badges (hidden on small screens) -->
     <div class="hidden min-w-0 flex-1 items-center gap-1.5 overflow-hidden sm:flex">
       <template v-if="skillLoad">
-        <span class="inline-flex h-[22px] shrink-0 items-center gap-1 rounded bg-violet-500/15 px-1.5 font-mono text-[11px] leading-none text-violet-600 dark:text-violet-400">
+        <span class="inline-flex h-[22px] shrink-0 items-center gap-1 rounded bg-tertiary/15 px-1.5 font-mono text-2xs leading-none text-tertiary">
           <span class="font-medium">{{ getSkillName(entry.input) }}</span>
         </span>
       </template>
       <template v-else>
         <template v-for="(value, key) in parseInputParams(entry.input)" :key="key">
-          <span class="inline-flex h-[22px] shrink-0 items-center gap-1 rounded bg-muted px-1.5 font-mono text-[11px] leading-none text-muted-foreground">
+          <span class="inline-flex h-[22px] shrink-0 items-center gap-1 rounded bg-muted px-1.5 font-mono text-2xs leading-none text-muted-foreground">
             <span class="font-medium">{{ key }}</span>
             <span class="max-w-[200px] truncate opacity-70">{{ value }}</span>
           </span>

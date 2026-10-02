@@ -76,7 +76,7 @@ const isLive = computed(() => nodeIsLive(props.row))
 
 const dotClass = computed(() => {
   switch (props.row.status) {
-    case 'running': return 'bg-success shadow-[0_0_6px_hsl(var(--success))]'
+    case 'running': return 'bg-success'
     case 'paused': return 'bg-warning'
     case 'failed': return 'bg-destructive'
     default: return 'bg-muted-foreground/60'

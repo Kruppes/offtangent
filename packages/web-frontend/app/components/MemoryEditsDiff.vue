@@ -4,19 +4,19 @@
     <div class="flex flex-wrap items-center gap-2 px-3 py-2">
       <Badge
         v-if="fileName"
-        class="border-transparent bg-violet-500/15 font-mono text-[11px] text-violet-600 dark:text-violet-400"
+        class="border-transparent bg-tertiary/15 font-mono text-2xs text-tertiary"
       >
         {{ fileName }}
       </Badge>
       <Badge
         v-if="stats.added > 0"
-        class="border-transparent bg-emerald-500/15 font-mono text-[11px] text-emerald-700 dark:text-emerald-300"
+        class="border-transparent bg-success/15 font-mono text-2xs text-success"
       >
         +{{ stats.added }}
       </Badge>
       <Badge
         v-if="stats.removed > 0"
-        class="border-transparent bg-rose-500/15 font-mono text-[11px] text-rose-700 dark:text-rose-300"
+        class="border-transparent bg-destructive/15 font-mono text-2xs text-destructive"
       >
         -{{ stats.removed }}
       </Badge>
@@ -28,7 +28,7 @@
       <div
         v-for="(line, li) in splitLines(edit.oldText)"
         :key="`r-${li}`"
-        class="flex items-start gap-2.5 border-l-2 border-l-rose-500/60 bg-rose-500/10 px-3 py-1 font-mono text-[11px] leading-4 text-rose-700 dark:text-rose-300"
+        class="flex items-start gap-2.5 border-l-2 border-l-destructive/60 bg-destructive/10 px-3 py-1 font-mono text-2xs leading-4 text-destructive"
       >
         <span class="mt-px w-4 shrink-0 text-center font-semibold leading-4">-</span>
         <span class="min-w-0 whitespace-pre-wrap break-words">{{ line || ' ' }}</span>
@@ -38,7 +38,7 @@
       <div
         v-for="(line, li) in splitLines(edit.newText)"
         :key="`a-${li}`"
-        class="flex items-start gap-2.5 border-l-2 border-l-emerald-500/60 bg-emerald-500/10 px-3 py-1 font-mono text-[11px] leading-4 text-emerald-700 dark:text-emerald-300"
+        class="flex items-start gap-2.5 border-l-2 border-l-success/60 bg-success/10 px-3 py-1 font-mono text-2xs leading-4 text-success"
       >
         <span class="mt-px w-4 shrink-0 text-center font-semibold leading-4">+</span>
         <span class="min-w-0 whitespace-pre-wrap break-words">{{ line || ' ' }}</span>

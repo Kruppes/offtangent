@@ -82,7 +82,7 @@
             <li
               v-for="family in familyChips"
               :key="family"
-              class="rounded bg-muted px-1.5 py-0.5 font-mono text-[10px] text-muted-foreground"
+              class="rounded bg-muted px-1.5 py-0.5 font-mono text-2xs text-muted-foreground"
             >{{ family }}</li>
           </ul>
           <p class="text-xs text-muted-foreground">{{ $t('settings.modelGate.familiesHint') }}</p>
@@ -125,16 +125,16 @@
             class="flex flex-wrap items-center gap-2 rounded-md border border-border bg-muted/30 px-2 py-1.5"
           >
             <span
-              :class="['rounded px-1.5 py-0.5 text-[10px] font-semibold uppercase',
+              :class="['rounded px-1.5 py-0.5 text-2xs font-semibold uppercase',
                        entry.blocked ? 'bg-destructive/15 text-destructive' : 'bg-muted text-muted-foreground']"
             >
               {{ entry.blocked ? $t('settings.modelGate.blocked') : $t('settings.modelGate.allowed') }}
             </span>
             <span class="font-mono text-xs text-foreground">{{ entry.role }}</span>
             <span class="font-mono text-xs break-all text-muted-foreground">{{ entry.providerId }} · {{ entry.modelId }}</span>
-            <span class="font-mono text-[10px] text-muted-foreground">{{ entry.policy.region }}/{{ entry.policy.training }}</span>
-            <span class="font-mono text-[10px] text-muted-foreground">{{ entry.reason }}</span>
-            <span v-if="entry.count > 1" class="font-mono text-[10px] text-muted-foreground">×{{ entry.count }}</span>
+            <span class="font-mono text-2xs text-muted-foreground">{{ entry.policy.region }}/{{ entry.policy.training }}</span>
+            <span class="font-mono text-2xs text-muted-foreground">{{ entry.reason }}</span>
+            <span v-if="entry.count > 1" class="font-mono text-2xs text-muted-foreground">×{{ entry.count }}</span>
           </li>
         </ul>
       </div>

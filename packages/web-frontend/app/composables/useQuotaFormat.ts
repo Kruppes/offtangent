@@ -20,8 +20,8 @@ export interface QuotaDisplayPart {
 export function useQuotaFormat() {
   function quotaColorClass(utilization: number): string {
     if (utilization >= 90) return 'text-destructive'
-    if (utilization >= 70) return 'text-amber-600 dark:text-amber-500'
-    return 'text-emerald-600 dark:text-emerald-500'
+    if (utilization >= 70) return 'text-warning'
+    return 'text-success'
   }
 
   function formatQuotaResetRelative(resetsAt: string | null): string {

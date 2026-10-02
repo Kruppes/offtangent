@@ -17,7 +17,7 @@
       </button>
     </PopoverTrigger>
     <PopoverContent align="start" class="w-56 p-1">
-      <p class="px-2 pb-1 pt-1 text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">
+      <p class="px-2 pb-1 pt-1 text-2xs font-semibold uppercase tracking-wider text-muted-foreground">
         {{ $t('settings.thinkingLevel') }}
       </p>
       <button
@@ -35,10 +35,9 @@
             :class="{
               'bg-muted-foreground': lvl === 'off',
               'bg-foreground': lvl === 'minimal',
-              'bg-yellow-500': lvl === 'low',
-              'bg-orange-500': lvl === 'medium',
-              'bg-red-500': lvl === 'high',
-              'bg-red-600': lvl === 'xhigh',
+              'bg-primary': lvl === 'low',
+              'bg-warning': lvl === 'medium',
+              'bg-destructive': lvl === 'high' || lvl === 'xhigh',
             }"
           />
           <span>{{ $t(`chat.thinkingLevelMenu.${lvl}`) }}</span>

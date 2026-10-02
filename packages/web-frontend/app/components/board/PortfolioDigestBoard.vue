@@ -32,8 +32,8 @@ const hasAnything = computed(() => {
     <p v-if="!hasAnything" role="status" class="rounded-lg border p-6 text-center text-muted-foreground">{{ $t('boards.emptyPayload') }}</p>
 
     <section v-if="digest.dataIssues.length" aria-labelledby="board-issues"
-      class="rounded-lg border border-amber-500/60 bg-amber-500/10 p-4">
-      <h2 id="board-issues" class="flex items-center gap-2 font-medium text-amber-700 dark:text-amber-300">
+      class="rounded-lg border border-warning/60 bg-warning/10 p-4">
+      <h2 id="board-issues" class="flex items-center gap-2 font-medium text-warning">
         <AppIcon name="warning" />{{ $t('boards.digest.dataIssues') }}
       </h2>
       <ul class="mt-2 space-y-2 text-sm">

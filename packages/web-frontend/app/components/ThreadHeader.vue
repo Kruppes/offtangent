@@ -117,7 +117,7 @@ function cancel() {
         <span class="min-w-0 flex-1 truncate text-sm font-semibold text-foreground">{{ displayTitle }}</span>
         <span
           v-if="activity?.state === 'running'"
-          class="hidden shrink-0 items-center gap-1 rounded-full bg-success/10 px-2 py-0.5 text-[10px] font-medium text-success sm:inline-flex"
+          class="hidden shrink-0 items-center gap-1 rounded-full bg-success/10 px-2 py-0.5 text-2xs font-medium text-success sm:inline-flex"
         >
           <span class="h-1.5 w-1.5 animate-pulse rounded-full bg-current" />
           {{ $t('threads.running') }}

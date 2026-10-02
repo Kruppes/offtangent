@@ -74,7 +74,7 @@ const emit = defineEmits<{
   <!-- Rows -->
   <div v-else class="flex flex-col gap-5">
     <section v-for="group in groups" :key="group.key" class="flex flex-col gap-2">
-      <h2 class="px-1 text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">
+      <h2 class="px-1 text-2xs font-semibold uppercase tracking-wider text-muted-foreground">
         {{ group.key === 'pinned' ? $t('threads.groupPinned') : $t('threads.groupRecent') }}
       </h2>
       <ThreadRow

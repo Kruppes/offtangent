@@ -11,8 +11,8 @@ describe('board formatting', () => {
     expect(formatPct(1.21, false)).toBe('1,21 %')
     expect(formatEur(undefined)).toBe('—')
     expect(formatPct(Number.NaN)).toBe('—')
-    expect(deltaClass(1)).toContain('emerald')
-    expect(deltaClass(-1)).toContain('rose')
+    expect(deltaClass(1)).toBe('text-gain')
+    expect(deltaClass(-1)).toBe('text-loss')
     expect(deltaClass(0)).toBe('text-muted-foreground')
   })
 

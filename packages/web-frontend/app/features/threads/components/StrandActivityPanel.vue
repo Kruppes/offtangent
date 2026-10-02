@@ -31,7 +31,7 @@
       <span v-else class="flex-1" />
       <span
         v-if="turnRunning"
-        class="shrink-0 rounded-full bg-success/15 px-2 py-0.5 text-[11px] font-medium text-success"
+        class="shrink-0 rounded-full bg-success/15 px-2 py-0.5 text-2xs font-medium text-success"
       >{{ $t('strandActivity.turnRunning') }}</span>
     </button>
 

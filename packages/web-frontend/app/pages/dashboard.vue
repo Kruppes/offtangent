@@ -227,7 +227,7 @@
                     >
                       {{ entry.latencyMs }} ms
                     </span>
-                    <Badge :variant="statusBadgeVariant(entry.status)" class="text-[11px]">
+                    <Badge :variant="statusBadgeVariant(entry.status)" class="text-2xs">
                       {{ statusLabel(entry.status) }}
                     </Badge>
                   </div>

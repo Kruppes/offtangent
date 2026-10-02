@@ -238,7 +238,7 @@
                       <span
                         v-for="lbl in xAxisLabels"
                         :key="lbl.day"
-                        class="overflow-hidden text-center text-[10px] text-muted-foreground"
+                        class="overflow-hidden text-center text-2xs text-muted-foreground"
                       >
                         {{ lbl.label }}
                       </span>
@@ -263,11 +263,11 @@
                       {{ $t('usage.sourceChart.mainAgent') }}
                     </span>
                     <span class="flex items-center gap-1.5">
-                      <span class="h-2.5 w-2.5 rounded-sm bg-amber-500" />
+                      <span class="h-2.5 w-2.5 rounded-sm bg-warning" />
                       {{ $t('usage.sourceChart.taskAgent') }}
                     </span>
                     <span class="flex items-center gap-1.5">
-                      <span class="h-2.5 w-2.5 rounded-sm bg-emerald-500" />
+                      <span class="h-2.5 w-2.5 rounded-sm bg-success" />
                       {{ $t('usage.sourceChart.heartbeat') }}
                     </span>
                   </div>
@@ -323,13 +323,13 @@
                           <!-- Heartbeat (top) -->
                           <div
                             v-if="point.heartbeatShare > 0"
-                            class="w-full bg-emerald-500"
+                            class="w-full bg-success"
                             :style="{ height: `${point.heartbeatShare}%` }"
                           />
                           <!-- Task (middle) -->
                           <div
                             v-if="point.taskShare > 0"
-                            class="w-full bg-amber-500"
+                            class="w-full bg-warning"
                             :style="{ height: `${point.taskShare}%` }"
                           />
                           <!-- Main (bottom) -->
@@ -354,7 +354,7 @@
                       <span
                         v-for="lbl in sourceChartXAxisLabels"
                         :key="lbl.day"
-                        class="overflow-hidden text-center text-[10px] text-muted-foreground"
+                        class="overflow-hidden text-center text-2xs text-muted-foreground"
                       >
                         {{ lbl.label }}
                       </span>
@@ -408,7 +408,7 @@
                           <TableCell class="text-right tabular-nums">{{ cacheHitLabel(row) }}</TableCell>
                           <TableCell class="text-right tabular-nums">
                             {{ formatCurrency(row.estimatedCost) }}
-                            <span v-if="breakdown.rows.length > 1" class="ml-1 text-[11px] text-muted-foreground">
+                            <span v-if="breakdown.rows.length > 1" class="ml-1 text-2xs text-muted-foreground">
                               {{ costShareLabel(row.estimatedCost) }}
                             </span>
                           </TableCell>

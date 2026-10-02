@@ -167,7 +167,7 @@
               >
               <div class="flex-1 min-w-0">
                 <span class="font-mono text-xs truncate block">{{ model.name }}</span>
-                <span class="text-[10px] text-muted-foreground">
+                <span class="text-2xs text-muted-foreground">
                   {{ model.parameterSize }}
                   <template v-if="model.quantization"> · {{ model.quantization }}</template>
                   · {{ formatSize(model.size) }}
@@ -223,7 +223,7 @@
             <div v-if="ollamaPullResult" :class="[
               'rounded-md px-3 py-2 text-xs',
               ollamaPullResult.success
-                ? 'border border-green-500/30 bg-green-500/10 text-green-700 dark:text-green-400'
+                ? 'border border-success/30 bg-success/10 text-success'
                 : 'border border-destructive/30 bg-destructive/10 text-destructive',
             ]">
               {{ ollamaPullResult.message }}

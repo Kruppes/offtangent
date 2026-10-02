@@ -43,21 +43,21 @@ export function useLogDisplay() {
     if (!name) return 'border-transparent bg-primary/15 text-primary'
     const lower = name.toLowerCase()
     if (lower === 'load skill')
-      return 'border-transparent bg-violet-500/15 text-violet-600 dark:text-violet-400'
+      return 'border-transparent bg-tertiary/15 text-tertiary'
     if (lower === 'session_start')
-      return 'border-transparent bg-emerald-500/15 text-emerald-600 dark:text-emerald-400'
+      return 'border-transparent bg-success/15 text-success'
     if (lower === 'session_end')
-      return 'border-transparent bg-sky-500/15 text-sky-600 dark:text-sky-400'
+      return 'border-transparent bg-primary/15 text-primary'
     if (lower === 'session_timeout')
-      return 'border-transparent bg-amber-500/15 text-amber-600 dark:text-amber-400'
+      return 'border-transparent bg-warning/15 text-warning'
     if (lower === 'memory_consolidation')
-      return 'border-transparent bg-violet-500/15 text-violet-600 dark:text-violet-400'
+      return 'border-transparent bg-tertiary/15 text-tertiary'
     if (lower.includes('bash') || lower.includes('exec') || lower.includes('command'))
       return 'border-transparent bg-warning/15 text-warning'
     if (lower.includes('file') || lower.includes('read') || lower.includes('write') || lower.includes('edit'))
-      return 'border-transparent bg-blue-500/15 text-blue-500'
+      return 'border-transparent bg-primary/15 text-primary'
     if (lower.includes('llm') || lower.includes('chat') || lower.includes('generate'))
-      return 'border-transparent bg-purple-500/15 text-purple-500'
+      return 'border-transparent bg-tertiary/15 text-tertiary'
     return 'border-transparent bg-primary/15 text-primary'
   }
 

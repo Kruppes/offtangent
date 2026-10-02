@@ -15,7 +15,7 @@
       </span>
     </template>
     <div>
-      <div v-if="!isToolSkillLoad(toolData) && !hasMemoryView(toolData)" class="border-b border-border px-3 py-2"><p class="mb-1.5 text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">Input</p><ToolDataDisplay :data="toolData.toolArgs" /></div>
+      <div v-if="!isToolSkillLoad(toolData) && !hasMemoryView(toolData)" class="border-b border-border px-3 py-2"><p class="mb-1.5 text-2xs font-semibold uppercase tracking-wider text-muted-foreground">Input</p><ToolDataDisplay :data="toolData.toolArgs" /></div>
       <template v-if="isEditFileTool(toolData) && getToolEdits(toolData) && getToolMemoryInfo(toolData).isMemoryFile">
         <div class="max-h-80 overflow-y-auto">
           <MemoryEditsDiff
@@ -34,7 +34,7 @@
         </div>
       </template>
       <div v-else class="max-h-80 overflow-y-auto px-3 py-2">
-        <p class="mb-1.5 text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">Output</p><ToolDataDisplay :data="toolData.toolResult" :is-error="toolData.toolIsError" />
+        <p class="mb-1.5 text-2xs font-semibold uppercase tracking-wider text-muted-foreground">Output</p><ToolDataDisplay :data="toolData.toolResult" :is-error="toolData.toolIsError" />
       </div>
     </div>
   </ChatCollapsibleCard>

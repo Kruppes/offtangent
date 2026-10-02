@@ -10,7 +10,7 @@
       <!-- Telegram badge (source or delivered) -->
       <span
         v-if="msg.source === 'telegram' || msg.telegramDelivered"
-        class="absolute -bottom-0.5 -right-0.5 flex h-3.5 w-3.5 items-center justify-center rounded-full bg-[#2AABEE] text-white shadow-sm"
+        class="absolute -bottom-0.5 -right-0.5 flex h-3.5 w-3.5 items-center justify-center rounded-full bg-telegram text-white"
         :title="msg.source === 'telegram' ? (msg.senderName ? `via Telegram (${msg.senderName})` : 'via Telegram') : 'Also sent via Telegram'"
       >
         <svg class="h-2 w-2" viewBox="0 0 24 24" fill="currentColor">
@@ -28,22 +28,22 @@
     >{{ personaLabel }}</p>
     <div v-if="!interactionCard(msg) || hasBubbleBody(msg)" class="min-w-0 max-w-full rounded-2xl px-4 py-2.5 text-sm leading-relaxed" :class="{
       'rounded-br-sm border border-primary/[0.22] bg-primary/[0.12] text-foreground': msg.role === 'user' && msg.source !== 'telegram',
-      'rounded-br-sm border border-[#2AABEE]/30 bg-[#2AABEE]/10 text-foreground': msg.role === 'user' && msg.source === 'telegram',
+      'rounded-br-sm border border-telegram/30 bg-telegram/10 text-foreground': msg.role === 'user' && msg.source === 'telegram',
       'rounded-bl-sm border border-border bg-muted text-foreground': msg.role === 'assistant' && !msg.telegramDelivered && !interactionCard(msg),
       // With a card below it the bubble drops its outline: one card,
       // one frame, no nested boxes of nearly the same colour.
       'bg-muted text-foreground': msg.role === 'assistant' && !msg.telegramDelivered && !!interactionCard(msg),
-      'rounded-bl-sm border border-[#2AABEE]/30 bg-[#2AABEE]/10 text-foreground': msg.role === 'assistant' && msg.telegramDelivered,
+      'rounded-bl-sm border border-telegram/30 bg-telegram/10 text-foreground': msg.role === 'assistant' && msg.telegramDelivered,
       'rounded-lg border border-border bg-muted/50 text-muted-foreground text-xs': msg.role === 'system',
     }">
       <p v-if="msg.role === 'assistant' || msg.role === 'user' || msg.role === 'system'" class="mb-1 text-xs font-semibold text-muted-foreground" data-speaker-label>
         {{ msg.role === 'assistant' ? personaLabel : msg.role === 'system' ? $t('w4Content.system') : (msg.senderName || user?.username || $t('w4Content.you')) }}
       </p>
       <!-- Telegram label (source or delivered) -->
-      <p v-if="msg.source === 'telegram'" class="mb-1 text-xs font-medium text-[#2AABEE]">
+      <p v-if="msg.source === 'telegram'" class="mb-1 text-xs font-medium text-telegram">
         via Telegram{{ msg.senderName ? ` (${msg.senderName})` : '' }}
       </p>
-      <p v-else-if="msg.telegramDelivered" class="mb-1 text-xs font-medium text-[#2AABEE]">
+      <p v-else-if="msg.telegramDelivered" class="mb-1 text-xs font-medium text-telegram">
         via Telegram
       </p>
       <!-- Reply-to quote bubble (WhatsApp/Telegram style). Shown above the
@@ -63,11 +63,11 @@
         <div
           v-for="(segment, si) in messageTextSegments(msg)"
           :key="`${index}-${si}`"
-          class="prose-chat max-w-[33em] break-words"
+          class="prose-chat max-w-conversation break-words"
           v-html="renderMarkdown(segment.text)"
         />
       </template>
-      <p v-else class="max-w-[70ch] whitespace-pre-wrap break-words">
+      <p v-else class="max-w-reading whitespace-pre-wrap break-words">
         <SecretHandleText :text="msg.content" />
       </p>
       <!-- Privacy step 1: a secret in this message was stored instead
@@ -75,7 +75,7 @@
            reload and carries the information afterwards. -->
       <p
         v-if="msg.role === 'user' && (msg.sealedCount ?? 0) > 0"
-        class="mt-1 flex items-center gap-1 text-[11px] text-muted-foreground"
+        class="mt-1 flex items-center gap-1 text-2xs text-muted-foreground"
         data-sealed-hint
       >
         <AppIcon name="lock" size="sm" class="h-3 w-3" />
@@ -96,7 +96,7 @@
           <AppIcon v-else-if="ttsPlayingIndex === index" name="square" size="sm" />
           <AppIcon v-else name="volume" size="sm" />
         </button>
-        <span class="text-[10px] leading-none text-muted-foreground/70">{{ formatTimeShort(msg.timestamp) }}</span>
+        <span class="text-2xs leading-none text-muted-foreground/70">{{ formatTimeShort(msg.timestamp) }}</span>
       </div>
     </div>
     <ChatInteractionBlock

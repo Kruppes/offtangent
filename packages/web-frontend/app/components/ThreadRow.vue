@@ -114,7 +114,7 @@ function submitRename() {
         <div class="flex items-center gap-2">
           <AppIcon v-if="thread.pinned" name="pin" class="h-3.5 w-3.5 shrink-0 text-primary" />
           <p class="min-w-0 flex-1 truncate text-sm font-semibold text-foreground">{{ displayTitle }}</p>
-          <span class="shrink-0 text-[11px] text-muted-foreground">{{ relativeTime }}</span>
+          <span class="shrink-0 text-2xs text-muted-foreground">{{ relativeTime }}</span>
         </div>
 
         <p v-if="excerpt" class="mt-0.5 line-clamp-2 text-xs leading-relaxed text-muted-foreground">
@@ -125,21 +125,21 @@ function submitRename() {
         <div class="mt-1.5 flex flex-wrap items-center gap-1.5">
           <span
             v-if="activity?.state === 'running'"
-            class="inline-flex items-center gap-1 rounded-full bg-success/10 px-2 py-0.5 text-[10px] font-medium text-success"
+            class="inline-flex items-center gap-1 rounded-full bg-success/10 px-2 py-0.5 text-2xs font-medium text-success"
           >
             <span class="h-1.5 w-1.5 animate-pulse rounded-full bg-current" />
             {{ $t('threads.running') }}
           </span>
           <span
             v-else-if="activity?.state === 'queued'"
-            class="inline-flex items-center gap-1 rounded-full bg-warning/10 px-2 py-0.5 text-[10px] font-medium text-warning"
+            class="inline-flex items-center gap-1 rounded-full bg-warning/10 px-2 py-0.5 text-2xs font-medium text-warning"
           >
             <AppIcon name="clock" class="h-3 w-3" />
             {{ activity.position ? $t('threads.queuedWithPosition', { position: activity.position }) : $t('threads.queued') }}
           </span>
           <span
             v-if="thread.archived"
-            class="inline-flex items-center rounded-full bg-muted px-2 py-0.5 text-[10px] font-medium text-muted-foreground"
+            class="inline-flex items-center rounded-full bg-muted px-2 py-0.5 text-2xs font-medium text-muted-foreground"
           >
             {{ $t('threads.archived') }}
           </span>

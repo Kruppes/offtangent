@@ -14,7 +14,7 @@
  * text-1=onSurface, text-2=onSurfaceVariant, signal=primary,
  * on-signal=onPrimary); there is no hex value in this file. `line` separates,
  * `outline` is used where a line is the only boundary of a control (WCAG
- * 1.4.11, ≥ 3:1). Type is Manrope at 12/14/16/18/22 in rem, weights
+ * 1.4.11, ≥ 3:1). Type is the app system font at 12/14/16/18/22 in rem, weights
  * 400/600 only. Spacing is px on the 4 grid so a text zoom scales type without
  * inflating the layout.
  *
@@ -334,7 +334,7 @@ const listHidden = computed(() => selected.value !== null)
               @click.prevent="openStory(item)">
               <span class="flex flex-wrap items-center gap-[8px]">
                 <span v-if="item.rankLabel" class="nd-meta nd-strong nd-t2 nd-tnum">{{ item.rankLabel }}</span>
-                <span v-if="item.verdict" class="nd-label inline-flex min-h-[20px] items-center rounded-[4px] px-[8px] py-[2px]" :class="pillClass(item.verdict)">
+                <span v-if="item.verdict" class="nd-label inline-flex min-h-[20px] items-center rounded-sm px-[8px] py-[2px]" :class="pillClass(item.verdict)">
                   {{ verdictText(item.verdict) }}
                 </span>
                 <span v-if="item.categoryLabel" class="nd-meta nd-t2">{{ item.categoryLabel }}</span>
@@ -404,7 +404,7 @@ const listHidden = computed(() => selected.value !== null)
         <div class="px-[16px] pb-[48px] min-[600px]:px-[24px]">
           <p class="flex flex-wrap items-center gap-[8px]">
             <span v-if="selected.rankLabel" class="nd-meta nd-strong nd-t2 nd-tnum">{{ selected.rankLabel }}</span>
-            <span v-if="selected.verdict" class="nd-label inline-flex min-h-[20px] items-center rounded-[4px] px-[8px] py-[2px]" :class="pillClass(selected.verdict)">
+            <span v-if="selected.verdict" class="nd-label inline-flex min-h-[20px] items-center rounded-sm px-[8px] py-[2px]" :class="pillClass(selected.verdict)">
               {{ verdictText(selected.verdict) }}
             </span>
             <span v-if="selected.categoryLabel" class="nd-meta nd-t2">{{ selected.categoryLabel }}</span>
@@ -422,12 +422,12 @@ const listHidden = computed(() => selected.value !== null)
           -->
           <div v-if="boardKey" class="mt-[20px] flex flex-wrap items-center gap-[8px]">
             <button type="button" data-testid="news-use-in-question"
-              class="nd-focus nd-signal nd-label inline-flex min-h-[48px] items-center rounded-[8px] px-[16px]"
+              class="nd-focus nd-signal nd-label inline-flex min-h-[48px] items-center rounded-md px-[16px]"
               @click="useInQuestion">
               {{ $t('boards.news.useInQuestion') }}
             </button>
             <button type="button" data-testid="news-copy-context"
-              class="nd-focus nd-outline-t2 nd-t1 nd-label inline-flex min-h-[48px] items-center rounded-[8px] px-[16px]"
+              class="nd-focus nd-outline-t2 nd-t1 nd-label inline-flex min-h-[48px] items-center rounded-md px-[16px]"
               @click="copyContext">
               {{ $t('boards.news.copyContext') }}
             </button>
@@ -447,7 +447,7 @@ const listHidden = computed(() => selected.value !== null)
           </template>
 
           <!-- The only tinted surface of the detail view. Never collapsed. -->
-          <div v-if="selected.critique" class="nd-raised mt-[24px] rounded-[8px] p-[16px]">
+          <div v-if="selected.critique" class="nd-raised mt-[24px] rounded-md p-[16px]">
             <h3 class="nd-label nd-t2">{{ $t('boards.news.criticalTake') }}</h3>
             <p class="nd-body nd-t1 nd-de mt-[8px]" lang="de">{{ selected.critique }}</p>
           </div>
@@ -539,7 +539,7 @@ const listHidden = computed(() => selected.value !== null)
 
 /*
  * Role `icon-glyph`: the day arrows ‹ › are a glyph, not a text step — 22/22/400.
- * Manrope draws them above the middle of their line box, so the ink would sit
+ * The UI font draws them above the middle of their line box, so the ink would sit
  * high in the 48×48 target; the translate puts the visible centre of the glyph
  * on the centre of the area (measured, see the acceptance report), in em so a
  * text zoom keeps it there. The 48×48 target itself is untouched.

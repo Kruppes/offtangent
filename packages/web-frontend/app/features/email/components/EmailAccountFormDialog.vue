@@ -61,7 +61,7 @@
             <Button type="button" variant="outline" :disabled="connection.testing.value !== null" @click="connection.testConnection(connectionPayload(), 'imap')">
               {{ connection.testing.value === 'imap' ? $t('email.form.testing') : $t('email.form.testImap') }}
             </Button>
-            <p v-if="connection.testResult.value?.imap?.ok" class="text-sm text-emerald-600">
+            <p v-if="connection.testResult.value?.imap?.ok" class="text-sm text-success">
               {{ $t('email.form.testImapSuccess') }}
             </p>
             <p v-else-if="connection.testResult.value?.imap?.error" class="text-sm text-destructive">
@@ -121,7 +121,7 @@
             <Button type="button" variant="outline" :disabled="connection.testing.value !== null" @click="connection.testConnection(connectionPayload(), 'smtp')">
               {{ connection.testing.value === 'smtp' ? $t('email.form.testing') : $t('email.form.testSmtp') }}
             </Button>
-            <p v-if="connection.testResult.value?.smtp?.ok" class="text-sm text-emerald-600">
+            <p v-if="connection.testResult.value?.smtp?.ok" class="text-sm text-success">
               {{ $t('email.form.testSmtpSuccess') }}
             </p>
             <p v-else-if="connection.testResult.value?.smtp?.error" class="text-sm text-destructive">

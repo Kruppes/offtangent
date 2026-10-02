@@ -20,10 +20,10 @@ export function useThinkingLevel(isAdmin: Ref<boolean>) {
     const map: Record<SettingsThinkingLevel, string> = {
       off: 'text-muted-foreground',
       minimal: 'text-foreground',
-      low: 'text-yellow-500 dark:text-yellow-400',
-      medium: 'text-orange-500 dark:text-orange-400',
-      high: 'text-red-500 dark:text-red-400',
-      xhigh: 'text-red-600 dark:text-red-500',
+      low: 'text-primary',
+      medium: 'text-warning',
+      high: 'text-destructive',
+      xhigh: 'text-destructive',
     }
     return map[current.value] ?? 'text-muted-foreground'
   })

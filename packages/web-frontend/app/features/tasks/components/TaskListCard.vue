@@ -30,7 +30,7 @@
 
     <dl class="grid grid-cols-2 gap-x-4 gap-y-1.5 text-xs">
       <div v-for="cell in statCells" :key="cell.label" class="min-w-0">
-        <dt class="text-[10px] font-medium uppercase tracking-wide text-muted-foreground/70">
+        <dt class="text-2xs font-medium uppercase tracking-wide text-muted-foreground/70">
           {{ cell.label }}
         </dt>
         <dd class="truncate tabular-nums text-foreground">

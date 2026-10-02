@@ -8,11 +8,11 @@
       <div class="flex items-center gap-2">
         <AppIcon name="zap" class="h-3 w-3 shrink-0 opacity-60" />
         <span class="font-medium text-foreground/80">{{ msg.taskStatusUpdateName ?? 'Background Task' }}</span>
-        <span class="ml-auto flex shrink-0 items-center gap-2 text-[10px] text-muted-foreground/80">
+        <span class="ml-auto flex shrink-0 items-center gap-2 text-2xs text-muted-foreground/80">
           <span v-if="typeof msg.taskStatusRuntimeMinutes === 'number'">⏱ {{ msg.taskStatusRuntimeMinutes }}min</span>
           <span v-if="typeof msg.taskStatusToolCallCount === 'number'">• {{ msg.taskStatusToolCallCount }} tools</span>
           <span v-if="typeof msg.taskStatusTokensUsed === 'number'">• ~{{ formatTokenCount(msg.taskStatusTokensUsed) }} tok</span>
-          <span class="rounded bg-amber-500/10 px-1.5 py-0.5 font-medium text-amber-600 dark:text-amber-400">Running</span>
+          <span class="rounded bg-warning/10 px-1.5 py-0.5 font-medium text-warning">Running</span>
         </span>
       </div>
     </div>
@@ -25,10 +25,10 @@
     <div
       class="w-full overflow-hidden rounded-lg border px-3 py-1.5 text-xs"
       :class="msg.stallInfo.outcome === 'recovered'
-        ? 'border-emerald-500/30 bg-emerald-500/5 text-muted-foreground'
+        ? 'border-success/30 bg-success/5 text-muted-foreground'
         : msg.stallInfo.outcome === 'aborted'
           ? 'border-destructive/30 bg-destructive/5 text-muted-foreground'
-          : 'border-amber-500/30 bg-amber-500/5 text-muted-foreground'"
+          : 'border-warning/30 bg-warning/5 text-muted-foreground'"
     >
       <div class="flex items-center gap-2">
         <AppIcon
@@ -36,7 +36,7 @@
           class="h-3 w-3 shrink-0 opacity-70"
         />
         <span class="min-w-0 flex-1 break-words text-foreground/80">{{ msg.content }}</span>
-        <span class="shrink-0 text-[10px] text-muted-foreground/80">
+        <span class="shrink-0 text-2xs text-muted-foreground/80">
           {{ formatStallDuration(msg.stallInfo.durationMs) }}
         </span>
       </div>

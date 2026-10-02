@@ -79,7 +79,7 @@
         <p class="text-sm">{{ hasActiveFilters ? $t('email.sentLog.noResults') : $t('email.sentLog.empty') }}</p>
       </div>
 
-      <div v-else class="overflow-hidden rounded-xl border border-border bg-card shadow-sm">
+      <div v-else class="overflow-hidden rounded-xl border border-border bg-card">
         <div class="overflow-x-auto">
           <Table>
             <TableHeader>
@@ -100,13 +100,13 @@
                 @click="selected = entry"
               >
                 <TableCell>
-                  <Badge :variant="statusVariant(entry.status)" class="text-[10px]">
+                  <Badge :variant="statusVariant(entry.status)" class="text-2xs">
                     {{ $t(`email.sentLog.status.${entry.status}`) }}
                   </Badge>
                   <!-- Stuck at "sending": the outcome is unknown, never "not sent". -->
                   <p
                     v-if="isStaleSending(entry)"
-                    class="mt-1 text-[10px] leading-snug text-destructive"
+                    class="mt-1 text-2xs leading-snug text-destructive"
                     data-testid="stale-sending-warning"
                   >
                     {{ $t('email.sentLog.staleSending') }}

@@ -36,7 +36,7 @@ onMounted(load)
               <span class="min-w-0 flex-1">
                 <span class="flex flex-wrap items-center gap-2">
                   <h2 class="font-medium">{{ board.title }}</h2>
-                  <span class="rounded-full bg-muted px-2 py-0.5 text-[11px] text-muted-foreground">{{ board.kind }}</span>
+                  <span class="rounded-full bg-muted px-2 py-0.5 text-2xs text-muted-foreground">{{ board.kind }}</span>
                 </span>
                 <span v-if="board.summary" class="mt-1 line-clamp-1 block text-sm text-muted-foreground">{{ plainSummary(board.summary) }}</span>
                 <span class="mt-1 block text-xs text-muted-foreground">

@@ -28,7 +28,7 @@
       </AlertDescription>
     </Alert>
 
-    <div class="overflow-hidden rounded-xl border border-border bg-card shadow-sm">
+    <div class="overflow-hidden rounded-xl border border-border bg-card">
       <div class="border-b border-border px-4 py-4">
         <div class="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
           <div class="flex flex-1 flex-col gap-3 sm:flex-row">

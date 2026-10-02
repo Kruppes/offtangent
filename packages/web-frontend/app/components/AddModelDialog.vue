@@ -56,16 +56,16 @@
               >
               <span class="flex min-w-0 flex-1 flex-col">
                 <span class="truncate">{{ model.name }}</span>
-                <span class="font-mono text-[10px] text-muted-foreground truncate">{{ model.id }}</span>
+                <span class="font-mono text-2xs text-muted-foreground truncate">{{ model.id }}</span>
               </span>
               <span
                 v-if="model.contextWindow || model.cost"
-                class="flex shrink-0 flex-col items-end text-[10px] text-muted-foreground tabular-nums"
+                class="flex shrink-0 flex-col items-end text-2xs text-muted-foreground tabular-nums"
               >
                 <span v-if="model.contextWindow">{{ $t('providers.addModelContext', { size: formatContextWindow(model.contextWindow) }) }}</span>
                 <span v-if="model.cost">${{ formatModelCost(model.cost.input) }} / ${{ formatModelCost(model.cost.output) }}</span>
               </span>
-              <span v-if="isAlreadyEnabled(model.id)" class="text-[10px] text-muted-foreground shrink-0">
+              <span v-if="isAlreadyEnabled(model.id)" class="text-2xs text-muted-foreground shrink-0">
                 {{ $t('providers.addModelAlreadyEnabled') }}
               </span>
             </label>
@@ -99,7 +99,7 @@
               <span class="truncate">
                 {{ $t('providers.addModelCustom', { name: search.trim() }) }}
               </span>
-              <span class="font-mono text-[10px] text-muted-foreground truncate">{{ search.trim() }}</span>
+              <span class="font-mono text-2xs text-muted-foreground truncate">{{ search.trim() }}</span>
             </span>
           </button>
         </div>

@@ -345,8 +345,8 @@
           />
           <div class="text-xs text-muted-foreground space-y-1">
             <p>{{ $t('skills.installExamples') }}</p>
-            <code class="block rounded bg-muted px-2 py-1 text-[11px]">zats/perplexity</code>
-            <code class="block rounded bg-muted px-2 py-1 text-[11px]">https://github.com/anthropics/skills/tree/main/skills/pdf</code>
+            <code class="block rounded bg-muted px-2 py-1 text-2xs">zats/perplexity</code>
+            <code class="block rounded bg-muted px-2 py-1 text-2xs">https://github.com/anthropics/skills/tree/main/skills/pdf</code>
           </div>
         </div>
 

@@ -124,13 +124,13 @@ function navigateFromSheet() {
 <template>
   <nav v-if="mobile" :aria-label="$t('nav.primary')" class="grid shrink-0 grid-cols-5 border-t border-border bg-background pb-[env(safe-area-inset-bottom)] md:hidden">
     <NuxtLink v-for="item in primary" :key="item.path" :to="item.path" :aria-current="active(path, item.path) ? 'page' : undefined"
-      class="flex min-h-14 min-w-0 flex-col items-center justify-center gap-1 text-[10px] font-medium"
+      class="flex min-h-14 min-w-0 flex-col items-center justify-center gap-1 text-2xs font-medium"
       :class="active(path, item.path) ? 'bg-primary/10 text-primary' : 'text-muted-foreground'" @click="emit('navigate')">
       <AppIcon :name="item.icon" />
       <span class="w-full truncate px-0.5 text-center">{{ $t(`nav.${item.label}`) }}</span>
       <span v-if="item.path === '/feed' && unreadCount > 0" class="h-2 w-2 shrink-0 rounded-full bg-primary" role="status"><span class="sr-only">{{ $t('feed.unreadCount', { count: unreadCount }) }}</span></span>
     </NuxtLink>
-    <button ref="moreButton" type="button" data-testid="nav-more" class="flex min-h-14 min-w-0 flex-col items-center justify-center gap-1 text-[10px] font-medium"
+    <button ref="moreButton" type="button" data-testid="nav-more" class="flex min-h-14 min-w-0 flex-col items-center justify-center gap-1 text-2xs font-medium"
       :class="inSystem || sheetOpen ? 'bg-primary/10 text-primary' : 'text-muted-foreground'"
       :aria-expanded="sheetOpen" aria-controls="system-sheet" aria-haspopup="dialog" @click="sheetOpen ? closeSheet() : openSheet()">
       <AppIcon name="more" />
@@ -138,9 +138,9 @@ function navigateFromSheet() {
     </button>
     <Teleport to="body">
       <div v-if="sheetOpen" class="fixed inset-0 z-50 md:hidden">
-        <div class="absolute inset-0 bg-black/55" aria-hidden="true" @click="closeSheet()" />
+        <div class="absolute inset-0 bg-scrim" aria-hidden="true" @click="closeSheet()" />
         <div id="system-sheet" ref="sheetPanel" role="dialog" aria-modal="true" :aria-label="$t('nav.system')"
-          class="absolute inset-x-0 bottom-0 max-h-[80vh] overflow-y-auto rounded-t-2xl border-t border-border bg-background p-3 pb-[calc(env(safe-area-inset-bottom)+0.75rem)] shadow-xl">
+          class="absolute inset-x-0 bottom-0 max-h-[80vh] overflow-y-auto rounded-t-2xl border-t border-border bg-background p-3 pb-[calc(env(safe-area-inset-bottom)+0.75rem)] shadow-overlay">
           <div class="mb-1 flex items-center justify-between gap-2 px-2">
             <h2 class="text-sm font-semibold text-muted-foreground">{{ $t('nav.system') }}</h2>
             <button ref="sheetClose" type="button" data-testid="nav-sheet-close" class="inline-flex h-11 w-11 items-center justify-center rounded-md text-muted-foreground hover:bg-accent focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring" :aria-label="$t('common.close')" @click="closeSheet()">

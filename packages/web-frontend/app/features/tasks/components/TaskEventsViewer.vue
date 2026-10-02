@@ -125,7 +125,7 @@
         <Alert
           v-if="showRetriggerNotice"
           variant="default"
-          class="mb-4 border-amber-500/40 bg-amber-500/5 text-amber-900 dark:text-amber-200"
+          class="mb-4 border-warning/40 bg-warning/5 text-warning"
         >
           <AlertDescription class="text-xs">
             {{ $t('taskViewer.restartTriggerNotice', { trigger: $t(`tasks.trigger.${taskInfo?.triggerType ?? 'user'}`) }) }}
@@ -233,7 +233,7 @@
             >
               {{ getToolCallSummary(event.toolName ?? '', event.toolArgs) }}
             </span>
-            <Badge v-if="event.toolIsError" variant="destructive" class="text-[10px] px-1.5 py-0">
+            <Badge v-if="event.toolIsError" variant="destructive" class="text-2xs px-1.5 py-0">
               {{ $t('taskViewer.error') }}
             </Badge>
           </template>
@@ -284,13 +284,13 @@
           <TaskEventCard
             v-if="parseStructuredResponse(event.text)"
             :icon="parseStructuredResponse(event.text)!.status === 'completed' ? 'check' : 'close'"
-            :icon-class="parseStructuredResponse(event.text)!.status === 'completed' ? 'text-green-500' : 'text-destructive'"
+            :icon-class="parseStructuredResponse(event.text)!.status === 'completed' ? 'text-success' : 'text-destructive'"
             :timestamp="formatTime(event.timestamp)"
           >
             <template #header>
               <span
                 class="text-xs font-medium"
-                :class="parseStructuredResponse(event.text)!.status === 'completed' ? 'text-green-500' : 'text-destructive'"
+                :class="parseStructuredResponse(event.text)!.status === 'completed' ? 'text-success' : 'text-destructive'"
               >
                 {{ parseStructuredResponse(event.text)!.statusLabel }}
               </span>

@@ -53,13 +53,13 @@
           <span class="min-w-0 flex-1 truncate font-medium">{{ opt.label }}</span>
           <span
             v-if="opt.description"
-            class="shrink-0 truncate text-[10px] text-muted-foreground/80"
+            class="shrink-0 truncate text-2xs text-muted-foreground/80"
           >{{ opt.description }}</span>
           <span
             v-if="opt.badge"
-            class="shrink-0 rounded px-1.5 py-0.5 text-[10px] font-medium"
+            class="shrink-0 rounded px-1.5 py-0.5 text-2xs font-medium"
             :class="opt.badge === 'active'
-              ? 'bg-emerald-500/10 text-emerald-600 dark:text-emerald-400'
+              ? 'bg-success/10 text-success'
               : opt.badge === 'error'
                 ? 'bg-destructive/10 text-destructive'
                 : 'bg-muted text-muted-foreground'"

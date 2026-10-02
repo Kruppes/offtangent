@@ -6,7 +6,7 @@
     v-if="views.length > 0"
     :class="wide
       ? 'relative flex h-full shrink-0 border-l border-border bg-background'
-      : 'absolute inset-x-0 top-0 z-30 flex flex-col border-b border-border bg-background shadow-lg'"
+      : 'absolute inset-x-0 top-0 z-30 flex flex-col border-b border-border bg-background shadow-overlay'"
     :style="shellStyle"
     data-testid="strand-canvas"
     :aria-expanded="isOpen ? 'true' : 'false'"
@@ -82,7 +82,7 @@
           v-for="view in views"
           :key="view.viewKey"
           type="button"
-          class="h-9 shrink-0 rounded-[10px] px-3 text-xs"
+          class="h-9 shrink-0 rounded-md px-3 text-xs"
           :class="view.viewKey === openViewKey ? 'bg-primary text-primary-foreground' : 'bg-muted text-muted-foreground hover:bg-muted/70'"
           :aria-current="view.viewKey === openViewKey ? 'true' : undefined"
           @click="openCanvas(view.viewKey)"
