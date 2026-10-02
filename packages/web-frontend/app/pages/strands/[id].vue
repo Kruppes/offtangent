@@ -56,7 +56,7 @@ onShortcut('context.toggle', toggleContext)
           <button type="button" data-testid="context-toggle"
             class="inline-flex h-11 w-11 shrink-0 items-center justify-center rounded-lg text-muted-foreground hover:bg-accent hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
             :class="contextOpen ? 'bg-accent text-foreground' : ''"
-            :aria-label="$t('shell.contextToggle')" :aria-pressed="contextOpen" aria-controls="strand-context-column" @click="toggleContext">
+            :aria-label="$t('shell.contextToggle')" :aria-pressed="contextOpen" :aria-controls="contextOpen ? 'strand-context-column' : undefined" @click="toggleContext">
             <AppIcon name="panelRight" />
           </button>
         </template>

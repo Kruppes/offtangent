@@ -194,3 +194,11 @@ describe('tables in their own scroll container', () => {
     expect(html).not.toContain('javascript:')
   })
 })
+
+describe('code blocks are keyboard scrollable', () => {
+  it('makes the scrolling pre of a fenced block focusable, still escaped', () => {
+    const html = useMarkdown().renderMarkdown('```ts\nconst wide = "<b>' + 'x'.repeat(200) + '</b>"\n```')
+    expect(html).toContain('<pre tabindex="0"><code class="language-ts">')
+    expect(html).not.toContain('<b>')
+  })
+})

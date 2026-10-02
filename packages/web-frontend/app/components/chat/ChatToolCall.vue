@@ -8,7 +8,7 @@
       <span class="shrink-0 font-medium">{{ toolDisplayName(toolData) }}</span>
       <span
         v-if="toolSummary(toolData)"
-        class="min-w-0 truncate font-mono text-muted-foreground/70"
+        class="min-w-0 truncate font-mono text-muted-foreground"
         :title="toolSummary(toolData)!"
       >
         {{ toolSummary(toolData) }}

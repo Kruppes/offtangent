@@ -49,8 +49,8 @@
     <ChatMessageList v-else :rows="transcriptRows" :state="contentState" @retry="reloadHistory" />
 
     <Transition enter-active-class="transition duration-200 ease-out" enter-from-class="translate-y-2 opacity-0" enter-to-class="translate-y-0 opacity-100" leave-active-class="transition duration-150 ease-in" leave-from-class="translate-y-0 opacity-100" leave-to-class="translate-y-2 opacity-0">
-      <button v-if="!isNearBottom" class="absolute bottom-28 right-6 z-10 flex h-9 w-9 items-center justify-center rounded-full border border-border bg-background text-muted-foreground shadow-overlay" @click="jumpToBottom">
-        <svg class="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="6 9 12 15 18 9" /></svg>
+      <button v-if="!isNearBottom" type="button" :aria-label="$t('chat.scrollToBottom')" :title="$t('chat.scrollToBottom')" class="absolute bottom-28 right-6 z-10 flex h-11 w-11 items-center justify-center rounded-full border border-border bg-background text-muted-foreground shadow-overlay focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary" @click="jumpToBottom">
+        <svg class="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><polyline points="6 9 12 15 18 9" /></svg>
       </button>
     </Transition>
 

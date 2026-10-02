@@ -116,6 +116,7 @@
              Desktop (sm+): text label, always shown alongside the mic. -->
         <Button
           type="submit"
+          :aria-label="$t('chat.send')"
           :disabled="!hasText || connectionStatus !== 'connected'"
           class="h-[42px] w-[42px] shrink-0 rounded-xl p-0 sm:w-auto sm:px-4"
           :class="(!hasText && sttEnabled) ? 'hidden sm:inline-flex' : 'inline-flex'"

@@ -93,7 +93,7 @@ renderer.code = ({ text, lang, escaped }: Tokens.Code) => {
     + '</svg>'
     + '</button>'
     + '</div>'
-    + `<pre><code${languageAttr}>${escapedCode}</code></pre>`
+    + `<pre tabindex="0"><code${languageAttr}>${escapedCode}</code></pre>`
     + '</div>\n'
 }
 
