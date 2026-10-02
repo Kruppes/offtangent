@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, onMounted, ref } from 'vue'
 import { useFeed } from '~/composables/useFeed'
-import { usePersonasApi, type PersonaListItem } from '~/api/personas'
+import { useCapturesApi, type ClientPersona } from '~/api/captures'
 import { FEED_FILTER_KINDS, type FeedItem, type FeedItemKind } from '~/api/feed'
 import FeedCard from '~/features/feed/FeedCard.vue'
 import { feedDays, feedPersonas, filterFeed, personaKey, type FeedDayLabel } from '~/features/feed/feedSections'
@@ -13,7 +13,7 @@ const kind = ref<FeedItemKind | ''>('')
 /** null = every persona, '' = the default persona (items without an agent). */
 const persona = ref<string | null>(null)
 const expanded = ref<Set<string>>(new Set())
-const personas = ref<PersonaListItem[]>([])
+const personas = ref<ClientPersona[]>([])
 const kinds = FEED_FILTER_KINDS
 const visibleItems = computed(() => filterFeed(items.value, { unreadOnly: unreadOnly.value, kind: kind.value, persona: persona.value }))
 const days = computed(() => feedDays(visibleItems.value, Date.now()))
@@ -41,8 +41,9 @@ async function askAbout(item: FeedItem) {
   if (destination) await navigateTo(destination)
 }
 async function loadPersonas() {
-  // Labels only; without them a chip shows the persona id.
-  try { personas.value = await usePersonasApi().listPersonas() } catch { personas.value = [] }
+  // Labels only, from the client catalog every logged-in role may read
+  // (`/api/personas` is admin-only). Without it a chip shows the persona id.
+  try { personas.value = await useCapturesApi().personas() } catch { personas.value = [] }
 }
 onMounted(() => { void load(); void loadPersonas() })
 const chipClass = (selected: boolean) => [
