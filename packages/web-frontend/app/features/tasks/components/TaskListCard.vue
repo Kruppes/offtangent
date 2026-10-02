@@ -1,11 +1,16 @@
 <template>
-  <button
-    type="button"
-    class="flex w-full flex-col gap-2 rounded-lg border border-border bg-card px-4 py-3 text-left transition-colors hover:bg-muted/50"
-    @click="$emit('open')"
+  <!-- One card, two controls side by side (never nested): the title button
+       stretches over the whole card, the kill button sits above it. -->
+  <div
+    data-testid="task-list-card"
+    class="relative flex w-full flex-col gap-2 rounded-lg border border-border bg-card px-4 py-3 text-left transition-colors focus-within:ring-2 focus-within:ring-ring hover:bg-muted/50"
   >
     <div class="flex items-start gap-2">
-      <span class="min-w-0 flex-1 truncate text-sm font-medium">{{ task.name }}</span>
+      <button
+        type="button"
+        class="min-w-0 flex-1 truncate text-left text-sm font-medium after:absolute after:inset-0 after:rounded-lg focus-visible:outline-none"
+        @click="$emit('open')"
+      >{{ task.name }}</button>
       <Badge :variant="taskStatusVariant(displayStatus)" class="shrink-0">
         {{ $t(`tasks.status.${displayStatus}`) }}
       </Badge>
@@ -13,8 +18,9 @@
         v-if="task.status === 'running'"
         variant="ghost"
         size="sm"
-        class="-my-1 -mr-2 h-7 w-7 shrink-0 p-0 text-destructive hover:bg-destructive/10 hover:text-destructive"
+        class="relative z-10 -my-1 -mr-2 h-7 w-7 shrink-0 p-0 text-destructive hover:bg-destructive/10 hover:text-destructive max-md:-my-2.5 max-md:h-11 max-md:w-11"
         :title="$t('tasks.killButton')"
+        :aria-label="$t('tasks.killButton')"
         @click.stop="$emit('kill')"
       >
         <AppIcon name="kill" size="sm" />
@@ -30,7 +36,7 @@
 
     <dl class="grid grid-cols-2 gap-x-4 gap-y-1.5 text-xs">
       <div v-for="cell in statCells" :key="cell.label" class="min-w-0">
-        <dt class="text-2xs font-medium uppercase tracking-wide text-muted-foreground/70">
+        <dt class="text-2xs font-medium uppercase tracking-wide text-muted-foreground">
           {{ cell.label }}
         </dt>
         <dd class="truncate tabular-nums text-foreground">
@@ -39,7 +45,7 @@
         </dd>
       </div>
     </dl>
-  </button>
+  </div>
 </template>
 
 <script setup lang="ts">

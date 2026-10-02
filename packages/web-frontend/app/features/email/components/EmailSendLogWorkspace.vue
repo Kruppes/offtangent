@@ -5,7 +5,7 @@
         <span>{{ error }}</span>
         <button
           type="button"
-          class="ml-2 opacity-70 transition-opacity hover:opacity-100"
+          class="-my-3 ml-2 inline-flex h-11 w-11 shrink-0 items-center justify-center rounded-md opacity-70 transition-opacity hover:opacity-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
           :aria-label="$t('aria.closeAlert')"
           @click="error = null"
         >
@@ -28,7 +28,7 @@
         />
         <select
           v-model="filters.accountId"
-          class="h-9 rounded-md border border-input bg-background px-3 text-sm"
+          class="h-9 rounded-md border border-input bg-background px-3 text-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring max-md:h-11"
           :aria-label="$t('email.sentLog.filters.account')"
           @change="fetchEntries"
         >
@@ -46,7 +46,7 @@
           v-for="status in EMAIL_SEND_LOG_STATUSES"
           :key="status"
           type="button"
-          class="rounded-full border px-2.5 py-0.5 text-xs font-medium transition-colors"
+          class="rounded-full border px-2.5 py-0.5 text-xs font-medium transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring max-md:min-h-11 max-md:px-3.5"
           :class="filters.status.includes(status)
             ? 'border-primary bg-primary text-primary-foreground'
             : 'border-border text-muted-foreground hover:bg-muted'"

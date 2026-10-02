@@ -13,7 +13,7 @@
           <span>{{ errorMessage }}</span>
           <button
             type="button"
-            class="ml-2 opacity-70 transition-opacity hover:opacity-100"
+            class="-my-3 ml-2 inline-flex h-11 w-11 shrink-0 items-center justify-center rounded-md opacity-70 transition-opacity hover:opacity-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
             :aria-label="$t('aria.closeAlert')"
             @click="clearMessages"
           >
@@ -27,7 +27,7 @@
           <span>{{ successMessage }}</span>
           <button
             type="button"
-            class="ml-2 opacity-70 transition-opacity hover:opacity-100"
+            class="-my-3 ml-2 inline-flex h-11 w-11 shrink-0 items-center justify-center rounded-md opacity-70 transition-opacity hover:opacity-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
             :aria-label="$t('aria.closeAlert')"
             @click="clearMessages"
           >

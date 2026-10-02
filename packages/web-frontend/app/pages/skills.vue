@@ -22,7 +22,7 @@
       <Alert v-if="error" variant="destructive" class="mb-3 shrink-0">
         <AlertDescription class="flex items-center justify-between">
           <span>{{ error }}</span>
-          <button type="button" class="ml-2 opacity-70 hover:opacity-100 transition-opacity" :aria-label="$t('aria.closeAlert')" @click="clearError()">
+          <button type="button" class="-my-3 ml-2 inline-flex h-11 w-11 shrink-0 items-center justify-center rounded-md opacity-70 transition-opacity hover:opacity-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring" :aria-label="$t('aria.closeAlert')" @click="clearError()">
             <AppIcon name="close" class="h-4 w-4" />
           </button>
         </AlertDescription>
@@ -32,7 +32,7 @@
       <Alert v-if="successMessage" variant="success" class="mb-3 shrink-0">
         <AlertDescription class="flex items-center justify-between">
           <span>{{ successMessage }}</span>
-          <button type="button" class="ml-2 opacity-70 hover:opacity-100 transition-opacity" :aria-label="$t('aria.closeAlert')" @click="successMessage = null">
+          <button type="button" class="-my-3 ml-2 inline-flex h-11 w-11 shrink-0 items-center justify-center rounded-md opacity-70 transition-opacity hover:opacity-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring" :aria-label="$t('aria.closeAlert')" @click="successMessage = null">
             <AppIcon name="close" class="h-4 w-4" />
           </button>
         </AlertDescription>

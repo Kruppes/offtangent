@@ -633,10 +633,13 @@
     }
     .code-block-language {
       @apply truncate font-mono font-medium uppercase tracking-wide text-muted-foreground;
-      font-size: max(11px, 0.6875em);
+      font-size: max(var(--text-2xs), 0.6875em);
     }
     .code-block-copy-button {
       @apply inline-flex h-6 w-6 shrink-0 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-muted hover:text-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring;
+    }
+    @media (max-width: 767px) {
+      .code-block-copy-button { @apply -my-1.5 h-11 w-11; }
     }
     .code-block-copy-button svg {
       @apply h-3.5 w-3.5;
@@ -831,4 +834,10 @@ html[data-strand-transition="close"]::view-transition-old(strand-conversation) {
   ::view-transition-new(*) {
     animation: none !important;
   }
+}
+
+/* Mobile web (< 768 px, W6a): no text below 12 px. The label step keeps its
+   11 px on desktop and grows to 12 px on phones; the line height stays 16 px. */
+@media (max-width: 767px) {
+  :root { --text-2xs: 12px; }
 }

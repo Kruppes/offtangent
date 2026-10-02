@@ -3,7 +3,7 @@
     <PopoverTrigger as-child>
       <button
         type="button"
-        class="mb-[7px] flex h-7 w-7 shrink-0 items-center justify-center rounded-lg transition-colors hover:bg-muted/60 disabled:cursor-not-allowed disabled:opacity-40"
+        class="mb-[7px] flex h-7 w-7 shrink-0 max-md:mb-0 max-md:h-11 max-md:w-11 items-center justify-center rounded-lg transition-colors hover:bg-muted/60 disabled:cursor-not-allowed disabled:opacity-40"
         :class="thinkingBrainColorClass"
         :disabled="thinkingLevelSaving"
         :title="$t('chat.thinkingLevelTooltip')"
