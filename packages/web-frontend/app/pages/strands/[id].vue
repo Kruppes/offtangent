@@ -8,6 +8,10 @@ import { useShellLayout } from '~/composables/useShellLayout'
 import { useStrandCanvas } from '~/composables/useStrandCanvas'
 import { onShortcut } from '~/composables/useShortcuts'
 import { CONTEXT_WIDTH } from '~/utils/shellLayout'
+import ContextRing from '~/components/context/ContextRing.vue'
+import StrandContextDetails from '~/components/context/StrandContextDetails.vue'
+import { useStrandContext } from '~/composables/useStrandContext'
+import { formatTokens, gaugePercent } from '~/utils/contextGauge'
 const route = useRoute()
 const router = useRouter()
 const threadId = computed(() => String(route.params.id ?? ''))
@@ -46,6 +50,25 @@ function closeContext() {
   else sheetOpen.value = false
 }
 onShortcut('context.toggle', toggleContext)
+
+// Context ring in the header (N2): the gauge of the last request, re-read
+// whenever the strand's activity moves (a finished turn) or the panel opens.
+const { t } = useI18n()
+const strandContext = useStrandContext(() => threadId.value || null)
+strandContext.watchGauge()
+const lastActivity = computed(() => threads.value.find(entry => entry.id === threadId.value)?.lastActivity ?? null)
+watch(lastActivity, (now, before) => { if (before && now !== before) strandContext.refreshGauge() })
+watch(contextOpen, open => { if (open) strandContext.refreshGauge() })
+const headerGauge = computed(() => {
+  const state = strandContext.gauge()
+  return state.status === 'ready' ? state.data : null
+})
+const ringLabel = computed(() => {
+  const percent = gaugePercent(headerGauge.value?.ratio ?? null)
+  return percent === null
+    ? t('w4b.context.ringUnknown')
+    : t('w4b.context.ringLabel', { percent, window: formatTokens(headerGauge.value?.contextWindow ?? null) })
+})
 </script>
 
 <template>
@@ -56,8 +79,9 @@ onShortcut('context.toggle', toggleContext)
           <button type="button" data-testid="context-toggle"
             class="inline-flex h-11 w-11 shrink-0 items-center justify-center rounded-lg text-muted-foreground hover:bg-accent hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
             :class="contextOpen ? 'bg-accent text-foreground' : ''"
-            :aria-label="$t('shell.contextToggle')" :aria-pressed="contextOpen" :aria-controls="contextOpen ? 'strand-context-column' : undefined" @click="toggleContext">
-            <AppIcon name="panelRight" />
+            :aria-label="headerGauge ? `${$t('shell.contextToggle')} · ${ringLabel}` : $t('shell.contextToggle')" :aria-pressed="contextOpen" :aria-controls="contextOpen ? 'strand-context-column' : undefined" @click="toggleContext">
+            <ContextRing v-if="headerGauge" :ratio="headerGauge.ratio" :label="ringLabel" :size="26" aria-hidden="true" />
+            <AppIcon v-else name="panelRight" />
           </button>
         </template>
       </StrandDetailHeader>
@@ -67,7 +91,9 @@ onShortcut('context.toggle', toggleContext)
     </div>
     <aside v-if="inline && inlineOpen" id="strand-context-column" data-testid="context-column" data-placement="inline"
       class="shrink-0 border-l border-border bg-background" :style="{ width: `${CONTEXT_WIDTH}px` }" aria-labelledby="strand-context-title">
-      <StrandContextPanel :strand-id="threadId" :strand="thread" @close="closeContext" />
+      <StrandContextPanel :strand-id="threadId" :strand="thread" @close="closeContext">
+        <template #extra><StrandContextDetails :strand-id="threadId" :project-id="thread?.projectId ?? null" /></template>
+      </StrandContextPanel>
     </aside>
     <DialogRoot v-if="!inline" :open="sheetOpen" @update:open="sheetOpen = $event">
       <DialogPortal>
@@ -75,7 +101,9 @@ onShortcut('context.toggle', toggleContext)
         <DialogContent id="strand-context-column" data-testid="context-column" data-placement="overlay" :aria-describedby="undefined"
           class="fixed inset-y-0 right-0 z-50 w-[min(20rem,100vw)] border-l border-border bg-background shadow-overlay focus:outline-none">
           <DialogTitle class="sr-only">{{ $t('shell.context') }}</DialogTitle>
-          <StrandContextPanel :strand-id="threadId" :strand="thread" @close="closeContext" />
+          <StrandContextPanel :strand-id="threadId" :strand="thread" @close="closeContext">
+            <template #extra><StrandContextDetails :strand-id="threadId" :project-id="thread?.projectId ?? null" /></template>
+          </StrandContextPanel>
         </DialogContent>
       </DialogPortal>
     </DialogRoot>
