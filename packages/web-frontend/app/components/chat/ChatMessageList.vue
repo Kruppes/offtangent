@@ -2,11 +2,12 @@
   <div ref="messagesContainer" class="relative flex flex-1 flex-col gap-4 overflow-y-auto p-4" @scroll="onMessagesScroll" @copy="handleCopyAsMarkdown" @click="handleMarkdownCodeCopy">
     <TranscriptState :state="state" @retry="$emit('retry')">
       <ChatMessageRow
-        v-for="{ message: msg, index: i, key, tools } in rows"
+        v-for="{ message: msg, index: i, key, steps, turnEnd } in rows"
         :key="key"
         :msg="msg"
         :index="i"
-        :tools="tools"
+        :steps="steps"
+        :turn-end="turnEnd"
       />
     </TranscriptState>
     <StrandActivityPanel

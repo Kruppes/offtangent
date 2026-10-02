@@ -4,7 +4,7 @@
       // Mobile: messages fill the available width (minus avatar + gap
       // or the pl-11 offset for tool cards). On sm+ screens we cap them
       // so bubbles don't span edge-to-edge on wider viewports.
-      msg.role === 'divider' ? 'w-full' : (msg.role === 'tool' || (msg.role === 'system' && (msg.isTaskResult || msg.isTaskStatusUpdate || msg.stallInfo || msg.errorInfo || msg.picker || msg.chatAction)) || msg.isThinking) ? 'self-start w-full max-w-full sm:max-w-[75%] pl-11' : msg.role === 'assistant'
+      msg.role === 'divider' ? 'w-full' : steps ? 'self-start w-full max-w-full pl-11 sm:max-w-[min(100%,max(75%,34rem))]' : (msg.role === 'tool' || (msg.role === 'system' && (msg.isTaskResult || msg.isTaskStatusUpdate || msg.stallInfo || msg.errorInfo || msg.picker || msg.chatAction)) || msg.isThinking) ? 'self-start w-full max-w-full sm:max-w-[75%] pl-11' : msg.role === 'assistant'
         // Answers keep their reading measure (~31rem of text) when the shell's
         // columns make the conversation narrow (two/three columns, W3).
         ? 'flex max-w-full gap-3 sm:max-w-[min(100%,max(75%,34rem))]'
@@ -20,12 +20,12 @@
     ]"
   >
     <ChatSessionDivider v-if="msg.role === 'divider'" :msg="msg" :index="index" />
-    <ChatThinkingCard v-else-if="msg.isThinking" :msg="msg" :index="index" />
-    <ToolActivityGroup v-else-if="tools" :tools="tools" :active="turnActive">
-      <template #default="{ msg: toolMsg }">
+    <!-- All tool calls and reasoning of a turn: ONE collapsed line (N4). -->
+    <TurnLine v-else-if="steps" :steps="steps" :active="turnActive" :turn-end="turnEnd" :label-of="stepLabel">
+      <template #tool="{ msg: toolMsg }">
         <ChatToolCall :tool-data="toolMsg.toolData!" />
       </template>
-    </ToolActivityGroup>
+    </TurnLine>
     <ChatStatusRow v-else-if="msg.role === 'system' && (msg.isTaskStatusUpdate || msg.stallInfo)" :msg="msg" />
     <ChatTurnError v-else-if="msg.role === 'system' && msg.errorInfo" :msg="msg" />
     <ChatTaskResult v-else-if="msg.role === 'system' && msg.isTaskResult" :msg="msg" :index="index" />
@@ -38,9 +38,9 @@
 import type { ChatMessage } from '~/composables/useChat'
 import type { TranscriptRow } from '../content/transcript'
 import { useChatView } from '~/composables/chat/chatViewContext'
-import ToolActivityGroup from '../content/ToolActivityGroup.vue'
+import { useToolPresentation } from '~/composables/chat/useToolPresentation'
+import TurnLine from '../content/TurnLine.vue'
 import ChatSessionDivider from './ChatSessionDivider.vue'
-import ChatThinkingCard from './ChatThinkingCard.vue'
 import ChatToolCall from './ChatToolCall.vue'
 import ChatStatusRow from './ChatStatusRow.vue'
 import ChatTurnError from './ChatTurnError.vue'
@@ -53,7 +53,9 @@ import ChatBubble from './ChatBubble.vue'
  * its kind (full-width divider, indented cards, left/right bubbles); the
  * content is picked by kind, in the same order the checks always ran.
  */
-defineProps<{ msg: ChatMessage; index: number; tools?: TranscriptRow['tools'] }>()
+defineProps<{ msg: ChatMessage; index: number; steps?: TranscriptRow['steps']; turnEnd?: string }>()
 
 const { interactionCard, turnActive } = useChatView()
+const { toolDisplayName } = useToolPresentation()
+const stepLabel = (step: ChatMessage) => (step.toolData ? toolDisplayName(step.toolData) : '')
 </script>

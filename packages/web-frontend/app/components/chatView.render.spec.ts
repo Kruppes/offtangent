@@ -419,17 +419,27 @@ describe('ChatView: streaming', () => {
     expect(textOf(finished)).toContain('time:')
   })
 
-  it('renders a thinking block as a collapsible card that expands on toggle', async () => {
+  it('folds a thinking block into the turn line, one level deeper behind its own toggle', async () => {
     const { root } = await mountChat()
     receive({ type: 'thinking', thinking: 'Considering options' })
     await flush()
-    const card = byTag(root, 'collapsible-card').find(n => attr(n, 'icon') === 'sparkles')!
-    expect(card).toBeDefined()
-    expect(textOf(card)).toContain('Considering options')
-    expect(attr(card, 'expanded')).toBe(false)
-    ;(card.props.onToggle as () => void)()
+    const line = all(root).find(n => 'data-turn-line' in n.props)!
+    expect(line).toBeDefined()
+    expect(attr(line, 'data-turn-state')).toBe('live')
+    expect(textOf(line)).toContain('w4a.turn.thinkingNow')
+    // Collapsed: the reasoning text is not in the transcript yet.
+    expect(textOf(root)).not.toContain('Considering options')
+    const toggle = all(line).find(n => 'data-turn-toggle' in n.props)!
+    expect(attr(toggle, 'aria-expanded')).toBe(false)
+    click(toggle)
     await nextTick()
-    expect(attr(byTag(root, 'collapsible-card').find(n => attr(n, 'icon') === 'sparkles')!, 'expanded')).toBe(true)
+    expect(attr(toggle, 'aria-expanded')).toBe(true)
+    expect(textOf(root)).not.toContain('Considering options')
+    const reasoning = all(line).find(n => 'data-reasoning-toggle' in n.props)!
+    click(reasoning)
+    await nextTick()
+    expect(attr(reasoning, 'aria-expanded')).toBe(true)
+    expect(textOf(line)).toContain('Considering options')
   })
 
   it('enables Stop while a turn streams and sends the stop command', async () => {
@@ -447,17 +457,29 @@ describe('ChatView: streaming', () => {
 })
 
 describe('ChatView: tool activity', () => {
-  it('groups tool calls into one activity block with name, input and output', async () => {
+  it('folds tool calls into one turn line that lists name, input and output when opened', async () => {
     const { root } = await mountChat()
     receive({ type: 'tool_call_start', toolName: 'web_search', toolCallId: 'call-1', toolArgs: { query: 'weather' } })
     await flush()
+    const line = () => all(root).find(n => 'data-turn-line' in n.props)!
+    expect(attr(line(), 'data-turn-state')).toBe('live')
+    expect(textOf(line())).toContain(toolNameFormat.formatToolName('web_search'))
     receive({ type: 'tool_call_end', toolCallId: 'call-1', toolResult: 'sunny' })
+    receive({ type: 'tool_call_start', toolName: 'read_file', toolCallId: 'call-2', toolArgs: { path: 'notes.txt' } })
+    receive({ type: 'tool_call_end', toolCallId: 'call-2', toolResult: 'text' })
+    receive({ type: 'text', text: 'The answer' })
     await flush()
 
-    const group = all(root).find(n => 'data-tool-group' in n.props)!
-    expect(group).toBeDefined()
-    expect(textOf(group)).toContain('w4Content.toolCalls{"count":1}')
-    const card = byTag(group, 'collapsible-card')[0]!
+    // Two calls, one line, collapsed: no tool card in the transcript.
+    expect(all(root).filter(n => 'data-turn-line' in n.props)).toHaveLength(1)
+    expect(attr(line(), 'data-turn-state')).toBe('done')
+    expect(textOf(line())).toContain('w4a.turn.steps{"count":2}')
+    expect(byTag(root, 'collapsible-card')).toHaveLength(0)
+    click(all(line()).find(n => 'data-turn-toggle' in n.props))
+    await nextTick()
+    const cards = byTag(line(), 'collapsible-card')
+    expect(cards).toHaveLength(2)
+    const card = cards[0]!
     expect(attr(card, 'icon')).toBe('settings')
     expect(textOf(card)).toContain(toolNameFormat.formatToolName('web_search'))
     const data = byTag(card, 'tool-data').map(n => attr(n, 'data'))
@@ -473,11 +495,11 @@ describe('ChatView: tool activity', () => {
     const { root } = await mountChat()
     receive({ type: 'tool_call_start', toolName: 'web_search', toolCallId: 'call-1', toolArgs: {} })
     await flush()
-    expect(all(root).some(n => 'data-tool-group' in n.props)).toBe(true)
+    expect(all(root).some(n => 'data-turn-line' in n.props)).toBe(true)
     const toggle = byTag(root, 'switch').find(n => attr(n, 'id') === 'filter-tools')!
     ;(toggle.props['onUpdate:checked'] as (v: boolean) => void)(false)
     await flush()
-    expect(all(root).some(n => 'data-tool-group' in n.props)).toBe(false)
+    expect(all(root).some(n => 'data-turn-line' in n.props)).toBe(false)
     expect(JSON.parse(storage.get('axiom-chat-filters')!).showToolCalls).toBe(false)
   })
 })
@@ -488,6 +510,8 @@ describe('ChatView: special rows', () => {
     receive({ type: 'tool_call_start', toolName: 'write_file', toolCallId: 'w1', toolArgs: { path: '/data/memory/MEMORY.md', content: '# Notes' } })
     receive({ type: 'tool_call_start', toolName: 'read_file', toolCallId: 'r1', toolArgs: { path: '/data/skills/example/SKILL.md' } })
     await flush()
+    click(all(root).find(n => 'data-turn-toggle' in n.props))
+    await nextTick()
     const diff = byTag(root, 'memory-file-diff')
     expect(diff).toHaveLength(1)
     expect(attr(diff[0]!, 'after')).toBe('# Notes')

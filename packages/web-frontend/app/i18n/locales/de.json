@@ -2230,5 +2230,37 @@
       "palette_move": "In der Palette wählen",
       "palette_run": "Palette-Eintrag ausführen"
     }
+  },
+  "w4a": {
+    "turn": {
+      "steps": "{count} Schritte",
+      "stepsOne": "1 Schritt",
+      "reasoningOnly": "Überlegungen",
+      "reasoning": "Überlegungen",
+      "live": "Arbeitet · Schritt {step}",
+      "thinkingNow": "überlegt",
+      "duration": {
+        "seconds": "{s} s",
+        "minutes": "{m} min {s} s",
+        "hours": "{h} h {m} min"
+      }
+    },
+    "actions": {
+      "label": "Nachrichtenaktionen",
+      "copy": "Kopieren",
+      "copied": "Kopiert",
+      "copyFailed": "Kopieren fehlgeschlagen"
+    },
+    "artifact": {
+      "placeholder": "Artefakt wird geladen, sobald es sichtbar ist",
+      "loading": "Artefakt wird geladen",
+      "error": "Artefakt konnte nicht geladen werden",
+      "retry": "Erneut laden",
+      "sandbox": "Sandbox",
+      "sandboxHint": "Läuft abgeschottet: kein Netz, kein Zugriff auf App, Cookies oder Token",
+      "showSource": "Quelltext anzeigen",
+      "hideSource": "Quelltext ausblenden",
+      "paused": "Angehalten, weil außer Sicht"
+    }
   }
 }

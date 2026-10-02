@@ -2230,5 +2230,37 @@
       "palette_move": "Move in palette",
       "palette_run": "Run palette entry"
     }
+  },
+  "w4a": {
+    "turn": {
+      "steps": "{count} steps",
+      "stepsOne": "1 step",
+      "reasoningOnly": "Reasoning",
+      "reasoning": "Reasoning",
+      "live": "Working · step {step}",
+      "thinkingNow": "thinking",
+      "duration": {
+        "seconds": "{s} s",
+        "minutes": "{m} min {s} s",
+        "hours": "{h} h {m} min"
+      }
+    },
+    "actions": {
+      "label": "Message actions",
+      "copy": "Copy",
+      "copied": "Copied",
+      "copyFailed": "Copy failed"
+    },
+    "artifact": {
+      "placeholder": "Artifact loads once it is in view",
+      "loading": "Loading artifact",
+      "error": "The artifact could not be loaded",
+      "retry": "Reload",
+      "sandbox": "Sandbox",
+      "sandboxHint": "Runs isolated: no network, no access to the app, cookies or token",
+      "showSource": "Show source",
+      "hideSource": "Hide source",
+      "paused": "Paused while out of view"
+    }
   }
 }
