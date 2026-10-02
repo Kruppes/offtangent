@@ -32,6 +32,10 @@
  *        (the oldest open question of the strand, or null).
  *   POST /api/strands/:id/project-suggestion/accept  -> { strand }
  *   POST /api/strands/:id/project-suggestion/dismiss -> { strand }
+ *   POST /api/strands/:id/activity/dismiss { ids } -> { dismissed, dismissedAt }
+ *   POST /api/strands/:id/activity/undismiss { ids } -> { restored }
+ *        (W6c) acknowledge finished entries of the activity list; ids must
+ *        belong to the strand's task tree (404), live ones are refused (409).
  *        The running project assignment (Stufe 2): accept writes the proposed
  *        project, dismiss buries the (strand, project) pair for good.
  *        404 strand_not_found / suggestion_not_found, 409 project_already_set
@@ -137,6 +141,8 @@ export function createStrandsRouters(options: StrandsRouterOptions): StrandsRout
   strands.put('/:id/tags', controller.setStrandTags)
   strands.post('/:id/project-suggestion/accept', controller.acceptProjectSuggestion)
   strands.post('/:id/project-suggestion/dismiss', controller.dismissProjectSuggestion)
+  strands.post('/:id/activity/dismiss', controller.dismissActivity)
+  strands.post('/:id/activity/undismiss', controller.undismissActivity)
 
   const tags = Router()
   tags.use(jwtMiddleware)

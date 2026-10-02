@@ -40,6 +40,11 @@ export interface StrandTaskNode {
   toolCallCount: number
   /** The task's own session, never the strand. */
   sessionId: string | null
+  /**
+   * W6c: when the user acknowledged (dismissed) this finished entry, ISO
+   * 8601; null or absent = not dismissed. Optional: older servers omit it.
+   */
+  dismissedAt?: string | null
 }
 
 export interface StrandTaskTreeResponse {
@@ -54,6 +59,10 @@ export interface StrandTaskTreeResponse {
 
 export interface StrandTasksApi {
   getStrandTasks(strandId: string, include?: 'active' | 'all'): Promise<StrandTaskTreeResponse>
+  /** W6c: acknowledge finished entries (ids of this strand's tree, not live). */
+  dismissActivity(strandId: string, ids: string[]): Promise<{ dismissed: string[]; dismissedAt: string }>
+  /** W6c: bring dismissed entries back. */
+  undismissActivity(strandId: string, ids: string[]): Promise<{ restored: string[] }>
 }
 
 export function useStrandTasksApi(): StrandTasksApi {
@@ -63,6 +72,18 @@ export function useStrandTasksApi(): StrandTasksApi {
     async getStrandTasks(strandId: string, include: 'active' | 'all' = 'active') {
       return await apiFetch<StrandTaskTreeResponse>(
         `/api/strands/${encodeURIComponent(strandId)}/tasks?include=${include}`,
+      )
+    },
+    async dismissActivity(strandId: string, ids: string[]) {
+      return await apiFetch<{ dismissed: string[]; dismissedAt: string }>(
+        `/api/strands/${encodeURIComponent(strandId)}/activity/dismiss`,
+        { method: 'POST', body: JSON.stringify({ ids }) },
+      )
+    },
+    async undismissActivity(strandId: string, ids: string[]) {
+      return await apiFetch<{ restored: string[] }>(
+        `/api/strands/${encodeURIComponent(strandId)}/activity/undismiss`,
+        { method: 'POST', body: JSON.stringify({ ids }) },
       )
     },
   }

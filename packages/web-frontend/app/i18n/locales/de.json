@@ -145,6 +145,7 @@
     "micPermissionDenied": "Mikrofonzugriff verweigert",
     "micTooShort": "Aufnahme zu kurz — länger halten",
     "dropFilesHere": "Dateien zum Anhängen hier ablegen",
+    "filesAttached": "{count} Datei angehängt | {count} Dateien angehängt",
     "skillAutocomplete": {
       "label": "Skill laden",
       "installed": "installiert",
@@ -1811,7 +1812,21 @@
     "emptyWhileTurn": "Keine delegierten Tasks — die Antwort wird geschrieben.",
     "errorDescription": "Die Aktivität dieses Strands konnte nicht geladen werden.",
     "showFinished": "Erledigte Tasks zeigen",
-    "hideFinished": "Erledigte Tasks ausblenden"
+    "hideFinished": "Erledigte Tasks ausblenden",
+    "dismiss": "Quittieren",
+    "dismissOne": "{name} quittieren und ausblenden",
+    "restore": "Wieder anzeigen",
+    "restoreOne": "{name} wieder anzeigen",
+    "dismissAll": "Alle abgeschlossenen ausblenden ({count})",
+    "dismissed": "{count} Eintrag ausgeblendet | {count} Einträge ausgeblendet",
+    "undo": "Rückgängig",
+    "dismissError": "Ausblenden fehlgeschlagen. Bitte erneut versuchen.",
+    "emptyOpen": "Keine offenen Aktivitäten.",
+    "showOlder": "Ältere anzeigen ({count})",
+    "hideOlder": "Ältere verbergen",
+    "showHidden": "Ausgeblendete anzeigen ({count})",
+    "hideHidden": "Ausgeblendete verbergen",
+    "listLabel": "Aktivitätsliste"
   },
   "feed": {
     "title": "Feed",

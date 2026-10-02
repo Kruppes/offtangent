@@ -259,6 +259,7 @@ export function deleteStrand(
     db.prepare('DELETE FROM session_summaries WHERE session_id = ?').run(strandId)
     db.prepare('DELETE FROM tool_calls WHERE session_id = ?').run(strandId)
     db.prepare('DELETE FROM artifacts WHERE strand_id = ?').run(strandId)
+    db.prepare('DELETE FROM strand_task_dismissals WHERE strand_id = ?').run(strandId)
     if (options.deleteFacts) {
       db.prepare('DELETE FROM memories WHERE session_id = ? AND CAST(user_id AS TEXT) = ?').run(strandId, userId)
     }

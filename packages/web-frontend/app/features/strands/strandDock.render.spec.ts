@@ -55,6 +55,14 @@ vi.mock('~/features/threads/composables/useStrandTasks', () => ({
     reload: vi.fn(),
     toggle: vi.fn(),
     isExpanded: () => false,
+    // W6c: the acknowledge / fold state of the activity panel.
+    partition: computed(() => ({ open: [], older: [], hidden: [] })),
+    showOlder: ref(false),
+    showHidden: ref(false),
+    lastDismissed: ref(null),
+    dismissError: ref(false),
+    dismiss: vi.fn(),
+    restore: vi.fn(),
   }),
 }))
 

@@ -111,6 +111,30 @@ export function parseStrandTasksQuery(query: Record<string, unknown>): ParseResu
   return { ok: false, error: 'include must be "active" or "all"', code: 'invalid_include' }
 }
 
+/** Body of `POST /api/strands/:id/activity/dismiss|undismiss` (W6c). */
+export interface StrandActivityIdsBody {
+  ids: string[]
+}
+
+/** Same cap as the task tree's node cap (`MAX_TASK_TREE_NODES`). */
+export const MAX_ACTIVITY_IDS = 200
+
+/**
+ * `{ ids: string[] }`, 1..200 distinct non-empty task ids of at most 200
+ * characters each. Anything else is a 400; duplicates collapse.
+ */
+export function parseStrandActivityIdsBody(body: unknown): ParseResult<StrandActivityIdsBody> {
+  const b = (typeof body === 'object' && body !== null ? body : {}) as Record<string, unknown>
+  const ids = b.ids
+  if (!Array.isArray(ids) || ids.length === 0 || ids.length > MAX_ACTIVITY_IDS) {
+    return { ok: false, error: `ids must be an array of 1 to ${MAX_ACTIVITY_IDS} task ids`, code: 'invalid_ids' }
+  }
+  if (ids.some(id => typeof id !== 'string' || id.trim() === '' || id.length > 200)) {
+    return { ok: false, error: 'every id must be a non-empty string of at most 200 characters', code: 'invalid_ids' }
+  }
+  return { ok: true, value: { ids: [...new Set(ids as string[])] } }
+}
+
 export function parseStrandTagsBody(body: unknown): ParseResult<string[]> {
   const b = (typeof body === 'object' && body !== null ? body : {}) as Record<string, unknown>
   if (!Array.isArray(b.tags) || b.tags.some(t => typeof t !== 'string')) {

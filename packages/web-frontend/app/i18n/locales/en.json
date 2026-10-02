@@ -145,6 +145,7 @@
     "micPermissionDenied": "Microphone permission denied",
     "micTooShort": "Recording too short — hold longer",
     "dropFilesHere": "Drop files to attach",
+    "filesAttached": "{count} file attached | {count} files attached",
     "skillAutocomplete": {
       "label": "Load a skill",
       "installed": "installed",
@@ -1811,7 +1812,21 @@
     "emptyWhileTurn": "No delegated tasks — the answer is being written.",
     "errorDescription": "The activity of this strand could not be loaded.",
     "showFinished": "Show finished tasks",
-    "hideFinished": "Hide finished tasks"
+    "hideFinished": "Hide finished tasks",
+    "dismiss": "Acknowledge",
+    "dismissOne": "Acknowledge and hide {name}",
+    "restore": "Show again",
+    "restoreOne": "Show {name} again",
+    "dismissAll": "Hide all finished ({count})",
+    "dismissed": "{count} entry hidden | {count} entries hidden",
+    "undo": "Undo",
+    "dismissError": "Could not hide. Please try again.",
+    "emptyOpen": "No open activity.",
+    "showOlder": "Show older ({count})",
+    "hideOlder": "Hide older",
+    "showHidden": "Show hidden ({count})",
+    "hideHidden": "Hide hidden",
+    "listLabel": "Activity list"
   },
   "feed": {
     "title": "Feed",

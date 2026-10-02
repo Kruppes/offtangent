@@ -79,6 +79,18 @@ const chat = useChat()
 // lineage), once this strand's history is loaded.
 useMessageAnchor(() => route.hash, () => threadId.value,
   () => chat.boundSessionId.value === threadId.value && !chat.loadingHistory.value)
+// W6c: a file dragged onto the strand header or the dock lands in the
+// composer too (ChatView's own drop logic), instead of the browser opening
+// the file in the tab. Drags inside the chat column are already handled there.
+type FileDropHandlers = Record<'handleDragEnter' | 'handleDragOver' | 'handleDragLeave' | 'handleDrop', (event: DragEvent) => void>
+const chatView = ref<{ fileDrop: FileDropHandlers } | null>(null)
+const dropHandler = { dragenter: 'handleDragEnter', dragover: 'handleDragOver', dragleave: 'handleDragLeave', drop: 'handleDrop' } as const
+function forwardFileDrag(event: DragEvent) {
+  const target = event.target instanceof Element ? event.target : null
+  if (target?.closest('[data-file-drop-zone]')) return
+  const name = dropHandler[event.type as keyof typeof dropHandler]
+  if (name) chatView.value?.fileDrop[name](event)
+}
 const turnRunning = computed(() => chat.sessionActivity.value[threadId.value]?.state === 'running'
   || (chat.boundSessionId.value === threadId.value && chat.isStreaming.value))
 const liveTasks = computed(() => countLive(chat.strandTasks.value[threadId.value]))
@@ -110,7 +122,8 @@ const ringLabel = computed(() => {
 </script>
 
 <template>
-  <div class="flex h-full min-h-0 min-w-0 overflow-hidden">
+  <div class="flex h-full min-h-0 min-w-0 overflow-hidden"
+    @dragenter="forwardFileDrag" @dragover="forwardFileDrag" @dragleave="forwardFileDrag" @drop="forwardFileDrag">
     <div class="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden">
       <StrandDetailHeader :key="threadId" :strand-id="threadId" :show-back="shell.tier.value === 'one'" @back="backToInbox" @updated="updated" @deleted="deleted">
         <template #actions>
@@ -125,7 +138,7 @@ const ringLabel = computed(() => {
         </template>
       </StrandDetailHeader>
       <div class="min-h-0 flex-1">
-        <ChatView :key="threadId" :thread-session-id="threadId" :thread-agent-id="thread?.agentId ?? null" @back="backToInbox" />
+        <ChatView ref="chatView" :key="threadId" :thread-session-id="threadId" :thread-agent-id="thread?.agentId ?? null" @back="backToInbox" />
       </div>
     </div>
     <aside v-if="inline && inlineOpen" id="strand-context-column" data-testid="context-column" data-placement="inline"

@@ -18,6 +18,9 @@ import {
   buildTaskRows,
   countLive,
   flattenTaskRows,
+  partitionActivity,
+  setDismissed,
+  subtreeNodes,
   type StrandTaskRow,
 } from '../taskActivity'
 
@@ -38,7 +41,17 @@ export function useStrandTasks(strandId: () => string | null) {
     return id ? strandTasks.value[id] : undefined
   })
   const roots = computed<StrandTaskRow[]>(() => buildTaskRows(state.value))
-  const visibleRows = computed<StrandTaskRow[]>(() => flattenTaskRows(roots.value, expanded.value))
+  // W6c: three groups — open (default view), older than 24 h (folded) and
+  // acknowledged (hidden). The two folded groups open on demand.
+  const showOlder = ref(false)
+  const showHidden = ref(false)
+  const partition = computed(() => partitionActivity(roots.value, nowMs.value))
+  const shownRoots = computed<StrandTaskRow[]>(() => [
+    ...partition.value.open,
+    ...(showOlder.value ? partition.value.older : []),
+    ...(showHidden.value ? partition.value.hidden : []),
+  ])
+  const visibleRows = computed<StrandTaskRow[]>(() => flattenTaskRows(shownRoots.value, expanded.value))
   const liveCount = computed(() => countLive(state.value))
   const totalCount = computed(() => Object.keys(state.value?.nodes ?? {}).length)
 
@@ -54,11 +67,62 @@ export function useStrandTasks(strandId: () => string | null) {
       // Guard against a slow response for a strand the user already left.
       if (strandId() !== id) return
       strandTasks.value = applyTaskTreeSnapshot(strandTasks.value, id, tree.tasks, tree.generatedAt)
+      nowMs.value = Date.now()
       errorMessage.value = null
       status.value = 'ready'
     } catch (err) {
       errorMessage.value = err instanceof Error ? err.message : String(err)
       status.value = 'error'
+    }
+  }
+
+  /** Last acknowledgement, for the undo bar. Null when nothing to undo. */
+  const lastDismissed = ref<string[] | null>(null)
+  const dismissError = ref(false)
+
+  function idsOf(rootIds: string[]): string[] {
+    const wanted = new Set(rootIds)
+    return roots.value.filter(r => wanted.has(r.id)).flatMap(r => subtreeNodes(r).map(n => n.id))
+  }
+
+  /**
+   * Acknowledge roots (each with its whole subtree). Optimistic: the rows go
+   * at once; a failed request puts them back and shows the error line.
+   */
+  async function dismiss(rootIds: string[]): Promise<boolean> {
+    const id = strandId()
+    const ids = idsOf(rootIds)
+    if (!id || ids.length === 0) return false
+    const previous = new Map(ids.map(taskId => [taskId, state.value?.nodes[taskId]?.dismissedAt ?? null]))
+    strandTasks.value = setDismissed(strandTasks.value, id, ids, new Date().toISOString())
+    dismissError.value = false
+    try {
+      const res = await api.dismissActivity(id, ids)
+      strandTasks.value = setDismissed(strandTasks.value, id, ids, res.dismissedAt)
+      lastDismissed.value = ids
+      return true
+    } catch {
+      for (const [taskId, at] of previous) strandTasks.value = setDismissed(strandTasks.value, id, [taskId], at)
+      dismissError.value = true
+      return false
+    }
+  }
+
+  /** Bring acknowledged nodes back (undo, or "restore" in the hidden group). */
+  async function restore(ids: string[]): Promise<boolean> {
+    const id = strandId()
+    if (!id || ids.length === 0) return false
+    const previous = new Map(ids.map(taskId => [taskId, state.value?.nodes[taskId]?.dismissedAt ?? null]))
+    strandTasks.value = setDismissed(strandTasks.value, id, ids, null)
+    dismissError.value = false
+    try {
+      await api.undismissActivity(id, ids)
+      lastDismissed.value = null
+      return true
+    } catch {
+      for (const [taskId, at] of previous) strandTasks.value = setDismissed(strandTasks.value, id, [taskId], at)
+      dismissError.value = true
+      return false
     }
   }
 
@@ -91,6 +155,10 @@ export function useStrandTasks(strandId: () => string | null) {
 
   watch(() => strandId(), id => {
     expanded.value = new Set()
+    showOlder.value = false
+    showHidden.value = false
+    lastDismissed.value = null
+    dismissError.value = false
     if (id) void reload()
     else status.value = 'idle'
   })
@@ -108,6 +176,13 @@ export function useStrandTasks(strandId: () => string | null) {
     status,
     errorMessage,
     roots,
+    partition,
+    showOlder,
+    showHidden,
+    lastDismissed,
+    dismissError,
+    dismiss,
+    restore,
     visibleRows,
     liveCount,
     totalCount,

@@ -39,24 +39,28 @@
               <AppIcon name="settings" class="h-4 w-4" />
             </Button>
           </PopoverTrigger>
-          <PopoverContent class="w-64">
-            <div class="flex flex-col gap-3">
-              <p class="text-xs font-semibold uppercase tracking-wider text-muted-foreground">{{ $t('chat.displayFilters') }}</p>
-              <div class="flex items-center justify-between gap-3">
-                <Label class="cursor-pointer text-sm" for="filter-thinking">{{ $t('chat.filterThinking') }}</Label>
-                <Switch id="filter-thinking" v-model:checked="showThinking" />
+          <!-- W6c: the panel grows with its labels up to the viewport minus a
+               margin; a long label wraps (also inside one long word) instead
+               of pushing its switch out of the box. The switch never shrinks
+               and stays flush right; rows are 44 px touch targets below md. -->
+          <PopoverContent data-testid="display-filters" :collision-padding="8" class="w-max min-w-64 max-w-[min(24rem,calc(100vw-1rem))]">
+            <div class="flex flex-col gap-1 md:gap-2">
+              <p class="text-xs font-semibold uppercase tracking-wider text-muted-foreground [overflow-wrap:anywhere]">{{ $t('chat.displayFilters') }}</p>
+              <div data-filter-row class="flex min-h-11 items-center justify-between gap-3 md:min-h-8">
+                <Label class="min-w-0 flex-1 cursor-pointer self-stretch py-1 text-sm leading-5 [overflow-wrap:anywhere] flex items-center" for="filter-thinking">{{ $t('chat.filterThinking') }}</Label>
+                <Switch id="filter-thinking" v-model:checked="showThinking" class="shrink-0" />
               </div>
-              <div class="flex items-center justify-between gap-3">
-                <Label class="cursor-pointer text-sm" for="filter-tools">{{ $t('chat.filterToolCalls') }}</Label>
-                <Switch id="filter-tools" v-model:checked="showToolCalls" />
+              <div data-filter-row class="flex min-h-11 items-center justify-between gap-3 md:min-h-8">
+                <Label class="min-w-0 flex-1 cursor-pointer self-stretch py-1 text-sm leading-5 [overflow-wrap:anywhere] flex items-center" for="filter-tools">{{ $t('chat.filterToolCalls') }}</Label>
+                <Switch id="filter-tools" v-model:checked="showToolCalls" class="shrink-0" />
               </div>
-              <div class="flex items-center justify-between gap-3">
-                <Label class="cursor-pointer text-sm" for="filter-injections">{{ $t('chat.filterInjections') }}</Label>
-                <Switch id="filter-injections" v-model:checked="showInjections" />
+              <div data-filter-row class="flex min-h-11 items-center justify-between gap-3 md:min-h-8">
+                <Label class="min-w-0 flex-1 cursor-pointer self-stretch py-1 text-sm leading-5 [overflow-wrap:anywhere] flex items-center" for="filter-injections">{{ $t('chat.filterInjections') }}</Label>
+                <Switch id="filter-injections" v-model:checked="showInjections" class="shrink-0" />
               </div>
-              <div class="flex items-center justify-between gap-3">
-                <Label class="cursor-pointer text-sm" for="filter-summaries">{{ $t('chat.filterSessionSummaries') }}</Label>
-                <Switch id="filter-summaries" v-model:checked="showSessionSummaries" />
+              <div data-filter-row class="flex min-h-11 items-center justify-between gap-3 md:min-h-8">
+                <Label class="min-w-0 flex-1 cursor-pointer self-stretch py-1 text-sm leading-5 [overflow-wrap:anywhere] flex items-center" for="filter-summaries">{{ $t('chat.filterSessionSummaries') }}</Label>
+                <Switch id="filter-summaries" v-model:checked="showSessionSummaries" class="shrink-0" />
               </div>
             </div>
           </PopoverContent>

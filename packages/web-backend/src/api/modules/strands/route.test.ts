@@ -86,7 +86,7 @@ afterAll(async () => {
 })
 
 beforeEach(() => {
-  db.exec('DELETE FROM chat_messages; DELETE FROM sessions; DELETE FROM tags; DELETE FROM strand_tags; DELETE FROM strand_links; DELETE FROM now_set; DELETE FROM resurface_snoozes; DELETE FROM session_summaries; DELETE FROM captures; DELETE FROM router_decisions; DELETE FROM memories; DELETE FROM tasks; DELETE FROM tool_calls; DELETE FROM projects; DELETE FROM strand_project_suggestions; DELETE FROM strand_project_dismissals; DELETE FROM strand_project_runs;')
+  db.exec('DELETE FROM chat_messages; DELETE FROM sessions; DELETE FROM tags; DELETE FROM strand_tags; DELETE FROM strand_links; DELETE FROM now_set; DELETE FROM resurface_snoozes; DELETE FROM session_summaries; DELETE FROM captures; DELETE FROM router_decisions; DELETE FROM memories; DELETE FROM tasks; DELETE FROM tool_calls; DELETE FROM projects; DELETE FROM strand_project_suggestions; DELETE FROM strand_project_dismissals; DELETE FROM strand_project_runs; DELETE FROM strand_task_dismissals;')
   events = []
   evicted = []
   busySessions = []
@@ -610,6 +610,62 @@ describe('strand task tree', () => {
     const foreign = await api('GET', `/api/strands/${strand.id}/tasks`, undefined, otherToken)
     expect(foreign.status).toBe(404)
     expect((await api('GET', '/api/strands/does-not-exist/tasks')).status).toBe(404)
+  })
+
+  it('W6c: dismisses finished entries, reports dismissedAt, restores them and refuses live, foreign and unknown ids', async () => {
+    const strand = sessionManager.createThread('1', 'main', 'Ack')
+    taskSession('sess-ack-done', strand.id)
+    taskSession('sess-ack-fail', strand.id)
+    taskSession('sess-ack-live', strand.id)
+    insertTask({ id: 'ack-done', name: 'Done', status: 'completed', resultStatus: 'completed', sessionId: 'sess-ack-done' })
+    insertTask({ id: 'ack-fail', name: 'Fail', status: 'failed', resultStatus: 'failed', errorMessage: 'exit 1', sessionId: 'sess-ack-fail' })
+    insertTask({ id: 'ack-live', name: 'Live', status: 'running', sessionId: 'sess-ack-live' })
+
+    const before = await api('GET', `/api/strands/${strand.id}/tasks?include=all`)
+    expect((before.body.tasks as Array<Record<string, unknown>>).every(t => t.dismissedAt === null)).toBe(true)
+
+    const ok = await api('POST', `/api/strands/${strand.id}/activity/dismiss`, { ids: ['ack-done', 'ack-fail', 'ack-done'] })
+    expect(ok.status).toBe(200)
+    expect(ok.body.dismissed).toEqual(['ack-done', 'ack-fail'])
+    expect(typeof ok.body.dismissedAt).toBe('string')
+
+    const after = await api('GET', `/api/strands/${strand.id}/tasks?include=all`)
+    const byId = Object.fromEntries((after.body.tasks as Array<Record<string, unknown>>).map(t => [t.id, t.dismissedAt]))
+    expect(byId['ack-done']).toBe(ok.body.dismissedAt)
+    expect(byId['ack-fail']).toBe(ok.body.dismissedAt)
+    expect(byId['ack-live']).toBeNull()
+
+    // Idempotent: a retry keeps the first timestamp.
+    await api('POST', `/api/strands/${strand.id}/activity/dismiss`, { ids: ['ack-done'] })
+    const again = await api('GET', `/api/strands/${strand.id}/tasks?include=all`)
+    expect((again.body.tasks as Array<Record<string, unknown>>).find(t => t.id === 'ack-done')!.dismissedAt).toBe(ok.body.dismissedAt)
+
+    const live = await api('POST', `/api/strands/${strand.id}/activity/dismiss`, { ids: ['ack-live'] })
+    expect(live.status).toBe(409)
+    expect(live.body.code).toBe('task_live')
+
+    const unknown = await api('POST', `/api/strands/${strand.id}/activity/dismiss`, { ids: ['nope'] })
+    expect(unknown.status).toBe(404)
+    expect(unknown.body.code).toBe('task_not_found')
+
+    for (const bad of [{}, { ids: [] }, { ids: [''] }, { ids: [42] }, { ids: Array.from({ length: 201 }, (_, i) => `t${i}`) }]) {
+      const res = await api('POST', `/api/strands/${strand.id}/activity/dismiss`, bad)
+      expect(res.status).toBe(400)
+      expect(res.body.code).toBe('invalid_ids')
+    }
+
+    const foreign = await api('POST', `/api/strands/${strand.id}/activity/dismiss`, { ids: ['ack-done'] }, otherToken)
+    expect(foreign.status).toBe(404)
+    const foreignUndo = await api('POST', `/api/strands/${strand.id}/activity/undismiss`, { ids: ['ack-done'] }, otherToken)
+    expect(foreignUndo.status).toBe(404)
+
+    const restored = await api('POST', `/api/strands/${strand.id}/activity/undismiss`, { ids: ['ack-done'] })
+    expect(restored.status).toBe(200)
+    expect(restored.body.restored).toEqual(['ack-done'])
+    const final = await api('GET', `/api/strands/${strand.id}/tasks?include=all`)
+    const finalById = Object.fromEntries((final.body.tasks as Array<Record<string, unknown>>).map(t => [t.id, t.dismissedAt]))
+    expect(finalById['ack-done']).toBeNull()
+    expect(finalById['ack-fail']).toBe(ok.body.dismissedAt)
   })
 
   it('never leaks the tasks of another strand', async () => {

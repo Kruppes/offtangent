@@ -6,11 +6,14 @@
   <div class="relative flex h-full overflow-hidden">
   <div
     class="relative flex min-w-0 flex-1 flex-col overflow-hidden"
-    @dragenter.prevent="handleDragEnter"
-    @dragover.prevent="handleDragOver"
-    @dragleave.prevent="handleDragLeave"
-    @drop.prevent="handleDrop"
+    data-file-drop-zone
+    @dragenter="handleDragEnter"
+    @dragover="handleDragOver"
+    @dragleave="handleDragLeave"
+    @drop="handleDrop"
   >
+    <!-- W6c: says where a file drag lands and what a drop attached. -->
+    <p class="sr-only" aria-live="polite" data-testid="drop-live">{{ isDraggingFiles ? $t('chat.dropFilesHere') : lastDropped ? $t('chat.filesAttached', { count: lastDropped }, lastDropped) : '' }}</p>
     <!-- Drag & drop overlay -->
     <Transition
       enter-active-class="transition duration-150 ease-out"
@@ -22,6 +25,7 @@
     >
       <div
         v-if="isDraggingFiles"
+        data-testid="drop-zone"
         class="pointer-events-none absolute inset-0 z-50 flex items-center justify-center bg-background/80 backdrop-blur-sm"
       >
         <div class="flex flex-col items-center gap-3 rounded-2xl border-2 border-dashed border-primary/60 bg-primary/[0.06] px-10 py-8 text-primary">
@@ -204,7 +208,11 @@ const lastAnswer = computed(() => {
 provideCommand('speech.readLast', async () => { const m = lastAnswer.value; if (m) await speech.speak('read', m.id, m.content) }, () => tts.ttsEnabled.value && !!lastAnswer.value)
 provideCommand('speech.summaryLast', async () => { const m = lastAnswer.value; if (m) await speech.speak('summary', m.id, m.content) }, () => tts.ttsEnabled.value && !!lastAnswer.value)
 const { isNearBottom, jumpToBottom, scrollToBottom } = scroll
-const { isDraggingFiles, handleDragEnter, handleDragOver, handleDragLeave, handleDrop } = useFileDrop(draft.addFiles)
+const { isDraggingFiles, lastDropped, handleDragEnter, handleDragOver, handleDragLeave, handleDrop } = useFileDrop(draft.addFiles)
+// W6c: the strand page forwards file drags that land outside this column
+// (header, dock) so a drop anywhere on the strand attaches instead of
+// opening the file in the tab.
+defineExpose({ fileDrop: { handleDragEnter, handleDragOver, handleDragLeave, handleDrop } })
 
 provideChatView({
   filters, scroll, draft, thinking, stt, tts, isAdmin, user, avatar,

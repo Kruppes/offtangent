@@ -53,14 +53,15 @@
       </button>
     </h3>
 
-    <!-- Focusable so a long task tree can be scrolled by keyboard (axe scrollable-region-focusable). -->
+    <!-- Focusable so a long task tree can be scrolled by keyboard (axe scrollable-region-focusable).
+         W6c: its own name, so it is not a second landmark called like the section (axe landmark-unique). -->
     <div
       v-if="open"
       :id="bodyElementId"
       class="min-h-0 flex-1 overflow-y-auto px-3 pb-2 focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-primary"
       tabindex="0"
       role="region"
-      aria-labelledby="strand-activity-title"
+      :aria-label="t('strandActivity.listLabel')"
     >
       <!-- Loading -->
       <div v-if="status === 'loading'" class="flex flex-col gap-1 px-2 py-1">
@@ -78,33 +79,93 @@
         </Button>
       </div>
 
-      <!-- Empty: calm, not alarming -->
-      <p v-else-if="visibleRows.length === 0" class="px-2 py-1 text-xs text-muted-foreground">
-        {{ turnRunning ? $t('strandActivity.emptyWhileTurn') : $t('strandActivity.empty') }}
-      </p>
+      <template v-else>
+        <!-- W6c toolbar: one fixed 44 px slot. "Hide all finished" and the
+             undo line take turns in it, so hiding never shifts the list. -->
+        <div
+          v-if="roots.length > 0"
+          class="flex min-h-11 flex-wrap items-center gap-x-2 px-1"
+          data-testid="activity-toolbar"
+        >
+          <p
+            role="status"
+            aria-live="polite"
+            class="min-w-0 flex-1 truncate text-xs text-muted-foreground"
+            data-testid="activity-status"
+          >{{ statusLine }}</p>
+          <button
+            v-if="lastDismissed"
+            ref="undoButton"
+            type="button"
+            class="inline-flex min-h-11 shrink-0 items-center rounded-lg px-2 text-xs font-medium text-primary hover:bg-muted/60 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+            data-testid="activity-undo"
+            @click="undo"
+          >{{ $t('strandActivity.undo') }}</button>
+          <button
+            v-else-if="dismissableRoots.length > 0"
+            type="button"
+            class="inline-flex min-h-11 shrink-0 items-center gap-1.5 rounded-lg px-2 text-xs font-medium text-muted-foreground hover:bg-muted/60 hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+            data-testid="activity-dismiss-all"
+            @click="dismissAll"
+          >
+            <AppIcon name="check" class="h-3.5 w-3.5" />
+            {{ $t('strandActivity.dismissAll', { count: dismissableRoots.length }) }}
+          </button>
+        </div>
 
-      <!-- Success -->
-      <div v-else class="flex flex-col gap-0.5">
-        <StrandActivityRow
-          v-for="row in visibleRows"
-          :key="row.id"
-          :row="row"
-          :metadata="metadata[row.id]"
-          :expanded="isExpanded(row.id)"
-          :now-ms="nowMs"
-          :reduced-motion="reducedMotion"
-          @toggle="toggle"
-        />
-      </div>
+        <!-- Empty: calm, not alarming -->
+        <p v-if="visibleRows.length === 0" class="px-2 py-1 text-xs text-muted-foreground" data-testid="activity-empty">
+          {{ roots.length > 0 ? $t('strandActivity.emptyOpen') : turnRunning ? $t('strandActivity.emptyWhileTurn') : $t('strandActivity.empty') }}
+        </p>
+
+        <!-- Success -->
+        <div v-else class="flex flex-col gap-0.5" data-testid="activity-rows">
+          <StrandActivityRow
+            v-for="row in visibleRows"
+            :key="row.id"
+            :row="row"
+            :metadata="metadata[row.id]"
+            :expanded="isExpanded(row.id)"
+            :now-ms="nowMs"
+            :reduced-motion="reducedMotion"
+            :dismissable="row.level === 0 && !hiddenIds.has(row.id) && isDismissable(row)"
+            :restorable="row.level === 0 && hiddenIds.has(row.id)"
+            @toggle="toggle"
+            @dismiss="dismissOne"
+            @restore="restoreOne"
+          />
+        </div>
+
+        <!-- The two folded groups. Failed entries never fold on their own. -->
+        <div v-if="partition.older.length > 0 || partition.hidden.length > 0" class="flex flex-wrap gap-x-2 px-1">
+          <button
+            v-if="partition.older.length > 0"
+            type="button"
+            class="inline-flex min-h-11 items-center rounded-lg px-2 text-xs text-muted-foreground underline-offset-2 hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+            :aria-expanded="showOlder"
+            data-testid="activity-show-older"
+            @click="showOlder = !showOlder"
+          >{{ showOlder ? $t('strandActivity.hideOlder') : $t('strandActivity.showOlder', { count: partition.older.length }) }}</button>
+          <button
+            v-if="partition.hidden.length > 0"
+            type="button"
+            class="inline-flex min-h-11 items-center rounded-lg px-2 text-xs text-muted-foreground underline-offset-2 hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+            :aria-expanded="showHidden"
+            data-testid="activity-show-hidden"
+            @click="showHidden = !showHidden"
+          >{{ showHidden ? $t('strandActivity.hideHidden') : $t('strandActivity.showHidden', { count: partition.hidden.length }) }}</button>
+        </div>
+      </template>
     </div>
   </section>
 </template>
 
 <script setup lang="ts">
-import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
+import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { useTasksApi } from '../../../api/tasks'
 import { createTaskMetadataCache, type TaskMetadata } from '../taskMetadata'
 import { useStrandTasks } from '../composables/useStrandTasks'
+import { isDismissable } from '../taskActivity'
 import StrandActivityRow from './StrandActivityRow.vue'
 
 const props = defineProps<{
@@ -131,7 +192,59 @@ const {
   reload,
   toggle,
   isExpanded,
+  roots,
+  partition,
+  showOlder,
+  showHidden,
+  lastDismissed,
+  dismissError,
+  dismiss,
+  restore,
 } = useStrandTasks(() => props.strandId)
+
+// ── W6c: acknowledge / hide ────────────────────────────────────────────────
+const hiddenIds = computed(() => new Set(partition.value.hidden.map(r => r.id)))
+/** Finished roots in the default view that "hide all" would take. */
+const dismissableRoots = computed(() => partition.value.open.filter(isDismissable))
+const undoButton = ref<HTMLButtonElement | null>(null)
+let undoTimer: ReturnType<typeof setTimeout> | null = null
+
+const statusLine = computed(() => {
+  if (dismissError.value) return t('strandActivity.dismissError')
+  if (lastDismissed.value) return t('strandActivity.dismissed', { count: lastDismissed.value.length })
+  return ''
+})
+
+function armUndo(): void {
+  if (undoTimer) clearTimeout(undoTimer)
+  // Long enough to read and reach with the keyboard; the hidden group keeps
+  // every entry restorable afterwards anyway.
+  undoTimer = setTimeout(() => { lastDismissed.value = null }, 10_000)
+  // Keyboard users land on "Undo" instead of on <body> when their row goes.
+  void nextTick(() => undoButton.value?.focus())
+}
+
+async function dismissOne(rootId: string): Promise<void> {
+  if (await dismiss([rootId])) armUndo()
+}
+async function dismissAll(): Promise<void> {
+  if (await dismiss(dismissableRoots.value.map(r => r.id))) armUndo()
+}
+async function restoreOne(rootId: string): Promise<void> {
+  const root = roots.value.find(r => r.id === rootId)
+  if (!root) return
+  const ids: string[] = []
+  const walk = (r: typeof root): void => { ids.push(r.id); r.children.forEach(walk) }
+  walk(root)
+  await restore(ids)
+}
+async function undo(): Promise<void> {
+  const ids = lastDismissed.value
+  if (!ids) return
+  if (undoTimer) clearTimeout(undoTimer)
+  await restore(ids)
+}
+onBeforeUnmount(() => { if (undoTimer) clearTimeout(undoTimer) })
 
 // Legacy backends may lack identity in the tree. Detail is only a fallback
 // for missing identity; it never replaces live usage, status or timestamps.

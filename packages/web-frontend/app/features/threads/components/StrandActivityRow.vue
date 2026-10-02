@@ -39,6 +39,19 @@
         </span>
       </span>
     </NuxtLink>
+    <!-- W6c: acknowledge a finished entry (with its subtree) or bring an
+         acknowledged one back. A sibling of the link, never nested in it. -->
+    <button
+      v-if="dismissable || restorable"
+      type="button"
+      class="flex min-h-[44px] min-w-[44px] shrink-0 items-center justify-center rounded-lg text-muted-foreground hover:bg-muted/60 hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+      :data-testid="restorable ? 'activity-restore' : 'activity-dismiss'"
+      :aria-label="restorable ? t('strandActivity.restoreOne', { name: row.name }) : t('strandActivity.dismissOne', { name: row.name })"
+      :title="restorable ? t('strandActivity.restore') : t('strandActivity.dismiss')"
+      @click="restorable ? $emit('restore', row.id) : $emit('dismiss', row.id)"
+    >
+      <AppIcon :name="restorable ? 'eye' : 'check'" class="h-4 w-4" />
+    </button>
   </div>
   <p
     v-if="row.status === 'failed' && row.errorMessage"
@@ -59,9 +72,13 @@ const props = defineProps<{
   nowMs: number
   reducedMotion: boolean
   metadata?: { model: string | null; provider: string | null } | null
+  /** W6c: show the acknowledge button (finished root rows only). */
+  dismissable?: boolean
+  /** W6c: show the restore button (acknowledged root rows only). */
+  restorable?: boolean
 }>()
 
-defineEmits<{ toggle: [taskId: string] }>()
+defineEmits<{ toggle: [taskId: string]; dismiss: [taskId: string]; restore: [taskId: string] }>()
 
 const { t } = useI18n()
 

@@ -16,6 +16,9 @@ import {
   buildStrandTaskTree,
   createTag,
   dismissStrandProject,
+  dismissStrandTasks,
+  listStrandTaskDismissals,
+  undismissStrandTasks,
   getStrandProjectSuggestion,
   deleteStrand,
   getNowSet,
@@ -45,7 +48,7 @@ import type { ChatEventBus } from '../../../chat-event-bus.js'
 import { resolveNowSetMax, resolveNowSetMode } from '../../../now-set-limit.js'
 import { describePendingTurn } from '../../../turn-queue.js'
 import { searchStrands } from './search.js'
-import type { DeleteStrandQuery, ListStrandsQuery, PatchStrandBody, PatchStrandModelBody, StrandTasksQuery } from './schema.js'
+import type { DeleteStrandQuery, ListStrandsQuery, PatchStrandBody, PatchStrandModelBody, StrandActivityIdsBody, StrandTasksQuery } from './schema.js'
 import { effectiveModelForStrand, getProvider, modelMetadataFor } from '../../../model-selection.js'
 
 /**
@@ -591,9 +594,39 @@ export function createStrandsService(options: StrandsServiceOptions) {
    * no existence oracle). This is also the catch-up read after a reconnect:
    * a client that missed a `task_started` frame still sees the full tree.
    */
-  function strandTasks(userId: number, strandId: string, query: StrandTasksQuery): StrandTaskTree {
+  function strandTasks(userId: number, strandId: string, query: StrandTasksQuery): StrandTaskTree & { tasks: Array<StrandTaskTree['tasks'][number] & { dismissedAt: string | null }> } {
     requireStrand(userId, strandId)
-    return buildStrandTaskTree(db, strandId, { include: query.include })
+    const tree = buildStrandTaskTree(db, strandId, { include: query.include })
+    // W6c: additive field. A client that does not know it (the app before
+    // its update) keeps showing everything, exactly as before.
+    const dismissed = listStrandTaskDismissals(db, strandId)
+    return { ...tree, tasks: tree.tasks.map(task => ({ ...task, dismissedAt: dismissed.get(task.id) ?? null })) }
+  }
+
+  /**
+   * Acknowledge finished entries of the strand activity list (W6c). Only ids
+   * that are part of THIS strand's tree are accepted (no writing marks for a
+   * foreign task); live entries (running / paused) cannot be dismissed, they
+   * always stay visible. Idempotent: a dismissed id keeps its first time.
+   */
+  function dismissStrandActivity(userId: number, strandId: string, body: StrandActivityIdsBody): { dismissed: string[]; dismissedAt: string } {
+    requireStrand(userId, strandId)
+    const tree = buildStrandTaskTree(db, strandId, { include: 'all' })
+    const byId = new Map(tree.tasks.map(task => [task.id, task]))
+    const unknown = body.ids.filter(id => !byId.has(id))
+    if (unknown.length > 0) throw new StrandServiceError(404, 'task_not_found', 'Task is not part of this strand')
+    const live = body.ids.filter(id => byId.get(id)!.status === 'running' || byId.get(id)!.status === 'paused')
+    if (live.length > 0) throw new StrandServiceError(409, 'task_live', 'A running or paused task cannot be dismissed')
+    const at = new Date().toISOString()
+    dismissStrandTasks(db, strandId, body.ids, at)
+    return { dismissed: body.ids, dismissedAt: at }
+  }
+
+  /** Bring dismissed entries back (undo / "show hidden" restore). */
+  function undismissStrandActivity(userId: number, strandId: string, body: StrandActivityIdsBody): { restored: string[] } {
+    requireStrand(userId, strandId)
+    undismissStrandTasks(db, strandId, body.ids)
+    return { restored: body.ids }
   }
 
   /**
@@ -967,6 +1000,8 @@ export function createStrandsService(options: StrandsServiceOptions) {
     snooze,
     acceptProjectSuggestion,
     dismissProjectSuggestion,
+    dismissStrandActivity,
+    undismissStrandActivity,
   }
 }
 

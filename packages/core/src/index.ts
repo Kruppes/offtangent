@@ -1669,6 +1669,13 @@ export {
   MAX_TASK_TREE_DEPTH,
   MAX_TASK_TREE_NODES,
 } from './task-tree.js'
+export {
+  ensureStrandTaskDismissalTable,
+  listStrandTaskDismissals,
+  dismissStrandTasks,
+  undismissStrandTasks,
+  MAX_DISMISS_IDS,
+} from './strand-task-dismissals.js'
 export type {
   StrandTaskInclude,
   StrandTaskNode,

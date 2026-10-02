@@ -7,6 +7,7 @@ import { initTaskInjectionQueueTable } from './task-injection-queue.js'
 import { ensureSessionSummariesTable } from './session-summary-store.js'
 import { ensureOfftangentTables } from './offtangent-schema.js'
 import { ensureProjectAssignmentTables } from './project-assignment-schema.js'
+import { ensureStrandTaskDismissalTable } from './strand-task-dismissals.js'
 import { ensureArtifactTables } from './artifact-store.js'
 import { ensureUserSettingsTable } from './user-settings.js'
 import { ensureMemoryPageEmbeddingTables } from './memory-page-embeddings.js'
@@ -866,6 +867,10 @@ export function initDatabase(dbPath?: string): Database {
   // tables (suggestion, dismissal, run bookkeeping), no column on `sessions`,
   // no backfill — see project-assignment-schema.ts.
   ensureProjectAssignmentTables(db)
+
+  // W6c: acknowledged entries of the strand activity list. One additive
+  // table, idempotent, no backfill (no row = not dismissed).
+  ensureStrandTaskDismissalTable(db)
 
   // Offtangent (SPEC 7.4b, canvas R2): artifacts per message and strand.
   // Additive; installs without a canvas simply have an empty table.

@@ -12,7 +12,7 @@ import { describe, expect, it, vi } from 'vitest'
 import { createSSRApp, defineComponent, h, ref, computed } from 'vue'
 import { renderToString } from 'vue/server-renderer'
 import StrandActivityRow from './StrandActivityRow.vue'
-import { buildTaskRows, type StrandTaskNode, type StrandTaskRow } from '../taskActivity'
+import { buildTaskRows, partitionActivity, type StrandTaskNode, type StrandTaskRow } from '../taskActivity'
 
 // Nuxt auto-imports are free identifiers at runtime — providing them on
 // globalThis is exactly what the Nuxt runtime does for these components.
@@ -180,7 +180,11 @@ const panelState = {
   expandedIds: ref<Set<string>>(new Set()),
   live: ref(0),
   total: ref(0),
+  lastDismissed: ref<string[] | null>(null),
+  showOlder: ref(false),
+  showHidden: ref(false),
 }
+const PANEL_NOW = Date.UTC(2025, 8, 15, 10, 1, 23)
 
 vi.mock('../composables/useStrandTasks', () => ({
   useStrandTasks: () => ({
@@ -195,7 +199,9 @@ vi.mock('../composables/useStrandTasks', () => ({
           if (panelState.expandedIds.value.has(r.id)) walk(r.children)
         }
       }
-      walk(panelState.rows.value)
+      // Same grouping as the real composable (W6c): open, then the folded groups on demand.
+      const p = partitionActivity(panelState.rows.value, PANEL_NOW)
+      walk([...p.open, ...(panelState.showOlder.value ? p.older : []), ...(panelState.showHidden.value ? p.hidden : [])])
       return out
     }),
     liveCount: computed(() => panelState.live.value),
@@ -205,6 +211,14 @@ vi.mock('../composables/useStrandTasks', () => ({
     reload: vi.fn(),
     toggle: vi.fn(),
     isExpanded: (id: string) => panelState.expandedIds.value.has(id),
+    // W6c: the real partition over the mocked rows.
+    partition: computed(() => partitionActivity(panelState.rows.value, PANEL_NOW)),
+    showOlder: panelState.showOlder,
+    showHidden: panelState.showHidden,
+    lastDismissed: panelState.lastDismissed,
+    dismissError: ref(false),
+    dismiss: vi.fn(),
+    restore: vi.fn(),
   }),
 }))
 
@@ -298,6 +312,11 @@ describe('StrandActivityPanel as a dock section (W4c)', () => {
     expect(open).toContain('aria-expanded="true"')
     expect(open).toContain('id="strand-activity-body"')
     expect(open).toContain('Wave A')
+    // W6c: the scrollable body is a region with its own name, not a second
+    // landmark labelled like the section (axe landmark-unique).
+    const body = open.match(/<div[^>]*id="strand-activity-body"[^>]*>/)![0]
+    expect(body).toContain('aria-label="strandActivity.listLabel"')
+    expect(body).not.toContain('aria-labelledby="strand-activity-title"')
   })
 
   it('keeps loading and error states inside the section', async () => {
@@ -334,5 +353,100 @@ describe('task card navigation and model', () => {
     expect(html).toContain('title="—"')
     expect(html).not.toContain('Default')
     expect(html).toContain('href="/tasks/legacy"')
+  })
+})
+
+describe('StrandActivityPanel acknowledge / hide (W6c)', () => {
+  const finished = (id: string, hoursAgo: number, over: Partial<StrandTaskNode> = {}) => {
+    const at = new Date(PANEL_NOW - hoursAgo * 3600_000).toISOString()
+    return node({ id, name: `Task ${id}`, status: 'completed', createdAt: at, startedAt: at, completedAt: at, ...over })
+  }
+
+  it('offers "hide all finished" and a per-row acknowledge button only on finished root rows', async () => {
+    panelState.status.value = 'ready'
+    panelState.expandedIds.value = new Set()
+    panelState.lastDismissed.value = null
+    panelState.rows.value = rowsOf([
+      node({ id: 'live', name: 'Live one' }),
+      finished('done', 1),
+      finished('fail', 2, { status: 'failed', errorMessage: 'exit 1' }),
+    ])
+    const html = await renderPanel()
+    expect(html).toContain('data-testid="activity-dismiss-all"')
+    expect(html).toContain('strandActivity.dismissAll({&quot;count&quot;:2})')
+    expect(html.match(/data-testid="activity-dismiss"/g)?.length).toBe(2)
+    expect(html).toContain('strandActivity.dismissOne({&quot;name&quot;:&quot;Task done&quot;})')
+    expect(html).not.toContain('strandActivity.dismissOne({&quot;name&quot;:&quot;Live one&quot;})')
+    // Acknowledge buttons are touch sized.
+    expect(html).toMatch(/min-h-\[44px\] min-w-\[44px\][^"]*"[^>]*data-testid="activity-dismiss"/)
+  })
+
+  it('folds finished entries older than 24 h and counts the acknowledged ones', async () => {
+    panelState.rows.value = rowsOf([
+      finished('old', 30),
+      finished('gone', 1, { dismissedAt: '2025-09-15T09:00:00Z' }),
+    ])
+    const html = await renderPanel()
+    expect(html).toContain('strandActivity.showOlder({&quot;count&quot;:1})')
+    expect(html).toContain('strandActivity.showHidden({&quot;count&quot;:1})')
+    expect(html).toContain('aria-expanded="false"')
+  })
+
+  it('says "no open activity" when everything is folded or hidden, and shows the undo line after a dismiss', async () => {
+    panelState.rows.value = rowsOf([finished('gone', 1, { dismissedAt: '2025-09-15T09:00:00Z' }), finished('old', 30)])
+    panelState.expandedIds.value = new Set()
+    panelState.lastDismissed.value = null
+    const empty = await renderPanel()
+    expect(empty).toContain('strandActivity.emptyOpen')
+    expect(empty).not.toContain('data-testid="activity-rows"')
+    panelState.showHidden.value = true
+    const shown = await renderPanel()
+    expect(shown).toContain('data-testid="activity-restore"')
+    expect(shown).toContain('strandActivity.hideHidden')
+    panelState.showHidden.value = false
+    panelState.lastDismissed.value = ['gone']
+    const undo = await renderPanel()
+    expect(undo).toContain('data-testid="activity-undo"')
+    expect(undo).toContain('role="status"')
+    expect(undo).toContain('strandActivity.dismissed({&quot;count&quot;:1})')
+    expect(undo).not.toContain('data-testid="activity-dismiss-all"')
+    panelState.lastDismissed.value = null
+  })
+
+  it('30 synthetic entries: the default view shows only live, fresh and unacknowledged failed ones, counters match', async () => {
+    const nodes: StrandTaskNode[] = []
+    // 4 running, 2 paused, 6 finished < 24 h, 10 finished > 24 h, 3 failed > 24 h (open),
+    // 2 failed acknowledged, 3 finished acknowledged = 30.
+    for (let i = 0; i < 4; i++) nodes.push(node({ id: `run${i}`, name: `Running ${i}` }))
+    for (let i = 0; i < 2; i++) nodes.push(node({ id: `pause${i}`, name: `Paused ${i}`, status: 'paused' }))
+    for (let i = 0; i < 6; i++) nodes.push(finished(`fresh${i}`, 1 + i))
+    for (let i = 0; i < 10; i++) nodes.push(finished(`old${i}`, 25 + i * 10))
+    for (let i = 0; i < 3; i++) nodes.push(finished(`fail${i}`, 48 + i, { status: 'failed', errorMessage: 'synthetic failure' }))
+    for (let i = 0; i < 2; i++) nodes.push(finished(`ackfail${i}`, 2, { status: 'failed', errorMessage: 'synthetic failure', dismissedAt: '2025-09-15T09:30:00Z' }))
+    for (let i = 0; i < 3; i++) nodes.push(finished(`ack${i}`, 3, { dismissedAt: '2025-09-15T09:30:00Z' }))
+    expect(nodes).toHaveLength(30)
+    panelState.status.value = 'ready'
+    panelState.expandedIds.value = new Set()
+    panelState.lastDismissed.value = null
+    panelState.showOlder.value = false
+    panelState.showHidden.value = false
+    panelState.rows.value = rowsOf(nodes)
+    panelState.live.value = 6
+    panelState.total.value = 30
+    const html = await renderPanel()
+    // One task link per rendered row: count rows by their link target.
+    const shown = (prefix: string) => (html.match(new RegExp(`href="/tasks/${prefix}\\d"`, 'g')) ?? []).length
+    expect(shown('run')).toBe(4)
+    expect(shown('pause')).toBe(2)
+    expect(shown('fresh')).toBe(6)
+    expect(shown('fail')).toBe(3)
+    expect(shown('old')).toBe(0)
+    expect(shown('ackfail')).toBe(0)
+    expect(shown('ack')).toBe(0)
+    expect(html).toContain('strandActivity.showOlder({&quot;count&quot;:10})')
+    expect(html).toContain('strandActivity.showHidden({&quot;count&quot;:5})')
+    // Acknowledgeable now: 6 fresh + 3 failed; live and paused are not.
+    expect(html).toContain('strandActivity.dismissAll({&quot;count&quot;:9})')
+    expect(html.match(/data-testid="activity-dismiss"/g)?.length).toBe(9)
   })
 })

@@ -107,6 +107,9 @@ export function applyTaskActivityFrame(store: StrandTaskStore, frame: TaskActivi
     estimatedCost: frame.taskEstimatedCost ?? existing?.estimatedCost ?? 0,
     toolCallCount: frame.taskToolCallCount ?? existing?.toolCallCount ?? 0,
     sessionId: existing?.sessionId ?? null,
+    // A live frame never carries the acknowledgement; keep what the last
+    // snapshot (or the user's own dismiss) said.
+    dismissedAt: existing?.dismissedAt ?? null,
   }
 
   return {
@@ -250,4 +253,64 @@ export function formatElapsed(totalSeconds: number | null): string {
   return hours > 0
     ? `${hours}:${mm}:${String(seconds).padStart(2, '0')}`
     : `${mm}:${String(seconds).padStart(2, '0')}`
+}
+
+// ── W6c: acknowledge / hide finished entries ────────────────────────────────
+
+/** Finished entries older than this fold behind "show older" by default. */
+export const ACTIVITY_OLDER_AFTER_MS = 24 * 60 * 60 * 1000
+
+/** Every node of a render subtree, the root first. */
+export function subtreeNodes(row: StrandTaskRow): StrandTaskRow[] {
+  const out: StrandTaskRow[] = []
+  const walk = (r: StrandTaskRow): void => { out.push(r); r.children.forEach(walk) }
+  walk(row)
+  return out
+}
+
+export interface ActivityPartition {
+  /** Live roots, failed roots and finished roots of the last 24 h. */
+  open: StrandTaskRow[]
+  /** Finished (not failed) roots that ended more than 24 h ago. */
+  older: StrandTaskRow[]
+  /** Roots the user acknowledged. */
+  hidden: StrandTaskRow[]
+}
+
+/**
+ * Sort the roots of the activity tree into the three groups of the panel.
+ * A root stands for its whole subtree: it is live while anything below it
+ * runs or waits (never hideable), failed when anything below it failed (it
+ * stays until acknowledged, it never folds away on its own), and
+ * acknowledged when every node of the subtree carries `dismissedAt`.
+ */
+export function partitionActivity(roots: StrandTaskRow[], nowMs: number): ActivityPartition {
+  const out: ActivityPartition = { open: [], older: [], hidden: [] }
+  for (const root of roots) {
+    const nodes = subtreeNodes(root)
+    if (nodes.some(isLive)) { out.open.push(root); continue }
+    if (nodes.every(n => !!n.dismissedAt)) { out.hidden.push(root); continue }
+    if (nodes.some(n => n.status === 'failed')) { out.open.push(root); continue }
+    const ended = Math.max(...nodes.map(n => parseTaskTimestamp(n.completedAt) ?? parseTaskTimestamp(n.createdAt) ?? nowMs))
+    if (nowMs - ended > ACTIVITY_OLDER_AFTER_MS) out.older.push(root)
+    else out.open.push(root)
+  }
+  return out
+}
+
+/** True when a root (with its subtree) may be acknowledged. */
+export function isDismissable(root: StrandTaskRow): boolean {
+  return !subtreeNodes(root).some(isLive)
+}
+
+/** Set (or clear, with `at = null`) the acknowledgement of nodes in the store. */
+export function setDismissed(store: StrandTaskStore, strandId: string, ids: string[], at: string | null): StrandTaskStore {
+  const state = store[strandId]
+  if (!state || ids.length === 0) return store
+  const nodes = { ...state.nodes }
+  for (const id of ids) {
+    const node = nodes[id]
+    if (node) nodes[id] = { ...node, dismissedAt: at }
+  }
+  return { ...store, [strandId]: { ...state, nodes } }
 }

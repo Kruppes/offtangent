@@ -11,6 +11,7 @@ import {
   parseResurfaceQuery,
   parseSnoozeBody,
   parseStrandTagsBody,
+  parseStrandActivityIdsBody,
   parseStrandTasksQuery,
   parseTagBody,
 } from './schema.js'
@@ -39,6 +40,8 @@ export interface StrandsController {
   snooze: (req: AuthenticatedRequest, res: Response) => void
   acceptProjectSuggestion: (req: AuthenticatedRequest, res: Response) => void
   dismissProjectSuggestion: (req: AuthenticatedRequest, res: Response) => void
+  dismissActivity: (req: AuthenticatedRequest, res: Response) => void
+  undismissActivity: (req: AuthenticatedRequest, res: Response) => void
 }
 
 function run(res: Response, context: string, fn: () => void): void {
@@ -269,6 +272,28 @@ export function createStrandsController(service: StrandsService): StrandsControl
     dismissProjectSuggestion(req, res) {
       run(res, 'Failed to dismiss the project suggestion', () => {
         res.json({ strand: service.dismissProjectSuggestion(req.user!.userId, String(req.params.id)) })
+      })
+    },
+
+    dismissActivity(req, res) {
+      const parsed = parseStrandActivityIdsBody(req.body)
+      if (!parsed.ok) {
+        res.status(400).json({ error: parsed.error, code: parsed.code })
+        return
+      }
+      runSafe(res, 'Failed to dismiss strand activity', () => {
+        res.json(service.dismissStrandActivity(req.user!.userId, String(req.params.id), parsed.value))
+      })
+    },
+
+    undismissActivity(req, res) {
+      const parsed = parseStrandActivityIdsBody(req.body)
+      if (!parsed.ok) {
+        res.status(400).json({ error: parsed.error, code: parsed.code })
+        return
+      }
+      runSafe(res, 'Failed to restore strand activity', () => {
+        res.json(service.undismissStrandActivity(req.user!.userId, String(req.params.id), parsed.value))
       })
     },
   }
