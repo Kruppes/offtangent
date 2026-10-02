@@ -77,6 +77,8 @@ export const EXTERNAL_SHORTCUT_HINTS: readonly ShortcutHint[] = [
   { id: 'list.open', group: 'navigation', display: ['Enter'] },
   { id: 'dictation.toggle', group: 'strand', display: ['Ctrl', 'M'] },
   { id: 'dictation.cancel', group: 'strand', display: ['Esc'] },
+  // Text fields that send (Home capture, task reply): Ctrl/⌘+Enter sends, plain Enter is a new line.
+  { id: 'field.submit', group: 'general', display: ['Ctrl', 'Enter'] },
   { id: 'palette.move', group: 'general', display: ['↑', '↓'] },
   { id: 'palette.run', group: 'general', display: ['Enter'] },
 ]
