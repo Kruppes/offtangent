@@ -1080,7 +1080,7 @@ class PiAgentRuntime implements AgentRuntimeBoundary, AgentRuntimePiAgentAccess 
     // platform / active toolset and annotated with missing required env vars.
     const activeTools = new Set<string>([
       'shell', 'read_file', 'write_file', 'edit_file', 'list_files',
-      'create_task', 'resume_task', 'list_tasks',
+      'create_task', 'resume_task', 'list_tasks', 'get_task', 'steer_task', 'cancel_task',
       'create_cronjob', 'edit_cronjob', 'remove_cronjob', 'list_cronjobs', 'get_cronjob',
       'create_reminder',
       'read_chat_history', 'search_memories', 'list_agent_skills',

@@ -36,6 +36,7 @@ import {
   injectSecretsIntoEnv,
   listCronjobsTool,
   listTasksTool,
+  createTaskControlTools,
   loadConfig,
   storeFact,
   loadMultiPersonaSettings,
@@ -1494,6 +1495,10 @@ export async function createRuntimeComposition(options: RuntimeCompositionOption
       createTaskTool(backgroundTaskToolsOptions),
       createResumeTaskTool(backgroundTaskToolsOptions),
       listTasksTool({ taskRuntime: taskRuntime.tasks, db }),
+      // get_task / steer_task / cancel_task: a task that delegated sub-tasks
+      // manages them itself. Scoped by the ALS task context to the task's
+      // OWN descendants (task-control.ts), never to siblings or the parent.
+      ...createTaskControlTools({ taskRuntime: taskRuntime.tasks, db }),
       createSendFileTool(backgroundSendFileToolOptions),
       // The canvas of the strand: a task writing an iterative result updates
       // ONE view instead of posting a card per round.
@@ -1562,6 +1567,15 @@ export async function createRuntimeComposition(options: RuntimeCompositionOption
     createTaskTool(taskToolsOptions),
     createResumeTaskTool(taskToolsOptions),
     listTasksTool({ taskRuntime: taskRuntime.tasks, db }),
+    // The strand orchestrates what it started: inspect, correct and stop its
+    // tasks. Same access rule as the REST requester check (owner user;
+    // non-main personas only their own tasks).
+    ...createTaskControlTools({
+      taskRuntime: taskRuntime.tasks,
+      db,
+      getCurrentUserId: () => agentCore?.getCurrentToolUserId(),
+      getCurrentAgentId: () => agentCore?.getCurrentToolAgentId(),
+    }),
     createCronjobTool(cronjobToolsOptions),
     editCronjobTool(cronjobToolsOptions),
     removeCronjobTool(cronjobToolsOptions),

@@ -43,6 +43,15 @@ describe('getToolCallSummary', () => {
     expect(getToolCallSummary('create_task', { name: 'GUI Debug Tool Runner', prompt: 'long…' })).toBe('GUI Debug Tool Runner')
   })
 
+  it('labels and summarizes the task control tools', () => {
+    expect(formatToolName('get_task')).toBe('Get task')
+    expect(formatToolName('steer_task')).toBe('Steer task')
+    expect(formatToolName('cancel_task')).toBe('Cancel task')
+    expect(getToolCallSummary('get_task', { task_id: 'abc123', events: 5 })).toBe('abc123')
+    expect(getToolCallSummary('steer_task', { task_id: 'abc123', message: 'Use the v2 API' })).toBe('abc123 · Use the v2 API')
+    expect(getToolCallSummary('cancel_task', { task_id: 'abc123', reason: 'duplicate run' })).toBe('abc123 · reason: duplicate run')
+  })
+
   it('joins multiple labeled arguments for read_chat_history', () => {
     expect(getToolCallSummary('read_chat_history', { query: 'cache Test Task', limit: 30 }))
       .toBe('query: cache Test Task · limit: 30')

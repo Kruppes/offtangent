@@ -32,6 +32,9 @@ const TOOL_SUMMARY: Record<string, SummaryPart[]> = {
   create_task: [{ key: 'name' }],
   resume_task: [{ key: 'task_id' }],
   list_tasks: [{ key: 'status', label: 'status' }, { key: 'trigger_type', label: 'trigger' }, { key: 'limit', label: 'limit' }],
+  get_task: [{ key: 'task_id' }],
+  steer_task: [{ key: 'task_id' }, { key: 'message' }],
+  cancel_task: [{ key: 'task_id' }, { key: 'reason', label: 'reason' }],
 
   create_cronjob: [{ key: 'name' }, { key: 'schedule', label: 'schedule' }],
   edit_cronjob: [{ key: 'name' }, { key: 'id', label: 'id' }],
