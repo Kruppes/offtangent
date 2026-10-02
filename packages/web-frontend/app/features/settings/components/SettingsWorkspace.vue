@@ -548,6 +548,23 @@
               </div>
 
               <div class="flex flex-col gap-8">
+                <!-- ─── Default persona for captures (W6b) ─── -->
+                <div class="flex flex-col gap-2">
+                  <Label for="capture-default-agent">{{ $t('settings.captureDefaultAgent') }}</Label>
+                  <Select v-model="form.capture.defaultAgentId" name="capture-default-agent">
+                    <SelectTrigger id="capture-default-agent">
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="auto">{{ $t('settings.captureDefaultAgentAuto') }}</SelectItem>
+                      <SelectItem v-for="p in capturePersonaOptions" :key="p.id" :value="p.id">
+                        {{ p.label }}
+                      </SelectItem>
+                    </SelectContent>
+                  </Select>
+                  <p class="text-xs text-muted-foreground">{{ $t('settings.captureDefaultAgentHint') }}</p>
+                </div>
+
                 <!-- ─── Capture mode: quick question ─── -->
                 <div>
                   <h3 class="text-base font-semibold tracking-tight text-foreground">
@@ -2395,7 +2412,8 @@ import {
   voiceNoteDraftFromCatalog,
   type VoiceNoteDraft,
 } from '../voiceNoteForm'
-import type { MemoryConsolidationSettings, FactExtractionSettings, HealthMonitorNotificationToggles, HealthMonitorSettings, AgentHeartbeatSettings, TasksSettings, TtsSettings, SttSettings, UploadsSettings, TelegramSettings, WatchdogSettings, RetrySettings, OfftangentSettings, CaptureModesSettings, CaptureSourcesSettings } from '~/composables/useSettings'
+import type { MemoryConsolidationSettings, FactExtractionSettings, HealthMonitorNotificationToggles, HealthMonitorSettings, AgentHeartbeatSettings, TasksSettings, TtsSettings, SttSettings, UploadsSettings, TelegramSettings, WatchdogSettings, RetrySettings, OfftangentSettings, CaptureModesSettings, CaptureSourcesSettings, CaptureSettings } from '~/composables/useSettings'
+import { useCapturesApi, type ClientPersona } from '~/api/captures'
 import type { TelegramUser } from '~/composables/useTelegramUsers'
 
 /* ── Auth ── */
@@ -2702,9 +2720,26 @@ interface SettingsForm {
   offtangent: OfftangentSettings
   captureModes: CaptureModesSettings
   captureSources: CaptureSourcesSettings
+  capture: CaptureSettings
 }
 
 const form = ref<SettingsForm | null>(null)
+
+/**
+ * Personas the capture default can point at (W6b). Loaded from the client
+ * list every user may read; a configured id that is not (or no longer) in the
+ * list still shows as its raw id, so the select never silently changes it.
+ */
+const clientPersonas = ref<ClientPersona[]>([])
+const capturePersonaOptions = computed(() => {
+  const options = clientPersonas.value.map(p => ({ id: p.id, label: p.displayName || p.id }))
+  const current = form.value?.capture.defaultAgentId
+  if (current && current !== 'auto' && !options.some(o => o.id === current)) options.push({ id: current, label: current })
+  return options
+})
+async function fetchClientPersonas() {
+  try { clientPersonas.value = await useCapturesApi().personas() } catch { clientPersonas.value = [] }
+}
 
 /**
  * Migrate a legacy provider-only ID to the composite "providerId:modelId" format.
@@ -2776,6 +2811,7 @@ function hydrateForm() {
     // captureModes object without the assist hint on every save.
     captureModes: { quick: { ...s.captureModes.quick }, assist: { ...s.captureModes.assist } },
     captureSources: { puck: { ...s.captureSources.puck } },
+    capture: { defaultAgentId: s.capture?.defaultAgentId ?? 'auto' },
   }
 }
 
@@ -3514,6 +3550,7 @@ async function loadAll() {
     fetchSecrets(),
     fetchMistralVoices(),
     loadTtsCatalog(),
+    fetchClientPersonas(),
   ])
   hydrateForm()
   await nextTick()

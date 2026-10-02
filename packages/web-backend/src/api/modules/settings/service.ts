@@ -11,6 +11,7 @@ import {
   mergeMultiPersona,
   mergeCaptureModes,
   mergeCaptureSources,
+  mergeCapture,
   mergeOfftangent,
   mergePrivacy,
   mergeRetry,
@@ -162,6 +163,9 @@ export function createSettingsService(options: SettingsRouterOptions = {}): Sett
 
     const captureSourcesMerge = mergeCaptureSources(body, settingsRaw)
     if (captureSourcesMerge.error) throw new SettingsValidationError(captureSourcesMerge.error)
+
+    const captureMerge = mergeCapture(body, settingsRaw)
+    if (captureMerge.error) throw new SettingsValidationError(captureMerge.error)
 
     const instanceIdentityMerge = mergeInstanceIdentity(body, settingsRaw)
     if (instanceIdentityMerge.error) throw new SettingsValidationError(instanceIdentityMerge.error)

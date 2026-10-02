@@ -22,7 +22,7 @@ export {
 export type { UploadDescriptor, SaveUploadInput, SaveUploadFromFileInput, UploadSettings } from './uploads.js'
 export { buildAttachmentContext } from './attachment-context.js'
 export type { AttachmentContext } from './attachment-context.js'
-export { loadConfig, warnConfigReadFailed, getConfigDir, ensureConfigTemplates, getDefaultTimezone, getProjectRootDir, getReadmePath, getDocsPath, getAgentDocsPath, loadMultiPersonaSettings, loadCaptureModeSettings } from './config.js'
+export { loadConfig, warnConfigReadFailed, getConfigDir, ensureConfigTemplates, getDefaultTimezone, getProjectRootDir, getReadmePath, getDocsPath, getAgentDocsPath, loadMultiPersonaSettings, loadCaptureModeSettings, loadCaptureDefaultAgentId } from './config.js'
 export type { MultiPersonaSettings } from './config.js'
 export { loadPersona, clearPersonaCache, invalidatePersonaCache, seedPersonaFiles, getPersonaDir, listPersonaIds } from './persona-loader.js'
 export type { PersonaContext } from './persona-loader.js'

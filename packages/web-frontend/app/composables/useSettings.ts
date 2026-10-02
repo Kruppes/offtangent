@@ -18,6 +18,7 @@ import {
   type OfftangentSettingsContract,
   type CaptureModesSettingsContract,
   type CaptureSourcesSettingsContract,
+  type CaptureSettingsContract,
 } from '@axiom/core/contracts'
 import { useSettingsApi } from '~/api/settings'
 
@@ -37,6 +38,7 @@ export type TelegramSettings = TelegramSettingsContract
 export type OfftangentSettings = OfftangentSettingsContract
 export type CaptureModesSettings = CaptureModesSettingsContract
 export type CaptureSourcesSettings = CaptureSourcesSettingsContract
+export type CaptureSettings = CaptureSettingsContract
 export type Settings = SettingsContract
 
 export function useSettings() {

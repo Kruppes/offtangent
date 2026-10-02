@@ -552,6 +552,50 @@ describe('settings route module', () => {
       .toBe('Nur der Entwurf.')
   })
 
+  it('round-trips capture.defaultAgentId, defaults to auto and rejects an unknown persona', async () => {
+    const put = async (body: unknown) => fetch(`${baseUrl}/api/settings`, {
+      method: 'PUT',
+      headers: { ...authHeaders(adminToken), 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+    })
+    const initial = await fetch(`${baseUrl}/api/settings`, { headers: authHeaders(adminToken) })
+    expect((await initial.json() as { capture: { defaultAgentId: string } }).capture).toEqual({ defaultAgentId: 'auto' })
+
+    fs.mkdirSync(path.join(tempDataDir, 'agents', 'helper'), { recursive: true })
+    try {
+      const ok = await put({ capture: { defaultAgentId: 'helper' } })
+      expect(ok.status).toBe(200)
+      expect((await ok.json() as { capture: { defaultAgentId: string } }).capture).toEqual({ defaultAgentId: 'helper' })
+      const reread = await fetch(`${baseUrl}/api/settings`, { headers: authHeaders(adminToken) })
+      expect((await reread.json() as { capture: { defaultAgentId: string } }).capture.defaultAgentId).toBe('helper')
+      const onDisk = JSON.parse(fs.readFileSync(path.join(tempDataDir, 'config', 'settings.json'), 'utf-8')) as {
+        capture: { defaultAgentId: string }
+        multiPersona?: { defaultAgentId?: string }
+      }
+      expect(onDisk.capture.defaultAgentId).toBe('helper')
+      // The global persona default is a different setting and stays untouched.
+      expect(onDisk.multiPersona?.defaultAgentId).not.toBe('helper')
+
+      const unknown = await put({ capture: { defaultAgentId: 'no-such-persona' } })
+      expect(unknown.status).toBe(400)
+      expect(await unknown.json()).toEqual({ error: 'capture.defaultAgentId must be "auto" or a known persona id' })
+      for (const bad of [42, '', '   ', null]) {
+        const res = await put({ capture: { defaultAgentId: bad } })
+        expect(res.status).toBe(400)
+      }
+      expect((await put({ capture: 'helper' })).status).toBe(400)
+      const afterRejects = await fetch(`${baseUrl}/api/settings`, { headers: authHeaders(adminToken) })
+      expect((await afterRejects.json() as { capture: { defaultAgentId: string } }).capture.defaultAgentId).toBe('helper')
+
+      expect((await put({ capture: { defaultAgentId: 'main' } })).status).toBe(200)
+      const back = await put({ capture: { defaultAgentId: 'auto' } })
+      expect(back.status).toBe(200)
+      expect((await back.json() as { capture: { defaultAgentId: string } }).capture.defaultAgentId).toBe('auto')
+    } finally {
+      fs.rmSync(path.join(tempDataDir, 'agents', 'helper'), { recursive: true, force: true })
+    }
+  })
+
   it('enforces authentication and admin boundaries', async () => {
     const unauthenticated = await fetch(`${baseUrl}/api/settings`)
     expect(unauthenticated.status).toBe(401)

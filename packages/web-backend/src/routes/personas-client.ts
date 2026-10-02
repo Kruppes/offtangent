@@ -7,7 +7,14 @@
  * app in particular — only needs to know which personas exist and how to label
  * them, so this route is deliberately a separate, minimal projection:
  *
- *   { "personas": [ { "id", "displayName", "emoji", "color" } ] }
+ *   { "personas": [ { "id", "displayName", "emoji", "color" } ],
+ *     "captureDefaultAgentId": "auto" | "<persona id>" }
+ *
+ * `captureDefaultAgentId` (W6b, additive) is the `capture.defaultAgentId`
+ * setting, so a client that is not an admin (the settings route is admin-only)
+ * can preselect the persona a capture without `agentId` lands at. An id whose
+ * persona is not in the list is reported as `auto`, the behaviour the server
+ * then applies.
  *
  * `main` is always first (it is the orchestrator), the rest is sorted by id.
  * Source of truth is the persona directory (`/data/agents/<id>/`) plus a
@@ -20,7 +27,7 @@
 import fs from 'node:fs'
 import path from 'node:path'
 import { Router } from 'express'
-import { getDefaultPersonaId, getPersonaRecord, listPersonaRecords } from '@axiom/core'
+import { CAPTURE_DEFAULT_AGENT_AUTO, getDefaultPersonaId, getPersonaRecord, listPersonaRecords, loadCaptureDefaultAgentId } from '@axiom/core'
 import type { Database } from '@axiom/core'
 import { jwtMiddleware } from '../auth.js'
 
@@ -140,8 +147,11 @@ export function createPersonasClientRouter(options?: PersonasClientRouterOptions
   router.get('/', (_req, res) => {
     const baseDir = agentsBaseDir()
     const defaultId = db ? getDefaultPersonaId(db) : 'main'
+    const ids = listClientPersonaIds(baseDir, db, defaultId)
+    const configured = loadCaptureDefaultAgentId()
     res.json({
-      personas: listClientPersonaIds(baseDir, db, defaultId).map(id => toClientPersona(id, baseDir, db, defaultId)),
+      personas: ids.map(id => toClientPersona(id, baseDir, db, defaultId)),
+      captureDefaultAgentId: configured === 'main' || ids.includes(configured) ? configured : CAPTURE_DEFAULT_AGENT_AUTO,
     })
   })
 

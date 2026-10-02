@@ -11,6 +11,16 @@ export interface ApplyCaptureInput { decisionId?: string; action?: Decision['act
 /** `total` is additive: captures matching the status filter across all pages (an older backend omits it). */
 export interface CaptureListPage { captures: Capture[]; decisions: Decision[]; parts?: Record<string, CapturePart[]>; total?: number }
 export interface ClientPersona { id: string; displayName: string; emoji: string | null; color: string | null; isDefault: boolean }
+export interface ClientPersonaOptions { personas: ClientPersona[]; captureDefaultAgentId: string }
+/**
+ * The persona the Home picker starts at: the server's capture default when it
+ * names a persona in the list, otherwise `''` (= automatic, the old start).
+ */
+export function initialCapturePersona(options: ClientPersonaOptions): string {
+  const id = options.captureDefaultAgentId
+  if (!id || id === 'auto') return ''
+  return options.personas.some(p => p.id === id) ? id : ''
+}
 export function newestDecision(captureId: string, decisions: Decision[]) {
   return decisions.filter(d => d.captureId === captureId).sort((a, b) => b.createdAt.localeCompare(a.createdAt))[0]
 }
@@ -18,6 +28,14 @@ export function useCapturesApi() {
   const { apiFetch } = useApi()
   return {
     personas: async () => (await apiFetch<{ personas: ClientPersona[] }>('/api/personas/client')).personas,
+    /**
+     * Persona list plus the server's capture default (`capture.defaultAgentId`,
+     * W6b). A backend without the field answers without it: `'auto'`.
+     */
+    personaOptions: async (): Promise<ClientPersonaOptions> => {
+      const body = await apiFetch<{ personas: ClientPersona[]; captureDefaultAgentId?: string }>('/api/personas/client')
+      return { personas: body.personas, captureDefaultAgentId: body.captureDefaultAgentId || 'auto' }
+    },
     create: (body: CaptureInput) => apiFetch<CaptureResult>('/api/captures', { method: 'POST', body: JSON.stringify(body) }),
     list: (status: Capture['status'], offset = 0) => apiFetch<CaptureListPage>(`/api/captures?status=${status}&limit=50&offset=${offset}`),
     /** Newest captures of every status (the server caps `limit` at 200). */

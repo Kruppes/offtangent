@@ -180,6 +180,10 @@ function buildOfftangentResponse(settingsRaw: Record<string, unknown>) {
   }
 }
 
+function buildCaptureResponse(settingsRaw: Record<string, unknown>) {
+  return normalizeSettingsContract(settingsRaw as Partial<SettingsContract>).capture
+}
+
 function buildCaptureModesResponse(settingsRaw: Record<string, unknown>) {
   return normalizeSettingsContract(settingsRaw as Partial<SettingsContract>).captureModes
 }
@@ -279,6 +283,7 @@ export function mapSettingsResponse(context: SettingsResponseContext) {
     offtangent: buildOfftangentResponse(settingsRaw),
     captureModes: buildCaptureModesResponse(settingsRaw),
     captureSources: buildCaptureSourcesResponse(settingsRaw),
+    capture: buildCaptureResponse(settingsRaw),
     instanceIdentity: buildInstanceIdentityResponse(settingsRaw),
   }
 }

@@ -510,6 +510,23 @@ export interface CaptureSourcesSettingsContract {
   puck: CaptureSourceSettingsContract
 }
 
+/**
+ * Capture defaults that are not tied to a mode or a source (W6b).
+ *
+ * `defaultAgentId` is the persona a capture lands at when the request names
+ * none: `'auto'` (the default) keeps the behaviour from before the setting
+ * existed (the router decides, `multiPersona.defaultAgentId` stays the global
+ * fallback), any other value is a persona id. Deliberately separate from
+ * `multiPersona.defaultAgentId`, which is the catch-all persona of the whole
+ * instance and has a different meaning.
+ */
+export interface CaptureSettingsContract {
+  defaultAgentId: string
+}
+
+/** Value of `capture.defaultAgentId` that means "no fixed persona". */
+export const CAPTURE_DEFAULT_AGENT_AUTO = 'auto'
+
 /** Upper bounds for the free-text capture-mode fields, enforced by `PUT /api/settings`. */
 export const CAPTURE_STYLE_HINT_MAX_LENGTH = 2000
 export const CAPTURE_STRAND_TITLE_MAX_LENGTH = 120
@@ -633,6 +650,7 @@ export interface SettingsContract {
   offtangent: OfftangentSettingsContract
   captureModes: CaptureModesSettingsContract
   captureSources: CaptureSourcesSettingsContract
+  capture: CaptureSettingsContract
   instanceIdentity: InstanceIdentitySettingsContract
 }
 
@@ -660,6 +678,7 @@ export interface SettingsStorageContract {
   offtangent?: Partial<OfftangentSettingsContract>
   captureModes?: DeepPartial<CaptureModesSettingsContract>
   captureSources?: DeepPartial<CaptureSourcesSettingsContract>
+  capture?: Partial<CaptureSettingsContract>
   instanceIdentity?: Partial<InstanceIdentitySettingsContract>
 }
 
@@ -819,6 +838,9 @@ export const DEFAULT_SETTINGS_CONTRACT: SettingsContract = {
   },
   captureSources: {
     puck: { styleHint: DEFAULT_PUCK_STYLE_HINT },
+  },
+  capture: {
+    defaultAgentId: CAPTURE_DEFAULT_AGENT_AUTO,
   },
   instanceIdentity: {
     name: '',
@@ -1065,6 +1087,11 @@ export function normalizeSettingsContract(input: DeepPartial<SettingsContract> |
       puck: {
         styleHint: source.captureSources?.puck?.styleHint ?? DEFAULT_SETTINGS_CONTRACT.captureSources.puck.styleHint,
       },
+    },
+    capture: {
+      defaultAgentId: typeof source.capture?.defaultAgentId === 'string' && source.capture.defaultAgentId.trim()
+        ? source.capture.defaultAgentId.trim()
+        : DEFAULT_SETTINGS_CONTRACT.capture.defaultAgentId,
     },
     instanceIdentity: {
       name: source.instanceIdentity?.name ?? DEFAULT_SETTINGS_CONTRACT.instanceIdentity.name,

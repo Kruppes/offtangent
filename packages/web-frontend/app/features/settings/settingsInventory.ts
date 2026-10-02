@@ -123,6 +123,15 @@ export const SETTINGS_ADDED: ReadonlyArray<{ field: string, area: string, endpoi
   { field: 'settings-search', area: 'overview', endpoint: '-', component: 'SettingsOverview' },
 ]
 
+/**
+ * Controls added after W5c inside SettingsWorkspace.vue itself. They are part
+ * of the inventory check (no control may be unlisted) but did not exist
+ * before the split, so `before` names the wave that added them.
+ */
+export const SETTINGS_ADDED_INLINE: ReadonlyArray<InventoryRow> = [
+  { field: 'capture-default-agent', binding: 'form.capture.defaultAgentId', before: 'w6b', after: 'capture', endpoint: 'PUT /api/settings (capture.defaultAgentId)' },
+]
+
 export interface ExtractedControl {
   section: string
   tag: string

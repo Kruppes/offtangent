@@ -112,6 +112,24 @@ describe('GET /api/personas/client', () => {
     }
   })
 
+  it('reports capture.defaultAgentId as captureDefaultAgentId (auto without the setting, auto for an unknown id)', async () => {
+    const settingsFile = path.join(tempDataDir, 'config', 'settings.json')
+    fs.mkdirSync(path.dirname(settingsFile), { recursive: true })
+    const read = async () => {
+      const res = await fetch(`${baseUrl}/api/personas/client`, { headers: { Authorization: `Bearer ${userToken}` } })
+      return ((await res.json()) as { captureDefaultAgentId?: string }).captureDefaultAgentId
+    }
+    try {
+      expect(await read()).toBe('auto')
+      fs.writeFileSync(settingsFile, JSON.stringify({ capture: { defaultAgentId: 'analyst' } }))
+      expect(await read()).toBe('analyst')
+      fs.writeFileSync(settingsFile, JSON.stringify({ capture: { defaultAgentId: 'vanished' } }))
+      expect(await read()).toBe('auto')
+    } finally {
+      fs.rmSync(settingsFile, { force: true })
+    }
+  })
+
   it('requires authentication', async () => {
     const res = await fetch(`${baseUrl}/api/personas/client`)
     expect(res.status).toBe(401)

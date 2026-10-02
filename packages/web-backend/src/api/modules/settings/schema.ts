@@ -1,4 +1,5 @@
 import {
+  CAPTURE_DEFAULT_AGENT_AUTO,
   CAPTURE_STRAND_TITLE_MAX_LENGTH,
   CAPTURE_STYLE_HINT_MAX_LENGTH,
   DEFAULT_WATCHDOG_SETTINGS,
@@ -24,6 +25,7 @@ import {
   TASK_LOOP_DETECTION_METHODS,
   TASK_TELEGRAM_DELIVERY_VALUES,
   withLegacySettingsPayloadCompatibility,
+  listPersonaIds,
 } from '@axiom/core'
 
 export interface MergeGroupResult {
@@ -810,6 +812,40 @@ export function mergeCaptureSources(
   existingSources.puck = existing
   settingsRaw.captureSources = existingSources
   return { error: null, changed: true }
+}
+
+/**
+ * `capture.defaultAgentId` (W6b): `'auto'` or the id of a persona that exists
+ * right now (`main` always does). Validated against the persona directory so
+ * a typo cannot silently route every capture to the fallback; an unknown id is
+ * a 400 and nothing is written. The persona list is injectable for tests.
+ */
+export function mergeCapture(
+  body: Record<string, unknown>,
+  settingsRaw: Record<string, unknown>,
+  personaIds: () => string[] = listPersonaIds,
+): MergeGroupResult {
+  const capture = body.capture as Record<string, unknown> | undefined
+  if (capture === undefined) return { error: null, changed: false }
+  if (capture === null || typeof capture !== 'object' || Array.isArray(capture)) {
+    return { error: 'capture must be an object', changed: false }
+  }
+  if (capture.defaultAgentId === undefined) return { error: null, changed: false }
+
+  const value = capture.defaultAgentId
+  if (typeof value !== 'string' || !value.trim()) {
+    return { error: 'capture.defaultAgentId must be "auto" or a known persona id', changed: false }
+  }
+  const id = value.trim()
+  if (id !== CAPTURE_DEFAULT_AGENT_AUTO && id !== 'main' && !personaIds().includes(id)) {
+    return { error: 'capture.defaultAgentId must be "auto" or a known persona id', changed: false }
+  }
+
+  const existing = (settingsRaw.capture ?? {}) as Record<string, unknown>
+  const changed = existing.defaultAgentId !== id
+  existing.defaultAgentId = id
+  settingsRaw.capture = existing
+  return { error: null, changed }
 }
 
 /**

@@ -293,6 +293,23 @@ export function loadCaptureModeSettings(): {
   return { captureModes: normalized.captureModes, captureSources: normalized.captureSources }
 }
 
+/**
+ * `capture.defaultAgentId` (W6b): `'auto'` or a persona id, read per capture
+ * so a change applies to the next capture without a restart. Never throws; a
+ * missing or corrupt `settings.json` yields `'auto'` (the behaviour from
+ * before the setting existed). Whether the id still names a persona is the
+ * caller's check.
+ */
+export function loadCaptureDefaultAgentId(): string {
+  let raw: Partial<SettingsContract> = {}
+  try {
+    raw = loadConfig<Partial<SettingsContract>>('settings.json')
+  } catch (err) {
+    warnConfigReadFailed('settings.json', err)
+  }
+  return normalizeSettingsContract(raw).capture.defaultAgentId
+}
+
 const reportedConfigFailures = new Set<string>()
 
 /**

@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, nextTick, onMounted, ref } from 'vue'
 import { takeComposerHandoff } from '~/composables/useComposerHandoff'
-import { useCapturesApi, type CaptureResult, type CaptureInput, type ApplyCaptureInput, type UploadDescriptor, type ClientPersona, newestDecision, captureClientKey } from '~/api/captures'
+import { useCapturesApi, type CaptureResult, type CaptureInput, type ApplyCaptureInput, type UploadDescriptor, type ClientPersona, newestDecision, initialCapturePersona, captureClientKey } from '~/api/captures'
 import { useNowApi, type NowSet, type NowStrand } from '~/api/now'
 import { useModelsApi, type SelectableModel } from '~/api/models'
 import { useResurfaceApi, type ResurfaceItem } from '~/api/resurface'
@@ -93,7 +93,12 @@ async function loadOptions() {
   optionsError.value = false
   await Promise.all([
     modelsApi.listModels().then(v => { models.value = v }).catch(() => { optionsError.value = true }),
-    api.personas().then(v => { personas.value = v }).catch(() => { optionsError.value = true }),
+    // The picker starts at the server's capture default (W6b); a choice the
+    // user already made before the list arrived is kept.
+    api.personaOptions().then(v => {
+      personas.value = v.personas
+      if (!agentId.value) agentId.value = initialCapturePersona(v)
+    }).catch(() => { optionsError.value = true }),
   ])
 }
 /**

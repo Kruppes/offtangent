@@ -8,6 +8,7 @@ import fs from 'node:fs'
 import path from 'node:path'
 import {
   SETTINGS_ADDED,
+  SETTINGS_ADDED_INLINE,
   SETTINGS_INVENTORY,
   SETTINGS_PANELS,
   checkInventory,
@@ -18,6 +19,8 @@ import { findSection, isRoutableSection } from './settingsSections'
 
 const dir = path.resolve(__dirname, 'components')
 const workspace = fs.readFileSync(path.join(dir, 'SettingsWorkspace.vue'), 'utf-8')
+/** The W5c inventory plus the controls later waves added inline. */
+const ALL_ROWS = [...SETTINGS_INVENTORY, ...SETTINGS_ADDED_INLINE]
 
 describe('settings inventory', () => {
   it('lists every control of the old tabs (84 controls)', () => {
@@ -31,7 +34,7 @@ describe('settings inventory', () => {
   })
 
   it('finds every control in its new area with the same binding, and nothing unlisted', () => {
-    const result = checkInventory(SETTINGS_INVENTORY, extractSectionControls(workspace))
+    const result = checkInventory(ALL_ROWS, extractSectionControls(workspace))
     expect(result.missing).toEqual([])
     expect(result.moved).toEqual([])
     expect(result.unknown).toEqual([])
@@ -62,9 +65,18 @@ describe('settings inventory', () => {
 
   it('detects a removed control', () => {
     const broken = workspace.replace('id="now-set-max"', 'id="gone"')
-    const result = checkInventory(SETTINGS_INVENTORY, extractSectionControls(broken))
+    const result = checkInventory(ALL_ROWS, extractSectionControls(broken))
     expect(result.missing.map(row => row.field)).toEqual(['now-set-max'])
     expect(result.unknown.map(control => control.id)).toEqual(['gone'])
+  })
+
+  it('lists the inline additions once, on routable areas, and not in the W5c inventory', () => {
+    const fields = ALL_ROWS.map(row => row.field)
+    expect(new Set(fields).size).toBe(fields.length)
+    expect(SETTINGS_ADDED_INLINE.map(row => `${row.field}:${row.after}:${row.binding}`)).toEqual([
+      'capture-default-agent:capture:form.capture.defaultAgentId',
+    ])
+    for (const row of SETTINGS_ADDED_INLINE) expect(isRoutableSection(row.after), row.field).toBe(true)
   })
 
   it('detects a control moved into another area', () => {

@@ -45,6 +45,8 @@ import {
   listDecisionsForCaptures,
   listPersonaIds,
   loadMultiPersonaSettings,
+  loadCaptureDefaultAgentId,
+  CAPTURE_DEFAULT_AGENT_AUTO,
   resolveAssignableProjectId,
   runRouter,
   sealText,
@@ -356,6 +358,32 @@ function personaList(): string[] {
 function defaultPersona(): string {
   const configured = loadMultiPersonaSettings().defaultAgentId
   return personaList().includes(configured) ? configured : 'main'
+}
+
+/**
+ * `capture.defaultAgentId` (W6b) as a persona the capture should land at, or
+ * null for `'auto'` (and for an id whose persona no longer exists): then
+ * nothing changes against the behaviour before the setting.
+ */
+export function captureDefaultAgent(load: () => string = loadCaptureDefaultAgentId, personas: () => string[] = personaList): string | null {
+  const configured = load()
+  if (!configured || configured === CAPTURE_DEFAULT_AGENT_AUTO) return null
+  return personas().includes(configured) ? configured : null
+}
+
+/**
+ * Order of the persona a new capture lands at: an explicit `agentId` in the
+ * request first, `capture.defaultAgentId` second, the previous fallback
+ * (router, `multiPersona.defaultAgentId`) last. A request that names a strand
+ * keeps the strand's own persona, the setting never overrides it.
+ */
+export function withCaptureDefaultAgent<T extends { agentId: string | null | undefined; strandId?: string | null }>(
+  body: T,
+  defaultAgent: () => string | null = captureDefaultAgent,
+): T {
+  if (body.agentId || body.strandId) return body
+  const agentId = defaultAgent()
+  return agentId ? { ...body, agentId } : body
 }
 
 export function createCapturesService(options: CapturesServiceOptions) {
@@ -1087,6 +1115,7 @@ export function createCapturesService(options: CapturesServiceOptions) {
       const existing = getCaptureByClientKey(db, userKey, body.clientMessageId)
       if (existing) return { capture: existing, decision: requireDecision(existing), created: false }
     }
+    body = withCaptureDefaultAgent(body)
 
     // A recording that contained no speech is stored and then put down
     // immediately: no router call, no strand, no card in the tray. It runs
@@ -1942,6 +1971,7 @@ export function createCapturesService(options: CapturesServiceOptions) {
   }
 
   async function preview(userId: number, body: RouterPreviewBody): Promise<RouterPreviewResult> {
+    body = withCaptureDefaultAgent(body)
     const chain = options.routerChain?.()
     const split = isSplitEligible({ kind: 'text', text: body.text })
       ? await runCaptureSplit(body.text, {

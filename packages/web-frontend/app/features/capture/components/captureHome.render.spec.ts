@@ -398,6 +398,26 @@ describe('Capture Home rendered', () => {
   const call = request.mock.calls.find(([url]) => url.endsWith('/api/captures'))!
   expect(JSON.parse(call[1].body)).toMatchObject({ agentId: 'public', modelProviderId: 'chosen', modelId: 'model' })
  })
+ /** W6b: the persona picker starts at the server's capture default. */
+ it.each([
+  ['public', 'public'],
+  ['auto', undefined],
+  ['vanished', undefined],
+  [undefined, undefined],
+ ])('starts the persona picker at the server default %s and sends it', async (serverDefault, sent) => {
+  const original = request.getMockImplementation()!
+  request.mockImplementation(async (url: string, options?: RequestInit) => url.endsWith('/api/personas/client')
+   ? Response.json({ personas: [{ id: 'public', displayName: 'Public persona' }], ...(serverDefault ? { captureDefaultAgentId: serverDefault } : {}) })
+   : original(url, options))
+  // The harness stubs `vModelSelect`, so the preselection is proven by what
+  // the untouched picker sends.
+  const { root } = mount(Home); await flush(); await draft(root)
+  await send(root)
+  const call = request.mock.calls.find(([url]) => url.endsWith('/api/captures'))!
+  const body = JSON.parse(call[1].body) as Record<string, unknown>
+  if (sent) expect(body.agentId).toBe(sent)
+  else expect(body).not.toHaveProperty('agentId')
+ })
  it('root page renders CaptureHome without the old redirect', () => {
   const page = readFileSync(new URL('../../../pages/index.vue', import.meta.url), 'utf8')
   expect(page).toContain('<CaptureHome />')
