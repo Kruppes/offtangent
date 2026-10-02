@@ -131,3 +131,88 @@ describe('useMessageAnchor', () => {
     scope.stop()
   })
 })
+
+describe('useMessageAnchor follows the row while the layout settles', () => {
+  let observers: Array<{ cb: () => void; observed: unknown[]; disconnected: boolean }>
+  let listeners: Map<string, () => void>
+  let top: number
+  function followRow(id: string): FakeRow & { isConnected: boolean; parentElement: null; getBoundingClientRect(): { top: number; bottom: number; height: number } } {
+    return { ...row(id), isConnected: true, parentElement: null, getBoundingClientRect: () => ({ top, bottom: top + 100, height: 100 }) }
+  }
+  beforeEach(() => {
+    observers = []
+    listeners = new Map()
+    top = 400
+    globals.ResizeObserver = class {
+      entry = { cb: () => {}, observed: [] as unknown[], disconnected: false }
+      constructor(cb: () => void) { this.entry.cb = cb; observers.push(this.entry) }
+      observe(node: unknown) { this.entry.observed.push(node) }
+      disconnect() { this.entry.disconnected = true }
+    }
+    globals.getComputedStyle = () => ({ overflowY: 'visible' })
+    ;(globals.document as Record<string, unknown>).body = { children: [] }
+    globals.window = {
+      matchMedia: () => ({ matches: true }),
+      innerHeight: 900,
+      addEventListener: (type: string, fn: () => void) => listeners.set(type, fn),
+      removeEventListener: (type: string) => listeners.delete(type),
+    }
+  })
+  afterEach(() => {
+    delete globals.ResizeObserver
+    delete globals.getComputedStyle
+  })
+
+  it('repeats the jump when content above pushes the row out of view, then stops', async () => {
+    const target = followRow('msg-5')
+    rows.set('msg-5', target)
+    const scope = effectScope()
+    scope.run(() => useMessageAnchor(() => '#msg-5', () => 'strand-a', () => true))
+    await settle()
+    expect(target.scrolled).toBe(1)
+    expect(observers).toHaveLength(1)
+    expect(observers[0]!.observed).toContain(target)
+    // Late images above the row: it drifts below the 900 px viewport.
+    top = 985
+    observers[0]!.cb()
+    await vi.advanceTimersByTimeAsync(20)
+    expect(target.scrolled).toBe(2)
+    // Back in view: further resizes do not scroll again.
+    top = 400
+    observers[0]!.cb()
+    await vi.advanceTimersByTimeAsync(20)
+    expect(target.scrolled).toBe(2)
+    // Layout quiet: the follow ends and lets go of the page.
+    await vi.advanceTimersByTimeAsync(800)
+    expect(observers[0]!.disconnected).toBe(true)
+    expect(listeners.size).toBe(0)
+    scope.stop()
+  })
+
+  it('stops following as soon as the reader scrolls or presses a key', async () => {
+    const target = followRow('msg-6')
+    rows.set('msg-6', target)
+    const scope = effectScope()
+    scope.run(() => useMessageAnchor(() => '#msg-6', () => 'strand-a', () => true))
+    await settle()
+    expect([...listeners.keys()].sort()).toEqual(['keydown', 'pointerdown', 'touchstart', 'wheel'])
+    listeners.get('wheel')!()
+    expect(observers[0]!.disconnected).toBe(true)
+    top = 1500
+    observers[0]!.cb()
+    await vi.advanceTimersByTimeAsync(1000)
+    expect(target.scrolled).toBe(1)
+    scope.stop()
+  })
+
+  it('gives up after the hard limit even while the layout keeps changing', async () => {
+    const target = followRow('msg-8')
+    rows.set('msg-8', target)
+    const scope = effectScope()
+    scope.run(() => useMessageAnchor(() => '#msg-8', () => 'strand-a', () => true))
+    await settle()
+    for (let t = 0; t < 6000; t += 500) { observers[0]!.cb(); await vi.advanceTimersByTimeAsync(500) }
+    expect(observers[0]!.disconnected).toBe(true)
+    scope.stop()
+  })
+})
