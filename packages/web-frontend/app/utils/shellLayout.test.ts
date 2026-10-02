@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest'
 import { DOCK_MAX_WIDTH } from './strandDock'
 import {
   CONTEXT_WIDTH, LIST_WIDTH, MIN_CONVERSATION_WIDTH, dockMaxWidth, inlineDockWidth, effectiveSidebarMode, SIDEBAR_WIDTH, columnTier, contextPlacement, isContextOpen, parseContextOverrides,
-  parseSidebarState, rememberContext, setSidebarMode, toggleSidebarCompact, toggleSidebarHidden, visiblePanes,
+  parseSidebarState, rememberContext, setSidebarMode, toggleSidebarCompact, toggleSidebarHidden, visiblePanes, listMode,
 } from './shellLayout'
 
 describe('sidebar state', () => {
@@ -65,7 +65,15 @@ describe('column tiers', () => {
     expect(visiblePanes('one', false)).toEqual({ list: true, conversation: false })
     expect(visiblePanes('one', true)).toEqual({ list: false, conversation: true })
     expect(visiblePanes('two', true)).toEqual({ list: true, conversation: true })
-    expect(visiblePanes('three', false)).toEqual({ list: true, conversation: true })
+    expect(visiblePanes('three', false)).toEqual({ list: true, conversation: false })
+    expect(visiblePanes('two', false)).toEqual({ list: true, conversation: false })
+  })
+  it('shows the overview without a strand and the side column with one', () => {
+    expect(listMode('one', false)).toBe('overview')
+    expect(listMode('three', false)).toBe('overview')
+    expect(listMode('two', true)).toBe('side')
+    expect(listMode('three', true)).toBe('side')
+    expect(listMode('one', true)).toBe('hidden')
   })
   it('lets the dock grow only into what the reading measure leaves', () => {
     // 1440 with the labelled sidebar: 1440 - 256 - 304 - 576 = 304.

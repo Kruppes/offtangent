@@ -125,10 +125,21 @@ export function inlineDockWidth(storedWidth: number, viewport: number, sidebarWi
   return clampDockWidth(storedWidth, dockMaxWidth(viewport, sidebarWidth))
 }
 
-/** Which panes a strand route shows at this tier. */
+/**
+ * Which panes a strand route shows at this tier. Without an open strand the
+ * list is the full-width overview (W4d) on every tier; only an open strand
+ * shrinks it to the side column (two and three columns) or replaces it
+ * (phone). The side list keeps `LIST_WIDTH`, which `dockMaxWidth` relies on.
+ */
 export function visiblePanes(tier: ColumnTier, strandOpen: boolean): { list: boolean; conversation: boolean } {
   if (tier === 'one') return { list: !strandOpen, conversation: strandOpen }
-  return { list: true, conversation: true }
+  return { list: true, conversation: strandOpen }
+}
+
+/** The list is the full-width overview (no strand open) or the side column. */
+export function listMode(tier: ColumnTier, strandOpen: boolean): 'overview' | 'side' | 'hidden' {
+  if (!strandOpen) return 'overview'
+  return tier === 'one' ? 'hidden' : 'side'
 }
 
 // ── Context column open/closed, remembered per strand ────────────────
