@@ -656,7 +656,7 @@ export type {
   TaskFilterClauseOptions,
 } from './task-store.js'
 export { TaskRunner, formatTaskInjection } from './task-runner.js'
-export type { TaskRunnerOptions, TaskOverrides, TaskQueueInfo } from './task-runner.js'
+export type { TaskRunnerOptions, TaskOverrides, TaskQueueInfo, TaskSteerResult } from './task-runner.js'
 export {
   DEFAULT_MAX_CONCURRENT_TASKS,
   DEFAULT_MAX_CONCURRENT_TASKS_PER_PROVIDER,
@@ -680,6 +680,8 @@ export {
 } from './loop-detection.js'
 export type { TrackedToolCall, LoopDetectionConfig, LoopDetectionResult } from './loop-detection.js'
 export { createTaskTool, createResumeTaskTool, listTasksTool } from './task-tools.js'
+export { createTaskControlTools } from './task-control-tools.js'
+export type { TaskControlToolsOptions } from './task-control-tools.js'
 export {
   runWithTaskExecutionContext,
   getCurrentTaskExecutionContext,
