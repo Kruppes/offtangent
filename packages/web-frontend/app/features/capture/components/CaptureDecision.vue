@@ -9,7 +9,8 @@ defineEmits<{ undo: []; apply: [body: ApplyCaptureInput]; dismiss: [] }>()
 </script>
 <template>
   <article class="rounded-xl border bg-card p-4 space-y-3 break-words" data-testid="decision">
-    <p class="text-sm font-medium">{{ $t(`capture.status.${result.capture.status}`) }}</p>
+    <!-- `kind: 'voice'` is the dictation mark (DICTATED_CAPTURE_KIND in captureDictation.ts): only the text was kept. -->
+    <p class="flex flex-wrap items-center gap-x-3 gap-y-1 text-sm font-medium"><span>{{ $t(`capture.status.${result.capture.status}`) }}</span><span v-if="result.capture.kind === 'voice'" data-testid="capture-dictated-badge" class="inline-flex items-center gap-1 font-normal text-muted-foreground"><AppIcon name="mic" aria-hidden="true" />{{ $t('capture.dictation.badge') }}</span></p>
     <p v-if="review" data-testid="review-band" class="rounded-md border-l-4 border-primary bg-muted p-3 font-medium">{{ $t('capture.reviewRequired') }}</p>
     <blockquote class="whitespace-pre-wrap text-sm" data-testid="capture-excerpt">{{ result.capture.text.slice(0, 400) }}{{ result.capture.text.length > 400 ? '…' : '' }}</blockquote>
     <time :datetime="result.capture.createdAt" class="text-sm text-muted-foreground">{{ new Date(result.capture.createdAt).toLocaleString() }}</time>

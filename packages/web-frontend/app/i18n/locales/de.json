@@ -200,7 +200,8 @@
         "mic_error": "Es konnte kein Mikrofon gestartet werden. Prüfe, ob eines angeschlossen ist und nicht von einer anderen App belegt wird.",
         "too_short": "Die Aufnahme war zu kurz. Sprich etwas länger, bevor du beendest.",
         "transcribe_error": "Die Transkription ist fehlgeschlagen. Die Aufnahme ist noch da, du kannst sie erneut senden.",
-        "no_speech": "In der Aufnahme wurde keine Sprache erkannt."
+        "no_speech": "In der Aufnahme wurde keine Sprache erkannt.",
+        "offline": "Du bist offline. Die Aufnahme bleibt in diesem Tab erhalten, versuche es erneut, sobald du wieder online bist. Dein Text bleibt im Feld."
       },
       "audio": {
         "label": "Diktat {n}",
@@ -1840,6 +1841,18 @@
     "strandCount": "{count} Strand | {count} Strands"
   },
   "capture": {
+    "dictation": {
+      "start": "Diktat starten (Strg+M)",
+      "stop": "Diktat beenden und transkribieren (Strg+M)",
+      "transcribing": "Wird transkribiert …",
+      "startShort": "Diktieren",
+      "stopShort": "Stopp",
+      "shortcut": "Strg+M diktiert",
+      "inserted": "Diktat ins Feld übernommen. Prüfen, bearbeiten, dann senden.",
+      "cancelled": "Diktat abgebrochen",
+      "marked": "Diktiert: gespeichert wird nur der Text, keine Aufnahme.",
+      "badge": "Diktiert"
+    },
     "proposedDestination": "Vorgeschlagenes Ziel:",
     "title": "Eingang",
     "subtitle": "Halte einen Gedanken fest. Wohin er gehört, entscheidest du danach.",

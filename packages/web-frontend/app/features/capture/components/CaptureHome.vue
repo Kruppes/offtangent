@@ -9,6 +9,8 @@ import type { CapturePart } from '~/api/captures'
 import CaptureDecision from './CaptureDecision.vue'
 import CaptureParts from './CaptureParts.vue'
 import { daysSince, isSplit, trayItems, trayTotal, TRAY_PAGE_SIZE, TRAY_STATUSES } from '../captureParts'
+import { dictationFields } from '../captureDictation'
+import { useCaptureDictation } from '../useCaptureDictation'
 const api = useCapturesApi()
 const nowApi = useNowApi()
 const modelsApi = useModelsApi()
@@ -51,6 +53,17 @@ const modelKey = ref('')
 const optionsError = ref(false)
 const more = ref(false)
 const trayTotalCount = ref<number | null>(null)
+/**
+ * Dictation (W5d): only the transcript is kept, the capture carries the
+ * dictation mark (`kind: 'voice'`), the recording is never stored. Hidden
+ * entirely while the server has no STT configured.
+ */
+const {
+  sttEnabled, fetchSttSettings, phase: dictationPhase, error: dictationError, canRetry: dictationCanRetry,
+  elapsedMs: dictationElapsed, levels: dictationLevels, busy: dictationBusy, dictated, announcement: dictationAnnouncement,
+  micLabel, toggle: toggleDictation, finish: finishDictation, retry: retryDictation, cancel: cancelDictation, dismiss: dismissDictation,
+  handleKeydown: handleDictationKeydown,
+} = useCaptureDictation(text, textarea)
 // Preserve the key for an identical retry after a lost response; changed drafts get a new key.
 let pending: { signature: string; key: string } | null = null
 /**
@@ -60,7 +73,8 @@ let pending: { signature: string; key: string } | null = null
  * behaves as before (manual).
  */
 const nowAuto = computed(() => now.value?.mode === 'auto')
-const canSend = computed(() => !!text.value.trim() && text.value.trim().length <= 20000 && !busy.value && !uploading.value)
+// A running dictation blocks the send: its words would land in an emptied box.
+const canSend = computed(() => !!text.value.trim() && text.value.trim().length <= 20000 && !busy.value && !uploading.value && !dictationBusy.value)
 const available = computed(() => candidates.value.filter(s => !now.value?.strands.some(n => n.id === s.id)))
 function strandTitle(id?: string | null) {
   return [...(now.value?.strands ?? []), ...candidates.value].find(s => s.id === id)?.title || (id ? resolved.value[id]?.title : undefined)
@@ -118,7 +132,7 @@ async function send() {
   if (!canSend.value) return
   busy.value = true; sending.value = true; error.value = ''; errorDetail.value = ''; notice.value = ''
   const model = models.value.find(m => JSON.stringify([m.providerId, m.modelId]) === modelKey.value)
-  const draft = { text: text.value.trim(), source: 'web' as const, attachments: attachments.value, ...(agentId.value ? { agentId: agentId.value } : {}), ...(model ? { modelProviderId: model.providerId, modelId: model.modelId } : {}), ...(handoffTarget.value ? { destination: 'new_strand' as const, ...(handoffTarget.value.title ? { strandTitle: handoffTarget.value.title } : {}) } : {}) }
+  const draft = { text: text.value.trim(), source: 'web' as const, attachments: attachments.value, ...dictationFields(dictated.value), ...(agentId.value ? { agentId: agentId.value } : {}), ...(model ? { modelProviderId: model.providerId, modelId: model.modelId } : {}), ...(handoffTarget.value ? { destination: 'new_strand' as const, ...(handoffTarget.value.title ? { strandTitle: handoffTarget.value.title } : {}) } : {}) }
   const signature = JSON.stringify(draft)
   if (pending?.signature !== signature) pending = { signature, key: crypto.randomUUID() }
   try {
@@ -219,7 +233,7 @@ function applyHandoff() {
   })
 }
 onMounted(() => {
-  void load(); void loadOptions()
+  void load(); void loadOptions(); void fetchSttSettings()
   applyHandoff()
   if (!text.value && typeof window !== 'undefined' && window.matchMedia?.('(min-width: 768px) and (pointer: fine)').matches) textarea.value?.focus()
 })
@@ -227,9 +241,23 @@ onMounted(() => {
 <template>
   <main class="mx-auto w-full max-w-4xl space-y-6 p-4 md:p-6">
     <header><h1 class="text-2xl font-semibold">{{ $t('capture.title') }}</h1><p class="mt-1 text-muted-foreground">{{ $t('capture.subtitle') }}</p></header>
-    <form class="space-y-3 rounded-xl border bg-card p-4" @submit.prevent="send">
+    <form class="space-y-3 rounded-xl border bg-card p-4" @submit.prevent="send" @keydown="handleDictationKeydown">
       <label for="capture-text" class="block font-medium">{{ $t('capture.prompt') }}</label>
       <textarea id="capture-text" ref="textarea" v-model="text" :disabled="busy" rows="4" class="focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 w-full resize-y rounded-md border border-input bg-background p-3" :placeholder="$t('capture.placeholder')" @keydown="(e: KeyboardEvent) => { if (e.key === 'Enter' && (e.ctrlKey || e.metaKey) && !e.isComposing) { e.preventDefault(); send() } }" />
+      <DictationBar
+        v-if="sttEnabled && dictationPhase !== 'idle'"
+        :phase="dictationPhase"
+        :elapsed-ms="dictationElapsed"
+        :levels="dictationLevels"
+        :error="dictationError"
+        :can-retry="dictationCanRetry"
+        @cancel="cancelDictation"
+        @finish="finishDictation"
+        @retry="retryDictation"
+        @dismiss="dismissDictation"
+      />
+      <p class="sr-only" aria-live="polite" data-testid="capture-dictation-announcement">{{ dictationAnnouncement ? $t(dictationAnnouncement) : '' }}</p>
+      <p v-if="dictated" data-testid="capture-dictated" class="flex items-start gap-2 text-sm text-muted-foreground"><AppIcon name="mic" class="mt-0.5 shrink-0" aria-hidden="true" /><span>{{ $t('capture.dictation.marked') }}</span></p>
       <p class="text-sm text-muted-foreground">{{ $t('capture.textLimit', { count: text.length }) }}</p>
       <div class="flex flex-wrap gap-3">
         <label class="flex min-w-0 flex-1 flex-col gap-1">{{ $t('capture.persona') }}<select v-model="agentId" :disabled="busy" class="focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 min-h-11 max-w-full rounded-md border border-input bg-background px-2"><option value="">{{ $t('capture.automatic') }}</option><option v-for="p in personas" :key="p.id" :value="p.id">{{ p.displayName }}</option></select></label>
@@ -242,7 +270,24 @@ onMounted(() => {
       <p v-if="uploading" role="status">{{ $t('capture.uploading') }}</p>
       <div class="flex flex-wrap items-center gap-3">
         <Button type="submit" data-testid="send" class="min-h-11 rounded-md bg-primary px-5 text-primary-foreground disabled:opacity-50" :disabled="!canSend">{{ $t(sending ? 'capture.sending' : 'capture.send') }}</Button>
-        <span class="text-sm text-muted-foreground">{{ $t('capture.shortcut') }}</span>
+        <button
+          v-if="sttEnabled"
+          type="button"
+          data-testid="capture-dictation-mic"
+          class="inline-flex min-h-11 min-w-11 items-center justify-center gap-2 rounded-md border px-3 text-sm font-medium transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 disabled:opacity-50"
+          :class="dictationPhase === 'recording' || dictationPhase === 'starting'
+            ? 'border-destructive bg-destructive/10 text-destructive'
+            : dictationPhase === 'transcribing' ? 'border-primary bg-primary/10 text-primary' : 'border-input bg-background text-foreground hover:bg-muted'"
+          :title="$t(micLabel)"
+          :aria-label="$t(micLabel)"
+          :aria-pressed="dictationPhase === 'recording'"
+          :disabled="busy || dictationPhase === 'transcribing' || dictationPhase === 'starting'"
+          @click="toggleDictation"
+        >
+          <AppIcon :name="dictationPhase === 'transcribing' ? 'loader' : dictationPhase === 'recording' ? 'square' : 'mic'" :class="dictationPhase === 'transcribing' ? 'motion-safe:animate-spin' : ''" aria-hidden="true" />
+          <span>{{ $t(dictationPhase === 'recording' ? 'capture.dictation.stopShort' : 'capture.dictation.startShort') }}</span>
+        </button>
+        <span class="text-sm text-muted-foreground">{{ $t('capture.shortcut') }}<template v-if="sttEnabled"> · {{ $t('capture.dictation.shortcut') }}</template></span>
       </div>
     </form>
     <p v-if="sending || refreshing" role="status">{{ $t(sending ? 'capture.routingWait' : 'capture.refreshing') }}</p>

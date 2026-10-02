@@ -200,7 +200,8 @@
         "mic_error": "No microphone could be started. Check that one is connected and not used by another app.",
         "too_short": "The recording was too short. Speak a little longer before you finish.",
         "transcribe_error": "The transcription failed. The recording is kept, you can send it again.",
-        "no_speech": "No speech was recognised in the recording."
+        "no_speech": "No speech was recognised in the recording.",
+        "offline": "You are offline. The recording is kept in this tab, try again once you are back online. Your text stays in the field."
       },
       "audio": {
         "label": "Dictation {n}",
@@ -1840,6 +1841,18 @@
     "strandCount": "{count} strand | {count} strands"
   },
   "capture": {
+    "dictation": {
+      "start": "Start dictation (Ctrl+M)",
+      "stop": "Stop dictation and transcribe (Ctrl+M)",
+      "transcribing": "Transcribing …",
+      "startShort": "Dictate",
+      "stopShort": "Stop",
+      "shortcut": "Ctrl+M dictates",
+      "inserted": "Dictation added to the field. Check it, edit it, then send.",
+      "cancelled": "Dictation cancelled",
+      "marked": "Dictated: only the text is saved, no recording.",
+      "badge": "Dictated"
+    },
     "proposedDestination": "Proposed destination:",
     "title": "Capture",
     "subtitle": "Drop a thought here. Decide where it belongs afterwards.",

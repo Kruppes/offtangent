@@ -91,6 +91,28 @@ describe('useStt', () => {
     expect(await stt.stop()).toEqual({ text: 'only text', audio: null, durationMs: 1500 })
   })
 
+  it('keepAudio: false asks the server to keep nothing and never returns audio', async () => {
+    const stt = useStt({ keepAudio: false })
+    await record(stt)
+    const result = await stt.stop()
+    const [url] = fetchMock.mock.calls[0]!
+    expect(url).toBe('http://localhost:3000/api/stt/transcribe')
+    expect(String(url)).not.toContain('keepAudio')
+    // Even a server that answered with a descriptor hands no audio to the caller.
+    expect(result).toEqual({ text: 'Clean words.', audio: null, durationMs: 1500 })
+  })
+
+  it('reports offline when the upload fails without network and keeps the recording for a retry', async () => {
+    vi.stubGlobal('navigator', { mediaDevices: { getUserMedia }, onLine: false })
+    fetchMock.mockImplementationOnce(async () => { throw new TypeError('Failed to fetch') })
+    const stt = useStt({ keepAudio: false })
+    await record(stt)
+    expect(await stt.stop()).toBeNull()
+    expect(stt.error.value).toBe('offline')
+    expect(stt.canRetry.value).toBe(true)
+    expect(await stt.retry()).toEqual({ text: 'Clean words.', audio: null, durationMs: 1500 })
+  })
+
   it('cancel drops the recording and uploads nothing', async () => {
     const stt = useStt()
     await record(stt)

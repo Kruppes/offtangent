@@ -48,6 +48,12 @@ describe('dictationReducer', () => {
     expect(state).toMatchObject({ phase: 'error', error: 'too_short', canRetry: false })
   })
 
+  it('a failed upload without network is the offline error and can be retried', () => {
+    const failed = run({ type: 'start' }, { type: 'started', at: 1 }, { type: 'stop' }, { type: 'failed', offline: true })
+    expect(failed).toMatchObject({ phase: 'error', error: 'offline', canRetry: true })
+    expect(dictationReducer(failed, { type: 'retry' })).toMatchObject({ phase: 'transcribing', error: null })
+  })
+
   it('a failed transcription can be retried and then succeed', () => {
     const failed = run({ type: 'start' }, { type: 'started', at: 1 }, { type: 'stop' }, { type: 'failed' })
     expect(failed).toMatchObject({ phase: 'error', error: 'transcribe_error', canRetry: true })

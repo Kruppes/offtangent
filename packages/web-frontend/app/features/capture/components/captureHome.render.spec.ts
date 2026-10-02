@@ -9,6 +9,9 @@ import * as personas from '~/api/personas'
 import * as composerHandoff from '~/composables/useComposerHandoff'
 import * as resurfaceApi from '~/api/resurface'
 import * as captureParts from '../captureParts'
+import * as captureDictation from '../captureDictation'
+import * as captureDictationUse from '../useCaptureDictation'
+import * as dictationUtils from '~/utils/dictation'
 import { readFileSync } from 'node:fs'
 import { parse, compileScript } from '@vue/compiler-sfc'
 import { transpileModule, ModuleKind, ScriptTarget } from 'typescript'
@@ -17,11 +20,13 @@ function loadComponent(path: string): Component {
  const script = compileScript(descriptor, { id: path, inlineTemplate: true })
  const { outputText } = transpileModule(script.content, { compilerOptions: { module: ModuleKind.CommonJS, target: ScriptTarget.ES2022 } })
  const exports: { default?: Component } = {}
- const modules: Record<string, unknown> = { vue: { ...Vue, vModelText: { mounted: (el: Node, binding: { value: unknown }) => { el.props.value = binding.value }, updated: (el: Node, binding: { value: unknown }) => { el.props.value = binding.value } }, vModelSelect: {} }, '~/api/captures': captures, '~/api/now': now, '~/api/models': models, '~/api/personas': personas, '~/composables/useComposerHandoff': composerHandoff, '~/api/resurface': resurfaceApi, '../captureParts': captureParts }
+ const modules: Record<string, unknown> = { vue: { ...Vue, vModelText: { mounted: (el: Node, binding: { value: unknown }) => { el.props.value = binding.value }, updated: (el: Node, binding: { value: unknown }) => { el.props.value = binding.value } }, vModelSelect: {} }, '~/api/captures': captures, '~/api/now': now, '~/api/models': models, '~/api/personas': personas, '~/composables/useComposerHandoff': composerHandoff, '~/api/resurface': resurfaceApi, '../captureParts': captureParts, '../captureDictation': captureDictation, '../useCaptureDictation': captureDictationUse, '~/utils/dictation': dictationUtils }
  new Function('require', 'exports', outputText)((name: string) => name === './CaptureDecision.vue' || name === './CaptureParts.vue' ? { default: loadComponent(name) } : modules[name], exports)
  return exports.default!
 }
 const Home = loadComponent('./CaptureHome.vue')
+/** The real dictation bar of the chat composer, reused on Home. */
+const DictationBarComponent = loadComponent('../../../components/DictationBar.vue')
 interface Node {
   tag: string
   text: string
@@ -58,6 +63,7 @@ function mount(component: Component): { app: Vue.App; root: Node } {
   for (const [name, tag] of Object.entries({ PageHeader: 'header', Alert: 'section', AlertDescription: 'p', Button: 'button', AppIcon: 'i', NuxtLink: 'a' })) {
     app.component(name, defineComponent({ setup: (_, { slots }) => () => h(tag, slots.default?.()) }))
   }
+  app.component('DictationBar', DictationBarComponent)
   app.mount(root)
   const result = { app, root }
   trees.push(result)
@@ -73,6 +79,12 @@ function setupFetch() {
   vi.stubGlobal('useApi', useApi)
   vi.stubGlobal('useAuth', () => ({ getAccessToken: () => 'test-token' }))
   vi.stubGlobal('useRuntimeConfig', () => ({ public: { apiBase: 'https://test.example' } }))
+  const states = new Map<string, Vue.Ref<unknown>>()
+  vi.stubGlobal('useState', <T>(key: string, init: () => T) => {
+    if (!states.has(key)) states.set(key, Vue.ref(init()) as Vue.Ref<unknown>)
+    return states.get(key)
+  })
+  vi.stubGlobal('useI18n', () => ({ t: (key: string) => key }))
   return vi.fn<typeof fetch>()
 }
 afterEach(() => {
@@ -92,8 +104,13 @@ let nowMode: 'auto' | 'manual' | undefined
 let resurfaceItems: unknown[] = []
 let resurfaceFail = false
 let splitLatest = false
+/** STT on the server: `GET /api/stt/settings` answers `{ enabled }`. */
+let sttConfigured = false
+/** Synthetic transcription answer; `hold` keeps the request open (transcribing). */
+let transcribe: { status: number; body: unknown; hold?: boolean } = { status: 200, body: { transcript: 'Synthetic spoken words.' } }
+let latestKind: string | undefined
 let request: ReturnType<typeof vi.fn>
-function result(state = status) { return { capture: { id: 'c1', text: 'Roof note', createdAt: '2026-01-01T12:00:00Z', status: state, strandId: state === 'unsorted' ? null : 's1', attachments: [] }, decision: { id: 'd1', createdAt: '2026-01-01T12:00:01Z', captureId: 'c1', title: 'Roof', action: 'new_strand', confidence: state === 'filed' ? 0.9 : state === 'needs_review' ? 0.55 : 0.2, rationale: 'Related topic', state: state === 'unsorted' ? 'proposed' : 'applied', alternatives: [{ action: 'append', strandId: 's2', title: 'House', confidence: 0.3, reason: 'Possible match' }] } } }
+function result(state = status) { return { capture: { id: 'c1', text: 'Roof note', ...(latestKind ? { kind: latestKind } : {}), createdAt: '2026-01-01T12:00:00Z', status: state, strandId: state === 'unsorted' ? null : 's1', attachments: [] }, decision: { id: 'd1', createdAt: '2026-01-01T12:00:01Z', captureId: 'c1', title: 'Roof', action: 'new_strand', confidence: state === 'filed' ? 0.9 : state === 'needs_review' ? 0.55 : 0.2, rationale: 'Related topic', state: state === 'unsorted' ? 'proposed' : 'applied', alternatives: [{ action: 'append', strandId: 's2', title: 'House', confidence: 0.3, reason: 'Possible match' }] } } }
 function splitResult() {
  const base = result()
  const part = (index: number, id: string, state: string) => ({ index, title: `Part ${index}`, text: `Synthetic part ${index}.`, sentenceIds: [index + 1], decision: { ...base.decision, id, state } })
@@ -102,12 +119,19 @@ function splitResult() {
 beforeEach(() => {
  status = 'filed'; max = 7; nowIds = []; nowMode = undefined; failLoad = false; holdLoad = false; saved = false
  resurfaceItems = []; resurfaceFail = false; splitLatest = false
+ sttConfigured = false; latestKind = undefined
+ transcribe = { status: 200, body: { transcript: 'Synthetic spoken words.' } }
  setupFetch()
  request = vi.fn(async (url: string, _options?: RequestInit) => {
   const path = url.replace('https://test.example', '')
   if (holdLoad && path === '/api/now') return new Promise(() => {})
   if (failLoad && path === '/api/now') return new Response('{}', { status: 500 })
   let data: unknown = {}
+  if (path === '/api/stt/settings') return Response.json({ enabled: sttConfigured })
+  if (path.startsWith('/api/stt/transcribe')) {
+   if (transcribe.hold) return new Promise(() => {})
+   return { ok: transcribe.status < 400, status: transcribe.status, json: async () => transcribe.body } as Response
+  }
   if (path.startsWith('/api/resurface?')) { if (resurfaceFail) return new Response('{}', { status: 500 }); data = { items: resurfaceItems } }
   else if (path.endsWith('/snooze')) data = {}
   else if (path === '/api/models') data = { models: [] }
@@ -363,11 +387,27 @@ describe('Capture Home rendered', () => {
   expect(page).toContain('<CaptureHome />')
   expect(page).not.toMatch(/navigateTo|redirect|definePageMeta/)
  })
- it('omits unverified speech controls and makes no STT requests', async () => {
+ /**
+  * The dictation contract (W5d, replaces "omits unverified speech controls"):
+  * Home asks the server whether STT is configured and shows nothing when it is
+  * not; when it is, a recording is transcribed WITHOUT keepAudio, only the
+  * text lands in the box, and the capture carries `kind: 'voice'`, never audio.
+  */
+ it('hides dictation completely and records nothing while STT is not configured', async () => {
+  const getUserMedia = stubMicrophone()
   const { root } = mount(Home); await flush()
-  expect(text(root)).not.toContain('capture.record')
-  expect(request.mock.calls.some(([url]) => url.includes('/api/stt'))).toBe(false)
-  expect(readFileSync(new URL('./CaptureHome.vue', import.meta.url), 'utf8')).not.toContain('useStt')
+  expect(request.mock.calls.filter(([url]) => String(url).includes('/api/stt')).map(([url]) => url)).toEqual(['https://test.example/api/stt/settings'])
+  expect(byTestId(root, 'capture-dictation-mic')).toHaveLength(0)
+  expect(byTestId(root, 'dictation-bar')).toHaveLength(0)
+  expect(text(root)).not.toContain('capture.dictation.shortcut')
+  await keydown(root, ctrlM)
+  expect(getUserMedia).not.toHaveBeenCalled()
+  expect(request.mock.calls.some(([url]) => String(url).includes('/api/stt/transcribe'))).toBe(false)
+ })
+ it('never asks the server to keep the recording (text only, no audio at the capture)', () => {
+  const source = readFileSync(new URL('../useCaptureDictation.ts', import.meta.url), 'utf8')
+  expect(source).toContain('useStt({ keepAudio: false })')
+  expect(readFileSync(new URL('./CaptureHome.vue', import.meta.url), 'utf8')).not.toMatch(/keepAudio|new Blob|pendingAudio/)
  })
  it('honestly displays the answered-capture moved response, not a fake Unsorted success', async () => {
   const original = request.getMockImplementation()!
@@ -421,4 +461,222 @@ describe('Capture Home rendered', () => {
   expect(text(root)).toContain('capture.uploadLimit')
  })
 
+})
+
+/* ---- Dictation on Home (W5d) ------------------------------------------- */
+
+class FakeRecorder {
+ static isTypeSupported(type: string) { return type === 'audio/webm;codecs=opus' }
+ state: 'inactive' | 'recording' = 'inactive'
+ mimeType = 'audio/webm'
+ ondataavailable: ((event: { data: Blob }) => void) | null = null
+ onstop: (() => void) | null = null
+ start() { this.state = 'recording' }
+ stop() {
+  this.state = 'inactive'
+  this.ondataavailable?.({ data: new Blob(['synthetic-audio'], { type: 'audio/webm' }) })
+  this.onstop?.()
+ }
+}
+let clockMs = 0
+let dateSpy: { mockRestore(): void } | null = null
+/** A fake microphone; `deny` makes the browser refuse it. */
+function stubMicrophone(options: { deny?: boolean; onLine?: boolean } = {}) {
+ const getUserMedia = vi.fn(async () => {
+  if (options.deny) throw Object.assign(new Error('denied'), { name: 'NotAllowedError' })
+  return { getTracks: () => [{ stop() {} }] }
+ })
+ vi.stubGlobal('navigator', { mediaDevices: { getUserMedia }, onLine: options.onLine ?? true })
+ vi.stubGlobal('MediaRecorder', FakeRecorder)
+ clockMs = 1_000_000
+ dateSpy?.mockRestore()
+ dateSpy = vi.spyOn(Date, 'now').mockImplementation(() => clockMs)
+ return getUserMedia
+}
+const ctrlM = { key: 'm', ctrlKey: true, metaKey: false, altKey: false, shiftKey: false }
+async function keydown(root: Node, init: Partial<KeyboardEvent>) {
+ const form = all(root).find(n => n.tag === 'form')!
+ ;(form.props.onKeydown as (e: unknown) => void)({ preventDefault() {}, stopPropagation() {}, ...init })
+ await flush()
+}
+function byTestId(root: Node, id: string) { return all(root).filter(n => n.props['data-testid'] === id) }
+function mic(root: Node) { return byTestId(root, 'capture-dictation-mic')[0]! }
+function field(root: Node) { return all(root).find(n => n.tag === 'textarea')! }
+async function tapMic(root: Node) { (mic(root).props.onClick as () => void)(); await flush() }
+/** Start, speak for `ms`, stop: the transcript lands in the box. */
+async function dictate(root: Node, ms = 1500) {
+ await tapMic(root)
+ clockMs += ms
+ await tapMic(root)
+}
+function captureBodies() {
+ return request.mock.calls.filter(([url, init]) => url === 'https://test.example/api/captures' && (init as RequestInit | undefined)?.method === 'POST').map(([, init]) => JSON.parse((init as RequestInit).body as string) as Record<string, unknown>)
+}
+
+describe('Capture Home dictation', () => {
+ afterEach(() => { dateSpy?.mockRestore(); dateSpy = null })
+
+ it('dictates into the field, lets the text be edited and sends it marked as dictated only on submit', async () => {
+  sttConfigured = true
+  const getUserMedia = stubMicrophone()
+  const { root } = mount(Home); await flush()
+  expect(mic(root).props['aria-label']).toBe('capture.dictation.start')
+  expect(mic(root).props['aria-pressed']).toBe(false)
+  expect(text(root)).toContain('capture.dictation.shortcut')
+  await draft(root, 'Typed start')
+
+  await tapMic(root)
+  expect(getUserMedia).toHaveBeenCalledTimes(1)
+  expect(byTestId(root, 'dictation-bar')[0]!.props['data-phase']).toBe('recording')
+  expect(mic(root).props['aria-pressed']).toBe(true)
+  expect(mic(root).props['aria-label']).toBe('capture.dictation.stop')
+  // The bar announces the recording to screen readers.
+  expect(all(byTestId(root, 'dictation-bar')[0]!).some(n => n.props.role === 'status' && text(n).includes('chat.dictation.recording'))).toBe(true)
+  // Sending is blocked while the words are still on their way.
+  expect(button(root, 'capture.send').props.disabled).toBe(true)
+
+  clockMs += 1500
+  await tapMic(root)
+  const stt = request.mock.calls.filter(([url]) => String(url).includes('/api/stt/transcribe'))
+  expect(stt.map(([url]) => url)).toEqual(['https://test.example/api/stt/transcribe'])
+  expect((stt[0]![1] as RequestInit).body).toBeInstanceOf(FormData)
+  // Appended to what was typed, not replacing it; nothing was sent.
+  expect(field(root).props.value).toBe('Typed start Synthetic spoken words.')
+  expect(captureBodies()).toHaveLength(0)
+  expect(byTestId(root, 'capture-dictated')).toHaveLength(1)
+  expect(text(byTestId(root, 'capture-dictation-announcement')[0]!)).toContain('capture.dictation.inserted')
+  expect(byTestId(root, 'dictation-bar')).toHaveLength(0)
+
+  await draft(root, 'Typed start, then edited spoken words.')
+  await send(root)
+  const [body] = captureBodies()
+  expect(body).toMatchObject({ text: 'Typed start, then edited spoken words.', kind: 'voice', source: 'web', attachments: [] })
+  expect(Object.keys(body!).filter(key => /audio|blob|recording/i.test(key))).toEqual([])
+  expect(JSON.stringify(body)).not.toMatch(/recording\.webm|audio\//)
+  // After the send the box is empty and the mark is gone.
+  expect(field(root).props.value).toBe('')
+  expect(byTestId(root, 'capture-dictated')).toHaveLength(0)
+ })
+
+ it('Ctrl+M starts and stops the recording inside the capture form', async () => {
+  sttConfigured = true
+  stubMicrophone()
+  const { root } = mount(Home); await flush()
+  await keydown(root, ctrlM)
+  expect(byTestId(root, 'dictation-bar')[0]!.props['data-phase']).toBe('recording')
+  clockMs += 900
+  await keydown(root, ctrlM)
+  expect(field(root).props.value).toBe('Synthetic spoken words.')
+ })
+
+ it('Esc cancels a running recording and uploads nothing', async () => {
+  sttConfigured = true
+  stubMicrophone()
+  const { root } = mount(Home); await flush()
+  await tapMic(root)
+  await keydown(root, { key: 'Escape', ctrlKey: false, metaKey: false, altKey: false, shiftKey: false })
+  expect(byTestId(root, 'dictation-bar')).toHaveLength(0)
+  expect(request.mock.calls.some(([url]) => String(url).includes('/api/stt/transcribe'))).toBe(false)
+  expect(text(byTestId(root, 'capture-dictation-announcement')[0]!)).toContain('capture.dictation.cancelled')
+ })
+
+ it('resets the mark when the field is emptied completely and sends a typed capture without kind', async () => {
+  sttConfigured = true
+  stubMicrophone()
+  const { root } = mount(Home); await flush()
+  await dictate(root)
+  expect(byTestId(root, 'capture-dictated')).toHaveLength(1)
+  await draft(root, '   ')
+  expect(byTestId(root, 'capture-dictated')).toHaveLength(0)
+  await draft(root, 'Typed after all')
+  await send(root)
+  const [body] = captureBodies()
+  expect(body).toMatchObject({ text: 'Typed after all' })
+  expect('kind' in body!).toBe(false)
+ })
+
+ it('keeps the mark through edits and appends a second dictation', async () => {
+  sttConfigured = true
+  stubMicrophone()
+  const { root } = mount(Home); await flush()
+  await dictate(root)
+  await draft(root, 'Synthetic spoken words, edited.')
+  await dictate(root)
+  expect(field(root).props.value).toBe('Synthetic spoken words, edited. Synthetic spoken words.')
+  await send(root)
+  expect(captureBodies()[0]).toMatchObject({ kind: 'voice' })
+ })
+
+ it('shows the transcribing state and keeps send disabled until the text arrived', async () => {
+  sttConfigured = true
+  stubMicrophone()
+  transcribe = { status: 200, body: {}, hold: true }
+  const { root } = mount(Home); await flush()
+  await draft(root, 'Typed start')
+  await dictate(root)
+  const bar = byTestId(root, 'dictation-bar')[0]!
+  expect(bar.props['data-phase']).toBe('transcribing')
+  expect(text(bar)).toContain('chat.dictation.transcribing')
+  expect(mic(root).props.disabled).toBe(true)
+  expect(mic(root).props['aria-label']).toBe('capture.dictation.transcribing')
+  expect(button(root, 'capture.send').props.disabled).toBe(true)
+  expect(field(root).props.value).toBe('Typed start')
+ })
+
+ it('a refused microphone shows the permission error and keeps the typed text', async () => {
+  sttConfigured = true
+  stubMicrophone({ deny: true })
+  const { root } = mount(Home); await flush()
+  await draft(root, 'Typed and kept')
+  await tapMic(root)
+  const error = byTestId(root, 'dictation-error')[0]!
+  expect(error.props['data-error']).toBe('permission_denied')
+  expect(error.props.role).toBe('alert')
+  expect(text(error)).toContain('chat.dictation.errors.permission_help')
+  expect(field(root).props.value).toBe('Typed and kept')
+  expect(byTestId(root, 'capture-dictated')).toHaveLength(0)
+  expect(button(root, 'capture.send').props.disabled).toBe(false)
+ })
+
+ it('a failed transcription keeps the text, offers a retry and inserts the words on success', async () => {
+  sttConfigured = true
+  stubMicrophone()
+  transcribe = { status: 502, body: { error: 'provider down' } }
+  const { root } = mount(Home); await flush()
+  await draft(root, 'Typed and kept')
+  await dictate(root)
+  expect(byTestId(root, 'dictation-error')[0]!.props['data-error']).toBe('transcribe_error')
+  expect(field(root).props.value).toBe('Typed and kept')
+  expect(byTestId(root, 'capture-dictated')).toHaveLength(0)
+  transcribe = { status: 200, body: { transcript: 'Synthetic spoken words.' } }
+  await click(root, 'chat.dictation.retry')
+  expect(field(root).props.value).toBe('Typed and kept Synthetic spoken words.')
+  expect(byTestId(root, 'capture-dictated')).toHaveLength(1)
+ })
+
+ it('says offline when the upload fails without network', async () => {
+  sttConfigured = true
+  stubMicrophone({ onLine: false })
+  const original = request.getMockImplementation()!
+  request.mockImplementation(async (url: string, options?: RequestInit) => String(url).includes('/api/stt/transcribe') ? Promise.reject(new TypeError('Failed to fetch')) : original(url, options))
+  const { root } = mount(Home); await flush()
+  await draft(root, 'Typed and kept')
+  await dictate(root)
+  expect(byTestId(root, 'dictation-error')[0]!.props['data-error']).toBe('offline')
+  expect(text(root)).toContain('chat.dictation.errors.offline')
+  expect(field(root).props.value).toBe('Typed and kept')
+ })
+
+ it('marks a dictated capture in the latest decision card', async () => {
+  sttConfigured = true
+  latestKind = 'voice'
+  const { root } = mount(Home); await flush(); await draft(root); await send(root)
+  expect(byTestId(root, 'capture-dictated-badge')).toHaveLength(1)
+  expect(text(root)).toContain('capture.dictation.badge')
+ })
+ it('shows no dictation badge for a typed capture', async () => {
+  latestKind = 'text'
+  const { root } = mount(Home); await flush(); await draft(root); await send(root)
+  expect(byTestId(root, 'capture-dictated-badge')).toHaveLength(0)
+ })
 })

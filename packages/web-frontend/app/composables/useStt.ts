@@ -14,7 +14,7 @@ import {
 export interface DictationResult {
   /** Rewritten text when the server sends one, the transcript otherwise. */
   text: string
-  /** The recording the server kept (`keepAudio=1`), null when it kept none. */
+  /** The recording the server kept (`keepAudio=1`), null when it kept none or none was asked for. */
   audio: ChatAttachment | null
   /** Recording length in ms, for the attachment chip. */
   durationMs: number
@@ -25,8 +25,19 @@ export const LEVEL_BARS = 24
 /** Minimum recording duration in ms (Whisper requires >= 0.1s; the server >= 0.25s). */
 export const MIN_RECORDING_MS = 300
 
+export interface UseSttOptions {
+  /**
+   * Ask the server to keep the recording as an upload (`keepAudio=1`), default
+   * true: the chat composer attaches it to the message, as the app does. The
+   * capture box on Home passes false — a capture stores only the transcript
+   * and its dictation mark, the server writes no file and nothing comes back.
+   */
+  keepAudio?: boolean
+}
+
 /**
- * Click-to-dictate for the chat composer (web redesign W1).
+ * Click-to-dictate for the chat composer (web redesign W1) and the capture box
+ * on Home (W5d, `keepAudio: false`).
  *
  * `start()` opens the microphone, `stop()` ends the recording and uploads it
  * to `POST /api/stt/transcribe?keepAudio=1`, `cancel()` drops it. The phase
@@ -34,7 +45,8 @@ export const MIN_RECORDING_MS = 300
  * resources (stream, recorder, analyser, timers) and the kept blob, which
  * stays in memory after a failed upload so `retry()` can send it again.
  */
-export function useStt() {
+export function useStt(options: UseSttOptions = {}) {
+  const keepAudio = options.keepAudio !== false
   const { apiFetch } = useApi()
   const { getAccessToken } = useAuth()
   const config = useRuntimeConfig()
@@ -227,7 +239,8 @@ export function useStt() {
       const apiBase = config.public.apiBase as string
       // keepAudio=1: the server stores the recording as an upload and answers
       // with its descriptor, which the message then carries (as the app does).
-      const response = await fetch(`${apiBase}/api/stt/transcribe?keepAudio=1`, {
+      // Without it the server deletes its temporary copy after transcribing.
+      const response = await fetch(`${apiBase}/api/stt/transcribe${keepAudio ? '?keepAudio=1' : ''}`, {
         method: 'POST',
         headers: token ? { Authorization: `Bearer ${token}` } : {},
         body: formData,
@@ -240,7 +253,7 @@ export function useStt() {
       if (myGeneration !== generation) return null
       pendingBlob = null
       const text = pickTranscriptText(data)
-      const audio = data.audio && typeof data.audio.relativePath === 'string' && data.audio.relativePath ? data.audio : null
+      const audio = keepAudio && data.audio && typeof data.audio.relativePath === 'string' && data.audio.relativePath ? data.audio : null
       if (!text && !audio) {
         dispatch({ type: 'no_speech' })
         return null
@@ -251,7 +264,7 @@ export function useStt() {
       if (myGeneration !== generation) return null
       console.warn('STT transcription failed:', err)
       pendingBlob = { blob, durationMs }
-      dispatch({ type: 'failed' })
+      dispatch({ type: 'failed', offline: typeof navigator !== 'undefined' && navigator.onLine === false })
       return null
     }
   }

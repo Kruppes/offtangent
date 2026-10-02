@@ -9,7 +9,7 @@
  *   idle ──start──▶ starting ──started──▶ recording ──stop──▶ transcribing ──done──▶ idle
  *                      │                     │                     │
  *                      └─start_failed──▶ error ◀──too_short────────┤
- *                                          ▲                       └─failed──▶ error (retry keeps the audio)
+ *                                          ▲                       └─failed──▶ error (retry keeps the audio; `offline` when the browser had no network)
  *   recording / starting ──cancel──▶ idle  (the audio is dropped, nothing is sent)
  *   error ──retry──▶ transcribing          error ──dismiss──▶ idle
  */
@@ -23,6 +23,8 @@ export type DictationErrorCode =
   | 'too_short'
   /** Upload or transcription failed; the recording is kept for a retry. */
   | 'transcribe_error'
+  /** The upload failed while the browser reported no network; kept for a retry too. */
+  | 'offline'
   /** The server understood nothing. */
   | 'no_speech'
 
@@ -46,7 +48,8 @@ export type DictationEvent =
   | { type: 'too_short' }
   | { type: 'transcribed' }
   | { type: 'no_speech' }
-  | { type: 'failed' }
+  /** `offline`: the browser reported no network when the upload failed. */
+  | { type: 'failed'; offline?: boolean }
   | { type: 'retry' }
   | { type: 'dismiss' }
 
@@ -88,7 +91,9 @@ export function dictationReducer(state: DictationState, event: DictationEvent): 
     case 'no_speech':
       return state.phase === 'transcribing' ? { phase: 'error', startedAt: null, error: 'no_speech', canRetry: false } : state
     case 'failed':
-      return state.phase === 'transcribing' ? { phase: 'error', startedAt: null, error: 'transcribe_error', canRetry: true } : state
+      return state.phase === 'transcribing'
+        ? { phase: 'error', startedAt: null, error: event.offline ? 'offline' : 'transcribe_error', canRetry: true }
+        : state
     case 'retry':
       return state.phase === 'error' && state.canRetry ? { phase: 'transcribing', startedAt: null, error: null, canRetry: false } : state
     case 'dismiss':
