@@ -1016,6 +1016,35 @@ describe('useChat thread binding', () => {
     expect(chat.boundAgentId.value).toBeNull()
     expect(chat.messages.value).toHaveLength(0)
   })
+
+  // Strand to strand navigation: the page swap mounts the incoming chat view
+  // (openThread B) before the outgoing one unmounts (leaveThread A). The late
+  // leave must not unbind B, or B's history is discarded and stays "loading".
+  it('keeps the incoming strand bound when the outgoing view leaves after it opened', async () => {
+    apiResponder = () => ({ messages: [historyRow(1, 'user', 'A')] })
+    const chat = useChat()
+    await chat.openThread('sess-a', 'coder')
+
+    let release!: (value: unknown) => void
+    apiResponder = () => new Promise(resolve => { release = resolve })
+    const opening = chat.openThread('sess-b', 'coder')
+    chat.leaveThread('sess-a')
+    release({ messages: [{ ...historyRow(2, 'user', 'B'), session_id: 'sess-b' }] })
+    await opening
+
+    expect(chat.boundSessionId.value).toBe('sess-b')
+    expect(chat.messages.value.map(m => m.content)).toEqual(['B'])
+    expect(chat.loadingHistory.value).toBe(false)
+  })
+
+  it('still drops its own binding when the leaving strand is the bound one', async () => {
+    apiResponder = () => ({ messages: [historyRow(1, 'user', 'hi')] })
+    const chat = useChat()
+    await chat.openThread('sess-a', 'coder')
+    chat.leaveThread('sess-a')
+    expect(chat.boundSessionId.value).toBeNull()
+    expect(chat.messages.value).toHaveLength(0)
+  })
 })
 
 describe('shared feed websocket integration', () => {

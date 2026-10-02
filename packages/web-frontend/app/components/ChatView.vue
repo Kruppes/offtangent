@@ -243,7 +243,7 @@ onMounted(async () => {
 })
 onUnmounted(() => {
   disconnect()
-  if (boundToThread.value) leaveThread()
+  if (boundToThread.value) leaveThread(props.threadSessionId)
   tts.stop()
   stt.cleanup()
 })

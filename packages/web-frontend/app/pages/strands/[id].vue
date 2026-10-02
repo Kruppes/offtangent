@@ -24,8 +24,6 @@ const route = useRoute()
 const router = useRouter()
 const threadId = computed(() => String(route.params.id ?? ''))
 const thread = ref<StrandDetail | null>(null)
-// W5b: `#msg-<id>` opens the strand at that message (search, recalled, lineage).
-useMessageAnchor(() => route.hash, () => threadId.value)
 const { threads, activeThreadId } = useThreads()
 const shell = useShellLayout()
 const canvas = useStrandCanvas(() => threadId.value || null)
@@ -72,6 +70,10 @@ const dockWidth = computed(() => inlineDockWidth(dock.state.value.width, shell.w
 
 // Anti-freeze signal while the dock is closed: the strand head says what runs.
 const chat = useChat()
+// W5b: `#msg-<id>` opens the strand at that message (search, recalled,
+// lineage), once this strand's history is loaded.
+useMessageAnchor(() => route.hash, () => threadId.value,
+  () => chat.boundSessionId.value === threadId.value && !chat.loadingHistory.value)
 const turnRunning = computed(() => chat.sessionActivity.value[threadId.value]?.state === 'running'
   || (chat.boundSessionId.value === threadId.value && chat.isStreaming.value))
 const liveTasks = computed(() => countLive(chat.strandTasks.value[threadId.value]))

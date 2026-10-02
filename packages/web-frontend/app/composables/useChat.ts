@@ -1639,8 +1639,15 @@ export function useChat() {
     }
   }
 
-  /** Drop the thread binding (back to the inbox) and clear its transcript. */
-  function leaveThread() {
+  /**
+   * Drop the thread binding (back to the inbox) and clear its transcript.
+   * `threadSessionId` scopes the leave to the strand the caller showed: on a
+   * strand to strand navigation the incoming view opens its strand before the
+   * outgoing view unmounts, and that late leave must not unbind the new strand
+   * (its history would be discarded and the transcript would stay loading).
+   */
+  function leaveThread(threadSessionId?: string | null) {
+    if (threadSessionId && boundSessionId.value !== threadSessionId) return
     boundSessionId.value = null
     boundAgentId.value = null
     queuePosition.value = null
