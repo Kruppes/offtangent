@@ -21,7 +21,12 @@ export function createSpeechController(service: SpeechService): SpeechController
         return
       }
       try {
-        res.json(await service.summary(req.user!.userId, parsed.value))
+        const { response, cache } = await service.summaryWithCache(req.user!.userId, parsed.value)
+        if (cache) {
+          res.setHeader('X-Cache', cache)
+          res.setHeader('Access-Control-Expose-Headers', 'X-Cache')
+        }
+        res.json(response)
       } catch (err) {
         if (err instanceof SpeechServiceError) {
           // The body is exactly the contract the app builds against: one
@@ -81,10 +86,13 @@ export function createSpeechController(service: SpeechService): SpeechController
         res.setHeader('X-Speech-Language', result.language)
         res.setHeader('X-Speech-Summary-Chars', String(result.summaryChars))
         if (result.source) res.setHeader('X-Tts-Source', result.source)
+        if (result.cache) res.setHeader('X-Cache', result.cache)
         // So a browser client can read the headers above at all.
         res.setHeader(
           'Access-Control-Expose-Headers',
-          'X-Speech-Language, X-Speech-Summary-Chars, X-Tts-Source',
+          result.cache
+            ? 'X-Speech-Language, X-Speech-Summary-Chars, X-Tts-Source, X-Cache'
+            : 'X-Speech-Language, X-Speech-Summary-Chars, X-Tts-Source',
         )
         res.setHeader('Cache-Control', 'no-store')
         if (result.stream) {

@@ -31,6 +31,11 @@
  *   PUT  /api/speech/voice-replies { enabled } -> 200 { enabled }
  *        Per-user switch for the automatic voice note after every answer.
  *
+ * Both /summary and /audio answer with `X-Cache: hit | miss` when the disk
+ * cache is on (W6b, `<DATA_DIR>/cache/speech`, `SPEECH_CACHE_MAX_MB`, default
+ * 200). Body and the other headers are the same for a hit and a miss, except
+ * that a cached clip always comes buffered (with Content-Length).
+ *
  * Authentication is the ordinary `jwtMiddleware` every other app route uses.
  */
 import { Router } from 'express'
@@ -57,6 +62,12 @@ export interface SpeechRouterOptions {
   createVoiceNote?: SpeechServiceOptions['createVoiceNote']
   /** Announce a freshly created voice note (the WS frame). */
   onVoiceNote?: SpeechServiceOptions['onVoiceNote']
+  /** Disk cache for /summary and /audio (W6b); absent = no disk cache. */
+  cache?: SpeechServiceOptions['cache']
+  /** Test seam, handed straight to the service. */
+  summaryFingerprint?: SpeechServiceOptions['summaryFingerprint']
+  /** Test seam, handed straight to the service. */
+  voiceFingerprint?: SpeechServiceOptions['voiceFingerprint']
 }
 
 export function createSpeechRouter(options: SpeechRouterOptions): Router {
@@ -70,6 +81,9 @@ export function createSpeechRouter(options: SpeechRouterOptions): Router {
     loadCloudTtsConfig: options.loadCloudTtsConfig,
     createVoiceNote: options.createVoiceNote,
     onVoiceNote: options.onVoiceNote,
+    cache: options.cache,
+    summaryFingerprint: options.summaryFingerprint,
+    voiceFingerprint: options.voiceFingerprint,
   }))
 
   const router = Router()

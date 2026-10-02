@@ -47,6 +47,7 @@ import type { PushSender } from './push/sender.js'
 import { sendCaptureDoorbell } from './push/triggers.js'
 import { createArtifactsRouter } from './api/modules/artifacts/route.js'
 import { createSpeechRouter } from './api/modules/speech/route.js'
+import { createSpeechDiskCache, speechCacheMaxBytesFromEnv } from './api/modules/speech/speech-cache.js'
 import { SPEECH_BODY_LIMIT } from './api/modules/speech/schema.js'
 import type { ChatEventBus } from './chat-event-bus.js'
 import type { ProviderConfig, TaskRuntimeBoundary, TaskEventBus, AgentHeartbeatService } from '@axiom/core'
@@ -247,6 +248,14 @@ export function createApp(options?: AppOptions): express.Express {
     // Companion app "summarize aloud": a spoken short form of one message.
     app.use('/api/speech', createSpeechRouter({
       db: options.db,
+      // W6b: read-aloud results on disk, LRU-bounded (SPEECH_CACHE_MAX_MB,
+      // default 200; 0 = off). Lazy: nothing is touched before the first use.
+      cache: speechCacheMaxBytesFromEnv() > 0
+        ? createSpeechDiskCache({
+          dir: path.join(process.env.DATA_DIR ?? '/data', 'cache', 'speech'),
+          maxBytes: speechCacheMaxBytesFromEnv(),
+        })
+        : null,
       // The explicit voice note announces itself on every socket of the user,
       // exactly like the automatic one does.
       onVoiceNote: frame => options.chatEventBus?.broadcast({

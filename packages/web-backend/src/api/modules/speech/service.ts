@@ -24,8 +24,11 @@
  * `user_id`). A foreign message answers exactly like a missing one, so the
  * endpoint is no existence oracle.
  */
-import type { Readable } from 'node:stream'
+import crypto from 'node:crypto'
+import { pipeline, Transform, type Readable } from 'node:stream'
 import {
+  loadTtsSettings,
+  resolveSpeechSummaryModel,
   createVoiceNote as createVoiceNoteFile,
   formatFromAccept,
   getVoiceRepliesEnabled,
@@ -62,6 +65,7 @@ import {
   type LocalTtsConfig,
   type SynthesizeSpeechInput,
 } from './tts.js'
+import { normalizeSpeechText, speechCacheKey, type SpeechCache } from './speech-cache.js'
 
 /**
  * Container the app path uses when the caller names none.
@@ -102,7 +106,19 @@ export interface SpeechServiceOptions {
   createVoiceNote?: VoiceNoteGenerator
   /** Announce a freshly created voice note (WS frame). Optional. */
   onVoiceNote?: (frame: VoiceNoteFrame) => void
+  /**
+   * Disk cache for summaries and audio (W6b). Absent = the previous
+   * behaviour: a small in-memory summary cache, audio always fresh.
+   */
+  cache?: SpeechCache | null
+  /** Test seam: what identifies the summary model in the cache key. */
+  summaryFingerprint?: () => Promise<string> | string
+  /** Test seam: everything about the voice that changes the sound. */
+  voiceFingerprint?: (engine: 'cloud' | 'local') => unknown
 }
+
+/** `hit`: served from the cache (or shared with an identical running request); `miss`: built now. */
+export type SpeechCacheState = 'hit' | 'miss'
 
 export interface SpeechSummaryResponse {
   text: string
@@ -122,6 +138,8 @@ export interface SpeechAudioResponse {
   summaryChars: number
   /** Which endpoint spoke, for the response header and the log. */
   source?: 'primary' | 'fallback'
+  /** Set when the disk cache is on; becomes the `X-Cache` header. */
+  cache?: SpeechCacheState
 }
 
 /** Per-request wishes that do not travel in the JSON body. */
@@ -132,6 +150,8 @@ export interface SpeechAudioOptions {
 
 export interface SpeechService {
   summary: (userId: number, body: SpeechSummaryBody) => Promise<SpeechSummaryResponse>
+  /** `summary` plus whether the cache answered (`cache` absent when the disk cache is off). */
+  summaryWithCache: (userId: number, body: SpeechSummaryBody) => Promise<{ response: SpeechSummaryResponse; cache?: SpeechCacheState }>
   /** The spoken version of one finished answer, stored on the message. */
   voiceNote: (userId: number, messageId: number) => Promise<{ voiceNote: VoiceNote }>
   /** Per-user switch: speak every finished answer automatically. */
@@ -165,10 +185,29 @@ const CACHE_LIMIT = 50
 const cache = new Map<string, SpeechSummaryResponse>()
 
 function cacheKey(raw: string): string {
-  // The content itself is the key; length prefix keeps collisions of the
-  // first/last window impossible for different lengths.
-  return `${raw.length}:${raw.slice(0, 200)}:${raw.slice(-200)}`
+  // The whole normalised content is the key (W6b: the old first/last-200
+  // window let two different texts of equal length share a summary).
+  return crypto.createHash('sha256').update(normalizeSpeechText(raw)).digest('hex')
 }
+
+/** Settings that change the sound, without anything secret in them. */
+function defaultVoiceFingerprint(engine: 'cloud' | 'local', local: () => LocalTtsConfig): unknown {
+  if (engine === 'local') return { baseUrl: local().baseUrl }
+  const settings = loadTtsSettings() as unknown as Record<string, unknown>
+  return Object.fromEntries(Object.entries(settings).filter(([k]) => !/key|token|secret|password/i.test(k)))
+}
+
+async function defaultSummaryFingerprint(): Promise<string> {
+  try {
+    const choice = await resolveSpeechSummaryModel()
+    return choice ? `${choice.providerId}:${choice.modelId}` : 'none'
+  } catch {
+    return 'unresolved'
+  }
+}
+
+/** Largest streamed clip that is still collected for the cache. */
+const STREAM_COLLECT_LIMIT = 32 * 1024 * 1024
 
 /** Test hook: forget every cached summary. */
 export function clearSpeechSummaryCache(): void {
@@ -205,6 +244,11 @@ export function createSpeechService(options: SpeechServiceOptions): SpeechServic
   const synthesizeCloudStream = options.synthesizeCloudStream ?? synthesizeCloudSpeechStream
   const loadCloudConfig = options.loadCloudTtsConfig ?? loadCloudTtsConfig
   const createVoiceNote = options.createVoiceNote ?? createVoiceNoteFile
+  const disk = options.cache ?? null
+  const summaryFingerprint = options.summaryFingerprint ?? defaultSummaryFingerprint
+  const voiceFingerprint = options.voiceFingerprint ?? ((engine: 'cloud' | 'local') => defaultVoiceFingerprint(engine, loadTtsConfig))
+  /** Streams still being collected for the cache, so an identical request can wait for the entry. */
+  const streamWrites = new Map<string, Promise<void>>()
 
   /**
    * One ownership rule for every read here: a message belongs to the caller
@@ -237,10 +281,36 @@ export function createSpeechService(options: SpeechServiceOptions): SpeechServic
   }
 
   async function summary(userId: number, body: SpeechSummaryBody): Promise<SpeechSummaryResponse> {
+    return (await summaryWithCache(userId, body)).response
+  }
+
+  async function summaryWithCache(userId: number, body: SpeechSummaryBody): Promise<{ response: SpeechSummaryResponse; cache?: SpeechCacheState }> {
+    // Ownership FIRST: a caller without access to the message never reaches
+    // a cache key, let alone a cached entry.
     const raw = body.messageId !== null ? loadMessage(userId, body.messageId) : (body.text ?? '')
 
+    if (!disk) return { response: await summarizeFresh(raw) }
+
+    const key = speechCacheKey({ kind: 'summary', text: normalizeSpeechText(raw), model: await summaryFingerprint() })
+    const stored = disk.get<{ kind: string }>(key)
+    if (stored) {
+      try {
+        return { response: JSON.parse(stored.payload.toString('utf8')) as SpeechSummaryResponse, cache: 'hit' }
+      } catch { /* unreadable payload: rebuild below */ }
+    }
+    let produced = false
+    const response = await disk.inflight(`summary:${key}`, async () => {
+      produced = true
+      const fresh = await summarizeFresh(raw, true)
+      disk.put(key, { kind: 'summary' }, Buffer.from(JSON.stringify(fresh), 'utf8'))
+      return fresh
+    })
+    return { response, cache: produced ? 'miss' : 'hit' }
+  }
+
+  async function summarizeFresh(raw: string, skipMemory = false): Promise<SpeechSummaryResponse> {
     const key = cacheKey(raw)
-    const hit = cache.get(key)
+    const hit = skipMemory ? undefined : cache.get(key)
     if (hit) return hit
 
     let result: SpeechSummaryResult
@@ -270,6 +340,7 @@ export function createSpeechService(options: SpeechServiceOptions): SpeechServic
       sourceChars: result.sourceChars,
       summaryChars: result.summaryChars,
     }
+    if (skipMemory) return response
     cache.set(key, response)
     if (cache.size > CACHE_LIMIT) {
       const oldest = cache.keys().next()
@@ -280,6 +351,7 @@ export function createSpeechService(options: SpeechServiceOptions): SpeechServic
 
   return {
     summary,
+    summaryWithCache,
 
     /**
      * Idempotent: an answer that already carries a note returns it without
@@ -326,78 +398,182 @@ export function createSpeechService(options: SpeechServiceOptions): SpeechServic
     async audio(userId, body, audioOptions = {}) {
       // Exactly the same summary pipeline — ownership, cleaning, passthrough,
       // cache and the 400/404/502 codes come from one place, not from a copy.
+      // Ownership is checked inside, before any cache is touched.
       const spoken = await summary(userId, body)
 
-      const startedAt = Date.now()
-      let audio: Buffer
-      let contentType: string
-      let engine: 'cloud' | 'local'
-
-      if (loadCloudConfig().enabled) {
-        // The cloud voice is an explicit choice, so it wins over a configured
-        // local box; no silent fallback to the other engine on failure.
-        engine = 'cloud'
-        const format = body.format
-          ?? formatFromAccept(audioOptions.accept)
-          ?? SPEECH_DEFAULT_FORMAT
-        try {
-          if (TTS_STREAMABLE_FORMATS.has(format)) {
-            const streamed = await synthesizeCloudStream(spoken.text, format)
-            if (streamed) {
-              console.log(
-                `[speech-audio] cloud stream ${spoken.summaryChars} chars, ${spoken.language} -> `
-                + `${streamed.contentType} (${streamed.source}), headers in ${Date.now() - startedAt}ms`,
-              )
-              return {
-                stream: streamed.stream,
-                contentType: streamed.contentType,
-                language: spoken.language,
-                summaryChars: spoken.summaryChars,
-                source: streamed.source,
-              }
-            }
-          }
-          const result = await synthesizeCloud(spoken.text, format)
-          audio = result.audio
-          contentType = result.contentType
-        } catch (err) {
-          if (err instanceof TtsFormatError) {
-            // The caller asked for a container this provider cannot build.
-            // That is a bad request, not an upstream outage, and never a
-            // silent fallback to a format the caller may not be able to play.
-            throw new SpeechServiceError(400, 'unsupported_format', err.message)
-          }
-          console.warn(`[speech-audio] cloud TTS failure: ${err instanceof Error ? err.message : String(err)}`)
-          throw new SpeechServiceError(502, 'upstream', 'The speech service is not available')
-        }
-      } else {
-        const config = loadTtsConfig()
-        if (!config.baseUrl) {
+      const cloud = loadCloudConfig().enabled
+      // The cloud voice is an explicit choice, so it wins over a configured
+      // local box; no silent fallback to the other engine on failure.
+      const engine: 'cloud' | 'local' = cloud ? 'cloud' : 'local'
+      const format = cloud
+        ? (body.format ?? formatFromAccept(audioOptions.accept) ?? SPEECH_DEFAULT_FORMAT)
+        : null
+      let localConfig: LocalTtsConfig | null = null
+      if (!cloud) {
+        localConfig = loadTtsConfig()
+        if (!localConfig.baseUrl) {
           // Not an error of this request: the instance has no TTS at all. The
           // app falls back to on-device speech on exactly this code.
           throw new SpeechServiceError(503, 'tts_unconfigured', 'No TTS service configured')
         }
-        engine = 'local'
-        contentType = 'audio/ogg'
-        try {
-          audio = await synthesize({
-            text: spoken.text,
-            language: spoken.language,
-            baseUrl: config.baseUrl,
-            timeoutMs: config.timeoutMs,
-          })
-        } catch (err) {
-          const detail = err instanceof LocalTtsError || err instanceof Error ? err.message : String(err)
-          console.warn(`[speech-audio] TTS failure: ${detail}`)
-          throw new SpeechServiceError(502, 'upstream', 'The speech service is not available')
+      }
+
+      const key = disk
+        ? speechCacheKey({
+          kind: 'audio',
+          engine,
+          text: normalizeSpeechText(spoken.text),
+          language: spoken.language,
+          format,
+          voice: voiceFingerprint(engine) ?? null,
+        })
+        : null
+
+      type AudioMeta = { kind: string; contentType: string; source?: 'primary' | 'fallback' }
+      const fromCache = (): SpeechAudioResponse | null => {
+        if (!disk || !key) return null
+        const entry = disk.get<AudioMeta>(key)
+        if (!entry || typeof entry.meta.contentType !== 'string') return null
+        return {
+          audio: entry.payload,
+          contentType: entry.meta.contentType,
+          language: spoken.language,
+          summaryChars: spoken.summaryChars,
+          ...(entry.meta.source ? { source: entry.meta.source } : {}),
+          cache: 'hit',
         }
       }
 
+      const hit = fromCache()
+      if (hit) {
+        console.log(`[speech-audio] cache hit ${engine} ${hit.audio!.length} bytes ${hit.contentType}`)
+        return hit
+      }
+      if (key && streamWrites.has(key)) {
+        // An identical request is streaming right now; its entry lands when
+        // the stream ends. Wait for it instead of asking the voice twice.
+        await streamWrites.get(key)
+        const shared = fromCache()
+        if (shared) return shared
+      }
+
+      const startedAt = Date.now()
+
+      if (cloud && format && TTS_STREAMABLE_FORMATS.has(format)) {
+        let streamed: CloudSpeechStreamResult | null
+        try {
+          streamed = await synthesizeCloudStream(spoken.text, format)
+        } catch (err) {
+          throw mapCloudError(err)
+        }
+        if (streamed) {
+          console.log(
+            `[speech-audio] cloud stream ${spoken.summaryChars} chars, ${spoken.language} -> `
+            + `${streamed.contentType} (${streamed.source}), headers in ${Date.now() - startedAt}ms`,
+          )
+          return {
+            stream: key ? collectForCache(key, streamed) : streamed.stream,
+            contentType: streamed.contentType,
+            language: spoken.language,
+            summaryChars: spoken.summaryChars,
+            source: streamed.source,
+            ...(key ? { cache: 'miss' as const } : {}),
+          }
+        }
+      }
+
+      const produce = async (): Promise<{ audio: Buffer; contentType: string }> => {
+        let made: { audio: Buffer; contentType: string }
+        if (cloud) {
+          try {
+            made = await synthesizeCloud(spoken.text, format)
+          } catch (err) {
+            throw mapCloudError(err)
+          }
+        } else {
+          try {
+            made = {
+              audio: await synthesize({
+                text: spoken.text,
+                language: spoken.language,
+                baseUrl: localConfig!.baseUrl,
+                timeoutMs: localConfig!.timeoutMs,
+              }),
+              contentType: 'audio/ogg',
+            }
+          } catch (err) {
+            const detail = err instanceof LocalTtsError || err instanceof Error ? err.message : String(err)
+            console.warn(`[speech-audio] TTS failure: ${detail}`)
+            throw new SpeechServiceError(502, 'upstream', 'The speech service is not available')
+          }
+        }
+        if (disk && key && made.audio.length > 0) disk.put(key, { kind: 'audio', contentType: made.contentType }, made.audio)
+        return made
+      }
+
+      let produced = false
+      const made = disk && key
+        ? await disk.inflight(`audio:${key}`, () => { produced = true; return produce() })
+        : (produced = true, await produce())
+
       console.log(
         `[speech-audio] ${engine} ${spoken.summaryChars} chars, ${spoken.language} -> `
-        + `${audio.length} bytes ${contentType} in ${Date.now() - startedAt}ms`,
+        + `${made.audio.length} bytes ${made.contentType} in ${Date.now() - startedAt}ms`,
       )
-      return { audio, contentType, language: spoken.language, summaryChars: spoken.summaryChars }
+      return {
+        audio: made.audio,
+        contentType: made.contentType,
+        language: spoken.language,
+        summaryChars: spoken.summaryChars,
+        ...(key ? { cache: produced ? 'miss' as const : 'hit' as const } : {}),
+      }
     },
+  }
+
+  function mapCloudError(err: unknown): SpeechServiceError {
+    if (err instanceof TtsFormatError) {
+      // The caller asked for a container this provider cannot build.
+      // That is a bad request, not an upstream outage, and never a
+      // silent fallback to a format the caller may not be able to play.
+      return new SpeechServiceError(400, 'unsupported_format', err.message)
+    }
+    console.warn(`[speech-audio] cloud TTS failure: ${err instanceof Error ? err.message : String(err)}`)
+    return new SpeechServiceError(502, 'upstream', 'The speech service is not available')
+  }
+
+  /**
+   * Pass a streamed clip through unchanged and keep a copy. Only a stream
+   * that ENDS normally becomes an entry; an upstream error or a client that
+   * hangs up destroys the pass-through before `flush`, so a half clip is
+   * never written (and therefore never served).
+   */
+  function collectForCache(key: string, streamed: CloudSpeechStreamResult): Readable {
+    const chunks: Buffer[] = []
+    let size = 0
+    let tooBig = false
+    let finish!: () => void
+    streamWrites.set(key, new Promise<void>((resolve) => { finish = resolve }))
+    const done = () => {
+      streamWrites.delete(key)
+      finish()
+    }
+    const tee = new Transform({
+      transform(chunk: Buffer, _enc, cb) {
+        if (!tooBig) {
+          size += chunk.length
+          if (size > STREAM_COLLECT_LIMIT) { tooBig = true; chunks.length = 0 } else chunks.push(Buffer.from(chunk))
+        }
+        cb(null, chunk)
+      },
+      flush(cb) {
+        if (!tooBig && size > 0 && disk) {
+          disk.put(key, { kind: 'audio', contentType: streamed.contentType, source: streamed.source }, Buffer.concat(chunks))
+        }
+        cb()
+      },
+    })
+    tee.once('close', done)
+    pipeline(streamed.stream, tee, () => { /* errors surface on `tee`, the controller handles them */ })
+    return tee
   }
 }
