@@ -1851,7 +1851,11 @@
       "inserted": "Dictation added to the field. Check it, edit it, then send.",
       "cancelled": "Dictation cancelled",
       "marked": "Dictated: only the text is saved, no recording.",
-      "badge": "Dictated"
+      "badge": "Dictated",
+      "errors": {
+        "transcribe_error": "The transcription failed. No recording is saved; only a copy in this tab waits for the next attempt until you close it.",
+        "offline": "You are offline. No recording is saved; only a copy in this tab waits for the next attempt once you are back online. Your text stays in the field."
+      }
     },
     "proposedDestination": "Proposed destination:",
     "title": "Capture",

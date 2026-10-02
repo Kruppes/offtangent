@@ -35,3 +35,9 @@ export function useCapturesApi() {
     },
   }
 }
+
+/** Idempotency key; `crypto.randomUUID` only exists in a secure context (not on http to a LAN address). */
+export function captureClientKey(cryptoRef: { randomUUID?: () => string } | undefined = globalThis.crypto): string {
+  try { if (typeof cryptoRef?.randomUUID === 'function') return cryptoRef.randomUUID() } catch { /* fall through */ }
+  return `cap-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 12)}-${Math.random().toString(36).slice(2, 12)}`
+}

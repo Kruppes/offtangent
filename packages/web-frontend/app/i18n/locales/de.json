@@ -1851,7 +1851,11 @@
       "inserted": "Diktat ins Feld übernommen. Prüfen, bearbeiten, dann senden.",
       "cancelled": "Diktat abgebrochen",
       "marked": "Diktiert: gespeichert wird nur der Text, keine Aufnahme.",
-      "badge": "Diktiert"
+      "badge": "Diktiert",
+      "errors": {
+        "transcribe_error": "Die Transkription ist fehlgeschlagen. Gespeichert wird keine Aufnahme; nur eine Kopie in diesem Tab steht für den nächsten Versuch bereit, bis du ihn schließt.",
+        "offline": "Du bist offline. Gespeichert wird keine Aufnahme; nur eine Kopie in diesem Tab steht für den nächsten Versuch bereit, sobald du wieder online bist. Dein Text bleibt im Feld."
+      }
     },
     "proposedDestination": "Vorgeschlagenes Ziel:",
     "title": "Eingang",

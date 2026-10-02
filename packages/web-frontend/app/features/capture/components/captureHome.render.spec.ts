@@ -300,6 +300,22 @@ describe('Capture Home rendered', () => {
   const calls = request.mock.calls.filter(([url]) => url.endsWith('/api/captures'))
   expect(JSON.parse(calls[0]![1].body).clientMessageId).toBe(JSON.parse(calls[1]![1].body).clientMessageId)
  })
+ it('sends without crypto.randomUUID (http on a LAN address) and keeps the key for a retry', async () => {
+  vi.stubGlobal('crypto', {})
+  const original = request.getMockImplementation()!
+  let failed = false
+  request.mockImplementation(async (url: string, options?: RequestInit) => { if (url.endsWith('/api/captures') && !failed) { failed = true; return new Response('{}', { status: 500 }) } return original(url, options) })
+  const { root } = mount(Home); await flush(); await draft(root); await send(root)
+  expect(text(root)).toContain('capture.sendError')
+  expect(all(root).find(n => n.tag === 'textarea')!.props.disabled).toBeFalsy()
+  await send(root)
+  const calls = request.mock.calls.filter(([url]) => url.endsWith('/api/captures'))
+  expect(calls).toHaveLength(2)
+  const key = JSON.parse(calls[0]![1].body).clientMessageId
+  expect(key).toMatch(/^[A-Za-z0-9._:-]{8,64}$/)
+  expect(JSON.parse(calls[1]![1].body).clientMessageId).toBe(key)
+  expect(text(root)).not.toContain('capture.sendError')
+ })
  it('uses only authenticated public persona catalog, preserving models if it fails', async () => {
   const original = request.getMockImplementation()!
   request.mockImplementation(async (url: string, options?: RequestInit) => {
@@ -646,6 +662,9 @@ describe('Capture Home dictation', () => {
   await draft(root, 'Typed and kept')
   await dictate(root)
   expect(byTestId(root, 'dictation-error')[0]!.props['data-error']).toBe('transcribe_error')
+  // Home keeps no audio: its own wording, never the chat's "the recording is kept".
+  expect(text(root)).toContain('capture.dictation.errors.transcribe_error')
+  expect(text(root)).not.toContain('chat.dictation.errors.transcribe_error')
   expect(field(root).props.value).toBe('Typed and kept')
   expect(byTestId(root, 'capture-dictated')).toHaveLength(0)
   transcribe = { status: 200, body: { transcript: 'Synthetic spoken words.' } }
@@ -663,7 +682,8 @@ describe('Capture Home dictation', () => {
   await draft(root, 'Typed and kept')
   await dictate(root)
   expect(byTestId(root, 'dictation-error')[0]!.props['data-error']).toBe('offline')
-  expect(text(root)).toContain('chat.dictation.errors.offline')
+  expect(text(root)).toContain('capture.dictation.errors.offline')
+  expect(text(root)).not.toContain('chat.dictation.errors.offline')
   expect(field(root).props.value).toBe('Typed and kept')
  })
 

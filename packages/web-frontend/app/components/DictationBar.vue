@@ -15,7 +15,9 @@ const props = withDefaults(defineProps<{
   error?: DictationErrorCode | null
   canRetry?: boolean
   bars?: number
-}>(), { elapsedMs: 0, levels: () => [], error: null, canRetry: false, bars: 24 })
+  /** Per-code i18n keys that replace the chat wording (e.g. Home, which keeps no audio). */
+  errorKeys?: Partial<Record<DictationErrorCode, string>>
+}>(), { elapsedMs: 0, levels: () => [], error: null, canRetry: false, bars: 24, errorKeys: () => ({}) })
 
 const emit = defineEmits<{ cancel: []; finish: []; retry: []; dismiss: [] }>()
 const { t } = useI18n()
@@ -26,7 +28,7 @@ const shownLevels = computed(() => {
   const row = props.levels.slice(-props.bars)
   return [...Array.from({ length: props.bars - row.length }, () => 0), ...row]
 })
-const errorText = computed(() => props.error ? t(`chat.dictation.errors.${props.error}`) : '')
+const errorText = computed(() => props.error ? t(props.errorKeys[props.error] ?? `chat.dictation.errors.${props.error}`) : '')
 /** Short status line for screen readers; changes only on phase changes. */
 const liveText = computed(() => {
   if (props.phase === 'recording') return t('chat.dictation.recording')

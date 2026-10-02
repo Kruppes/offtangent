@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, nextTick, onMounted, ref } from 'vue'
 import { takeComposerHandoff } from '~/composables/useComposerHandoff'
-import { useCapturesApi, type CaptureResult, type CaptureInput, type ApplyCaptureInput, type UploadDescriptor, type ClientPersona, newestDecision } from '~/api/captures'
+import { useCapturesApi, type CaptureResult, type CaptureInput, type ApplyCaptureInput, type UploadDescriptor, type ClientPersona, newestDecision, captureClientKey } from '~/api/captures'
 import { useNowApi, type NowSet, type NowStrand } from '~/api/now'
 import { useModelsApi, type SelectableModel } from '~/api/models'
 import { useResurfaceApi, type ResurfaceItem } from '~/api/resurface'
@@ -128,14 +128,20 @@ async function load() {
   catch { loadError.value = true }
   finally { loading.value = false }
 }
+/**
+ * Home keeps no audio: after a failed transcription only a copy in this tab
+ * waits for the next attempt, so the chat wording ("the recording is kept")
+ * would promise too much here.
+ */
+const DICTATION_ERROR_KEYS = { transcribe_error: 'capture.dictation.errors.transcribe_error', offline: 'capture.dictation.errors.offline' } as const
 async function send() {
   if (!canSend.value) return
   busy.value = true; sending.value = true; error.value = ''; errorDetail.value = ''; notice.value = ''
   const model = models.value.find(m => JSON.stringify([m.providerId, m.modelId]) === modelKey.value)
   const draft = { text: text.value.trim(), source: 'web' as const, attachments: attachments.value, ...dictationFields(dictated.value), ...(agentId.value ? { agentId: agentId.value } : {}), ...(model ? { modelProviderId: model.providerId, modelId: model.modelId } : {}), ...(handoffTarget.value ? { destination: 'new_strand' as const, ...(handoffTarget.value.title ? { strandTitle: handoffTarget.value.title } : {}) } : {}) }
   const signature = JSON.stringify(draft)
-  if (pending?.signature !== signature) pending = { signature, key: crypto.randomUUID() }
   try {
+    if (pending?.signature !== signature) pending = { signature, key: captureClientKey() }
     latest.value = await api.create({ ...draft, clientMessageId: pending.key } satisfies CaptureInput)
     sending.value = false; refreshing.value = true
     text.value = ''; attachments.value = []; pending = null; handoffTarget.value = null
@@ -251,6 +257,7 @@ onMounted(() => {
         :levels="dictationLevels"
         :error="dictationError"
         :can-retry="dictationCanRetry"
+        :error-keys="DICTATION_ERROR_KEYS"
         @cancel="cancelDictation"
         @finish="finishDictation"
         @retry="retryDictation"
