@@ -140,6 +140,8 @@ describe('capture.defaultAgentId in the capture service', () => {
     expect(r.status).toBe(201)
     expect(r.capture.agentId).toBe('helper')
     expect(r.strandAgent).toBe('helper')
+    // A forced new strand never asks the router; the setting does not change that.
+    expect(routerCalls).toBe(0)
   })
 
   it('lets an explicit agentId in the request win over the setting', async () => {
@@ -166,10 +168,13 @@ describe('capture.defaultAgentId in the capture service', () => {
   })
 
   it('hands the configured persona to the router as hint when routing', async () => {
+    // One existing strand, so the router has a candidate and is really asked.
+    sessionManager.createThread('1', 'main', 'Synthetic candidate strand')
     writeSettings({ defaultAgentId: 'helper' })
     const res = await api('POST', '/api/captures', { text: 'Synthetic routed note', source: 'web' })
     expect(res.status).toBe(201)
     expect((res.body.capture as Capture).agentId).toBe('helper')
+    expect(routerCalls).toBeGreaterThan(0)
   })
 })
 
