@@ -3,7 +3,7 @@
  * slim fact list and the recalled messages of the context report.
  *
  *   POST /api/strands/:id/fork   { messageId, title? } -> 201 { fork, strand }
- *   GET  /api/search?q=&limit=   -> { query, hits[], truncated }
+ *   GET  /api/search?q=&limit=&cursor= -> { query, hits[], truncated, nextCursor }
  *   GET  /api/strands/:id/facts  -> { strandId, facts[], total, truncated, summaries, toolCalls }
  *   GET  /api/strands/:id/context -> ... recalled[] (additive)
  *
@@ -165,10 +165,16 @@ export function useStrandW5bApi() {
       if (!result) throw new Error('Malformed fork answer')
       return result
     },
-    async search(term: string, limit: number, signal?: AbortSignal): Promise<{ hits: MessageHit[]; truncated: boolean }> {
+    /**
+     * One page of message hits. `cursor` continues a previous answer (W6b);
+     * `nextCursor` is `null` on the last page and on a server without paging.
+     */
+    async search(term: string, limit: number, signal?: AbortSignal, cursor?: string | null): Promise<{ hits: MessageHit[]; truncated: boolean; nextCursor: string | null }> {
       const params = new URLSearchParams({ q: term, limit: String(limit) })
+      if (cursor) params.set('cursor', cursor)
       const raw = await apiFetch<unknown>(`${MESSAGE_SEARCH_PATH}?${params}`, { signal })
-      return { hits: mapMessageHits(raw), truncated: obj(raw).truncated === true }
+      const next = obj(raw).nextCursor
+      return { hits: mapMessageHits(raw), truncated: obj(raw).truncated === true, nextCursor: typeof next === 'string' && next ? next : null }
     },
   }
 }

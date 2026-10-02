@@ -93,6 +93,8 @@ describe('GET /api/search', () => {
           timestamp: '2026-03-04T05:06:07.000Z',
         }],
         truncated: false,
+        // W6b, additive: no further page.
+        nextCursor: null,
       },
     })
     const hit = res.body.hits[0]

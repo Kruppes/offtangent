@@ -136,6 +136,70 @@ describe('MessageSearchResults ("In messages")', () => {
   })
 })
 
+describe('MessageSearchResults paging (W6b)', () => {
+  const page = (from: number, count: number) => Array.from({ length: count }, (_, i) => ({ ...hit, messageId: from + i }))
+  const button = (root: Node) => all(root).find(n => 'data-message-search-load-more' in n.props)
+
+  it('loads more with the cursor, appends without duplicates, and ends cleanly', async () => {
+    const { apiFetch } = setup()
+    apiFetch.mockResolvedValueOnce({ query: 'needle', hits: page(1, 20), truncated: true, nextCursor: 'c1' })
+    const root = mount(SearchResults, { query: 'needle' })
+    await flush(250)
+    expect(button(root)?.tag).toBe('button')
+    expect(text(button(root)!)).toBe('search.loadMore')
+
+    let resolve!: (value: unknown) => void
+    apiFetch.mockImplementationOnce(() => new Promise(r => { resolve = r }))
+    ;(button(root)!.props.onClick as () => void)()
+    await flush()
+    expect(apiFetch.mock.calls[1]![0]).toBe('/api/search?q=needle&limit=20&cursor=c1')
+    expect(button(root)!.props.disabled).toBe(true)
+    expect(button(root)!.props['aria-busy']).toBe('true')
+    expect(text(button(root)!)).toBe('search.loadingMore')
+    // One overlap on purpose: the list never shows a hit twice.
+    resolve({ query: 'needle', hits: page(20, 20), truncated: true, nextCursor: 'c2' })
+    await flush()
+    expect(all(root).filter(n => n.tag === 'a')).toHaveLength(39)
+
+    apiFetch.mockResolvedValueOnce({ query: 'needle', hits: page(40, 5), truncated: false, nextCursor: null })
+    ;(button(root)!.props.onClick as () => void)()
+    await flush()
+    expect(apiFetch.mock.calls[2]![0]).toBe('/api/search?q=needle&limit=20&cursor=c2')
+    expect(all(root).filter(n => n.tag === 'a')).toHaveLength(44)
+    expect(button(root)).toBeUndefined()
+    expect(find(root, 'data-message-search-end')).toBeDefined()
+    expect(find(root, 'data-message-search-more')).toBeUndefined()
+  })
+
+  it('keeps the hits and offers the button again when a page fails', async () => {
+    const { apiFetch } = setup()
+    apiFetch.mockResolvedValueOnce({ query: 'needle', hits: page(1, 20), truncated: true, nextCursor: 'c1' })
+    const root = mount(SearchResults, { query: 'needle' })
+    await flush(250)
+    apiFetch.mockRejectedValueOnce(new useApiModule.ApiError('boom', 500))
+    ;(button(root)!.props.onClick as () => void)()
+    await flush()
+    expect(find(root, 'data-message-search-more-error')).toBeDefined()
+    expect(text(root)).toContain('search.loadMoreError')
+    expect(all(root).filter(n => n.tag === 'a')).toHaveLength(20)
+    expect(button(root)!.props.disabled).toBe(false)
+    apiFetch.mockResolvedValueOnce({ query: 'needle', hits: page(21, 3), truncated: false, nextCursor: null })
+    ;(button(root)!.props.onClick as () => void)()
+    await flush()
+    expect(all(root).filter(n => n.tag === 'a')).toHaveLength(23)
+    expect(find(root, 'data-message-search-more-error')).toBeUndefined()
+  })
+
+  it('a server without paging keeps the old hint and no button', async () => {
+    const { apiFetch } = setup()
+    apiFetch.mockResolvedValueOnce({ query: 'needle', hits: page(1, 20), truncated: true })
+    const root = mount(SearchResults, { query: 'needle' })
+    await flush(250)
+    expect(button(root)).toBeUndefined()
+    expect(text(find(root, 'data-message-search-more')!)).toContain('search.more')
+  })
+})
+
 describe('MessageForkAction', () => {
   it('forks with the message id and opens the new strand', async () => {
     const { apiFetch, push } = setup()

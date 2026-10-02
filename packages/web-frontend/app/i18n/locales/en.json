@@ -2549,6 +2549,10 @@
     "retry": "Retry",
     "noMessages": "No matches in messages.",
     "more": "First {count} matches; refine the search for more.",
+    "loadMore": "Load more",
+    "loadingMore": "Loading more matches …",
+    "loadMoreError": "Could not load more matches. Try again.",
+    "end": "All {count} matches loaded.",
     "roleUser": "You",
     "roleAssistant": "Answer"
   },

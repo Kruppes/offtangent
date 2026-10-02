@@ -2549,6 +2549,10 @@
     "retry": "Erneut versuchen",
     "noMessages": "Keine Treffer in Nachrichten.",
     "more": "Die ersten {count} Treffer; Suche verfeinern für mehr.",
+    "loadMore": "Mehr laden",
+    "loadingMore": "Lade weitere Treffer …",
+    "loadMoreError": "Weitere Treffer konnten nicht geladen werden. Erneut versuchen.",
+    "end": "Alle {count} Treffer geladen.",
     "roleUser": "Du",
     "roleAssistant": "Antwort"
   },
