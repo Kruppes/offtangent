@@ -3,6 +3,7 @@ import { computed, nextTick, onMounted, onUnmounted, ref, watch } from 'vue'
 import { useFeed } from '~/composables/useFeed'
 import { useChat } from '~/composables/useChat'
 import { useStorage } from '@vueuse/core'
+import { PRIMARY_NAV_ITEMS, SYSTEM_NAV_ITEMS, navItemAllowed } from '~/utils/shellNav'
 
 const props = withDefaults(defineProps<{ mobile?: boolean; compact?: boolean; isAdmin?: boolean; emailConfigured?: boolean; path: string }>(), {
   mobile: false, compact: false, isAdmin: false, emailConfigured: false,
@@ -20,42 +21,8 @@ onUnmounted(() => {
 })
 const emit = defineEmits<{ navigate: [] }>()
 const systemOpen = useStorage('offtangent-system-navigation-open', false)
-/** The four main areas: the same as the app's tabs. */
-const primary = [
-  { path: '/', label: 'home', icon: 'inbox' },
-  { path: '/strands', label: 'strands', icon: 'chat' },
-  { path: '/feed', label: 'feed', icon: 'activity' },
-  { path: '/boards', label: 'boards', icon: 'compass' },
-] as const
-/**
- * Everything else lives in the collapsible System block. `access` keeps the
- * rights exactly as before: projects and memory for everyone, email for
- * admins or when an email account is configured, the rest admin only.
- */
-const system = [
-  { path: '/projects', label: 'projects', icon: 'folder', access: 'all' },
-  { path: '/memory', label: 'memory', icon: 'brain', access: 'all' },
-  { path: '/dashboard', label: 'dashboard', icon: 'dashboard', access: 'admin' },
-  { path: '/tasks', label: 'tasks', icon: 'tasks', access: 'admin' },
-  { path: '/cronjobs', label: 'cronjobs', icon: 'calendar', access: 'admin' },
-  { path: '/logs', label: 'logs', icon: 'logs', access: 'admin' },
-  { path: '/usage', label: 'usage', icon: 'trendDown', access: 'admin' },
-  { path: '/email', label: 'email', icon: 'mail', access: 'email' },
-  { path: '/users', label: 'users', icon: 'users', access: 'admin' },
-  { path: '/providers', label: 'providers', icon: 'plug', access: 'admin' },
-  { path: '/connectors', label: 'connectors', icon: 'link', access: 'admin' },
-  { path: '/skills', label: 'skills', icon: 'puzzle', access: 'admin' },
-  { path: '/personas', label: 'personas', icon: 'bot', access: 'admin' },
-  { path: '/instructions', label: 'instructions', icon: 'file', access: 'admin' },
-  { path: '/settings', label: 'settings', icon: 'settings', access: 'admin' },
-] as const
-type SystemItem = typeof system[number]
-function allowed(item: SystemItem): boolean {
-  if (item.access === 'all') return true
-  if (item.access === 'email') return props.isAdmin || props.emailConfigured
-  return props.isAdmin
-}
-const systemItems = computed(() => system.filter(allowed))
+const primary = PRIMARY_NAV_ITEMS
+const systemItems = computed(() => SYSTEM_NAV_ITEMS.filter(item => navItemAllowed(item, { isAdmin: props.isAdmin, emailConfigured: props.emailConfigured })))
 const settingsItem = computed(() => systemItems.value.find(item => item.path === '/settings') ?? null)
 function active(current: string, target: string) {
   return current === target || (target !== '/' && current.startsWith(`${target}/`))
