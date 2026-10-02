@@ -31,7 +31,7 @@ async function render(state: { loading?: boolean; error?: string; boards?: Board
   return renderToString(app)
 }
 
-describe('Integrations chooser', () => {
+describe('Boards chooser', () => {
   it('renders accessible loading skeletons instead of an empty state', async () => {
     const html = await render({ loading: true })
     expect(html).toContain('aria-busy="true"')

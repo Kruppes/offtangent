@@ -76,6 +76,12 @@ const valid = {
 }
 
 describe('publish_board', () => {
+  it('tells the model where the user finds boards: the Boards card', () => {
+    const { instance } = tool()
+    expect(instance.description).toContain('opens from the "Boards" card')
+    expect(instance.description).not.toMatch(/integration/i)
+  })
+
   it('writes the board, the revision and the feed publication', async () => {
     const { instance, published } = tool()
     const result = await run(instance, { ...valid, icon: '📈', as_of: '2026-09-25T20:00:00Z' })

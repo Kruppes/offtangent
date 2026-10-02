@@ -2,6 +2,8 @@ import { describe, expect, it, vi } from 'vitest'
 import { createSSRApp, defineComponent, h, ref } from 'vue'
 import { renderToString } from 'vue/server-renderer'
 import ShellNavigation from './ShellNavigation.vue'
+import de from '../i18n/locales/de.json'
+import en from '../i18n/locales/en.json'
 
 const storage = vi.hoisted(() => ({ open: false, unread: 0 }))
 vi.mock('~/composables/useFeed', () => ({ useFeed: () => ({ unreadCount: ref(storage.unread), refreshCount: vi.fn() }) }))
@@ -15,13 +17,20 @@ const Link = defineComponent({
   props: ['to'],
   setup: (props, { slots }) => () => h('a', { href: props.to }, slots.default?.()),
 })
-async function render(props: Record<string, unknown> = {}) {
+type Messages = Record<string, unknown>
+function translator(messages: Messages) {
+  return (key: string) => {
+    const value = key.split('.').reduce<unknown>((node, part) => (node as Messages | undefined)?.[part], messages)
+    return typeof value === 'string' ? value : key
+  }
+}
+async function render(props: Record<string, unknown> = {}, t: (key: string) => string = key => key) {
   const app = createSSRApp(ShellNavigation, { path: '/strands', isAdmin: true, ...props })
   app.component('NuxtLink', Link)
   app.component('AppIcon', defineComponent({ setup: () => () => h('i') }))
   for (const name of ['Tooltip', 'TooltipTrigger']) app.component(name, defineComponent({ setup: (_, { slots }) => () => slots.default?.() }))
   app.component('TooltipContent', defineComponent({ setup: (_, { slots }) => () => h('span', { role: 'tooltip' }, slots.default?.()) }))
-  app.config.globalProperties.$t = (key: string) => key
+  app.config.globalProperties.$t = t
   return renderToString(app)
 }
 const primary = ['/', '/strands', '/feed', '/boards']
@@ -103,6 +112,19 @@ describe('Offtangent shell navigation', () => {
       expect(link).toContain('aria-current="page"')
       expect(link).toContain('bg-primary-container')
       expect(link).toContain('before:bg-primary')
+    }
+  })
+  it('calls boards Boards in both languages, never Integrations', async () => {
+    for (const messages of [de, en]) {
+      for (const props of [{}, { mobile: true }, { compact: true }]) {
+        const html = await render(props, translator(messages))
+        expect(html).toMatch(/href="\/boards"[^>]*>[\s\S]*?Boards/)
+        expect(html).not.toMatch(/Integration/i)
+      }
+      // The boards screens use the same word.
+      const boards = (messages as { boards: Record<string, unknown> }).boards
+      expect(boards.title).toBe('Boards')
+      expect(JSON.stringify(boards)).not.toMatch(/integration/i)
     }
   })
 })

@@ -352,7 +352,7 @@ export function createPublishBoardTool(options: PublishBoardToolOptions): AgentT
     name: 'publish_board',
     label: 'Publish Board',
     description:
-      'Publish or update a board: a long-lived, overwritable object the user opens from the "Integrations" card '
+      'Publish or update a board: a long-lived, overwritable object the user opens from the "Boards" card '
       + '(chooser -> board screen). Use it for recurring, structured results that should always show ONE current '
       + 'state instead of a new chat message or feed card per run (daily digests, dashboards, monitors). '
       + 'A board is identified by `key` and rendered according to `kind` (the renderer contract, e.g. '
