@@ -32,6 +32,10 @@ vi.mock('../../core/src/config.js', () => ({
     captureModes: { quick: { providerId: '', modelId: '', thinkingLevel: 'off', styleHint: '', strandTitle: 'Kurzfragen' } },
     captureSources: { puck: { styleHint: '' } },
   })),
+  // W6b: every new capture reads `capture.defaultAgentId`. 'auto' is the
+  // neutral default (behaviour unchanged), so the routing under test stays
+  // exactly as before.
+  loadCaptureDefaultAgentId: vi.fn(() => 'auto'),
 }))
 
 let db: Database
