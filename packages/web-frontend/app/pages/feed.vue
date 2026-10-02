@@ -54,7 +54,7 @@ const chipClass = (selected: boolean) => [
 
 <template>
   <div class="flex h-full min-h-0 flex-col overflow-hidden">
-    <PageHeader :title="$t('feed.title')" :subtitle="$t('feed.subtitle')" />
+    <PageHeader :title="$t('feed.title')" :subtitle="$t('feed.subtitle')" own-mobile-heading />
     <div class="min-h-0 flex-1 overflow-y-auto overflow-x-hidden px-3 pb-24 pt-3 md:px-6 md:pb-8" data-testid="feed-scroll">
       <div class="mx-auto flex w-full min-w-0 max-w-3xl flex-col gap-3">
         <h1 class="px-1 text-xl font-bold tracking-tight md:hidden">{{ $t('feed.title') }}</h1>

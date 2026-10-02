@@ -2,16 +2,19 @@
 import { type HTMLAttributes } from 'vue'
 import { cn } from '~/lib/utils'
 
-const props = defineProps<{
+const props = withDefaults(defineProps<{
   class?: HTMLAttributes['class']
-}>()
+  /** Heading level; pick the one that follows the page outline (h1 page title, h2 sections). */
+  as?: 'h2' | 'h3' | 'h4'
+}>(), { as: 'h3' })
 </script>
 
 <template>
-  <h3
+  <component
+    :is="props.as"
     :class="cn('text-2xl font-semibold leading-none tracking-tight', props.class)"
     v-bind="$attrs"
   >
     <slot />
-  </h3>
+  </component>
 </template>

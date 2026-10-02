@@ -8,7 +8,7 @@
   />
 
   <Select v-model="enabled">
-    <SelectTrigger class="w-full md:w-[140px]">
+    <SelectTrigger :aria-label="$t('aria.filterBy.state')" class="w-full md:w-[140px]">
       <SelectValue />
     </SelectTrigger>
     <SelectContent>
@@ -19,7 +19,7 @@
   </Select>
 
   <Select v-model="actionType">
-    <SelectTrigger class="w-full md:w-[140px]">
+    <SelectTrigger :aria-label="$t('aria.filterBy.action')" class="w-full md:w-[140px]">
       <SelectValue />
     </SelectTrigger>
     <SelectContent>
@@ -30,7 +30,7 @@
   </Select>
 
   <Select v-model="provider">
-    <SelectTrigger class="w-full md:w-[220px]">
+    <SelectTrigger :aria-label="$t('aria.filterBy.provider')" class="w-full md:w-[220px]">
       <SelectValue />
     </SelectTrigger>
     <SelectContent>
@@ -45,7 +45,7 @@
   </Select>
 
   <Select v-model="lastRunStatus">
-    <SelectTrigger class="w-full md:w-[160px]">
+    <SelectTrigger :aria-label="$t('aria.filterBy.lastRun')" class="w-full md:w-[160px]">
       <SelectValue />
     </SelectTrigger>
     <SelectContent>
@@ -58,7 +58,7 @@
   </Select>
 
   <Select v-model="scheduleType">
-    <SelectTrigger class="w-full md:w-[160px]">
+    <SelectTrigger :aria-label="$t('aria.filterBy.schedule')" class="w-full md:w-[160px]">
       <SelectValue />
     </SelectTrigger>
     <SelectContent>

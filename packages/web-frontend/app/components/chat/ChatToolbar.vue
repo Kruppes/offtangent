@@ -29,7 +29,7 @@
         </Button>
         <!-- /new starts a fresh session in the (user, persona) slot, which is
              meaningless inside a named thread: threads replace that flow. -->
-        <Button v-if="!boundToThread" variant="outline" size="sm" class="gap-2" :disabled="isStreaming || sessionResetting" @click="$emit('newSession')">
+        <Button v-if="!boundToThread" variant="outline" size="sm" class="min-h-11 min-w-11 gap-2" :aria-label="$t('chat.newSession')" :disabled="isStreaming || sessionResetting" @click="$emit('newSession')">
           <AppIcon name="sparkles" class="h-4 w-4" />
           <span class="hidden sm:inline">{{ $t('chat.newSession') }}</span>
         </Button>

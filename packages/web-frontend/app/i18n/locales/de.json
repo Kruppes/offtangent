@@ -4,7 +4,8 @@
     "home": "Zurück zum Eingang",
     "loading": "Artikelkontext wird vorbereitet…",
     "missing": "Dieser Link ist unvollständig: Board oder Meldung fehlt.",
-    "storyGone": "Diese Meldung ist in dieser Board-Ausgabe nicht mehr enthalten."
+    "storyGone": "Diese Meldung ist in dieser Board-Ausgabe nicht mehr enthalten.",
+    "title": "Frage zu einer Meldung"
   },
   "w4Content": {
     "loading": "Nachrichten werden geladen",
@@ -210,7 +211,8 @@
         "remove": "Diktat {n} entfernen",
         "attached": "Die Aufnahme wird mit der Nachricht gesendet"
       }
-    }
+    },
+    "attachFiles": "Dateien anhängen"
   },
   "canvas": {
     "open": "Canvas öffnen",
@@ -237,7 +239,20 @@
     "toggleSidebar": "Seitenleiste umschalten",
     "userMenu": "Benutzermenü",
     "themeToggle": "Farbdesign umschalten",
-    "closeAlert": "Schließen"
+    "closeAlert": "Schließen",
+    "skipToContent": "Zum Hauptinhalt springen",
+    "filterBy": {
+      "status": "Nach Status filtern",
+      "trigger": "Nach Auslöser filtern",
+      "provider": "Nach Provider filtern",
+      "state": "Nach Zustand filtern",
+      "action": "Nach Aktion filtern",
+      "lastRun": "Nach letztem Lauf filtern",
+      "schedule": "Nach Zeitplan filtern",
+      "source": "Nach Quelle filtern",
+      "tool": "Nach Werkzeug filtern",
+      "model": "Nach Modell filtern"
+    }
   },
   "providers": {
     "title": "Anbieter",
@@ -1380,7 +1395,8 @@
         "empty": "Schreib zuerst eine Antwort.",
         "tooLong": "Die Antwort ist zu lang (höchstens 8000 Zeichen)."
       }
-    }
+    },
+    "actionsColumn": "Aktionen"
   },
   "email": {
     "title": "E-Mail",
@@ -2339,13 +2355,14 @@
       "list_next": "Nächster Strand",
       "list_previous": "Voriger Strand",
       "list_open": "Strand öffnen",
-      "canvas_toggle": "Canvas ein/aus",
+      "canvas_toggle": "Canvas ein/aus (übernimmt in Chrome Strg+J, sonst Downloads)",
       "dismiss": "Overlay oder Bereich schließen",
       "context_toggle": "Kontextspalte ein/aus",
       "dictation_toggle": "Diktat starten / beenden",
       "dictation_cancel": "Aufnahme abbrechen",
       "palette_move": "In der Palette wählen",
-      "palette_run": "Palette-Eintrag ausführen"
+      "palette_run": "Palette-Eintrag ausführen",
+      "field_submit": "Aus einem mehrzeiligen Feld senden (Erfassen, Antwort an Task)"
     }
   },
   "w4a": {

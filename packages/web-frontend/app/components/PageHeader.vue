@@ -21,6 +21,8 @@ import { useMediaQuery } from '@vueuse/core'
 interface Props {
   title?: string
   subtitle?: string
+  /** The page shows its own visible h1 on mobile; skip the screen-reader h1 then. */
+  ownMobileHeading?: boolean
 }
 
 defineProps<Props>()
@@ -35,6 +37,8 @@ onMounted(() => { teleportReady.value = true })
 </script>
 
 <template>
+  <!-- Mobile hides the bar; the page still needs its h1 for screen readers. -->
+  <h1 v-if="title && isMobile && !ownMobileHeading" class="sr-only">{{ title }}</h1>
   <!--
     Desktop bar. Hidden via `md:` classes on mobile so the slot only
     renders once (teleport is disabled on desktop, so the actions stay

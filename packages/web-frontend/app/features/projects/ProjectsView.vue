@@ -29,7 +29,7 @@ onMounted(load)
 
 <template>
   <div class="flex h-full min-h-0 flex-col overflow-hidden">
-    <PageHeader :title="projectId ? (selected?.name ?? $t('projectsW3.detail')) : $t('projects.title')" :subtitle="$t('projects.subtitle')" />
+    <PageHeader :title="projectId ? (selected?.name ?? $t('projectsW3.detail')) : $t('projects.title')" :subtitle="$t('projects.subtitle')" own-mobile-heading />
     <div :class="projectId ? 'max-h-[35dvh] shrink-0 overflow-y-auto px-3 py-3 md:px-6' : 'min-h-0 flex-1 overflow-y-auto px-3 pb-24 pt-3 md:px-6 md:pb-8'">
       <div class="mx-auto flex w-full max-w-3xl flex-col gap-4">
         <NuxtLink v-if="projectId" to="/projects" class="inline-flex min-h-[44px] min-w-[44px] w-fit items-center rounded-md px-2 text-primary underline focus-visible:outline-2 focus-visible:outline-ring">{{ $t('projectsW3.back') }}</NuxtLink>

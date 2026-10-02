@@ -76,24 +76,25 @@ function setPreset(preset: string) {
 
 <template>
   <Popover v-model:open="open">
-    <PopoverTrigger as-child>
-      <div class="flex items-center gap-1">
-        <Button variant="outline" :class="'gap-2 font-normal' + (!hasRange ? ' text-muted-foreground' : '')">
+    <!-- The trigger is the button itself (not the row), so the popup ARIA sits on a button and "clear" is not nested in it. -->
+    <div class="flex items-center gap-1">
+      <PopoverTrigger as-child>
+        <Button variant="outline" :aria-label="displayText" :class="'gap-2 font-normal' + (!hasRange ? ' text-muted-foreground' : '')">
           <AppIcon name="calendar" size="sm" />
           <span class="hidden sm:inline">{{ displayText }}</span>
         </Button>
-        <Button
-          v-if="hasRange"
-          variant="ghost"
-          size="icon"
-          class="text-muted-foreground hover:text-foreground"
-          :aria-label="t('logs.clearDateRange')"
-          @click.stop="clear"
-        >
-          <AppIcon name="close" size="sm" />
-        </Button>
-      </div>
-    </PopoverTrigger>
+      </PopoverTrigger>
+      <Button
+        v-if="hasRange"
+        variant="ghost"
+        size="icon"
+        class="text-muted-foreground hover:text-foreground"
+        :aria-label="t('logs.clearDateRange')"
+        @click.stop="clear"
+      >
+        <AppIcon name="close" size="sm" />
+      </Button>
+    </div>
 
     <PopoverContent align="end" class="w-[280px]">
       <!-- Presets -->

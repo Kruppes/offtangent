@@ -65,8 +65,9 @@ onMounted(async () => {
   <div class="ask">
     <p v-if="error === null">{{ $t('ask.loading') }}</p>
     <template v-else>
+      <h1 class="text-lg font-semibold">{{ $t('ask.title') }}</h1>
       <p>{{ $t(error) }}</p>
-      <NuxtLink to="/">{{ $t('ask.home') }}</NuxtLink>
+      <NuxtLink to="/" class="inline-flex min-h-11 items-center underline underline-offset-4 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring">{{ $t('ask.home') }}</NuxtLink>
     </template>
   </div>
 </template>

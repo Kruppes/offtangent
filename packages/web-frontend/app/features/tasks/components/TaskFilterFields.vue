@@ -1,6 +1,6 @@
 <template>
   <Select v-model="status" @update:model-value="$emit('change')">
-    <SelectTrigger class="w-full md:w-[160px]">
+    <SelectTrigger :aria-label="$t('aria.filterBy.status')" class="w-full md:w-[160px]">
       <SelectValue />
     </SelectTrigger>
     <SelectContent>
@@ -13,7 +13,7 @@
   </Select>
 
   <Select v-model="triggerType" @update:model-value="$emit('change')">
-    <SelectTrigger class="w-full md:w-[160px]">
+    <SelectTrigger :aria-label="$t('aria.filterBy.trigger')" class="w-full md:w-[160px]">
       <SelectValue />
     </SelectTrigger>
     <SelectContent>
@@ -27,7 +27,7 @@
   </Select>
 
   <Select v-model="providerFilter" @update:model-value="$emit('change')">
-    <SelectTrigger class="w-full md:w-[240px]">
+    <SelectTrigger :aria-label="$t('aria.filterBy.provider')" class="w-full md:w-[240px]">
       <SelectValue />
     </SelectTrigger>
     <SelectContent>

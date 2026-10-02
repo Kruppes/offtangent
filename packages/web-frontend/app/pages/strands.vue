@@ -90,8 +90,8 @@ watch(activeId, (id, previous) => {
       class="flex min-h-0 min-w-0 flex-col overflow-hidden"
       :class="compactList ? 'shrink-0 border-r border-border' : 'flex-1'"
       :style="compactList ? { width: `${LIST_WIDTH}px` } : undefined"
-      :aria-label="$t('strandsW3.title')"
     >
+      <!-- No own label: the list inside is the "Strands" region; two equal labels would be two indistinguishable landmarks. -->
       <div v-if="compactList" class="flex min-h-11 items-center gap-1 px-1 pt-2">
         <NuxtLink :to="overviewLink" data-testid="strand-overview-link" class="inline-flex h-11 w-11 shrink-0 items-center justify-center rounded-lg text-muted-foreground hover:bg-accent hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring" :aria-label="$t('strandsW4d.backToOverview')" :title="$t('strandsW4d.backToOverview')">
           <AppIcon name="arrowLeft" />

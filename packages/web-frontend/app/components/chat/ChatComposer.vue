@@ -65,7 +65,7 @@
           <textarea
             ref="inputRef"
             v-model="inputText"
-            class="min-h-[42px] max-h-[150px] flex-1 resize-none bg-transparent py-2.5 pr-1 text-sm outline-none placeholder:text-muted-foreground"
+            class="min-h-[42px] max-md:min-h-[44px] max-h-[150px] flex-1 resize-none bg-transparent py-2.5 pr-1 text-sm outline-none placeholder:text-muted-foreground"
             :class="isAdmin ? 'pl-2' : 'pl-3'"
             :placeholder="$t('chat.placeholder')"
             rows="1"
@@ -74,8 +74,9 @@
           />
 
           <!-- File attachment button (right inside box) -->
-          <label class="mb-[7px] flex h-7 w-7 shrink-0 cursor-pointer items-center justify-center rounded-lg text-muted-foreground transition-colors hover:bg-muted/60 hover:text-foreground">
-            <input class="hidden" type="file" multiple @change="handleFileSelection">
+          <!-- The file input stays in the Tab order (sr-only, not display:none); the label shows its focus. -->
+          <label class="mb-[7px] flex h-7 w-7 shrink-0 cursor-pointer items-center justify-center rounded-lg text-muted-foreground transition-colors hover:bg-muted/60 hover:text-foreground focus-within:ring-2 focus-within:ring-ring max-md:mb-0 max-md:h-11 max-md:w-11">
+            <input class="sr-only" type="file" multiple data-testid="composer-attach" :aria-label="$t('chat.attachFiles')" @change="handleFileSelection">
             <AppIcon name="paperclip" class="h-4 w-4" />
           </label>
         </div>
@@ -118,7 +119,7 @@
           type="submit"
           :aria-label="$t('chat.send')"
           :disabled="!hasText || connectionStatus !== 'connected'"
-          class="h-[42px] w-[42px] shrink-0 rounded-xl p-0 sm:w-auto sm:px-4"
+          class="h-[42px] w-[42px] shrink-0 rounded-xl p-0 max-sm:h-11 max-sm:w-11 sm:w-auto sm:px-4"
           :class="(!hasText && sttEnabled) ? 'hidden sm:inline-flex' : 'inline-flex'"
         >
           <AppIcon name="send" class="h-4 w-4 sm:hidden" />

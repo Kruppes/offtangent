@@ -19,7 +19,7 @@
         <Separator orientation="vertical" class="hidden h-5 md:block" />
 
         <div class="flex min-w-0 flex-1 items-center gap-2">
-          <h2 class="truncate text-sm font-semibold">{{ taskInfo?.name ?? '—' }}</h2>
+          <h1 class="truncate text-sm font-semibold">{{ taskInfo?.name ?? '—' }}</h1>
           <Badge v-if="taskInfo?.status" :variant="taskStatusVariant(taskInfo.status)">
             {{ $t(`tasks.status.${taskInfo.status}`) }}
           </Badge>

@@ -29,7 +29,7 @@ const emit = defineEmits<{
       />
 
       <Select v-model="selectedSessionType" @update:model-value="emit('apply')">
-        <SelectTrigger class="w-[150px]">
+        <SelectTrigger :aria-label="t('aria.filterBy.source')" class="w-[150px]">
           <SelectValue />
         </SelectTrigger>
         <SelectContent>
@@ -40,7 +40,7 @@ const emit = defineEmits<{
       </Select>
 
       <Select v-model="selectedToolName" @update:model-value="emit('apply')">
-        <SelectTrigger class="w-[150px]">
+        <SelectTrigger :aria-label="t('aria.filterBy.tool')" class="w-[150px]">
           <SelectValue />
         </SelectTrigger>
         <SelectContent>

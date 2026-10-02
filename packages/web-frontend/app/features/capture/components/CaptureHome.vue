@@ -245,7 +245,7 @@ onMounted(() => {
 })
 </script>
 <template>
-  <main class="mx-auto w-full max-w-4xl space-y-6 p-4 md:p-6">
+  <div class="mx-auto w-full max-w-4xl space-y-6 p-4 md:p-6">
     <header><h1 class="text-2xl font-semibold">{{ $t('capture.title') }}</h1><p class="mt-1 text-muted-foreground">{{ $t('capture.subtitle') }}</p></header>
     <form class="space-y-3 rounded-xl border bg-card p-4" @submit.prevent="send" @keydown="handleDictationKeydown">
       <label for="capture-text" class="block font-medium">{{ $t('capture.prompt') }}</label>
@@ -339,5 +339,5 @@ onMounted(() => {
         </ul>
       </section>
     </template>
-  </main>
+  </div>
 </template>

@@ -109,6 +109,7 @@ onMounted(load)
       <NuxtLink to="/" class="mt-3 inline-flex min-h-11 items-center rounded-md border px-3 hover:bg-accent focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring">{{ $t('unsorted.toHome') }}</NuxtLink>
     </section>
     <section v-else class="space-y-3" :aria-label="$t('unsorted.listLabel', { count: tray.length })">
+      <h2 class="sr-only">{{ $t('unsorted.listLabel', { count: tray.length }) }}</h2>
       <p class="text-sm text-muted-foreground" role="status">{{ $t('unsorted.count', { count: totalCount ?? (more ? `${tray.length}+` : tray.length) }) }}</p>
       <CaptureDecision v-for="item in tray" :key="item.capture.id" :result="item" :strand-title="titleFor(item)" :title-for-id="strandTitle" :busy="busy" @undo="undo(item)" @apply="apply(item, $event)" @dismiss="dismiss(item)">
         <CaptureParts v-if="isSplit(item)" :result="item" :busy="busy" :strands="moveTargets" :title-for-id="strandTitle" @keep="keepPart(item, $event)" @move="(part, id) => movePart(item, part, id)" @undo="undoPart(item, $event)" @keep-as-one="keepAsOne(item)" />

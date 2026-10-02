@@ -1,4 +1,11 @@
 <template>
+  <!-- First Tab stop on every page: jump past sidebar and header straight to the page content. -->
+  <a
+    href="#main-content"
+    data-testid="skip-link"
+    class="sr-only focus-visible:not-sr-only focus-visible:fixed focus-visible:left-3 focus-visible:top-3 focus-visible:z-[100] focus-visible:inline-flex focus-visible:min-h-11 focus-visible:items-center focus-visible:rounded-md focus-visible:bg-background focus-visible:px-4 focus-visible:text-sm focus-visible:font-medium focus-visible:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background"
+    @click.prevent="skipToContent"
+  >{{ $t('aria.skipToContent') }}</a>
   <!-- Mobile sidebar overlay -->
   <Transition
     enter-active-class="transition-opacity duration-200 ease-out"
@@ -248,7 +255,7 @@
       </header>
 
       <!-- Page content -->
-      <main class="flex flex-1 flex-col overflow-hidden">
+      <main id="main-content" tabindex="-1" class="flex flex-1 flex-col overflow-hidden focus:outline-none">
         <slot />
       </main>
       <ShellNavigation mobile :path="route.path" :is-admin="isAdmin" :email-configured="emailConfigured" />
@@ -259,6 +266,11 @@
 </template>
 
 <script setup lang="ts">
+/** Skip link target: focus the page content (no scroll jump; `main` scrolls inside). */
+function skipToContent() {
+  const target = document.getElementById('main-content')
+  target?.focus({ preventScroll: true })
+}
 import { useMediaQuery } from '@vueuse/core'
 import { useEmailApi } from '~/api/email'
 import { useShellLayout } from '~/composables/useShellLayout'

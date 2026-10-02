@@ -98,7 +98,7 @@
                 >{{ persona.badge || initial(persona) }}</span>
 
                 <div class="min-w-0 flex-1">
-                  <h3 class="truncate text-base font-semibold text-foreground">{{ persona.displayName }}</h3>
+                  <h2 class="truncate text-base font-semibold text-foreground">{{ persona.displayName }}</h2>
                   <p class="truncate font-mono text-xs text-muted-foreground">{{ persona.id }}</p>
                 </div>
 

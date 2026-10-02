@@ -4,7 +4,8 @@
     "home": "Back to capture",
     "loading": "Preparing the article context…",
     "missing": "This link is incomplete: board or story is missing.",
-    "storyGone": "That story is not part of this board revision any more."
+    "storyGone": "That story is not part of this board revision any more.",
+    "title": "Ask about a story"
   },
   "w4Content": {
     "loading": "Loading messages",
@@ -210,7 +211,8 @@
         "remove": "Remove dictation {n}",
         "attached": "Recording is sent with the message"
       }
-    }
+    },
+    "attachFiles": "Attach files"
   },
   "canvas": {
     "open": "Open canvas",
@@ -237,7 +239,20 @@
     "toggleSidebar": "Toggle sidebar",
     "userMenu": "User menu",
     "themeToggle": "Toggle color theme",
-    "closeAlert": "Dismiss"
+    "closeAlert": "Dismiss",
+    "skipToContent": "Skip to main content",
+    "filterBy": {
+      "status": "Filter by status",
+      "trigger": "Filter by trigger",
+      "provider": "Filter by provider",
+      "state": "Filter by state",
+      "action": "Filter by action",
+      "lastRun": "Filter by last run",
+      "schedule": "Filter by schedule",
+      "source": "Filter by source",
+      "tool": "Filter by tool",
+      "model": "Filter by model"
+    }
   },
   "providers": {
     "title": "Providers",
@@ -1380,7 +1395,8 @@
         "empty": "Write an answer first.",
         "tooLong": "The answer is too long (8000 characters at most)."
       }
-    }
+    },
+    "actionsColumn": "Actions"
   },
   "email": {
     "title": "Email",
@@ -2339,13 +2355,14 @@
       "list_next": "Next strand",
       "list_previous": "Previous strand",
       "list_open": "Open strand",
-      "canvas_toggle": "Canvas: show or hide",
+      "canvas_toggle": "Canvas: show or hide (in Chrome this takes over Ctrl+J for Downloads)",
       "dismiss": "Close overlay or panel",
       "context_toggle": "Context column: show or hide",
       "dictation_toggle": "Dictation: start or stop",
       "dictation_cancel": "Cancel recording",
       "palette_move": "Move in palette",
-      "palette_run": "Run palette entry"
+      "palette_run": "Run palette entry",
+      "field_submit": "Send from a multi-line field (capture, task reply)"
     }
   },
   "w4a": {

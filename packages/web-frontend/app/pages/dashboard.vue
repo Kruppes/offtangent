@@ -26,7 +26,7 @@
           <span>{{ error }}</span>
           <button
             type="button"
-            class="ml-2 opacity-70 transition-opacity hover:opacity-100"
+            class="-my-3 ml-2 inline-flex h-11 w-11 shrink-0 items-center justify-center rounded-md opacity-70 transition-opacity hover:opacity-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
             :aria-label="$t('aria.closeAlert')"
             @click="error = null"
           >
@@ -100,7 +100,7 @@
             <CardHeader class="pb-3">
               <div class="flex items-start justify-between gap-3">
                 <div class="min-w-0">
-                  <CardTitle class="text-base tracking-tight">
+                  <CardTitle as="h2" class="text-base tracking-tight">
                     {{ $t('dashboard.providerHealth') }}
                   </CardTitle>
                   <CardDescription v-if="providerName" class="mt-0.5 truncate">
@@ -194,7 +194,7 @@
           <!-- Health history -->
           <Card>
             <CardHeader class="pb-3">
-              <CardTitle class="text-base tracking-tight">
+              <CardTitle as="h2" class="text-base tracking-tight">
                 {{ $t('dashboard.recentHealthChecks') }}
               </CardTitle>
               <CardDescription>{{ $t('dashboard.recentHealthChecksDescription') }}</CardDescription>

@@ -29,7 +29,7 @@
         />
 
         <Select v-model="filters.provider" @update:model-value="onProviderChange">
-          <SelectTrigger class="w-[160px]">
+          <SelectTrigger :aria-label="$t('aria.filterBy.provider')" class="w-[160px]">
             <SelectValue />
           </SelectTrigger>
           <SelectContent>
@@ -39,7 +39,7 @@
         </Select>
 
         <Select v-model="filters.model" @update:model-value="loadStats">
-          <SelectTrigger class="w-[200px]">
+          <SelectTrigger :aria-label="$t('aria.filterBy.model')" class="w-[200px]">
             <SelectValue />
           </SelectTrigger>
           <SelectContent>
@@ -58,7 +58,7 @@
           <span>{{ error }}</span>
           <button
             type="button"
-            class="ml-2 opacity-70 transition-opacity hover:opacity-100"
+            class="-my-3 ml-2 inline-flex h-11 w-11 items-center justify-center rounded-md opacity-70 transition-opacity hover:opacity-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
             :aria-label="$t('aria.closeAlert')"
             @click="error = null"
           >

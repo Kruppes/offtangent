@@ -25,7 +25,7 @@ const content = computed({
       <!-- File path bar -->
       <div v-if="filePath" class="flex shrink-0 items-center gap-1.5 border-b border-border px-4 py-2">
         <AppIcon name="file" class="h-3.5 w-3.5 text-muted-foreground/50" />
-        <span class="font-mono text-xs text-muted-foreground/60">{{ filePath }}</span>
+        <span class="font-mono text-xs text-muted-foreground">{{ filePath }}</span>
       </div>
 
       <!-- Editor -->
@@ -34,7 +34,7 @@ const content = computed({
         :placeholder="t('memory.editorPlaceholder')"
         spellcheck="false"
         class="w-full flex-1 min-h-0 resize-none p-4 font-mono text-sm text-foreground placeholder:text-muted-foreground leading-relaxed focus:outline-none transition-colors overflow-y-auto"
-        :class="filePath ? 'bg-transparent' : 'rounded-xl border border-border bg-card focus:ring-2 focus:ring-ring focus:ring-offset-2 focus:ring-offset-background'"
+        :class="filePath ? 'bg-transparent focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring' : 'rounded-xl border border-border bg-card focus:ring-2 focus:ring-ring focus:ring-offset-2 focus:ring-offset-background'"
       />
     </div>
 
