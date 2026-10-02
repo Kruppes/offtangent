@@ -92,10 +92,10 @@ const thinking = computed(() => props.steps.filter(step => step.isThinking))
 const stateOf = (message: ChatMessage) => toolState(message, props.active)
 const summary = computed(() => summarizeTurn(props.steps, { active: props.active, now: now.value, turnEnd: props.turnEnd }))
 
-const stepsLabel = computed((): { key: string; params?: Record<string, number> } => {
+const stepsLabel = computed((): { key: string; params: Record<string, number> } => {
   const s = summary.value
-  if (s.toolCount === 0) return { key: 'w4a.turn.reasoningOnly' }
-  return s.toolCount === 1 ? { key: 'w4a.turn.stepsOne' } : { key: 'w4a.turn.steps', params: { count: s.toolCount } }
+  if (s.toolCount === 0) return { key: 'w4a.turn.reasoningOnly', params: {} }
+  return s.toolCount === 1 ? { key: 'w4a.turn.stepsOne', params: {} } : { key: 'w4a.turn.steps', params: { count: s.toolCount } }
 })
 const durationLabel = computed(() => {
   const seconds = summary.value.durationSeconds

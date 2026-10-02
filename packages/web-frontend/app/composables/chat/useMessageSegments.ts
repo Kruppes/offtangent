@@ -1,6 +1,7 @@
 import type { ComputedRef } from 'vue'
 import type { ChatMessage } from '~/composables/useChat'
 import { useInteractions } from '~/composables/useInteractions'
+import { inlineArtifactCount, splitArtifactFences } from '~/utils/inlineArtifacts'
 
 /**
  * Interactive blocks of assistant messages (SPEC 7.4c): which card a message
@@ -12,8 +13,25 @@ export function useMessageSegments(visibleMessages: ComputedRef<ChatMessage[]>) 
   const { segmentsOf } = useInteractions()
   const segmentCache = new Map<string, ReturnType<typeof segmentsOf>>()
 
-  function messageSegments(msg: ChatMessage) {
+  /**
+   * The markdown of the bubble. An ```html / ```svg block that became an
+   * inline artifact is shown once, as the running artifact below the text
+   * (with its source one click away), not a second time as a code block.
+   */
+  function bodyText(msg: ChatMessage): string {
     const content = msg.content ?? ''
+    if (msg.role !== 'assistant') return content
+    return splitArtifactFences(content, inlineArtifactCount(msg.artifacts)).text
+  }
+
+  /** Source of the inline artifacts of a message, by inline index. */
+  function artifactFences(msg: ChatMessage) {
+    if (msg.role !== 'assistant') return []
+    return splitArtifactFences(msg.content ?? '', inlineArtifactCount(msg.artifacts)).fences
+  }
+
+  function messageSegments(msg: ChatMessage) {
+    const content = bodyText(msg)
     const cached = segmentCache.get(content)
     if (cached) return cached
     const segments = segmentsOf(content)
@@ -61,5 +79,5 @@ export function useMessageSegments(visibleMessages: ComputedRef<ChatMessage[]>) 
     return false
   }
 
-  return { interactionCard, messageTextSegments, hasBubbleBody, answeredElsewhere }
+  return { interactionCard, messageTextSegments, hasBubbleBody, answeredElsewhere, artifactFences }
 }

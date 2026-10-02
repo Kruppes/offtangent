@@ -1,4 +1,5 @@
 import { inject, provide, type ComputedRef, type InjectionKey, type Ref } from 'vue'
+import type { ArtifactFence } from '~/utils/inlineArtifacts'
 import type { ChatMessage, useChat } from '~/composables/useChat'
 import type { ArtifactRef } from '~/api/artifacts'
 import type { InteractionBlock, InteractionSegment } from '@axiom/core/contracts'
@@ -43,6 +44,7 @@ export interface ChatViewContext {
   interactionCard: (msg: ChatMessage) => InteractionBlock | null
   messageTextSegments: (msg: ChatMessage) => Array<Extract<InteractionSegment, { type: 'text' }>>
   hasBubbleBody: (msg: ChatMessage) => boolean
+  artifactFences: (msg: ChatMessage) => ArtifactFence[]
   answeredElsewhere: (index: number) => boolean
   handleOwnAnswer: (text: string) => Promise<void>
   handleChatAction: (messageId: string, actionId: string) => Promise<void>

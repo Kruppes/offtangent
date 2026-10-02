@@ -117,13 +117,16 @@ describe('ChatView: the interaction card next to the bubble', () => {
     expect(findAll(bubble, isCard)).toHaveLength(0)
   })
 
-  it('keeps the timestamp/TTS line in the bubble, below the last text line', () => {
+  it('keeps the timestamp line in the bubble, below the last text line; read-aloud sits in the action row', () => {
     const bubble = findAll(template, isBubble)[0]!
     const meta = findAll(bubble, n => (bindingOf(n, 'if') ?? '').includes('msg.timestamp'))
     expect(meta).toHaveLength(1)
     expect(staticClassOf(meta[0]!)).toContain('justify-end')
-    // The TTS button lives in that same line and stays in the bubble.
-    expect(findAll(meta[0]!, n => (bindingOf(n, 'if') ?? '').includes('ttsEnabled'))).toHaveLength(1)
+    // Read-aloud moved out of the bubble into the message action row (W4a).
+    expect(findAll(bubble, n => (bindingOf(n, 'if') ?? '').includes('ttsEnabled'))).toHaveLength(0)
+    const actions = findAll(template, n => n.tag === 'ChatMessageActions')
+    expect(actions).toHaveLength(1)
+    expect(findAll(actions[0]!, n => (bindingOf(n, 'if') ?? '').includes('ttsEnabled'))).toHaveLength(1)
     // …and it is the last child of the bubble, i.e. below the text segments.
     const children = (bubble.children ?? []).filter(c => c.type === 1)
     expect(children[children.length - 1]).toBe(meta[0])

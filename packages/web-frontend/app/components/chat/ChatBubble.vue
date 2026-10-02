@@ -83,7 +83,7 @@
         <span>{{ $t('chat.secretsSealed', { count: msg.sealedCount ?? 0 }) }}</span>
       </p>
       <ChatAttachments v-if="msg.attachments?.length" :attachments="msg.attachments" />
-      <ChatArtifactLinks v-if="msg.artifacts?.length" :artifacts="msg.artifacts" />
+      <ChatArtifactLinks v-if="msg.artifacts?.length" :artifacts="msg.artifacts" :attachments="msg.attachments" :fences="artifactFences(msg)" />
       <div v-if="msg.streaming" class="mt-1.5 flex items-center gap-1"><span class="h-1.5 w-1.5 animate-pulse rounded-full bg-current opacity-60" /><span class="h-1.5 w-1.5 animate-pulse rounded-full bg-current opacity-60" /><span class="h-1.5 w-1.5 animate-pulse rounded-full bg-current opacity-60" /></div>
       <div v-if="msg.timestamp && !msg.streaming" class="mt-1 flex items-center justify-end gap-1.5">
         <span class="text-2xs leading-none text-muted-foreground">{{ formatTimeShort(msg.timestamp) }}</span>
@@ -135,7 +135,7 @@ const { formatTimeShort } = useFormat()
 const { renderMarkdown } = useMarkdown()
 const {
   user, avatar, persona, tts,
-  interactionCard, messageTextSegments, hasBubbleBody, answeredElsewhere, handleOwnAnswer,
+  interactionCard, messageTextSegments, hasBubbleBody, answeredElsewhere, artifactFences, handleOwnAnswer,
 } = useChatView()
 const { userAvatarUrl, avatarFailed, userInitial, onAvatarError } = avatar
 const { label: personaLabel, initials: personaInitials, color: personaColor } = persona

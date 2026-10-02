@@ -12,6 +12,7 @@ import * as Vue from 'vue'
 import { readFileSync } from 'node:fs'
 import { parse, compileScript } from '@vue/compiler-sfc'
 import { transpileModule, ModuleKind } from 'typescript'
+import * as inlineArtifacts from '~/utils/inlineArtifacts'
 
 interface Node {
   tag: string
@@ -20,9 +21,10 @@ interface Node {
   children: Node[]
   parent: Node | null
   addEventListener: () => void
+  closest: () => null
 }
 
-const node = (tag: string, text = ''): Node => ({ tag, text, props: {}, children: [], parent: null, addEventListener: () => {} })
+const node = (tag: string, text = ''): Node => ({ tag, text, props: {}, children: [], parent: null, addEventListener: () => {}, closest: () => null })
 
 const renderer = createRenderer<Node, Node>({
   createElement: tag => node(tag),
@@ -88,6 +90,7 @@ function loadComponent(): Component {
   const modules: Record<string, unknown> = {
     vue: Vue,
     '~/api/artifacts': { useArtifactsApi: () => ({ loadArtifact, loadStrandViews }) },
+    '~/utils/inlineArtifacts': inlineArtifacts,
   }
   new Function('require', 'exports', outputText)((name: string) => {
     if (!(name in modules)) throw new Error(`Unexpected import: ${name}`)
@@ -211,5 +214,101 @@ describe('ChatArtifact revision switcher', () => {
     expect(loadArtifact).toHaveBeenCalledWith('art-3')
     expect(byLabel(root, 'chat.artifact.previousRevision')).toBeUndefined()
     expect(all(root).some(n => n.tag === 'iframe')).toBe(true)
+  })
+})
+
+// ── Inline frame (W4a): lazy window, states, sandbox ─────────────────────────
+/** A controllable IntersectionObserver: tests decide what is near. */
+class FakeObserver {
+  static all: FakeObserver[] = []
+  margin: string
+  constructor(private readonly callback: (entries: Array<{ isIntersecting: boolean }>) => void, options: { rootMargin: string }) {
+    this.margin = options.rootMargin
+    FakeObserver.all.push(this)
+  }
+  observe() {}
+  disconnect() { FakeObserver.all = FakeObserver.all.filter(o => o !== this) }
+  fire(isIntersecting: boolean) { this.callback([{ isIntersecting }]) }
+}
+const margin = (px: number) => FakeObserver.all.find(o => o.margin === `${px}px 0px`)!
+const frame = (root: Node) => all(root).find(n => 'data-artifact-frame' in n.props)!
+const iframes = (root: Node) => all(root).filter(n => n.tag === 'iframe')
+
+describe('ChatArtifact inline frame', () => {
+  beforeEach(() => {
+    FakeObserver.all = []
+    vi.stubGlobal('IntersectionObserver', FakeObserver)
+  })
+
+  it('placeholder: fixed height, no fetch, no frame until it comes near', async () => {
+    const { root } = mount(ChatArtifact, { artifactId: 'art-9', title: 'One off', strandId: 'strand-1' })
+    await flush()
+    expect(frame(root).props['data-frame-state']).toBe('idle')
+    expect(loadArtifact).not.toHaveBeenCalled()
+    expect(iframes(root)).toHaveLength(0)
+    expect(text(root)).toContain('w4a.artifact.placeholder')
+    const body = all(root).find(n => 'data-artifact-body' in n.props)!
+    expect(body.props.style).toEqual({ height: `${inlineArtifacts.FRAME_HEIGHT_PX}px` })
+  })
+
+  it('loaded: runs sandboxed without same-origin once near, parks far away and comes back without a refetch', async () => {
+    const { root } = mount(ChatArtifact, { artifactId: 'art-9', title: 'One off', strandId: 'strand-1' })
+    margin(inlineArtifacts.FRAME_KEEP_MARGIN_PX).fire(true)
+    margin(inlineArtifacts.FRAME_MOUNT_MARGIN_PX).fire(true)
+    await flush()
+    expect(loadArtifact).toHaveBeenCalledTimes(1)
+    expect(frame(root).props['data-load-state']).toBe('ready')
+    const [iframe] = iframes(root)
+    expect(iframe!.props.sandbox).toBe('allow-scripts')
+    expect(String(iframe!.props.sandbox)).not.toContain('allow-same-origin')
+    expect(iframe!.props.srcdoc).toBe('<p>art-9</p>')
+    expect(iframe!.props.referrerpolicy).toBe('no-referrer')
+
+    // out of the mount margin but inside the keep zone: keeps running
+    margin(inlineArtifacts.FRAME_MOUNT_MARGIN_PX).fire(false)
+    await flush()
+    expect(iframes(root)).toHaveLength(1)
+    // far away: unloaded, the placeholder holds the height
+    margin(inlineArtifacts.FRAME_KEEP_MARGIN_PX).fire(false)
+    await flush()
+    expect(frame(root).props['data-frame-state']).toBe('parked')
+    expect(iframes(root)).toHaveLength(0)
+    expect(text(root)).toContain('w4a.artifact.paused')
+    // back again: remounted from the kept document
+    margin(inlineArtifacts.FRAME_KEEP_MARGIN_PX).fire(true)
+    margin(inlineArtifacts.FRAME_MOUNT_MARGIN_PX).fire(true)
+    await flush()
+    expect(iframes(root)).toHaveLength(1)
+    expect(loadArtifact).toHaveBeenCalledTimes(1)
+  })
+
+  it('error: says so and loads again on "Reload"', async () => {
+    loadArtifact.mockImplementationOnce(async () => { throw new Error('network down') })
+    const { root } = mount(ChatArtifact, { artifactId: 'art-9', title: 'One off', strandId: 'strand-1' })
+    margin(inlineArtifacts.FRAME_MOUNT_MARGIN_PX).fire(true)
+    await flush()
+    expect(frame(root).props['data-load-state']).toBe('error')
+    const alert = all(root).find(n => 'data-artifact-error' in n.props)!
+    expect(alert.props.role).toBe('alert')
+    expect(text(alert)).toContain('w4a.artifact.error')
+    expect(iframes(root)).toHaveLength(0)
+    click(all(root).find(n => 'data-artifact-retry' in n.props))
+    await flush()
+    expect(loadArtifact).toHaveBeenCalledTimes(2)
+    expect(frame(root).props['data-load-state']).toBe('ready')
+    expect(iframes(root)).toHaveLength(1)
+  })
+
+  it('shows the fenced source on request, as text, never as markup', async () => {
+    const { root } = mount(ChatArtifact, { artifactId: 'art-9', title: 'One off', sourceText: '<script>alert(1)</script>' })
+    expect(all(root).find(n => 'data-artifact-source' in n.props)).toBeUndefined()
+    const toggle = all(root).find(n => 'data-artifact-source-toggle' in n.props)!
+    expect(toggle.props['aria-expanded']).toBe(false)
+    click(toggle)
+    await flush()
+    const source = all(root).find(n => 'data-artifact-source' in n.props)!
+    expect(text(source)).toContain('<script>alert(1)</script>')
+    expect(all(source).some(n => 'innerHTML' in n.props)).toBe(false)
+    expect(toggle.props['aria-controls']).toBe(source.props.id)
   })
 })

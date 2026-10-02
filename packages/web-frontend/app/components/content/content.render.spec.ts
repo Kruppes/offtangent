@@ -14,7 +14,7 @@ import type { ChatMessage } from '../../composables/useChat'
 const t = (key: string, params?: Record<string, unknown>) => `${key}${params && Object.keys(params).length ? JSON.stringify(params) : ''}`
 
 async function render(props: Record<string, unknown>) {
-  const app = createSSRApp({ render: () => h(TurnLine, props, { tool: ({ msg }: { msg: ChatMessage }) => h('pre', String(msg.toolData!.toolResult ?? '')) }) })
+  const app = createSSRApp({ render: () => h(TurnLine as Component, props, { tool: ({ msg }: { msg: ChatMessage }) => h('pre', String(msg.toolData!.toolResult ?? '')) }) })
   app.config.globalProperties.$t = t as never
   app.component('AppIcon', { render: () => null })
   return renderToString(app)

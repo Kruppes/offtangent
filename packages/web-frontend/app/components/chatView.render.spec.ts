@@ -660,6 +660,46 @@ describe('ChatView: artifacts and attachments', () => {
     expect(canvas.openRevision.value).toBe(2)
   })
 
+  it('shows a fenced html block once, as the running artifact with its source, not again as code (n5 P2)', async () => {
+    const answer = ['Here is the page:', '', '```html Sample page', '<h1>Hello frame</h1>', '```', '', 'And code:', '```ts', 'const kept = 1', '```'].join('\n')
+    history = [
+      row(1, 'user', 'make a page'),
+      { ...row(2, 'assistant', answer), artifacts: [{ id: 'art-html', kind: 'html', title: 'Sample page', source: 'inline_fence', strandId: 'strand-a' }] },
+    ]
+    const { root } = await mountChat()
+    const prose = all(root).filter(n => cls(n).includes('prose-chat')).map(n => String(n.props.innerHTML)).join('')
+    expect(prose).toContain('Here is the page:')
+    expect(prose).toContain('const kept = 1')
+    expect(prose).not.toContain('Hello frame')
+    const cards = byTag(root, 'chat-artifact')
+    expect(cards).toHaveLength(1)
+    expect(attr(cards[0]!, 'sourceText')).toBe('<h1>Hello frame</h1>')
+  })
+
+  it('keeps the code block when the fences and the inline artifacts do not line up', async () => {
+    const answer = ['```html', '<h1>First</h1>', '```', '```html', '<h1>Second</h1>', '```'].join('\n')
+    history = [
+      row(1, 'user', 'two pages'),
+      { ...row(2, 'assistant', answer), artifacts: [{ id: 'art-1', kind: 'html', title: 'First', source: 'inline_fence', strandId: 'strand-a' }] },
+    ]
+    const { root } = await mountChat()
+    const prose = all(root).filter(n => cls(n).includes('prose-chat')).map(n => String(n.props.innerHTML)).join('')
+    expect(prose).toContain('First')
+    expect(prose).toContain('Second')
+    expect(attr(byTag(root, 'chat-artifact')[0]!, 'sourceText')).toBeUndefined()
+  })
+
+  it('shows an uploaded image once, as the attachment, not again as a canvas frame (n5 P2)', async () => {
+    history = [
+      row(1, 'user', 'a picture'),
+      { ...row(2, 'assistant', 'Here', { metadata: JSON.stringify({ files: [{ kind: 'image', originalName: 'photo.png', storedName: 's.png', relativePath: 'u/s.png', urlPath: '/api/uploads/u/s.png', mimeType: 'image/png', size: 5 }] }) }),
+        artifacts: [{ id: 'art-img', kind: 'png', title: 'photo.png', source: 'upload', strandId: 'strand-a' }] },
+    ]
+    const { root } = await mountChat()
+    expect(byTag(root, 'chat-artifact')).toHaveLength(0)
+    expect(byTag(root, 'chat-attachments')).toHaveLength(1)
+  })
+
   it('keeps the artifact card when a just finished turn is replayed (n5 regression)', async () => {
     history = [
       row(1, 'user', 'older question'), row(2, 'assistant', 'older answer'),
