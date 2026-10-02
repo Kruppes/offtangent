@@ -4,6 +4,7 @@
        (SPEC 2.9) — the app behaviour, in CSS pixels. -->
   <aside
     v-if="views.length > 0"
+    ref="shellEl"
     :class="wide
       ? 'relative flex h-full shrink-0 border-l border-border bg-background'
       : 'absolute inset-x-0 top-0 z-30 flex flex-col border-b border-border bg-background shadow-overlay'"
@@ -112,6 +113,7 @@ import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import ChatArtifact from './ChatArtifact.vue'
 import { useArtifactsApi } from '~/api/artifacts'
 import { useStrandCanvas } from '~/composables/useStrandCanvas'
+import { onShortcut } from '~/composables/useShortcuts'
 
 const props = defineProps<{ strandId: string | null }>()
 
@@ -130,7 +132,10 @@ const { views, openViewKey, openRevision, unseen, hasUnseen } = canvas
 const width = ref(DEFAULT_WIDTH)
 const windowWidth = ref(WIDE_BREAKPOINT)
 const isOpen = computed(() => openViewKey.value !== null)
-const wide = computed(() => windowWidth.value >= WIDE_BREAKPOINT && windowWidth.value - width.value >= MIN_CHAT_WIDTH)
+/** Width of the row the canvas shares with the chat (the shell's columns take the rest of the window). */
+const rowWidth = ref(WIDE_BREAKPOINT)
+const shellEl = ref<HTMLElement | null>(null)
+const wide = computed(() => windowWidth.value >= WIDE_BREAKPOINT && rowWidth.value - width.value >= MIN_CHAT_WIDTH)
 const activeView = computed(() => views.value.find(view => view.viewKey === openViewKey.value) ?? null)
 const railTitle = computed(() => activeView.value?.title ?? views.value[0]?.title ?? '')
 const activeArtifactId = computed(() => {
@@ -178,16 +183,17 @@ function resetWidth(): void {
   if (key) window.localStorage.setItem(key, String(DEFAULT_WIDTH))
 }
 
-function onKeydown(event: KeyboardEvent): void {
-  // Ctrl/Cmd + J toggles, Esc closes (SPEC 2.8).
-  if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === 'j') {
-    event.preventDefault()
-    if (isOpen.value) close()
-    else openCanvas()
-    return
-  }
-  if (event.key === 'Escape' && isOpen.value) close()
-}
+// Ctrl/Cmd + J toggles, Esc closes (SPEC 2.8) — bound through the shell's
+// central shortcut composable instead of an own window listener.
+onShortcut('canvas.toggle', () => {
+  if (!views.value.length) return false
+  if (isOpen.value) close()
+  else openCanvas()
+})
+onShortcut('dismiss', () => {
+  if (!isOpen.value) return false
+  close()
+})
 
 async function reload(): Promise<void> {
   if (!props.strandId) {
@@ -203,7 +209,17 @@ async function reload(): Promise<void> {
 
 function onResize(): void {
   windowWidth.value = window.innerWidth
+  rowWidth.value = shellEl.value?.parentElement?.clientWidth ?? window.innerWidth
 }
+let rowObserver: ResizeObserver | null = null
+watch(shellEl, (el) => {
+  rowObserver?.disconnect()
+  rowObserver = null
+  if (!el?.parentElement || typeof ResizeObserver === 'undefined') return
+  rowObserver = new ResizeObserver(onResize)
+  rowObserver.observe(el.parentElement)
+  onResize()
+})
 
 onMounted(() => {
   const key = storageKey()
@@ -211,13 +227,12 @@ onMounted(() => {
   if (Number.isFinite(stored) && stored >= MIN_WIDTH && stored <= MAX_WIDTH) width.value = stored
   onResize()
   window.addEventListener('resize', onResize)
-  window.addEventListener('keydown', onKeydown)
   void reload()
 })
 
 onBeforeUnmount(() => {
   window.removeEventListener('resize', onResize)
-  window.removeEventListener('keydown', onKeydown)
+  rowObserver?.disconnect()
 })
 
 watch(() => props.strandId, () => { void reload() })

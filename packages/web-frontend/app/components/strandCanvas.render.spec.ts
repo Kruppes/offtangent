@@ -14,6 +14,7 @@ import { resolve } from 'node:path'
 import { parse, compileScript } from '@vue/compiler-sfc'
 import { transpileModule, ModuleKind } from 'typescript'
 import { createStrandCanvasState, type CanvasViewUpdate, type StrandCanvasState } from '../composables/useStrandCanvas'
+import * as shortcuts from '../composables/useShortcuts'
 
 interface Node {
   tag: string
@@ -90,6 +91,8 @@ function loadComponent(): Component {
     './ChatArtifact.vue': { default: { name: 'ChatArtifact', props: ['artifactId', 'title', 'strandId', 'viewKey', 'revision', 'latestRevision'], template: '<div data-testid="artifact" :data-artifact="artifactId"></div>' } },
     '~/api/artifacts': { useArtifactsApi: () => ({ loadStrandViews }) },
     '~/composables/useStrandCanvas': { useStrandCanvas: () => state },
+    // The real central shortcut dispatcher: its one window listener is what the keys below reach.
+    '~/composables/useShortcuts': shortcuts,
   }
   new Function('require', 'exports', outputText)((name: string) => {
     if (!(name in modules)) throw new Error(`Unexpected import: ${name}`)
@@ -122,6 +125,7 @@ const listeners: Record<string, Array<(event: unknown) => void>> = {}
 
 beforeEach(() => {
   loadStrandViews.mockClear()
+  shortcuts.resetShortcutsForTest()
   state = createStrandCanvasState(() => STRAND)
   StrandCanvas = loadComponent()
   for (const key of Object.keys(listeners)) delete listeners[key]
