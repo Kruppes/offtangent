@@ -235,8 +235,8 @@ function fakeStt() {
 }
 function fakeTts() {
   return {
-    playingIndex: ref<number | null>(null), loading: ref(false), ttsEnabled: ref(true), error: ref<string | null>(null),
-    fetchTtsSettings: vi.fn(async () => {}), play: vi.fn(), stop: vi.fn(), clearError: vi.fn(),
+    ttsEnabled: ref(true), ttsSettings: ref(null), mistralVoices: ref([]), voicesLoading: ref(false),
+    fetchTtsSettings: vi.fn(async () => {}), fetchMistralVoices: vi.fn(async () => {}),
   }
 }
 
@@ -927,8 +927,8 @@ describe('ChatView: scrolling and message actions', () => {
     expect(url).toBe('http://localhost:3000/api/speech/audio')
     expect(init.method).toBe('POST')
     expect(JSON.parse(String(init.body))).toEqual({ messageId: 2 })
-    // The old client-side TTS path is not used any more.
-    expect(tts.play).not.toHaveBeenCalled()
+    // The old client-side TTS path is gone (W6b): nothing posts to /api/tts.
+    expect(fetchMock.mock.calls.some(call => String((call as unknown[])[0]).endsWith('/api/tts'))).toBe(false)
   })
 
   it('copies an answer as Markdown from its action row and says so', async () => {
