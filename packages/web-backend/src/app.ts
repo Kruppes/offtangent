@@ -1,4 +1,5 @@
 import path from 'node:path'
+import { buildShaField } from './build-info.js'
 import { fileURLToPath } from 'node:url'
 import fs from 'node:fs'
 import express from 'express'
@@ -173,6 +174,8 @@ export function createApp(options?: AppOptions): express.Express {
       uptime: uptimeSeconds,
       version: '0.1.0',
       timestamp: new Date().toISOString(),
+      // W6b, additive: short build commit, only when the image knows it.
+      ...buildShaField(),
     })
   })
 

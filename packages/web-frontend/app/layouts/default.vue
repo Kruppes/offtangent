@@ -57,9 +57,7 @@
             <span class="block truncate text-lg font-bold text-sidebar-foreground">
               {{ $t('app.title') }}
             </span>
-            <p class="mt-0.5 text-xs text-muted-foreground">
-              v{{ appVersion }}
-            </p>
+            <AppVersionLabel :version="appVersion" :build-sha="buildSha" />
           </div>
         </div>
 
@@ -275,6 +273,7 @@ function skipToContent() {
   const target = document.getElementById('main-content')
   target?.focus({ preventScroll: true })
 }
+import AppVersionLabel from '~/components/shell/AppVersionLabel.vue'
 import { useMediaQuery } from '@vueuse/core'
 import { useEmailApi } from '~/api/email'
 import { useShellLayout } from '~/composables/useShellLayout'
@@ -284,6 +283,7 @@ import { isMacPlatform } from '~/utils/shortcuts'
 const route = useRoute()
 const runtimeConfig = useRuntimeConfig()
 const appVersion = runtimeConfig.public.appVersion as string
+const buildSha = (runtimeConfig.public.buildSha as string | undefined) ?? ''
 const { user, logout } = useAuth()
 const { status: globalStatus, providerName: globalProviderName, operatingMode: globalOperatingMode, fallbackProviderName: globalFallbackProviderName, healthMonitorEnabled: globalHealthMonitorEnabled, quota: globalQuota, start: startStatusPolling, stop: stopStatusPolling } = useConnectionStatus()
 

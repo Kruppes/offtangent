@@ -51,6 +51,14 @@ RUN npm ci --include=dev
 # Copy source code
 COPY . .
 
+# Build commit shown in the web app ("v0.30.0 · abc1234") and in /health.
+# .dockerignore keeps .git out of the context, so the commit comes in as a
+# build arg: docker build --build-arg GIT_SHA=$(git rev-parse HEAD) ...
+# Empty (the default) shows the version alone. Declared after COPY so the
+# npm ci layer above stays cached.
+ARG GIT_SHA=""
+ENV GIT_SHA=${GIT_SHA}
+
 # Build all packages
 RUN npm run build
 
