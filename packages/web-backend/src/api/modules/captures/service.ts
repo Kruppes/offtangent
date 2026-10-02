@@ -41,6 +41,7 @@ import {
   isSessionAccessError,
   isSilenceTranscript,
   listCaptures,
+  countCaptures,
   listDecisionsForCaptures,
   listPersonaIds,
   loadMultiPersonaSettings,
@@ -1533,9 +1534,12 @@ export function createCapturesService(options: CapturesServiceOptions) {
    * The tray listing. `decisions` keeps exactly one entry per capture (the
    * decision of part 0), which is what every client built before parts reads;
    * `parts` carries every part of every capture in the same response.
+   * `total` (additive) is the number of captures matching the status filter
+   * across all pages, so a client can show an exact count.
    */
   function list(userId: number, query: { status: Capture['status'] | 'all'; limit: number; offset: number }) {
     const captures = listCaptures(db, String(userId), query)
+    const total = countCaptures(db, String(userId), { status: query.status })
     const ids = captures.map(c => c.id)
     const decisions = listDecisionsForCaptures(db, ids)
     const all = listAllCurrentDecisions(db, ids)
@@ -1543,7 +1547,7 @@ export function createCapturesService(options: CapturesServiceOptions) {
     for (const capture of captures) {
       parts[capture.id] = describeParts(capture, all.filter(d => d.captureId === capture.id))
     }
-    return { captures, decisions, parts }
+    return { captures, decisions, parts, total }
   }
 
   /** One capture with its parts, the shape `GET /api/captures/:id` returns. */

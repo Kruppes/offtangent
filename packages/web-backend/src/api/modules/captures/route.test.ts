@@ -252,6 +252,40 @@ describe('POST /api/captures', () => {
     expect(((await api('GET', '/api/captures?status=unsorted', undefined, userToken)).body.captures as Capture[]).length).toBe(0)
   })
 
+  it('keeps the list shape and adds total, the count of the status filter across pages', async () => {
+    sessionManager.createThread('1', 'main', 'Something')
+    for (const text of ['synthetic one', 'synthetic two', 'synthetic three']) {
+      answer({ action: 'new_strand', newStrand: { title: 'Maybe', personaId: 'main', tags: [] }, confidence: 0.2, alternatives: [] })
+      expect((await api('POST', '/api/captures', { text })).status).toBe(201)
+    }
+
+    const page = await api('GET', '/api/captures?status=unsorted&limit=2')
+    expect(page.status).toBe(200)
+    // Existing fields stay as they were (the app reads them); total is additive.
+    expect(Object.keys(page.body).sort()).toEqual(['captures', 'decisions', 'parts', 'total'])
+    expect((page.body.captures as Capture[]).length).toBe(2)
+    expect((page.body.decisions as Decision[]).length).toBe(2)
+    expect(Object.keys(page.body.parts as Record<string, unknown>).length).toBe(2)
+    expect(page.body.total).toBe(3)
+
+    const rest = await api('GET', '/api/captures?status=unsorted&limit=2&offset=2')
+    expect((rest.body.captures as Capture[]).length).toBe(1)
+    expect(rest.body.total).toBe(3)
+
+    expect((await api('GET', '/api/captures?status=filed')).body.total).toBe(0)
+    expect((await api('GET', '/api/captures?status=all')).body.total).toBe(3)
+    // The filter is bound as a parameter, never spliced into the SQL.
+    expect((await api('GET', "/api/captures?status=unsorted'%20OR%201=1--")).status).toBe(400)
+    // Another user counts only their own captures.
+    expect((await api('GET', '/api/captures?status=unsorted', undefined, userToken)).body.total).toBe(0)
+
+    // A dismissed capture leaves `all` and its count, but is counted by name.
+    const first = (page.body.captures as Capture[])[0]!
+    expect((await api('POST', `/api/captures/${first.id}/dismiss`, {})).status).toBe(200)
+    expect((await api('GET', '/api/captures?status=all')).body.total).toBe(2)
+    expect((await api('GET', '/api/captures?status=dismissed')).body.total).toBe(1)
+  })
+
   it('creates a new strand for a high confidence new_strand and marks router failure as failed', async () => {
     sessionManager.createThread('1', 'main', 'Existing')
     answer({ action: 'new_strand', newStrand: { title: 'Dach Angebot Nord', personaId: 'coder', tags: ['dach'] }, intent: 'note', confidence: 0.75 })

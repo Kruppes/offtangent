@@ -11,7 +11,7 @@ const UnsortedPage = loadSfc(path.join(APP_DIR, 'features/unsorted/UnsortedPage.
 type Status = 'unsorted' | 'needs_review' | 'failed' | 'filed' | 'dismissed'
 const capture = (id: string, status: Status, createdAt = '2026-01-01T12:00:00Z') => ({ id, text: `Synthetic note ${id}`, createdAt, status, strandId: null, attachments: [] })
 const decision = (captureId: string, extra: Record<string, unknown> = {}) => ({ id: `d-${captureId}`, createdAt: '2026-01-01T12:00:01Z', captureId, title: 'Proposed topic', action: 'new_strand', confidence: 0.3, rationale: 'Unsure', state: 'proposed', alternatives: [], ...extra })
-let pages: Record<string, { captures: unknown[]; decisions: unknown[]; parts?: Record<string, unknown> }>
+let pages: Record<string, { captures: unknown[]; decisions: unknown[]; parts?: Record<string, unknown>; total?: number }>
 let failList = false
 let request: ReturnType<typeof vi.fn>
 const calls = (suffix: string) => request.mock.calls.filter(([url]) => String(url).includes(suffix))
@@ -55,6 +55,21 @@ describe('Unsorted page', () => {
     await click(button(root, 'common.retry'))
     expect(text(root)).toContain('unsorted.count:1')
     expect(text(root)).toContain('Synthetic note c1')
+  })
+
+  it('shows the exact total from the backend instead of the loaded count', async () => {
+    const many = Array.from({ length: 50 }, (_, i) => capture(`m${i}`, 'unsorted'))
+    pages = { unsorted: { captures: many, decisions: many.map(c => decision(c.id)), total: 73 }, needs_review: { captures: [], decisions: [], total: 2 }, failed: { captures: [], decisions: [], total: 0 } }
+    const root = mountNode(UnsortedPage); await flush()
+    expect(text(root)).toContain('unsorted.count:75')
+    expect(text(root)).not.toContain('unsorted.count:50+')
+  })
+
+  it('keeps "n+" for a full page when the backend sends no total', async () => {
+    const many = Array.from({ length: 50 }, (_, i) => capture(`m${i}`, 'unsorted'))
+    pages = { unsorted: { captures: many, decisions: many.map(c => decision(c.id)) } }
+    const root = mountNode(UnsortedPage); await flush()
+    expect(text(root)).toContain('unsorted.count:50+')
   })
 
   it('explains an empty tray and links back to Home', async () => {

@@ -49,6 +49,36 @@ export function trayItems(pages: readonly CaptureListPage[]): CaptureResult[] {
   return items.sort((a, b) => b.capture.createdAt.localeCompare(a.capture.createdAt))
 }
 
+/** Page size the tray lists with; a full page means there may be more. */
+export const TRAY_PAGE_SIZE = 50
+
+/**
+ * Exact tray size from the additive `total` of every status page, or null
+ * when any page lacks it (an older backend). The statuses are disjoint, so
+ * the totals add up without double counting.
+ */
+export function trayTotal(pages: readonly CaptureListPage[]): number | null {
+  if (!pages.length) return null
+  let sum = 0
+  for (const page of pages) {
+    const total = page.total
+    if (typeof total !== 'number' || !Number.isInteger(total) || total < 0) return null
+    sum += total
+  }
+  return sum
+}
+
+/**
+ * Tray counter: the exact total when the backend sends it, else the number
+ * of loaded cards with "+" once a status filled its first page (previous
+ * behaviour).
+ */
+export function trayCount(pages: readonly CaptureListPage[], loaded: number): { count: number; more: boolean } {
+  const total = trayTotal(pages)
+  if (total !== null) return { count: total, more: false }
+  return { count: loaded, more: pages.some(page => page.captures.length === TRAY_PAGE_SIZE) }
+}
+
 /** Whole days since an ISO timestamp, never negative; null for a broken value. */
 export function daysSince(iso: string, nowMs: number): number | null {
   const ms = Date.parse(iso)

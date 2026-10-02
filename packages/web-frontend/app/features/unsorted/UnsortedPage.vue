@@ -4,7 +4,7 @@ import { useCapturesApi, type CaptureResult, type ApplyCaptureInput, type Captur
 import { useNowApi, type NowStrand } from '~/api/now'
 import CaptureDecision from '~/features/capture/components/CaptureDecision.vue'
 import CaptureParts from '~/features/capture/components/CaptureParts.vue'
-import { isSplit, trayItems, TRAY_STATUSES } from '~/features/capture/captureParts'
+import { isSplit, trayItems, trayTotal, TRAY_PAGE_SIZE, TRAY_STATUSES } from '~/features/capture/captureParts'
 
 /**
  * The unsorted tray as its own page (the app's Unsorted screen): every capture
@@ -24,6 +24,8 @@ const error = ref('')
 const notice = ref('')
 const last = ref<CaptureResult | null>(null)
 const more = ref(false)
+/** Exact tray size from the backend (`total`), null for an older backend. */
+const totalCount = ref<number | null>(null)
 const offset = ref(0)
 
 function strandTitle(id?: string | null) {
@@ -48,7 +50,8 @@ async function loadPage(append: boolean) {
   await resolveTitles([...items, ...(last.value ? [last.value] : [])])
   tray.value = merged
   offset.value = next
-  more.value = pages.some(p => p.captures.length === 50)
+  more.value = pages.some(p => p.captures.length === TRAY_PAGE_SIZE)
+  totalCount.value = trayTotal(pages)
 }
 async function load() {
   loading.value = true; loadError.value = false
@@ -106,7 +109,7 @@ onMounted(load)
       <NuxtLink to="/" class="mt-3 inline-flex min-h-11 items-center rounded-md border px-3 hover:bg-accent focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring">{{ $t('unsorted.toHome') }}</NuxtLink>
     </section>
     <section v-else class="space-y-3" :aria-label="$t('unsorted.listLabel', { count: tray.length })">
-      <p class="text-sm text-muted-foreground" role="status">{{ $t('unsorted.count', { count: more ? `${tray.length}+` : tray.length }) }}</p>
+      <p class="text-sm text-muted-foreground" role="status">{{ $t('unsorted.count', { count: totalCount ?? (more ? `${tray.length}+` : tray.length) }) }}</p>
       <CaptureDecision v-for="item in tray" :key="item.capture.id" :result="item" :strand-title="titleFor(item)" :title-for-id="strandTitle" :busy="busy" @undo="undo(item)" @apply="apply(item, $event)" @dismiss="dismiss(item)">
         <CaptureParts v-if="isSplit(item)" :result="item" :busy="busy" :strands="moveTargets" :title-for-id="strandTitle" @keep="keepPart(item, $event)" @move="(part, id) => movePart(item, part, id)" @undo="undoPart(item, $event)" @keep-as-one="keepAsOne(item)" />
       </CaptureDecision>

@@ -8,7 +8,7 @@ import { useResurfaceApi, type ResurfaceItem } from '~/api/resurface'
 import type { CapturePart } from '~/api/captures'
 import CaptureDecision from './CaptureDecision.vue'
 import CaptureParts from './CaptureParts.vue'
-import { daysSince, isSplit, trayItems, TRAY_STATUSES } from '../captureParts'
+import { daysSince, isSplit, trayItems, trayTotal, TRAY_PAGE_SIZE, TRAY_STATUSES } from '../captureParts'
 const api = useCapturesApi()
 const nowApi = useNowApi()
 const modelsApi = useModelsApi()
@@ -50,6 +50,7 @@ const agentId = ref('')
 const modelKey = ref('')
 const optionsError = ref(false)
 const more = ref(false)
+const trayTotalCount = ref<number | null>(null)
 // Preserve the key for an identical retry after a lost response; changed drafts get a new key.
 let pending: { signature: string; key: string } | null = null
 /**
@@ -83,12 +84,14 @@ async function loadOptions() {
 }
 /**
  * Home only counts the tray; deciding happens on /unsorted. The count stops
- * at one page per status, `more` turns it into "50+".
+ * at one page per status, `more` turns it into "50+" unless the backend sends
+ * the exact `total`.
  */
 async function loadTray() {
   const pages = await Promise.all(TRAY_STATUSES.map(status => api.list(status, 0)))
   tray.value = trayItems(pages)
-  more.value = pages.some(p => p.captures.length === 50)
+  more.value = pages.some(p => p.captures.length === TRAY_PAGE_SIZE)
+  trayTotalCount.value = trayTotal(pages)
 }
 async function loadResurface() {
   resurfaceError.value = false
@@ -167,7 +170,7 @@ function movePart(result: CaptureResult, part: CapturePart, strandId: string) { 
 function undoPart(result: CaptureResult, part: CapturePart) { void actPart(() => api.undo(result.capture.id, part.index), 'home.parts.undone') }
 function keepAsOne(result: CaptureResult) { void actPart(() => api.keepAsOne(result.capture.id), 'home.parts.keptAsOne') }
 const moveTargets = computed(() => [...(now.value?.strands ?? []), ...candidates.value.filter(c => !now.value?.strands.some(n => n.id === c.id))].map(s => ({ id: s.id, title: s.title })))
-const trayCount = computed(() => more.value ? `${tray.value.length}+` : String(tray.value.length))
+const trayCount = computed(() => trayTotalCount.value !== null ? String(trayTotalCount.value) : more.value ? `${tray.value.length}+` : String(tray.value.length))
 function resurfaceAge(item: ResurfaceItem) { return daysSince(item.lastActivity, Date.now()) ?? 0 }
 /** Throw a tray card away; the notice carries the undo, the card keeps it too. */
 async function discard(result: CaptureResult) {

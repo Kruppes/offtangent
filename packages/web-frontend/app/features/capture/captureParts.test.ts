@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import type { CaptureListPage, CapturePart, CaptureResult } from '~/api/captures'
-import { daysSince, isSplit, partLabel, partState, partsOf, trayItems } from './captureParts'
+import { daysSince, isSplit, partLabel, partState, partsOf, trayCount, trayItems, trayTotal } from './captureParts'
 
 const capture = (id: string, createdAt = '2026-01-01T10:00:00Z') => ({ id, text: 'Synthetic note one. Synthetic note two.', kind: 'note', source: 'web', agentId: null, strandId: null, messageId: null, status: 'unsorted', createdAt, filedAt: null, attachments: [], clientMessageId: null }) as unknown as CaptureResult['capture']
 const decision = (captureId: string, extra: Record<string, unknown> = {}) => ({ id: `d-${captureId}`, captureId, action: 'append', strandId: 's1', state: 'proposed', partIndex: 0, partCount: 1, createdAt: '2026-01-01T10:00:01Z', alternatives: [], ...extra }) as unknown as CaptureResult['decision']
@@ -54,5 +54,30 @@ describe('daysSince', () => {
     expect(daysSince('2026-01-01T13:00:00Z', now)).toBe(11)
     expect(daysSince('2026-01-14T00:00:00Z', now)).toBe(0)
     expect(daysSince('nope', now)).toBeNull()
+  })
+})
+
+describe('trayTotal / trayCount', () => {
+  const full = Array.from({ length: 50 }, (_, i) => capture(`f${i}`))
+  it('adds the totals of the disjoint status pages', () => {
+    const pages: CaptureListPage[] = [
+      { captures: full, decisions: [], total: 73 },
+      { captures: [capture('r')], decisions: [], total: 1 },
+      { captures: [], decisions: [], total: 0 },
+    ]
+    expect(trayTotal(pages)).toBe(74)
+    expect(trayCount(pages, 51)).toEqual({ count: 74, more: false })
+  })
+  it('falls back to the loaded count with "+" when a page has no total (older backend)', () => {
+    const pages: CaptureListPage[] = [{ captures: full, decisions: [] }, { captures: [capture('r')], decisions: [], total: 1 }]
+    expect(trayTotal(pages)).toBeNull()
+    expect(trayCount(pages, 51)).toEqual({ count: 51, more: true })
+    expect(trayCount([{ captures: [capture('r')], decisions: [] }], 1)).toEqual({ count: 1, more: false })
+  })
+  it('ignores a malformed total', () => {
+    expect(trayTotal([{ captures: [], decisions: [], total: -1 }])).toBeNull()
+    expect(trayTotal([{ captures: [], decisions: [], total: 1.5 }])).toBeNull()
+    expect(trayTotal([{ captures: [], decisions: [], total: '3' as unknown as number }])).toBeNull()
+    expect(trayTotal([])).toBeNull()
   })
 })

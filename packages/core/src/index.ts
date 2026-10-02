@@ -1312,6 +1312,7 @@ export {
   getCapture,
   getCaptureByClientKey,
   listCaptures,
+  countCaptures,
   updateCapture,
   insertDecision,
   getDecision,

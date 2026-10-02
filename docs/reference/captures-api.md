@@ -258,8 +258,10 @@ input field only.
 Query: `status=unsorted|needs_review|filed|moved|failed|pending|dismissed|all`
 (default `all`), `limit=1..200` (default 50), `offset`.
 
-**200** `{ "captures": Capture[], "decisions": Decision[], "parts": { [captureId]: Part[] } }`,
-newest first. `decisions` holds the current decision of **part 0** of every
+**200** `{ "captures": Capture[], "decisions": Decision[], "parts": { [captureId]: Part[] }, "total": number }`,
+newest first. `total` is additive: the number of captures that match the
+`status` filter across all pages (ignores `limit`/`offset`), so a client can
+show an exact count without paging. `decisions` holds the current decision of **part 0** of every
 listed capture (one entry per capture, as before). `parts` is additive and
 holds every part:
 

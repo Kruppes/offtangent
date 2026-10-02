@@ -667,14 +667,13 @@ export interface ListCapturesOptions {
   offset?: number
 }
 
-export function listCaptures(db: Database, userId: string, options: ListCapturesOptions = {}): Capture[] {
-  const limit = Math.min(200, Math.max(1, Math.trunc(options.limit ?? 50)))
-  const offset = Math.max(0, Math.trunc(options.offset ?? 0))
+/** WHERE clause of the capture listing, shared by the page and its count. */
+function captureListFilter(userId: string, status: ListCapturesOptions['status']): { where: string; params: unknown[] } {
   const where = ['user_id = ?']
   const params: unknown[] = [userId]
-  if (options.status && options.status !== 'all') {
+  if (status && status !== 'all') {
     where.push('status = ?')
-    params.push(options.status)
+    params.push(status)
   } else {
     // `all` means "everything that still counts". A dismissed capture is out
     // of every list by definition — it is only reachable by asking for it by
@@ -685,11 +684,25 @@ export function listCaptures(db: Database, userId: string, options: ListCaptures
     // know the status yet.
     where.push("status != 'dismissed'")
   }
+  return { where: where.join(' AND '), params }
+}
+
+export function listCaptures(db: Database, userId: string, options: ListCapturesOptions = {}): Capture[] {
+  const limit = Math.min(200, Math.max(1, Math.trunc(options.limit ?? 50)))
+  const offset = Math.max(0, Math.trunc(options.offset ?? 0))
+  const { where, params } = captureListFilter(userId, options.status)
   const rows = db.prepare(
-    `SELECT ${CAPTURE_COLUMNS} FROM captures WHERE ${where.join(' AND ')}
+    `SELECT ${CAPTURE_COLUMNS} FROM captures WHERE ${where}
      ORDER BY created_at DESC, rowid DESC LIMIT ? OFFSET ?`,
   ).all(...params, limit, offset) as CaptureRow[]
   return rows.map(toCapture)
+}
+
+/** Number of captures `listCaptures` pages through for the same filter (ignores limit/offset). */
+export function countCaptures(db: Database, userId: string, options: Pick<ListCapturesOptions, 'status'> = {}): number {
+  const { where, params } = captureListFilter(userId, options.status)
+  const row = db.prepare(`SELECT COUNT(*) AS n FROM captures WHERE ${where}`).get(...params) as { n: number }
+  return row.n
 }
 
 export function updateCapture(

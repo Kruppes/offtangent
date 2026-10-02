@@ -7,7 +7,8 @@ export interface CaptureResult { capture: Capture; decision: Decision; parts?: C
 /** `destination: 'new_strand'` makes the server open a strand instead of routing; `strandTitle` names it. */
 export interface CaptureInput { text: string; clientMessageId: string; source: 'web'; attachments: UploadDescriptor[]; agentId?: string; modelProviderId?: string; modelId?: string; destination?: 'new_strand'; strandTitle?: string }
 export interface ApplyCaptureInput { decisionId?: string; action?: Decision['action']; strandId?: string; title?: string; partIndex?: number }
-export interface CaptureListPage { captures: Capture[]; decisions: Decision[]; parts?: Record<string, CapturePart[]> }
+/** `total` is additive: captures matching the status filter across all pages (an older backend omits it). */
+export interface CaptureListPage { captures: Capture[]; decisions: Decision[]; parts?: Record<string, CapturePart[]>; total?: number }
 export interface ClientPersona { id: string; displayName: string; emoji: string | null; color: string | null; isDefault: boolean }
 export function newestDecision(captureId: string, decisions: Decision[]) {
   return decisions.filter(d => d.captureId === captureId).sort((a, b) => b.createdAt.localeCompare(a.createdAt))[0]
