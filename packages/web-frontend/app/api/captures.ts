@@ -1,9 +1,13 @@
 import type { Capture, Decision, UploadDescriptor } from '@axiom/core'
 export type { Capture, Decision, UploadDescriptor }
-export interface CaptureResult { capture: Capture; decision: Decision }
+/** One topic part of a capture (split on intake); a single part capture has exactly one. */
+export interface CapturePart { index: number; title: string | null; text: string; sentenceIds: number[]; decision: Decision }
+/** `parts`/`partCount` are additive: an older backend omits them, which means one part. */
+export interface CaptureResult { capture: Capture; decision: Decision; parts?: CapturePart[]; partCount?: number }
 /** `destination: 'new_strand'` makes the server open a strand instead of routing; `strandTitle` names it. */
 export interface CaptureInput { text: string; clientMessageId: string; source: 'web'; attachments: UploadDescriptor[]; agentId?: string; modelProviderId?: string; modelId?: string; destination?: 'new_strand'; strandTitle?: string }
-export interface ApplyCaptureInput { decisionId?: string; action?: Decision['action']; strandId?: string; title?: string }
+export interface ApplyCaptureInput { decisionId?: string; action?: Decision['action']; strandId?: string; title?: string; partIndex?: number }
+export interface CaptureListPage { captures: Capture[]; decisions: Decision[]; parts?: Record<string, CapturePart[]> }
 export interface ClientPersona { id: string; displayName: string; emoji: string | null; color: string | null; isDefault: boolean }
 export function newestDecision(captureId: string, decisions: Decision[]) {
   return decisions.filter(d => d.captureId === captureId).sort((a, b) => b.createdAt.localeCompare(a.createdAt))[0]
@@ -13,9 +17,13 @@ export function useCapturesApi() {
   return {
     personas: async () => (await apiFetch<{ personas: ClientPersona[] }>('/api/personas/client')).personas,
     create: (body: CaptureInput) => apiFetch<CaptureResult>('/api/captures', { method: 'POST', body: JSON.stringify(body) }),
-    list: (status: Capture['status'], offset = 0) => apiFetch<{ captures: Capture[]; decisions: Decision[] }>(`/api/captures?status=${status}&limit=50&offset=${offset}`),
+    list: (status: Capture['status'], offset = 0) => apiFetch<CaptureListPage>(`/api/captures?status=${status}&limit=50&offset=${offset}`),
+    /** Newest captures of every status (the server caps `limit` at 200). */
+    recent: (limit = 200) => apiFetch<CaptureListPage>(`/api/captures?status=all&limit=${limit}&offset=0`),
     apply: (id: string, body: ApplyCaptureInput) => apiFetch<CaptureResult>(`/api/captures/${encodeURIComponent(id)}/apply`, { method: 'POST', body: JSON.stringify(body) }),
-    undo: (id: string) => apiFetch<CaptureResult>(`/api/captures/${encodeURIComponent(id)}/undo`, { method: 'POST', body: '{}' }),
+    undo: (id: string, partIndex?: number) => apiFetch<CaptureResult>(`/api/captures/${encodeURIComponent(id)}/undo`, { method: 'POST', body: partIndex === undefined ? '{}' : JSON.stringify({ partIndex }) }),
+    /** Undo every part and route the original text as one capture. */
+    keepAsOne: (id: string) => apiFetch<CaptureResult>(`/api/captures/${encodeURIComponent(id)}/keep-as-one`, { method: 'POST', body: '{}' }),
     // Throw a tray card away. Undo restores it, so this is not a delete.
     dismiss: (id: string) => apiFetch<CaptureResult>(`/api/captures/${encodeURIComponent(id)}/dismiss`, { method: 'POST', body: '{}' }),
     upload: async (files: File[]) => {

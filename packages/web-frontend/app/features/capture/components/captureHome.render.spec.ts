@@ -7,6 +7,8 @@ import * as now from '~/api/now'
 import * as models from '~/api/models'
 import * as personas from '~/api/personas'
 import * as composerHandoff from '~/composables/useComposerHandoff'
+import * as resurfaceApi from '~/api/resurface'
+import * as captureParts from '../captureParts'
 import { readFileSync } from 'node:fs'
 import { parse, compileScript } from '@vue/compiler-sfc'
 import { transpileModule, ModuleKind, ScriptTarget } from 'typescript'
@@ -15,8 +17,8 @@ function loadComponent(path: string): Component {
  const script = compileScript(descriptor, { id: path, inlineTemplate: true })
  const { outputText } = transpileModule(script.content, { compilerOptions: { module: ModuleKind.CommonJS, target: ScriptTarget.ES2022 } })
  const exports: { default?: Component } = {}
- const modules: Record<string, unknown> = { vue: { ...Vue, vModelText: { mounted: (el: Node, binding: { value: unknown }) => { el.props.value = binding.value }, updated: (el: Node, binding: { value: unknown }) => { el.props.value = binding.value } }, vModelSelect: {} }, '~/api/captures': captures, '~/api/now': now, '~/api/models': models, '~/api/personas': personas, '~/composables/useComposerHandoff': composerHandoff }
- new Function('require', 'exports', outputText)((name: string) => name === './CaptureDecision.vue' ? { default: loadComponent(name) } : modules[name], exports)
+ const modules: Record<string, unknown> = { vue: { ...Vue, vModelText: { mounted: (el: Node, binding: { value: unknown }) => { el.props.value = binding.value }, updated: (el: Node, binding: { value: unknown }) => { el.props.value = binding.value } }, vModelSelect: {} }, '~/api/captures': captures, '~/api/now': now, '~/api/models': models, '~/api/personas': personas, '~/composables/useComposerHandoff': composerHandoff, '~/api/resurface': resurfaceApi, '../captureParts': captureParts }
+ new Function('require', 'exports', outputText)((name: string) => name === './CaptureDecision.vue' || name === './CaptureParts.vue' ? { default: loadComponent(name) } : modules[name], exports)
  return exports.default!
 }
 const Home = loadComponent('./CaptureHome.vue')
@@ -87,23 +89,34 @@ let holdLoad = false
 let saved = false
 /** `undefined` = a backend without the setting, i.e. the curated set. */
 let nowMode: 'auto' | 'manual' | undefined
+let resurfaceItems: unknown[] = []
+let resurfaceFail = false
+let splitLatest = false
 let request: ReturnType<typeof vi.fn>
 function result(state = status) { return { capture: { id: 'c1', text: 'Roof note', createdAt: '2026-01-01T12:00:00Z', status: state, strandId: state === 'unsorted' ? null : 's1', attachments: [] }, decision: { id: 'd1', createdAt: '2026-01-01T12:00:01Z', captureId: 'c1', title: 'Roof', action: 'new_strand', confidence: state === 'filed' ? 0.9 : state === 'needs_review' ? 0.55 : 0.2, rationale: 'Related topic', state: state === 'unsorted' ? 'proposed' : 'applied', alternatives: [{ action: 'append', strandId: 's2', title: 'House', confidence: 0.3, reason: 'Possible match' }] } } }
+function splitResult() {
+ const base = result()
+ const part = (index: number, id: string, state: string) => ({ index, title: `Part ${index}`, text: `Synthetic part ${index}.`, sentenceIds: [index + 1], decision: { ...base.decision, id, state } })
+ return { ...base, parts: [part(0, 'p0', 'proposed'), part(1, 'p1', 'applied')], partCount: 2 }
+}
 beforeEach(() => {
  status = 'filed'; max = 7; nowIds = []; nowMode = undefined; failLoad = false; holdLoad = false; saved = false
+ resurfaceItems = []; resurfaceFail = false; splitLatest = false
  setupFetch()
  request = vi.fn(async (url: string, _options?: RequestInit) => {
   const path = url.replace('https://test.example', '')
   if (holdLoad && path === '/api/now') return new Promise(() => {})
   if (failLoad && path === '/api/now') return new Response('{}', { status: 500 })
   let data: unknown = {}
-  if (path === '/api/models') data = { models: [] }
+  if (path.startsWith('/api/resurface?')) { if (resurfaceFail) return new Response('{}', { status: 500 }); data = { items: resurfaceItems } }
+  else if (path.endsWith('/snooze')) data = {}
+  else if (path === '/api/models') data = { models: [] }
   else if (path === '/api/personas/client') data = { personas: [{ id: 'public', displayName: 'Public persona' }] }
   else if (path === '/api/projects') data = { projects: [] }
   else if (path.startsWith('/api/strands/')) data = { strand: { id: path.split('/').pop(), title: 'Resolved destination' } }
   else if (path === '/api/now') { if (_options?.method === 'PUT') nowIds = JSON.parse(_options.body as string).strandIds; data = { strands: nowIds.map(id => ({ id, title: id })), max, ...(nowMode ? { mode: nowMode } : {}) } }
   else if (path.startsWith('/api/strands?')) data = { strands: [{ id: 's2', title: 'House' }] }
-  else if (path === '/api/captures') { data = result(); saved = true }
+  else if (path === '/api/captures' || (splitLatest && /\/(apply|undo|keep-as-one)$/.test(path))) { data = splitLatest && !path.endsWith('/keep-as-one') ? splitResult() : result(); saved = !splitLatest }
   else if (path.endsWith('/undo')) { status = 'unsorted'; data = result() }
   else if (path.endsWith('/apply')) { status = 'filed'; data = result() }
   else if (path.startsWith('/api/captures?')) data = saved && path.includes('status=' + status) && status !== 'filed' ? { captures: [result().capture], decisions: [result().decision] } : { captures: [], decisions: [] }
@@ -287,27 +300,45 @@ describe('Capture Home rendered', () => {
   expect(all(root).find(n => n.tag === 'details')?.props.open).toBe(true)
   expect(all(root).find(n => n.props['data-testid'] === 'capture-excerpt')?.text).toBe('Roof note')
  })
- it('resolves append proposal outside candidate list by decision.strandId', async () => {
+ // Deciding moved to /unsorted (UnsortedPage.render.spec.ts covers proposal titles and manual filing).
+ it('shows the unsorted tray only as a counted hint that links to /unsorted', async () => {
   saved = true; status = 'unsorted'
-  const original = request.getMockImplementation()!
-  request.mockImplementation(async (url: string, options?: RequestInit) => {
-   if (url.includes('/api/captures?status=unsorted')) {
-    const r = result(); return new Response(JSON.stringify({ captures: [r.capture], decisions: [{ ...r.decision, action: 'append', strandId: 'outside', title: null }] }))
-   }
-   return original(url, options)
-  })
   const { root } = mount(Home); await flush()
-  expect(text(root)).toContain('Resolved destination')
-  expect(request.mock.calls.some(([url]) => url.endsWith('/api/strands/outside'))).toBe(true)
+  const link = all(root).find(n => n.tag === 'a' && n.props.to === '/unsorted')!
+  expect(text(link)).toContain('home.unsortedHint:1')
+  expect(all(root).filter(n => n.tag === 'form')).toHaveLength(1)
+  expect(text(root)).not.toContain('Roof note')
  })
- it('manually files an unsorted capture into a new named strand', async () => {
-  saved = true; status = 'unsorted'
+ it('shows resurface suggestions and snoozes one for seven days', async () => {
+  resurfaceItems = [{ strandId: 'q1', title: 'Quiet topic', lastActivity: '2026-01-01T00:00:00Z', reason: 'dormant', tags: [] }]
   const { root } = mount(Home); await flush()
-  const field = all(root).find(n => n.tag === 'input' && n.props.type === 'text')!
-  ;(field.props['onUpdate:modelValue'] as (v: string) => void)('Better destination'); await nextTick()
-  const form = all(root).filter(n => n.tag === 'form')[1]!
-  ;(form.props.onSubmit as (e: unknown) => void)({ preventDefault() {} }); await flush()
-  expect(JSON.parse(request.mock.calls.find(([url]) => url.endsWith('/apply'))![1].body)).toEqual({ decisionId: 'd1', action: 'new_strand', title: 'Better destination' })
+  expect(text(root)).toContain('home.resurface.title'); expect(text(root)).toContain('Quiet topic')
+  expect(all(root).some(n => n.tag === 'a' && n.props.to === '/strands/q1')).toBe(true)
+  await click(root, 'home.resurface.snooze')
+  const call = request.mock.calls.find(([url]) => url.endsWith('/api/resurface/q1/snooze'))!
+  expect(JSON.parse(call[1].body)).toEqual({ days: 7 })
+  expect(text(root)).toContain('home.resurface.snoozed'); expect(text(root)).not.toContain('Quiet topic')
+ })
+ it('offers a retry when resurface fails, without blocking Home', async () => {
+  resurfaceFail = true
+  const { root } = mount(Home); await flush()
+  expect(text(root)).toContain('home.resurface.error'); expect(text(root)).toContain('capture.unsorted')
+  resurfaceFail = false; resurfaceItems = [{ strandId: 'q2', title: 'Back again', lastActivity: '2026-01-01T00:00:00Z', reason: 'unanswered', tags: [] }]
+  await click(all(root).find(n => n.props['data-testid'] === 'resurface')!, 'common.retry')
+  expect(text(root)).toContain('Back again')
+ })
+ it('lets the latest split capture keep, undo and keep-as-one per part', async () => {
+  splitLatest = true
+  const { root } = mount(Home); await flush(); await draft(root); await send(root)
+  expect(all(root).filter(n => n.props['data-testid'] === 'capture-part')).toHaveLength(2)
+  await click(all(root).find(n => n.props['data-testid'] === 'capture-part')!, 'home.parts.keep')
+  expect(JSON.parse(request.mock.calls.find(([url]) => url.endsWith('/apply'))![1].body)).toEqual({ decisionId: 'p0', partIndex: 0 })
+  expect(text(root)).toContain('home.parts.kept')
+  await click(all(root).filter(n => n.props['data-testid'] === 'capture-part')[1]!, 'home.parts.undo')
+  expect(JSON.parse(request.mock.calls.find(([url]) => url.endsWith('/undo'))![1].body)).toEqual({ partIndex: 1 })
+  await click(root, 'home.parts.keepAsOne')
+  expect(request.mock.calls.some(([url]) => url.endsWith('/keep-as-one'))).toBe(true)
+  expect(text(root)).toContain('home.parts.keptAsOne')
  })
  it('selects newest matching decision independent of server ordering', () => {
   const d = result().decision

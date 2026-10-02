@@ -5,7 +5,8 @@ import ShellNavigation from './ShellNavigation.vue'
 import de from '../i18n/locales/de.json'
 import en from '../i18n/locales/en.json'
 
-const storage = vi.hoisted(() => ({ open: false, unread: 0 }))
+const storage = vi.hoisted(() => ({ open: false, unread: 0, unsorted: '' }))
+vi.mock('~/composables/useUnsortedCount', () => ({ useUnsortedCount: () => ({ label: ref(storage.unsorted), refresh: vi.fn() }) }))
 vi.mock('~/composables/useFeed', () => ({ useFeed: () => ({ unreadCount: ref(storage.unread), refreshCount: vi.fn() }) }))
 vi.mock('~/composables/useChat', () => ({ useChat: () => ({ retainConnection: vi.fn(() => vi.fn()) }) }))
 vi.mock('@vueuse/core', () => ({ useStorage: (key: string, initial: boolean) => {
@@ -34,6 +35,8 @@ async function render(props: Record<string, unknown> = {}, t: (key: string) => s
   return renderToString(app)
 }
 const primary = ['/', '/strands', '/feed', '/boards']
+/** Capture destinations (W5a) sit right after the primary block and are open to everyone. */
+const capture = ['/unsorted', '/week']
 const system = ['/projects', '/memory', '/dashboard', '/tasks', '/cronjobs', '/logs', '/usage', '/email', '/users', '/providers', '/connectors', '/skills', '/personas', '/instructions', '/settings']
 function links(html: string) { return [...html.matchAll(/href="([^"]+)"/g)].map(m => m[1]) }
 describe('Offtangent shell navigation', () => {
@@ -50,10 +53,18 @@ describe('Offtangent shell navigation', () => {
     storage.open = false
     const html = await render()
     // Settings is pinned at the bottom in addition to its place in System.
-    expect(links(html)).toEqual([...primary, ...system, '/settings'])
+    expect(links(html)).toEqual([...primary, ...capture, ...system, '/settings'])
     expect(html).toContain('aria-expanded="false"')
     expect(html).toContain('id="system-navigation"')
     expect(html).toContain('display:none')
+  })
+  it('shows the unsorted counter with a spoken label, and nothing at zero', async () => {
+    storage.unsorted = '3'
+    const html = await render({}, translator(en))
+    expect(html).toMatch(/data-testid="nav-capture-unsorted"[^]*?>3<span class="sr-only">/)
+    expect(html).toContain('href="/week"')
+    storage.unsorted = ''
+    expect(await render()).not.toContain('unsorted.navCount')
   })
   it('restores expanded System state', async () => {
     storage.open = true
@@ -72,8 +83,8 @@ describe('Offtangent shell navigation', () => {
     expect(html).not.toContain('system-navigation')
   })
   it('retains access restrictions: projects and memory for everyone, email when configured', async () => {
-    expect(links(await render({ isAdmin: false }))).toEqual([...primary, '/projects', '/memory'])
-    expect(links(await render({ isAdmin: false, emailConfigured: true }))).toEqual([...primary, '/projects', '/memory', '/email'])
+    expect(links(await render({ isAdmin: false }))).toEqual([...primary, ...capture, '/projects', '/memory'])
+    expect(links(await render({ isAdmin: false, emailConfigured: true }))).toEqual([...primary, ...capture, '/projects', '/memory', '/email'])
     expect(await render({ isAdmin: false })).not.toContain('nav-settings-pinned')
   })
   it('opens the System block by itself on a System route', async () => {

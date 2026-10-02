@@ -1351,6 +1351,34 @@
       "cacheRead": "Cache read",
       "cacheWrite": "Cache write",
       "cacheHitRate": "Cache hit rate"
+    },
+    "detail": {
+      "label": "Task status and actions",
+      "status": {
+        "running": "Running in the background.",
+        "paused": "Paused: waiting for your answer.",
+        "completed": "Finished.",
+        "failed": "Failed.",
+        "unknown": "Status unknown."
+      },
+      "resultHeading": "Result",
+      "errorHeading": "Error",
+      "stop": "Stop task",
+      "stopConfirm": "Stop this task? Work in progress is lost.",
+      "stopYes": "Stop now",
+      "stopped": "Task stopped.",
+      "stopError": "The task could not be stopped. Please try again.",
+      "reply": {
+        "question": "Question:",
+        "label": "Your answer",
+        "send": "Send answer",
+        "sending": "Sending…",
+        "sent": "Answer sent, the task continues.",
+        "running": "The task is running again; answer once it pauses.",
+        "error": "The answer could not be sent. Please try again.",
+        "empty": "Write an answer first.",
+        "tooLong": "The answer is too long (8000 characters at most)."
+      }
     }
   },
   "email": {
@@ -1793,7 +1821,16 @@
     "readError": "Could not mark items read. Your previous read state has been restored.",
     "askError": "Could not ask about this item. Please try again.",
     "recentLimit": "Showing the latest 200 items. Filters apply to these items.",
-    "openBoard": "Open board"
+    "openBoard": "Open board",
+    "personaFilter": "Filter by persona",
+    "allPersonas": "All personas",
+    "personaDefault": "Default persona",
+    "showMore": "Show more",
+    "showLess": "Show less",
+    "day": {
+      "today": "Today",
+      "yesterday": "Yesterday"
+    }
   },
   "projects": {
     "title": "Projects",
@@ -2489,6 +2526,92 @@
       "roleAssistant": "Answer",
       "noText": "(no text)",
       "open": "Jump to message: {role}, {excerpt}"
+    }
+  },
+  "home": {
+    "unsortedHint": "{count} captures wait for a decision. Open Unsorted",
+    "parts": {
+      "label": "Split into {count} parts",
+      "heading": "Split into {count} parts",
+      "number": "Part {n}",
+      "to": "Goes to",
+      "toNew": "New strand:",
+      "state": {
+        "placed": "placed",
+        "open": "proposed",
+        "undone": "taken back"
+      },
+      "keep": "Keep",
+      "move": "Move",
+      "moveTo": "Move to",
+      "undo": "Undo",
+      "keepAsOne": "Keep as one",
+      "keepAsOneHint": "Undo all parts and file the original text as one capture.",
+      "kept": "Part kept.",
+      "moved": "Part moved.",
+      "undone": "Part taken back.",
+      "keptAsOne": "Kept as one capture."
+    },
+    "resurface": {
+      "title": "Pick up again",
+      "ago": "{count} days quiet",
+      "reason": {
+        "dormant": "quiet for a while",
+        "tag_match": "shares a tag with Now",
+        "unanswered": "has an open question"
+      },
+      "snooze": "Snooze 7 days",
+      "snoozeLabel": "Snooze {name} for 7 days",
+      "snoozed": "Snoozed for 7 days.",
+      "snoozeError": "Could not snooze. Please try again.",
+      "error": "Suggestions could not be loaded."
+    }
+  },
+  "week": {
+    "title": "Week",
+    "subtitle": "What went in this week",
+    "navLabel": "Week",
+    "range": "Week {week} · {from} to {to}",
+    "claim": {
+      "none": "Nothing captured this week yet.",
+      "dayOneSingle": "One capture this week.",
+      "dayOne": "{count} captures this week, a start.",
+      "many": "{count} captures in {strands} strands this week."
+    },
+    "tiles": {
+      "captures": "Captures",
+      "strands": "Strands touched",
+      "auto": "Filed without asking",
+      "reviewed": "Reviewed",
+      "undone": "{count} taken back"
+    },
+    "perDay": "Per day",
+    "dayCount": "{day}: {count}",
+    "strands": "Strands this week",
+    "emptyText": "Captures you make on Home show up here, counted per day.",
+    "toHome": "Go to Home",
+    "loadError": "The week could not be loaded.",
+    "basis": "Counted from your newest 200 captures."
+  },
+  "unsorted": {
+    "title": "Unsorted",
+    "subtitle": "Captures the router was unsure about",
+    "navLabel": "Unsorted",
+    "navCount": "{count} waiting",
+    "count": "{count} waiting",
+    "listLabel": "{count} unsorted captures",
+    "lastDecision": "Last decision",
+    "emptyTitle": "Nothing to sort.",
+    "emptyText": "When the router is unsure where a capture belongs, it waits here for you.",
+    "toHome": "Go to Home",
+    "loadError": "Unsorted captures could not be loaded.",
+    "applied": "Filed.",
+    "undone": "Taken back.",
+    "original": {
+      "show": "Original",
+      "part": "This part",
+      "capture": "Whole capture",
+      "sentences": "Sentences {list}"
     }
   }
 }

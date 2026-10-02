@@ -11,7 +11,7 @@
       <span class="flex-1" />
       <span v-if="meta || timestamp" class="shrink-0 whitespace-nowrap text-xs text-muted-foreground tabular-nums">
         <template v-if="meta">{{ meta }}</template>
-        <span v-if="meta && timestamp" class="mx-1.5 opacity-50">·</span>
+        <span v-if="meta && timestamp" class="mx-1.5" aria-hidden="true">·</span>
         <template v-if="timestamp">{{ timestamp }}</template>
       </span>
       <AppIcon

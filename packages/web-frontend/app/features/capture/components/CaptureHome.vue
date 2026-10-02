@@ -4,10 +4,15 @@ import { takeComposerHandoff } from '~/composables/useComposerHandoff'
 import { useCapturesApi, type CaptureResult, type CaptureInput, type ApplyCaptureInput, type UploadDescriptor, type ClientPersona, newestDecision } from '~/api/captures'
 import { useNowApi, type NowSet, type NowStrand } from '~/api/now'
 import { useModelsApi, type SelectableModel } from '~/api/models'
+import { useResurfaceApi, type ResurfaceItem } from '~/api/resurface'
+import type { CapturePart } from '~/api/captures'
 import CaptureDecision from './CaptureDecision.vue'
+import CaptureParts from './CaptureParts.vue'
+import { daysSince, isSplit, trayItems, TRAY_STATUSES } from '../captureParts'
 const api = useCapturesApi()
 const nowApi = useNowApi()
 const modelsApi = useModelsApi()
+const resurfaceApi = useResurfaceApi()
 
 const text = ref('')
 const textarea = ref<HTMLTextAreaElement | null>(null)
@@ -29,6 +34,10 @@ const latest = ref<CaptureResult | null>(null)
  */
 const handoffTarget = ref<{ title: string | null } | null>(null)
 const tray = ref<CaptureResult[]>([])
+/** Resurface row: optional, so its failure never blocks Home. */
+const resurface = ref<ResurfaceItem[]>([])
+const resurfaceError = ref(false)
+const snoozing = ref('')
 const loading = ref(true)
 const loadError = ref(false)
 const now = ref<NowSet | null>(null)
@@ -41,7 +50,6 @@ const agentId = ref('')
 const modelKey = ref('')
 const optionsError = ref(false)
 const more = ref(false)
-const offset = ref(0)
 // Preserve the key for an identical retry after a lost response; changed drafts get a new key.
 let pending: { signature: string; key: string } | null = null
 /**
@@ -60,7 +68,7 @@ function titleFor(result: CaptureResult) {
   return strandTitle(result.capture.strandId || result.decision.strandId || result.decision.createdStrandId)
 }
 async function resolveTitles() {
-  const results = [...tray.value, ...(latest.value ? [latest.value] : [])]
+  const results = latest.value ? [latest.value] : []
   const ids = new Set(results.flatMap(r => [r.capture.strandId, r.decision.strandId, r.decision.createdStrandId, ...r.decision.alternatives.map(a => a.strandId)]).filter((id): id is string => !!id))
   await Promise.all([...ids].filter(id => !strandTitle(id)).map(async id => {
     try { resolved.value[id] = await nowApi.strand(id) } catch { /* Deleted/inaccessible destination: keep the proposal label. */ }
@@ -73,27 +81,35 @@ async function loadOptions() {
     api.personas().then(v => { personas.value = v }).catch(() => { optionsError.value = true }),
   ])
 }
-async function loadTray(append = false) {
-  const next = append ? offset.value + 50 : 0
-  const pages = await Promise.all((['unsorted', 'needs_review', 'failed'] as const).map(status => api.list(status, next)))
-  const items = pages.flatMap(p => p.captures.flatMap(capture => {
-    const decision = newestDecision(capture.id, p.decisions)
-    return decision ? [{ capture, decision }] : []
-  }))
-  tray.value = append ? [...tray.value, ...items] : items
-  await resolveTitles()
-  offset.value = next
+/**
+ * Home only counts the tray; deciding happens on /unsorted. The count stops
+ * at one page per status, `more` turns it into "50+".
+ */
+async function loadTray() {
+  const pages = await Promise.all(TRAY_STATUSES.map(status => api.list(status, 0)))
+  tray.value = trayItems(pages)
   more.value = pages.some(p => p.captures.length === 50)
+}
+async function loadResurface() {
+  resurfaceError.value = false
+  try { resurface.value = await resurfaceApi.list(3) } catch { resurface.value = []; resurfaceError.value = true }
+}
+async function snooze(item: ResurfaceItem) {
+  if (snoozing.value) return
+  snoozing.value = item.strandId; notice.value = ''; error.value = ''
+  try {
+    await resurfaceApi.snooze(item.strandId, 7)
+    resurface.value = resurface.value.filter(entry => entry.strandId !== item.strandId)
+    notice.value = 'home.resurface.snoozed'
+  } catch { error.value = 'home.resurface.snoozeError' }
+  finally { snoozing.value = '' }
 }
 async function load() {
   loading.value = true; loadError.value = false
+  void loadResurface()
   try { await Promise.all([loadTray(), nowApi.get().then(v => { now.value = v }), nowApi.candidates().then(v => { candidates.value = v }), nowApi.projects().then(v => { projects.value = Object.fromEntries(v.map(p => [p.id, p.name])) })]) }
   catch { loadError.value = true }
   finally { loading.value = false }
-}
-async function loadMore() {
-  busy.value = true; errorDetail.value = ''; error.value = ''
-  try { await loadTray(true) } catch { error.value = 'capture.loadError' } finally { busy.value = false }
 }
 async function send() {
   if (!canSend.value) return
@@ -134,6 +150,25 @@ async function act(result: CaptureResult, body?: ApplyCaptureInput) {
   } catch { error.value = 'capture.actionError' }
   finally { busy.value = false }
 }
+/** One part of a split capture: keep, move, undo; or route the whole text as one. */
+async function actPart(run: () => Promise<CaptureResult>, message = '') {
+  if (busy.value) return
+  busy.value = true; errorDetail.value = ''; error.value = ''; notice.value = ''
+  try {
+    latest.value = await run()
+    notice.value = message
+    await load()
+    await resolveTitles()
+  } catch { error.value = 'capture.actionError' }
+  finally { busy.value = false }
+}
+function keepPart(result: CaptureResult, part: CapturePart) { void actPart(() => api.apply(result.capture.id, { decisionId: part.decision.id, partIndex: part.index }), 'home.parts.kept') }
+function movePart(result: CaptureResult, part: CapturePart, strandId: string) { void actPart(() => api.apply(result.capture.id, { decisionId: part.decision.id, action: 'append', strandId, partIndex: part.index }), 'home.parts.moved') }
+function undoPart(result: CaptureResult, part: CapturePart) { void actPart(() => api.undo(result.capture.id, part.index), 'home.parts.undone') }
+function keepAsOne(result: CaptureResult) { void actPart(() => api.keepAsOne(result.capture.id), 'home.parts.keptAsOne') }
+const moveTargets = computed(() => [...(now.value?.strands ?? []), ...candidates.value.filter(c => !now.value?.strands.some(n => n.id === c.id))].map(s => ({ id: s.id, title: s.title })))
+const trayCount = computed(() => more.value ? `${tray.value.length}+` : String(tray.value.length))
+function resurfaceAge(item: ResurfaceItem) { return daysSince(item.lastActivity, Date.now()) ?? 0 }
 /** Throw a tray card away; the notice carries the undo, the card keeps it too. */
 async function discard(result: CaptureResult) {
   if (busy.value) return
@@ -210,7 +245,7 @@ onMounted(() => {
     <p v-if="sending || refreshing" role="status">{{ $t(sending ? 'capture.routingWait' : 'capture.refreshing') }}</p>
     <p v-if="error" role="alert" class="rounded-md border border-destructive p-3">{{ $t(error) }} <span v-if="errorDetail">{{ errorDetail }}</span></p>
     <p v-if="notice" role="status" class="rounded-md bg-muted p-3">{{ $t(notice) }}</p>
-    <section v-if="latest" aria-live="polite" class="space-y-2"><h2 class="font-semibold">{{ $t('capture.latest') }}</h2><CaptureDecision :result="latest" :strand-title="titleFor(latest)" :title-for-id="strandTitle" :busy="busy" @undo="act(latest!)" @apply="act(latest!, $event)" @dismiss="discard(latest!)" /></section>
+    <section v-if="latest" aria-live="polite" class="space-y-2"><h2 class="font-semibold">{{ $t('capture.latest') }}</h2><CaptureDecision :result="latest" :strand-title="titleFor(latest)" :title-for-id="strandTitle" :busy="busy" @undo="act(latest!)" @apply="act(latest!, $event)" @dismiss="discard(latest!)"><CaptureParts v-if="isSplit(latest)" :result="latest" :busy="busy" :strands="moveTargets" :title-for-id="strandTitle" @keep="keepPart(latest!, $event)" @move="(part, id) => movePart(latest!, part, id)" @undo="undoPart(latest!, $event)" @keep-as-one="keepAsOne(latest!)" /></CaptureDecision></section>
     <div v-if="loading" role="status" class="space-y-4" data-testid="skeleton"><span class="sr-only">{{ $t('common.loading') }}</span><div v-for="i in 3" :key="i" class="h-24 animate-pulse rounded-xl bg-muted" /></div>
     <section v-else-if="loadError" role="alert" class="rounded-xl border p-4"><p>{{ $t('capture.loadError') }}</p><Button variant="outline" class="mt-2 min-h-11 rounded-md border px-3" @click="load">{{ $t('common.retry') }}</Button></section>
     <template v-else>
@@ -227,7 +262,27 @@ onMounted(() => {
         </div>
         <p v-if="now && !nowAuto && now.strands.length >= now.max" class="text-sm text-muted-foreground">{{ $t('capture.nowFull') }}</p>
       </section>
-      <section class="space-y-3"><h2 class="text-lg font-semibold">{{ $t('capture.unsorted') }}</h2><p class="text-sm text-muted-foreground">{{ $t('capture.trayHelp') }}</p><p v-if="!tray.length" class="rounded-xl border p-6 text-muted-foreground">{{ $t('capture.empty') }}</p><CaptureDecision v-for="item in tray" :key="item.capture.id" :result="item" :strand-title="titleFor(item)" :title-for-id="strandTitle" :busy="busy" @undo="act(item)" @apply="act(item, $event)" @dismiss="discard(item)" /><Button variant="outline" v-if="more" class="min-h-11 rounded-md border px-3" :disabled="busy" @click="loadMore">{{ $t('capture.more') }}</Button></section>
+      <section class="space-y-2" data-testid="unsorted-hint" aria-labelledby="home-unsorted-heading">
+        <h2 id="home-unsorted-heading" class="text-lg font-semibold">{{ $t('capture.unsorted') }}</h2>
+        <p v-if="!tray.length" class="rounded-xl border p-4 text-muted-foreground">{{ $t('capture.empty') }}</p>
+        <NuxtLink v-else to="/unsorted" data-testid="unsorted-link" class="flex min-h-11 items-center justify-between gap-3 rounded-xl border bg-card p-4 hover:bg-accent focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring">
+          <span class="min-w-0">{{ $t('home.unsortedHint', { count: trayCount }) }}</span>
+          <span class="shrink-0 rounded-full bg-primary px-2.5 py-0.5 text-sm font-semibold text-primary-foreground" aria-hidden="true">{{ trayCount }}</span>
+        </NuxtLink>
+      </section>
+      <section v-if="resurface.length || resurfaceError" class="space-y-2" data-testid="resurface" aria-labelledby="home-resurface-heading">
+        <h2 id="home-resurface-heading" class="text-lg font-semibold">{{ $t('home.resurface.title') }}</h2>
+        <p v-if="resurfaceError" role="alert" class="flex flex-wrap items-center gap-2 text-sm text-muted-foreground">{{ $t('home.resurface.error') }} <Button variant="outline" type="button" class="min-h-11" @click="loadResurface">{{ $t('common.retry') }}</Button></p>
+        <ul v-else class="space-y-2">
+          <li v-for="item in resurface" :key="item.strandId" class="flex flex-wrap items-center gap-2 rounded-xl border bg-card p-3 [overflow-wrap:anywhere]" data-testid="resurface-item">
+            <NuxtLink :to="`/strands/${encodeURIComponent(item.strandId)}`" class="flex min-h-11 min-w-0 flex-1 flex-col justify-center rounded-md focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring">
+              <span class="font-medium">{{ item.title || $t('capture.untitled') }}</span>
+              <span class="text-sm text-muted-foreground">{{ $t('home.resurface.ago', { count: resurfaceAge(item) }) }} · {{ $t(`home.resurface.reason.${item.reason}`) }}</span>
+            </NuxtLink>
+            <Button variant="outline" type="button" class="min-h-11 shrink-0" :disabled="!!snoozing" :aria-label="$t('home.resurface.snoozeLabel', { name: item.title || $t('capture.untitled') })" @click="snooze(item)">{{ $t('home.resurface.snooze') }}</Button>
+          </li>
+        </ul>
+      </section>
     </template>
   </main>
 </template>

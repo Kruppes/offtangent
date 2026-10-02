@@ -81,6 +81,9 @@
       <span :title="$t('tasks.columns.cost')">${{ (taskInfo.estimatedCost ?? 0).toFixed(4) }}</span>
     </div>
 
+    <p v-if="controlNotice" role="status" class="mx-3 mt-2 rounded-md bg-muted p-2 text-sm md:mx-5" data-testid="task-notice">{{ $t(controlNotice) }}</p>
+    <TaskControls v-if="taskInfo && !loading" :task="taskInfo" :events="events" @changed="onControlChanged" @follow-up="(id: string) => emit('restarted', id)" />
+
     <Alert v-if="error && events.length > 0" variant="destructive" class="m-4">
       <AlertDescription>{{ error }}</AlertDescription>
     </Alert>
@@ -92,8 +95,9 @@
     </div>
 
     <!-- Error state -->
-    <Alert v-else-if="error && events.length === 0" variant="destructive" class="m-4">
-      <AlertDescription>{{ error }}</AlertDescription>
+    <Alert v-else-if="error && events.length === 0" variant="destructive" role="alert" class="m-4 flex flex-wrap items-center gap-3">
+      <AlertDescription class="flex-1">{{ error }}</AlertDescription>
+      <Button variant="outline" class="min-h-[44px]" data-testid="task-retry" @click="loadTaskEvents(taskId)">{{ $t('common.retry') }}</Button>
     </Alert>
 
     <!-- Empty state -->
@@ -339,6 +343,7 @@ import { buildProviderModelOptions } from '~/utils/providerModelOptions'
 import TaskEventCard from '~/features/tasks/components/TaskEventCard.vue'
 import { useTaskEvents } from '~/features/tasks/composables/useTaskEvents'
 import { useTasksApi } from '~/api/tasks'
+import TaskControls from './TaskControls.vue'
 import { formatToolName, getToolCallSummary } from '~/utils/toolNameFormat'
 import { useProviders } from '~/composables/useProviders'
 import { taskStatusVariant } from '~/features/tasks/utils/taskFormat'
@@ -595,12 +600,20 @@ function parseStructuredResponse(text: string): { status: string; statusLabel: s
   return { status: rawStatus, statusLabel, summary }
 }
 
+/** Notice of the last stop / answer; survives the reload that follows it. */
+const controlNotice = ref('')
+function onControlChanged(notice: string) {
+  controlNotice.value = notice
+  void loadTaskEvents(props.taskId)
+}
+
 onMounted(() => {
   loadTaskEvents(props.taskId)
 })
 
 watch(() => props.taskId, (newId) => {
   disconnect()
+  controlNotice.value = ''
   expandedItems.value.clear()
   autoScroll.value = true
   lastScrollTop = 0

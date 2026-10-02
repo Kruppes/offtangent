@@ -37,3 +37,18 @@ export function navItemAllowed(item: SystemNavItem, rights: { isAdmin: boolean; 
   if (item.access === 'email') return rights.isAdmin || rights.emailConfigured
   return rights.isAdmin
 }
+/**
+ * Capture follow-ups (the app reaches them from Home): directly below the main
+ * areas on desktop, at the top of the "More" sheet on mobile. `labelKey` is a
+ * full i18n key; Unsorted carries the tray counter.
+ */
+export const CAPTURE_NAV_ITEMS = [
+  { path: '/unsorted', labelKey: 'unsorted.navLabel', icon: 'filter', counter: 'unsorted' },
+  { path: '/week', labelKey: 'week.navLabel', icon: 'calendar', counter: null },
+] as const
+export type CaptureNavItem = typeof CAPTURE_NAV_ITEMS[number]
+/** Badge text of a counter: nothing at zero, "50+" when the first page was full. */
+export function counterLabel(count: number, more: boolean): string {
+  if (count <= 0) return ''
+  return more ? `${count}+` : String(count)
+}

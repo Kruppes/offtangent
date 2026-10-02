@@ -67,6 +67,15 @@ interface TaskResponse {
   task: Task
 }
 
+/** `POST /api/tasks/:id/reply` (API contract 2026-09-18). */
+export const TASK_REPLY_MAX_LENGTH = 8000
+export interface TaskReplyResult {
+  outcome: 'resumed' | 'running' | 'follow_up'
+  taskId: string
+  followUpTaskId?: string
+  message: string
+}
+
 export interface TaskInfo {
   promptTokens?: number
   completionTokens?: number
@@ -161,6 +170,11 @@ export function useTasksApi() {
     return apiFetch<TaskResponse>(`/api/tasks/${taskId}/kill`, { method: 'POST' })
   }
 
+  /** Answer a paused task (resumes it) or start a follow-up of a finished one. 409 = still running. */
+  async function replyToTask(taskId: string, text: string): Promise<TaskReplyResult> {
+    return apiFetch<TaskReplyResult>(`/api/tasks/${encodeURIComponent(taskId)}/reply`, { method: 'POST', body: JSON.stringify({ text }) })
+  }
+
   async function restartTask(
     taskId: string,
     payload: RestartTaskPayload = {},
@@ -177,6 +191,7 @@ export function useTasksApi() {
     getTask,
     getTaskEvents,
     killTask,
+    replyToTask,
     restartTask,
   }
 }

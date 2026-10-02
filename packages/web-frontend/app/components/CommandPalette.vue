@@ -13,7 +13,7 @@ import {
   PALETTE_MESSAGE_LIMIT, PALETTE_SEARCH_DEBOUNCE_MS, PALETTE_STRAND_LIMIT, buildPaletteList, createLatestRequest, groupPaletteList,
   keepCursor, moveCursor, paletteSearchTerm, type PaletteEntry, type PaletteKey,
 } from '~/utils/commandPalette'
-import { PRIMARY_NAV_ITEMS, SYSTEM_NAV_ITEMS, navItemAllowed } from '~/utils/shellNav'
+import { CAPTURE_NAV_ITEMS, PRIMARY_NAV_ITEMS, SYSTEM_NAV_ITEMS, navItemAllowed } from '~/utils/shellNav'
 import { displayKeys, isMacPlatform } from '~/utils/shortcuts'
 import { parseBackendTimestamp } from '~/utils/datetime'
 import { useShellCommands } from '~/composables/useShellCommands'
@@ -107,13 +107,20 @@ async function newStrand() {
   setTimeout(() => document.querySelector<HTMLTextAreaElement>('[data-testid="home-scroll"] textarea')?.focus(), 50)
 }
 
-const pages = computed<Entry[]>(() => [
-  ...PRIMARY_NAV_ITEMS.map(item => ({ ...item, section: '' })),
-  ...SYSTEM_NAV_ITEMS.filter(item => navItemAllowed(item, { isAdmin: props.isAdmin, emailConfigured: props.emailConfigured })).map(item => ({ ...item, section: t('nav.system') })),
-].map(item => ({
-  id: `page:${item.path}`, group: 'pages' as const, label: t(`nav.${item.label}`), hint: item.section, icon: item.icon,
-  keywords: [item.label, item.path], run: () => go(item.path),
-})))
+const pages = computed<Entry[]>(() => {
+  const nav: Entry[] = [
+    ...PRIMARY_NAV_ITEMS.map(item => ({ ...item, section: '' })),
+    ...SYSTEM_NAV_ITEMS.filter(item => navItemAllowed(item, { isAdmin: props.isAdmin, emailConfigured: props.emailConfigured })).map(item => ({ ...item, section: t('nav.system') })),
+  ].map(item => ({
+    id: `page:${item.path}`, group: 'pages' as const, label: t(`nav.${item.label}`), hint: item.section, icon: item.icon,
+    keywords: [item.label, item.path], run: () => go(item.path),
+  }))
+  const capture: Entry[] = CAPTURE_NAV_ITEMS.map(item => ({
+    id: `page:${item.path}`, group: 'pages' as const, label: t(item.labelKey), hint: '', icon: item.icon,
+    keywords: [item.path.slice(1), item.path], run: () => go(item.path),
+  }))
+  return [...nav, ...capture]
+})
 
 const actions = computed<Entry[]>(() => {
   const list: Entry[] = [

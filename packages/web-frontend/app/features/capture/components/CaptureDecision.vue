@@ -37,5 +37,7 @@ defineEmits<{ undo: []; apply: [body: ApplyCaptureInput]; dismiss: [] }>()
       <label class="block">{{ $t('capture.newStrandTitle') }}<input v-model="newTitle" type="text" required maxlength="200" :disabled="busy" class="focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 mt-1 block min-h-11 w-full rounded-md border border-input bg-background px-3" /></label>
       <Button type="submit" variant="outline" class="min-h-11" :disabled="busy || !newTitle.trim()">{{ $t('capture.fileNew') }}</Button>
     </form>
+    <!-- Split captures: the per-part rows (CaptureParts) go here. -->
+    <slot />
   </article>
 </template>

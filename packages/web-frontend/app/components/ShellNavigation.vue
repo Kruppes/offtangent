@@ -3,16 +3,19 @@ import { computed, nextTick, onMounted, onUnmounted, ref, watch } from 'vue'
 import { useFeed } from '~/composables/useFeed'
 import { useChat } from '~/composables/useChat'
 import { useStorage } from '@vueuse/core'
-import { PRIMARY_NAV_ITEMS, SYSTEM_NAV_ITEMS, navItemAllowed } from '~/utils/shellNav'
+import { CAPTURE_NAV_ITEMS, PRIMARY_NAV_ITEMS, SYSTEM_NAV_ITEMS, navItemAllowed } from '~/utils/shellNav'
+import { useUnsortedCount } from '~/composables/useUnsortedCount'
 
 const props = withDefaults(defineProps<{ mobile?: boolean; compact?: boolean; isAdmin?: boolean; emailConfigured?: boolean; path: string }>(), {
   mobile: false, compact: false, isAdmin: false, emailConfigured: false,
 })
 const { unreadCount, refreshCount } = useFeed()
+const unsorted = useUnsortedCount()
 const chat = useChat()
 let releaseConnection: (() => void) | undefined
 onMounted(() => {
   void refreshCount()
+  void unsorted.refresh()
   releaseConnection = chat.retainConnection()
 })
 onUnmounted(() => {
@@ -22,12 +25,16 @@ onUnmounted(() => {
 const emit = defineEmits<{ navigate: [] }>()
 const systemOpen = useStorage('offtangent-system-navigation-open', false)
 const primary = PRIMARY_NAV_ITEMS
+const captureItems = CAPTURE_NAV_ITEMS
 const systemItems = computed(() => SYSTEM_NAV_ITEMS.filter(item => navItemAllowed(item, { isAdmin: props.isAdmin, emailConfigured: props.emailConfigured })))
 const settingsItem = computed(() => systemItems.value.find(item => item.path === '/settings') ?? null)
 function active(current: string, target: string) {
   return current === target || (target !== '/' && current.startsWith(`${target}/`))
 }
 const inSystem = computed(() => systemItems.value.some(item => active(props.path, item.path)))
+const inCapture = computed(() => captureItems.some(item => active(props.path, item.path)))
+// Leaving the tray (a decision may have changed it) refreshes the badge.
+watch(() => props.path, (_next, previous) => { if (previous === '/unsorted' || previous === '/') void unsorted.refresh() })
 /**
  * The block opens by itself while a System page is shown. A click on the
  * header still closes it for that page; the next navigation restores the rule.
@@ -111,11 +118,12 @@ function navigateFromSheet() {
       <span class="w-full truncate px-0.5 text-center">{{ $t(`nav.${item.label}`) }}</span>
       <span v-if="item.path === '/feed' && unreadCount > 0" class="h-2 w-2 shrink-0 rounded-full bg-primary" role="status"><span class="sr-only">{{ $t('feed.unreadCount', { count: unreadCount }) }}</span></span>
     </NuxtLink>
-    <button ref="moreButton" type="button" data-testid="nav-more" class="flex min-h-14 min-w-0 flex-col items-center justify-center gap-1 text-2xs font-medium"
-      :class="inSystem || sheetOpen ? 'bg-primary/10 text-primary' : 'text-muted-foreground'"
+    <button ref="moreButton" type="button" data-testid="nav-more" class="relative flex min-h-14 min-w-0 flex-col items-center justify-center gap-1 text-2xs font-medium"
+      :class="inSystem || inCapture || sheetOpen ? 'bg-primary/10 text-primary' : 'text-muted-foreground'"
       :aria-expanded="sheetOpen" aria-controls="system-sheet" aria-haspopup="dialog" @click="sheetOpen ? closeSheet() : openSheet()">
       <AppIcon name="more" />
       <span class="w-full truncate px-0.5 text-center">{{ $t('nav.more') }}</span>
+      <span v-if="unsorted.label.value" class="absolute right-3 top-1.5 h-2 w-2 rounded-full bg-primary" aria-hidden="true" />
     </button>
     <Teleport to="body">
       <div v-if="sheetOpen" class="fixed inset-0 z-50 md:hidden">
@@ -127,6 +135,14 @@ function navigateFromSheet() {
             <button ref="sheetClose" type="button" data-testid="nav-sheet-close" class="inline-flex h-11 w-11 items-center justify-center rounded-md text-muted-foreground hover:bg-accent focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring" :aria-label="$t('common.close')" @click="closeSheet()">
               <AppIcon name="close" />
             </button>
+          </div>
+          <div class="mb-2 grid grid-cols-1 gap-1 border-b border-border pb-2 min-[360px]:grid-cols-2" data-testid="nav-sheet-capture">
+            <NuxtLink v-for="item in captureItems" :key="item.path" :to="item.path" :aria-current="active(path, item.path) ? 'page' : undefined"
+              class="flex min-h-12 min-w-0 items-center gap-3 rounded-lg px-3 text-sm font-medium"
+              :class="active(path, item.path) ? 'bg-primary/10 text-primary' : 'text-foreground hover:bg-accent'" @click="navigateFromSheet">
+              <AppIcon :name="item.icon" /><span class="min-w-0 flex-1 truncate">{{ $t(item.labelKey) }}</span>
+              <span v-if="item.counter && unsorted.label.value" class="shrink-0 rounded-full bg-primary px-2 text-xs font-semibold text-primary-foreground">{{ unsorted.label.value }}<span class="sr-only"> {{ $t('unsorted.navCount', { count: unsorted.label.value }) }}</span></span>
+            </NuxtLink>
           </div>
           <div class="grid grid-cols-1 gap-1 min-[360px]:grid-cols-2">
             <NuxtLink v-for="item in systemItems" :key="item.path" :to="item.path" :aria-current="active(path, item.path) ? 'page' : undefined"
@@ -157,6 +173,23 @@ function navigateFromSheet() {
           :class="entryClass(active(path, item.path))" @click="emit('navigate')">
           <AppIcon :name="item.icon" /><span>{{ $t(`nav.${item.label}`) }}</span>
           <span v-if="item.path === '/feed' && unreadCount > 0" class="h-2 w-2 shrink-0 rounded-full bg-primary" role="status"><span class="sr-only">{{ $t('feed.unreadCount', { count: unreadCount }) }}</span></span>
+        </NuxtLink>
+      </template>
+      <template v-for="item in captureItems" :key="item.path">
+        <Tooltip v-if="compact">
+          <TooltipTrigger as-child>
+            <NuxtLink :to="item.path" :aria-current="active(path, item.path) ? 'page' : undefined" :aria-label="$t(item.labelKey)" :data-testid="`nav-capture-${item.path.slice(1)}`"
+              :class="entryClass(active(path, item.path))" @click="emit('navigate')">
+              <AppIcon :name="item.icon" />
+              <span v-if="item.counter && unsorted.label.value" class="absolute right-1.5 top-1.5 h-2 w-2 rounded-full bg-primary" role="status"><span class="sr-only">{{ $t('unsorted.navCount', { count: unsorted.label.value }) }}</span></span>
+            </NuxtLink>
+          </TooltipTrigger>
+          <TooltipContent side="right">{{ $t(item.labelKey) }}</TooltipContent>
+        </Tooltip>
+        <NuxtLink v-else :to="item.path" :aria-current="active(path, item.path) ? 'page' : undefined" :data-testid="`nav-capture-${item.path.slice(1)}`"
+          :class="entryClass(active(path, item.path))" @click="emit('navigate')">
+          <AppIcon :name="item.icon" /><span class="min-w-0 flex-1 truncate">{{ $t(item.labelKey) }}</span>
+          <span v-if="item.counter && unsorted.label.value" class="shrink-0 rounded-full bg-primary px-2 text-xs font-semibold text-primary-foreground">{{ unsorted.label.value }}<span class="sr-only"> {{ $t('unsorted.navCount', { count: unsorted.label.value }) }}</span></span>
         </NuxtLink>
       </template>
     </div>

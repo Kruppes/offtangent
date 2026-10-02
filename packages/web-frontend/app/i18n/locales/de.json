@@ -1351,6 +1351,34 @@
       "cacheRead": "Cache-Lesen",
       "cacheWrite": "Cache-Schreiben",
       "cacheHitRate": "Cache-Trefferquote"
+    },
+    "detail": {
+      "label": "Task-Status und Aktionen",
+      "status": {
+        "running": "Läuft im Hintergrund.",
+        "paused": "Pausiert: wartet auf deine Antwort.",
+        "completed": "Fertig.",
+        "failed": "Fehlgeschlagen.",
+        "unknown": "Status unbekannt."
+      },
+      "resultHeading": "Ergebnis",
+      "errorHeading": "Fehler",
+      "stop": "Task stoppen",
+      "stopConfirm": "Diesen Task stoppen? Laufende Arbeit geht verloren.",
+      "stopYes": "Jetzt stoppen",
+      "stopped": "Task gestoppt.",
+      "stopError": "Der Task konnte nicht gestoppt werden. Bitte noch einmal versuchen.",
+      "reply": {
+        "question": "Frage:",
+        "label": "Deine Antwort",
+        "send": "Antwort senden",
+        "sending": "Wird gesendet…",
+        "sent": "Antwort gesendet, der Task läuft weiter.",
+        "running": "Der Task läuft wieder; antworte, sobald er pausiert.",
+        "error": "Die Antwort konnte nicht gesendet werden. Bitte noch einmal versuchen.",
+        "empty": "Schreib zuerst eine Antwort.",
+        "tooLong": "Die Antwort ist zu lang (höchstens 8000 Zeichen)."
+      }
     }
   },
   "email": {
@@ -1793,7 +1821,16 @@
     "readError": "Einträge konnten nicht als gelesen markiert werden. Der vorherige Lesestatus wurde wiederhergestellt.",
     "askError": "Nachfrage zu diesem Eintrag fehlgeschlagen. Bitte erneut versuchen.",
     "recentLimit": "Die neuesten 200 Einträge werden angezeigt. Filter gelten für diese Einträge.",
-    "openBoard": "Board öffnen"
+    "openBoard": "Board öffnen",
+    "personaFilter": "Nach Persona filtern",
+    "allPersonas": "Alle Personas",
+    "personaDefault": "Standard-Persona",
+    "showMore": "Mehr zeigen",
+    "showLess": "Weniger zeigen",
+    "day": {
+      "today": "Heute",
+      "yesterday": "Gestern"
+    }
   },
   "projects": {
     "title": "Projekte",
@@ -2489,6 +2526,92 @@
       "roleAssistant": "Antwort",
       "noText": "(ohne Text)",
       "open": "Zur Nachricht springen: {role}, {excerpt}"
+    }
+  },
+  "home": {
+    "unsortedHint": "{count} Captures warten auf eine Entscheidung. Unsortiert öffnen",
+    "parts": {
+      "label": "In {count} Teile aufgeteilt",
+      "heading": "In {count} Teile aufgeteilt",
+      "number": "Teil {n}",
+      "to": "Geht nach",
+      "toNew": "Neuer Strand:",
+      "state": {
+        "placed": "abgelegt",
+        "open": "Vorschlag",
+        "undone": "zurückgenommen"
+      },
+      "keep": "Behalten",
+      "move": "Verschieben",
+      "moveTo": "Verschieben nach",
+      "undo": "Rückgängig",
+      "keepAsOne": "Als eins behalten",
+      "keepAsOneHint": "Alle Teile zurücknehmen und den Originaltext als ein Capture ablegen.",
+      "kept": "Teil behalten.",
+      "moved": "Teil verschoben.",
+      "undone": "Teil zurückgenommen.",
+      "keptAsOne": "Als ein Capture behalten."
+    },
+    "resurface": {
+      "title": "Wieder aufgreifen",
+      "ago": "seit {count} Tagen ruhig",
+      "reason": {
+        "dormant": "länger ruhig",
+        "tag_match": "teilt ein Tag mit Jetzt",
+        "unanswered": "hat eine offene Frage"
+      },
+      "snooze": "7 Tage ausblenden",
+      "snoozeLabel": "{name} für 7 Tage ausblenden",
+      "snoozed": "Für 7 Tage ausgeblendet.",
+      "snoozeError": "Ausblenden hat nicht geklappt. Bitte noch einmal versuchen.",
+      "error": "Vorschläge konnten nicht geladen werden."
+    }
+  },
+  "week": {
+    "title": "Woche",
+    "subtitle": "Was diese Woche hereinkam",
+    "navLabel": "Woche",
+    "range": "KW {week} · {from} bis {to}",
+    "claim": {
+      "none": "Diese Woche noch nichts erfasst.",
+      "dayOneSingle": "Ein Capture diese Woche.",
+      "dayOne": "{count} Captures diese Woche, ein Anfang.",
+      "many": "{count} Captures in {strands} Strands diese Woche."
+    },
+    "tiles": {
+      "captures": "Captures",
+      "strands": "Berührte Strands",
+      "auto": "Ohne Rückfrage abgelegt",
+      "reviewed": "Geprüft",
+      "undone": "{count} zurückgenommen"
+    },
+    "perDay": "Pro Tag",
+    "dayCount": "{day}: {count}",
+    "strands": "Strands dieser Woche",
+    "emptyText": "Captures von Home erscheinen hier, gezählt pro Tag.",
+    "toHome": "Zu Home",
+    "loadError": "Die Woche konnte nicht geladen werden.",
+    "basis": "Gezählt aus deinen neuesten 200 Captures."
+  },
+  "unsorted": {
+    "title": "Unsortiert",
+    "subtitle": "Captures, bei denen der Router unsicher war",
+    "navLabel": "Unsortiert",
+    "navCount": "{count} warten",
+    "count": "{count} warten",
+    "listLabel": "{count} unsortierte Captures",
+    "lastDecision": "Letzte Entscheidung",
+    "emptyTitle": "Nichts zu sortieren.",
+    "emptyText": "Wenn der Router nicht weiß, wohin ein Capture gehört, wartet es hier auf dich.",
+    "toHome": "Zu Home",
+    "loadError": "Unsortierte Captures konnten nicht geladen werden.",
+    "applied": "Abgelegt.",
+    "undone": "Zurückgenommen.",
+    "original": {
+      "show": "Original",
+      "part": "Dieser Teil",
+      "capture": "Ganzes Capture",
+      "sentences": "Sätze {list}"
     }
   }
 }
