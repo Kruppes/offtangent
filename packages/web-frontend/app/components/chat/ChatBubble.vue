@@ -82,7 +82,10 @@
         <AppIcon name="lock" size="sm" class="h-3 w-3" />
         <span>{{ $t('chat.secretsSealed', { count: msg.sealedCount ?? 0 }) }}</span>
       </p>
-      <ChatAttachments v-if="msg.attachments?.length" :attachments="msg.attachments" />
+      <!-- The spoken version of this answer (also one made in the app), shown
+           as its own element; it is played, never generated again. -->
+      <VoiceNoteBubble v-if="msg.role === 'assistant' && voiceNoteOf(msg)" :url="voiceNoteOf(msg)!.url" :seconds="voiceNoteOf(msg)!.seconds" kind="assistant" />
+      <ChatAttachments v-if="msg.attachments?.length" :attachments="msg.attachments" :role="msg.role" />
       <ChatArtifactLinks v-if="msg.artifacts?.length" :artifacts="msg.artifacts" :attachments="msg.attachments" :fences="artifactFences(msg)" />
       <div v-if="msg.streaming" class="mt-1.5 flex items-center gap-1"><span class="h-1.5 w-1.5 animate-pulse rounded-full bg-current opacity-60" /><span class="h-1.5 w-1.5 animate-pulse rounded-full bg-current opacity-60" /><span class="h-1.5 w-1.5 animate-pulse rounded-full bg-current opacity-60" /></div>
       <div v-if="msg.timestamp && !msg.streaming" class="mt-1 flex items-center justify-end gap-1.5">
@@ -90,21 +93,9 @@
       </div>
     </div>
     <ChatMessageActions v-if="msg.role === 'assistant' && !msg.streaming && msg.content.trim()" :markdown="msg.content">
-      <button
-        v-if="ttsEnabled"
-        type="button"
-        class="inline-flex min-h-11 items-center gap-1.5 rounded-md px-2 text-sm text-muted-foreground transition-colors hover:bg-muted hover:text-foreground focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary pointer-fine:min-h-8"
-        :title="ttsPlayingIndex === index ? $t('chat.ttsStop') : $t('chat.ttsPlay')"
-        :aria-pressed="ttsPlayingIndex === index"
-        data-action="read-aloud"
-        @click.stop="handleTtsPlay(msg.content, index)"
-      >
-        <AppIcon v-if="ttsLoading && ttsPlayingIndex === index" name="loader" size="sm" class="animate-spin motion-reduce:animate-none" />
-        <AppIcon v-else-if="ttsPlayingIndex === index" name="square" size="sm" />
-        <AppIcon v-else name="volume" size="sm" />
-        <span>{{ ttsPlayingIndex === index ? $t('chat.ttsStop') : $t('chat.ttsPlay') }}</span>
-      </button>
+      <MessageSpeechActions :message-id="msg.id" :text="msg.content" :has-voice-note="!!voiceNoteOf(msg)" />
     </ChatMessageActions>
+    <MessageSpeechPanel v-if="msg.role === 'assistant' && !msg.streaming && msg.content.trim()" :message-id="msg.id" :text="msg.content" />
     <ChatInteractionBlock
       v-if="interactionCard(msg)"
       class="mt-2 w-full max-w-xl"
@@ -123,10 +114,14 @@ import { useChatView } from '~/composables/chat/chatViewContext'
 import SecretHandleText from '../SecretHandleText.vue'
 import ChatArtifactLinks from './ChatArtifactLinks.vue'
 import ChatMessageActions from './ChatMessageActions.vue'
+import MessageSpeechActions from './MessageSpeechActions.vue'
+import MessageSpeechPanel from './MessageSpeechPanel.vue'
+import VoiceNoteBubble from '../audio/VoiceNoteBubble.vue'
+import { useMessageSpeech } from '~/composables/useMessageSpeech'
 
 /**
  * A speaking row: avatar, the message bubble (speaker, body, attachments,
- * canvases, time and read-aloud) and — as a sibling below the bubble, not a
+ * canvases, voice note and time), its actions (copy, read aloud, audio summary) and — as a sibling below the bubble, not a
  * box inside it — the interaction card (SPEC 7.4c).
  */
 defineProps<{ msg: ChatMessage; index: number }>()
@@ -134,14 +129,15 @@ defineProps<{ msg: ChatMessage; index: number }>()
 const { formatTimeShort } = useFormat()
 const { renderMarkdown } = useMarkdown()
 const {
-  user, avatar, persona, tts,
+  user, avatar, persona,
   interactionCard, messageTextSegments, hasBubbleBody, answeredElsewhere, artifactFences, handleOwnAnswer,
 } = useChatView()
 const { userAvatarUrl, avatarFailed, userInitial, onAvatarError } = avatar
 const { label: personaLabel, initials: personaInitials, color: personaColor } = persona
-const { playingIndex: ttsPlayingIndex, loading: ttsLoading, ttsEnabled, play: ttsPlay } = tts
+const speech = useMessageSpeech()
 
-function handleTtsPlay(content: string, index: number) {
-  ttsPlay(content, index)
+/** Stored note of the message, or one created in this tab since the load. */
+function voiceNoteOf(msg: ChatMessage) {
+  return msg.voiceNote ?? speech.voiceNoteFor(msg.id)
 }
 </script>

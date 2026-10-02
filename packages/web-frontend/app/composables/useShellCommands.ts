@@ -8,7 +8,7 @@
  */
 import { computed, onBeforeUnmount, shallowRef, type ComputedRef } from 'vue'
 
-export type ShellCommandId = 'dictation.start' | 'strand.archive'
+export type ShellCommandId = 'dictation.start' | 'strand.archive' | 'speech.readLast' | 'speech.summaryLast'
 
 interface Provider {
   run: () => void | Promise<void>

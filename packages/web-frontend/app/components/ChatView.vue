@@ -87,6 +87,8 @@ import StrandCanvas from './StrandCanvas.vue'
 import { useStrandCanvas } from '~/composables/useStrandCanvas'
 import type { ArtifactRef } from '~/api/artifacts'
 import { provideChatView } from '~/composables/chat/chatViewContext'
+import { provideCommand } from '~/composables/useShellCommands'
+import { useMessageSpeech } from '~/composables/useMessageSpeech'
 import { useChatActions } from '~/composables/chat/useChatActions'
 import { useChatFilters } from '~/composables/chat/useChatFilters'
 import { useChatScroll } from '~/composables/chat/useChatScroll'
@@ -201,6 +203,18 @@ const { error: ttsError, clearError: clearTtsError } = tts
 const stt = useStt()
 const draft = useComposerDraft()
 const scroll = useChatScroll(messages)
+
+// Palette: read aloud / audio summary of the newest finished answer (W4b).
+const speech = useMessageSpeech()
+const lastAnswer = computed(() => {
+  for (let i = messages.value.length - 1; i >= 0; i--) {
+    const m = messages.value[i]!
+    if (m.role === 'assistant' && !m.streaming && m.content.trim()) return m
+  }
+  return null
+})
+provideCommand('speech.readLast', async () => { const m = lastAnswer.value; if (m) await speech.speak('read', m.id, m.content) }, () => tts.ttsEnabled.value && !!lastAnswer.value)
+provideCommand('speech.summaryLast', async () => { const m = lastAnswer.value; if (m) await speech.speak('summary', m.id, m.content) }, () => tts.ttsEnabled.value && !!lastAnswer.value)
 const { isNearBottom, jumpToBottom, scrollToBottom } = scroll
 const { isDraggingFiles, handleDragEnter, handleDragOver, handleDragLeave, handleDrop } = useFileDrop(draft.addFiles)
 

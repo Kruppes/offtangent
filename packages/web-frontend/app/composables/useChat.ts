@@ -7,6 +7,8 @@ import type { ArtifactRef } from '~/api/artifacts'
 import type { FeedItem } from '~/api/feed'
 import { readInteractionAnswers, type InteractionAnswerState } from '@axiom/core/contracts'
 import { ApiError } from './useApi'
+import { readVoiceNote, type VoiceNoteRef } from '~/api/speech'
+import { rememberVoiceNote } from './useMessageSpeech'
 import {
   applyTaskActivityFrame,
   isTaskActivityFrame,
@@ -134,6 +136,11 @@ export interface ChatMessage {
   timestamp?: string
   streaming?: boolean
   attachments?: ChatAttachment[]
+  /**
+   * The spoken version of an answer (`metadata.voiceNote`, core `VoiceNote`),
+   * also one the companion app created. Played, never generated again.
+   */
+  voiceNote?: VoiceNoteRef
   /** The source channel (for cross-channel messages) */
   source?: 'web' | 'telegram'
   /** Sender display name (for cross-channel messages) */
@@ -243,7 +250,7 @@ interface WsMessage {
   revision?: number
   /** Board `as_of` timestamp after a `publish_board` (for type='board_updated'). */
   asOf?: string
-  type: 'feed_item' | 'board_updated' | 'canvas_view_updated' | 'text' | 'thinking' | 'tool_call_start' | 'tool_call_end' | 'error' | 'done' | 'system' | 'external_user_message' | 'session_end' | 'session_summary' | 'reminder' | 'task_completed' | 'task_failed' | 'task_question' | 'task_status_update' | 'task_started' | 'task_progress' | 'task_finished' | 'pong' | 'attachment' | 'chat_action' | 'chat_action_resolved' | 'turn_replay_start' | 'turn_replay_end' | 'stall_warning' | 'stall_resolved' | 'retry_scheduled' | 'queued' | 'message_ack'
+  type: 'feed_item' | 'board_updated' | 'canvas_view_updated' | 'text' | 'thinking' | 'tool_call_start' | 'tool_call_end' | 'error' | 'done' | 'system' | 'external_user_message' | 'session_end' | 'session_summary' | 'reminder' | 'task_completed' | 'task_failed' | 'task_question' | 'task_status_update' | 'task_started' | 'task_progress' | 'task_finished' | 'pong' | 'attachment' | 'chat_action' | 'chat_action_resolved' | 'turn_replay_start' | 'turn_replay_end' | 'voice_note' | 'stall_warning' | 'stall_resolved' | 'retry_scheduled' | 'queued' | 'message_ack'
   text?: string
   /** For `message_ack`: echo of the idempotency key we sent. */
   clientMessageId?: string
@@ -269,6 +276,8 @@ interface WsMessage {
   messageId?: number
   /** Uploaded file the agent sent for the current turn (for type='attachment') */
   attachment?: ChatAttachment
+  /** Stored voice note of the answer `messageId` (for type='voice_note'). */
+  voiceNote?: unknown
   /** Thinking delta (for type='thinking') */
   thinking?: string
   toolName?: string
@@ -831,6 +840,10 @@ export function mapHistoryRows(rows: ChatHistoryRow[]): ChatMessage[] {
       ...(m.role === 'user' && m.sealed?.length ? { sealedCount: m.sealed.length } : {}) }
     if (m.role === 'assistant' && meta.telegramDelivered) {
       base.telegramDelivered = true
+    }
+    if (m.role === 'assistant') {
+      const voiceNote = readVoiceNote(meta.voiceNote)
+      if (voiceNote) base.voiceNote = voiceNote
     }
     if (meta.type === 'task_injection_response') {
       base.isTaskInjection = true
@@ -1499,6 +1512,20 @@ export function useChat() {
         replayingTurn = false
         replayFinishedTurn = false
         if (finished && boundSessionId.value) void loadThreadHistory(boundSessionId.value).catch(() => {})
+        break
+      }
+
+      case 'voice_note': {
+        // The spoken version of an answer was stored (by this tab, another
+        // tab or the app). Shown on the message; nothing plays by itself.
+        const note = readVoiceNote(msg.voiceNote)
+        if (note && typeof msg.messageId === 'number') {
+          rememberVoiceNote(msg.messageId, note)
+          const id = msg.messageId
+          if (messages.value.some(m => m.id === id)) {
+            messages.value = messages.value.map(m => (m.id === id ? { ...m, voiceNote: note } : m))
+          }
+        }
         break
       }
 

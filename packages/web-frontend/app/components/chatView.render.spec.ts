@@ -893,8 +893,10 @@ describe('ChatView: scrolling and message actions', () => {
     expect(box.scrollTop).toBe(2600)
   })
 
-  it('reads an assistant answer aloud from its action row', async () => {
+  it('reads an assistant answer aloud from its action row (POST /api/speech/audio with the message id)', async () => {
     history = [row(1, 'user', 'q'), row(2, 'assistant', 'Read me')]
+    const fetchMock = vi.fn(() => new Promise<Response>(() => {}))
+    vi.stubGlobal('fetch', fetchMock)
     const { root } = await mountChat()
     const actions = all(root).filter(n => 'data-message-actions' in n.props)
     // One action row, under the answer only (not under the question).
@@ -902,9 +904,17 @@ describe('ChatView: scrolling and message actions', () => {
     expect(attr(actions[0]!, 'role')).toBe('toolbar')
     const play = all(actions[0]!).find(n => n.tag === 'button' && n.props['data-action'] === 'read-aloud')!
     expect(play).toBeDefined()
-    expect(play.props.title).toBe('chat.ttsPlay')
+    expect(textOf(play)).toContain('w4b.speech.read')
+    expect(all(actions[0]!).some(n => n.tag === 'button' && n.props['data-action'] === 'audio-summary')).toBe(true)
     click(play)
-    expect(tts.play).toHaveBeenCalledWith('Read me', 1)
+    await flush()
+    expect(fetchMock).toHaveBeenCalledTimes(1)
+    const [url, init] = fetchMock.mock.calls[0] as unknown as [string, RequestInit]
+    expect(url).toBe('http://localhost:3000/api/speech/audio')
+    expect(init.method).toBe('POST')
+    expect(JSON.parse(String(init.body))).toEqual({ messageId: 2 })
+    // The old client-side TTS path is not used any more.
+    expect(tts.play).not.toHaveBeenCalled()
   })
 
   it('copies an answer as Markdown from its action row and says so', async () => {

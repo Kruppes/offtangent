@@ -93,6 +93,8 @@ const actions = computed<Entry[]>(() => {
     { id: 'action:new-strand', group: 'actions', label: t('palette.newStrand'), icon: 'edit', keywords: ['new', 'neu', 'create'], run: newStrand },
   ]
   if (commands.available('dictation.start')) list.push({ id: 'action:dictation', group: 'actions', label: t('palette.dictation'), hint: keys(['Ctrl', 'M']), icon: 'mic', keywords: ['dictation', 'diktat', 'voice'], run: async () => { await commands.run('dictation.start') } })
+  if (commands.available('speech.readLast')) list.push({ id: 'action:read-last', group: 'actions', label: t('w4b.palette.readLast'), icon: 'volume', keywords: ['read aloud', 'vorlesen', 'speech', 'audio'], run: async () => { await commands.run('speech.readLast') } })
+  if (commands.available('speech.summaryLast')) list.push({ id: 'action:summary-last', group: 'actions', label: t('w4b.palette.summaryLast'), icon: 'sparkles', keywords: ['audio summary', 'zusammenfassung', 'summary', 'audio'], run: async () => { await commands.run('speech.summaryLast') } })
   if (commands.available('strand.archive')) list.push({ id: 'action:archive', group: 'actions', label: t('palette.archive'), icon: 'archive', keywords: ['archive', 'archivieren'], run: async () => { await commands.run('strand.archive') } })
   list.push(
     { id: 'action:sidebar', group: 'actions', label: t('palette.sidebar'), hint: keys(['Ctrl', 'B']), icon: 'panelLeft', keywords: ['sidebar', 'leiste', 'navigation'], run: () => emit('toggleSidebar') },

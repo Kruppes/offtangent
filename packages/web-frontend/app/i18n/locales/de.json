@@ -2262,5 +2262,87 @@
       "hideSource": "Quelltext ausblenden",
       "paused": "Angehalten, weil außer Sicht"
     }
+  },
+  "w4b": {
+    "speech": {
+      "read": "Vorlesen",
+      "summary": "Audio-Zusammenfassung",
+      "generatingRead": "Audio wird erzeugt …",
+      "generatingSummary": "Zusammenfassung wird erzeugt …",
+      "retry": "Wiederholen",
+      "close": "Audio schließen",
+      "note": "Sprachnachricht",
+      "noteCreating": "Sprachnachricht wird erzeugt …",
+      "error": {
+        "unconfigured": "Die Sprachausgabe ist auf dem Server nicht eingerichtet.",
+        "upstream": "Der Sprachdienst hat nicht geantwortet. Bitte erneut versuchen.",
+        "empty": "In dieser Nachricht gibt es nichts vorzulesen.",
+        "tooLarge": "Diese Nachricht ist zu lang zum Vorlesen.",
+        "notFound": "Diese Nachricht ist nicht mehr gespeichert.",
+        "network": "Keine Verbindung zum Server.",
+        "generic": "Das Audio konnte nicht erzeugt werden."
+      }
+    },
+    "player": {
+      "play": "{label} abspielen",
+      "pause": "{label} pausieren",
+      "position": "Position in {label}",
+      "valueText": "{position} von {duration}",
+      "rate": "Wiedergabegeschwindigkeit",
+      "error": {
+        "blocked": "Der Browser hat die Wiedergabe blockiert. Bitte erneut abspielen.",
+        "unsupported": "Dieses Audioformat kann hier nicht abgespielt werden.",
+        "network": "Das Audio konnte nicht geladen werden.",
+        "aborted": "Die Wiedergabe wurde abgebrochen.",
+        "unknown": "Das Audio konnte nicht abgespielt werden."
+      }
+    },
+    "voice": {
+      "assistant": "Sprachnachricht",
+      "dictation": "Diktat",
+      "file": "Audio"
+    },
+    "media": {
+      "openImage": "Bild {name} öffnen",
+      "lightboxHint": "Escape schließt das Bild.",
+      "showPreview": "Vorschau zeigen",
+      "hidePreview": "Vorschau ausblenden",
+      "pdfFallback": "Die Vorschau kann hier nicht angezeigt werden. Das PDF lässt sich öffnen oder herunterladen."
+    },
+    "context": {
+      "usage": "Kontextauslastung",
+      "loading": "Letzte Anfrage wird gelesen …",
+      "unsupported": "Dieser Server meldet die Kontextauslastung noch nicht.",
+      "offline": "Keine Verbindung zum Server, der Kontext ist unbekannt.",
+      "error": "Der Server konnte den Kontext dieses Strands nicht melden.",
+      "notMeasured": "Noch nicht gemessen. Die Zahlen erscheinen nach der nächsten Antwort.",
+      "cautionTitle": "Über 70 %.",
+      "fullTitle": "Über 90 %.",
+      "hint": "Ältere Teile des Gesprächs werden bald verdichtet. Ein neuer Strand hält die Antworten fokussiert.",
+      "stale": "Das Modell wurde nach dieser Messung gewechselt; der Prozentwert bezieht sich auf das Fenster von {model}.",
+      "request": "Letzte Anfrage",
+      "cacheRead": "aus dem Cache",
+      "uncached": "ungecachte Eingabe",
+      "answer": "Antwort",
+      "window": "Modellfenster",
+      "transcript": "Verlaufsfenster",
+      "compaction": "Letzte Verdichtung",
+      "dropped": "{count} Nachrichten entfernt",
+      "explain": "Gezählt wird, was mit der letzten Anfrage wirklich gesendet wurde, inklusive Systemprompt, Gedächtnis und Werkzeugen.",
+      "ringLabel": "Kontext {percent} % von {window} Tokens",
+      "ringUnknown": "Kontextauslastung unbekannt",
+      "belongings": "In diesem Strand",
+      "project": "Projekt",
+      "noProject": "Kein Projekt",
+      "summaries": "Zusammenfassungen",
+      "toolCalls": "Werkzeugaufrufe",
+      "facts": "Fakten aus dem Gedächtnis ({count})",
+      "noFacts": "Mit diesem Strand sind keine Fakten verknüpft.",
+      "moreFacts": "und {count} weitere"
+    },
+    "palette": {
+      "readLast": "Letzte Antwort vorlesen",
+      "summaryLast": "Audio-Zusammenfassung der letzten Antwort"
+    }
   }
 }

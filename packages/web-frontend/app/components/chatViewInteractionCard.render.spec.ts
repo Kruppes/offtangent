@@ -126,7 +126,8 @@ describe('ChatView: the interaction card next to the bubble', () => {
     expect(findAll(bubble, n => (bindingOf(n, 'if') ?? '').includes('ttsEnabled'))).toHaveLength(0)
     const actions = findAll(template, n => n.tag === 'ChatMessageActions')
     expect(actions).toHaveLength(1)
-    expect(findAll(actions[0]!, n => (bindingOf(n, 'if') ?? '').includes('ttsEnabled'))).toHaveLength(1)
+    // W4b: read aloud + audio summary live in MessageSpeechActions (gated on ttsEnabled there).
+    expect(findAll(actions[0]!, n => n.tag === 'MessageSpeechActions')).toHaveLength(1)
     // …and it is the last child of the bubble, i.e. below the text segments.
     const children = (bubble.children ?? []).filter(c => c.type === 1)
     expect(children[children.length - 1]).toBe(meta[0])

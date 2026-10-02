@@ -2262,5 +2262,87 @@
       "hideSource": "Hide source",
       "paused": "Paused while out of view"
     }
+  },
+  "w4b": {
+    "speech": {
+      "read": "Read aloud",
+      "summary": "Audio summary",
+      "generatingRead": "Creating the audio …",
+      "generatingSummary": "Creating the summary …",
+      "retry": "Retry",
+      "close": "Close audio",
+      "note": "Voice note",
+      "noteCreating": "Creating the voice note …",
+      "error": {
+        "unconfigured": "Speech output is not set up on the server.",
+        "upstream": "The speech service did not answer. Try again.",
+        "empty": "There is nothing to read in this message.",
+        "tooLarge": "This message is too long to read aloud.",
+        "notFound": "This message is no longer stored.",
+        "network": "No connection to the server.",
+        "generic": "The audio could not be created."
+      }
+    },
+    "player": {
+      "play": "Play {label}",
+      "pause": "Pause {label}",
+      "position": "Position in {label}",
+      "valueText": "{position} of {duration}",
+      "rate": "Playback speed",
+      "error": {
+        "blocked": "The browser blocked playback. Press play again.",
+        "unsupported": "This audio format cannot be played here.",
+        "network": "The audio could not be loaded.",
+        "aborted": "Playback was stopped.",
+        "unknown": "The audio could not be played."
+      }
+    },
+    "voice": {
+      "assistant": "Voice note",
+      "dictation": "Dictation",
+      "file": "Audio"
+    },
+    "media": {
+      "openImage": "Open image {name}",
+      "lightboxHint": "Escape closes the image.",
+      "showPreview": "Show preview",
+      "hidePreview": "Hide preview",
+      "pdfFallback": "The preview cannot be shown here. Open or download the PDF instead."
+    },
+    "context": {
+      "usage": "Context usage",
+      "loading": "Reading the last request …",
+      "unsupported": "This server does not report context usage yet.",
+      "offline": "No connection to the server, so the context is unknown.",
+      "error": "The server could not report the context of this strand.",
+      "notMeasured": "Not measured yet. The numbers appear after the next answer.",
+      "cautionTitle": "Over 70 %.",
+      "fullTitle": "Over 90 %.",
+      "hint": "Older parts of the conversation will be compacted soon. Starting a new strand keeps the answers focused.",
+      "stale": "The model changed after this measurement; the percentage refers to the window of {model}.",
+      "request": "Last request",
+      "cacheRead": "from cache",
+      "uncached": "uncached input",
+      "answer": "Answer",
+      "window": "Model window",
+      "transcript": "Transcript window",
+      "compaction": "Last compaction",
+      "dropped": "{count} messages dropped",
+      "explain": "Counted is what was really sent with the last request, including system prompt, memory and tools.",
+      "ringLabel": "Context {percent} % of {window} tokens",
+      "ringUnknown": "Context usage unknown",
+      "belongings": "In this strand",
+      "project": "Project",
+      "noProject": "No project",
+      "summaries": "Summaries",
+      "toolCalls": "Tool calls",
+      "facts": "Facts from memory ({count})",
+      "noFacts": "No facts are linked to this strand.",
+      "moreFacts": "and {count} more"
+    },
+    "palette": {
+      "readLast": "Read the last answer aloud",
+      "summaryLast": "Audio summary of the last answer"
+    }
   }
 }
