@@ -330,6 +330,14 @@ interface RunningTask {
   aborted: boolean
 }
 
+/** Outcome of {@link TaskRunner.steerTask}. */
+export interface TaskSteerResult {
+  delivered: boolean
+  /** `steered` = agent steering queue, `queued_prompt` = appended to the brief of a waiting task. */
+  mode: 'steered' | 'queued_prompt' | 'none'
+  reason?: string
+}
+
 interface PausedTask {
   taskId: string
   agent: PiAgent
@@ -1823,7 +1831,7 @@ export class TaskRunner {
       const durationMinutes = Math.round((Date.now() - startedAt) / 60000)
       const injection = `<task_injection task_id="${task.id}" task_name="${task.name}" status="failed" trigger="${task.triggerType}" duration_minutes="${durationMinutes}" tokens_used="${task.promptTokens + task.completionTokens}">
 ${reason}
-Hint: Use /kill_task ${task.id} if the task needs to be cleaned up.
+Hint: Inspect it with get_task (task_id ${task.id}); use cancel_task if anything still needs to be cleaned up.
 </task_injection>`
       this.notifyTaskComplete(taskId, injection, "failed", reason, task.agentId)
     }
@@ -2116,14 +2124,19 @@ Hint: Use /kill_task ${task.id} if the task needs to be cleaned up.
       console.log(`[task-runner] Removed queued task ${taskId} from the queue (${reason})`)
     }
 
+    const pausedTask = this.pausedTasks.get(taskId)
+    if (!runningTask && (pausedTask || this.store.getById(taskId)?.status === 'paused')) {
+      this.abortPausedTask(taskId, reason, pausedTask ?? null, now)
+      return
+    }
+
     if (!runningTask) {
       // Zombie task: no in-memory state to tear down, but we still need to
       // clear the DB row so the UI reflects the kill and the row no longer
       // counts as running.
       const existing = this.store.getById(taskId)
       if (!existing || existing.status !== 'running') {
-        // Nothing to do — already finalized, paused (handled separately),
-        // or not present at all.
+        // Nothing to do — already finalized or not present at all.
         return
       }
 
@@ -2182,6 +2195,82 @@ Hint: Use /kill_task ${task.id} if the task needs to be cleaned up.
   }
 
   /**
+   * A paused task holds no slot and no running loop, only its agent in
+   * memory (or nothing at all when the row outlived the process). Cancelling
+   * it frees the agent and finalizes the row with the usage it had reached.
+   */
+  private abortPausedTask(taskId: string, reason: string, pausedTask: PausedTask | null, now: string): void {
+    if (pausedTask) {
+      pausedTask.agent.abort()
+      this.pausedTasks.delete(taskId)
+    }
+    this.store.update(taskId, {
+      status: 'failed',
+      resultStatus: 'failed',
+      resultSummary: reason,
+      errorMessage: reason,
+      completedAt: now,
+      ...(pausedTask
+        ? {
+            promptTokens: pausedTask.promptTokens,
+            completionTokens: pausedTask.completionTokens,
+            cacheRead: pausedTask.cacheRead,
+            cacheWrite: pausedTask.cacheWrite,
+            estimatedCost: pausedTask.estimatedCost,
+            toolCallCount: pausedTask.toolCallCount,
+          }
+        : {}),
+    })
+    this.persistHandoff(taskId, abortHandoffReason(reason), { errorMessage: reason })
+    const task = this.store.getById(taskId)
+    if (task) {
+      const startedAt = taskStartedAtMs(task.startedAt)
+      const durationMinutes = Math.round((Date.now() - startedAt) / 60000)
+      this.notifyTaskComplete(taskId, formatTaskInjection(task, durationMinutes), 'failed', reason, task.agentId)
+    }
+  }
+
+  /**
+   * Deliver a correction to a task without stopping it.
+   *
+   * - running: queued on the agent's steering queue; pi-agent-core drains it
+   *   after the current turn's tool calls (also after a final answer, which
+   *   then gets one more turn), same channel as the wrap-up signal.
+   * - queued (waiting for a slot): appended to the stored prompt. `pumpQueue`
+   *   starts the task from the freshest row, so the text is part of the brief.
+   * - anything else (paused, finished, zombie, aborted): not delivered —
+   *   paused tasks are answered through `resumeTask`.
+   */
+  steerTask(taskId: string, text: string): TaskSteerResult {
+    const runningTask = this.runningTasks.get(taskId)
+    if (runningTask) {
+      if (runningTask.aborted || runningTask.guardTripped) {
+        return { delivered: false, mode: 'none', reason: 'the task is being stopped' }
+      }
+      const streaming = (runningTask.agent as { state?: { isStreaming?: boolean } }).state?.isStreaming
+      if (streaming === false) {
+        return { delivered: false, mode: 'none', reason: 'the task agent is between runs (finishing or under review)' }
+      }
+      runningTask.agent.steer({ role: 'user', content: [{ type: 'text', text }], timestamp: Date.now() })
+      console.log(`[task-runner] Orchestrator steer queued for task ${taskId}`)
+      return { delivered: true, mode: 'steered' }
+    }
+    if (this.queue.isQueued(taskId)) {
+      const row = this.store.getById(taskId)
+      if (!row || row.status !== 'running') {
+        return { delivered: false, mode: 'none', reason: `the task is ${row?.status ?? 'missing'}` }
+      }
+      this.store.update(taskId, { prompt: `${row.prompt}\n\n${text}` })
+      console.log(`[task-runner] Orchestrator steer appended to the prompt of queued task ${taskId}`)
+      return { delivered: true, mode: 'queued_prompt' }
+    }
+    if (this.pausedTasks.has(taskId)) {
+      return { delivered: false, mode: 'none', reason: 'the task is paused; answer it with resume_task' }
+    }
+    return { delivered: false, mode: 'none', reason: 'the task has no live agent' }
+  }
+
+  /**
    * Check if a task is currently running
    */
   isRunning(taskId: string): boolean {
@@ -2201,6 +2290,15 @@ Hint: Use /kill_task ${task.id} if the task needs to be cleaned up.
    */
   isQueued(taskId: string): boolean {
     return this.queue.isQueued(taskId)
+  }
+
+  /**
+   * The strand a waiting task was delegated from. A queued task has no
+   * session yet, so this in-memory link is the only way to attribute it to
+   * its owner before it starts.
+   */
+  getQueuedParentSessionId(taskId: string): string | null {
+    return this.queue.payloadOf(taskId)?.parentSessionId ?? null
   }
 
   /** Ids of the tasks waiting for a slot, in FIFO order. */

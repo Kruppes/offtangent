@@ -380,6 +380,11 @@ export class TaskConcurrencyQueue<T> {
     return null
   }
 
+  /** The payload of a waiting task, or null when it is not waiting. */
+  payloadOf(taskId: string): T | null {
+    return this.waiting.find(entry => entry.taskId === taskId)?.payload ?? null
+  }
+
   /**
    * Remove a waiting task from the queue (abort of a queued task). Returns
    * the removed entry, or null when the task was not waiting.

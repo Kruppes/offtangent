@@ -1,6 +1,6 @@
 import type { Database } from './database.js'
 import { TaskRunner } from './task-runner.js'
-import type { TaskRunnerOptions, TaskOverrides, TaskQueueInfo } from './task-runner.js'
+import type { TaskRunnerOptions, TaskOverrides, TaskQueueInfo, TaskSteerResult } from './task-runner.js'
 import { TaskScheduler } from './task-scheduler.js'
 import type { TaskSchedulerOptions } from './task-scheduler.js'
 import type { ProviderConfig } from './provider-config.js'
@@ -20,7 +20,13 @@ export interface TaskRuntimeTaskBoundary {
    */
   start(task: Task, provider: ProviderConfig, overrides?: TaskOverrides, parentSessionId?: string | null): Promise<string>
   resume(taskId: string, message: string): Promise<boolean>
+  /** Cancels a running, queued or paused task; a finished task is left untouched. */
   abort(taskId: string, reason?: string): void
+  /**
+   * Deliver a correction to a running task (steering queue) or a queued one
+   * (appended to its brief). Optional so existing test doubles keep compiling.
+   */
+  steer?(taskId: string, text: string): TaskSteerResult
   isRunning(taskId: string): boolean
   getRunningIds(): string[]
   isPaused(taskId: string): boolean
@@ -34,6 +40,8 @@ export interface TaskRuntimeTaskBoundary {
    */
   queueInfo?(taskId: string): Pick<TaskQueueInfo, 'queued' | 'position' | 'running' | 'queued_count' | 'limit'>
     & Partial<Pick<TaskQueueInfo, 'reason' | 'provider' | 'provider_running' | 'provider_limit'>>
+  /** Parent session a still-queued task was delegated from (it has no session of its own yet). */
+  queuedParentSessionId?(taskId: string): string | null
   /** Ids of the tasks waiting for a concurrency slot, in FIFO order. */
   getQueuedIds?(): string[]
   cleanupStalePaused(): number
@@ -102,12 +110,14 @@ class PiTaskRuntime implements TaskRuntimeBoundary {
       start: (task, provider, overrides, parentSessionId) => this.runner.startTask(task, provider, overrides, parentSessionId),
       resume: (taskId, message) => this.runner.resumeTask(taskId, message),
       abort: (taskId, reason) => this.runner.abortTask(taskId, reason),
+      steer: (taskId, text) => this.runner.steerTask(taskId, text),
       isRunning: (taskId) => this.runner.isRunning(taskId),
       getRunningIds: () => this.runner.getRunningTaskIds(),
       isPaused: (taskId) => this.runner.isPaused(taskId),
       getPausedIds: () => this.runner.getPausedTaskIds(),
       queueInfo: (taskId) => this.runner.getQueueInfo(taskId),
       getQueuedIds: () => this.runner.getQueuedTaskIds(),
+      queuedParentSessionId: (taskId) => this.runner.getQueuedParentSessionId(taskId),
       cleanupStalePaused: () => this.runner.cleanupStalePausedTasks(),
       recover: (getProvider, defaultProvider) => this.runner.recoverTasks(getProvider, defaultProvider),
     }

@@ -96,6 +96,8 @@ export interface CreateTaskInput {
 
 export interface UpdateTaskInput {
   status?: TaskStatus
+  /** Only for a task that has not started yet (orchestrator steer of a queued task). */
+  prompt?: string
   provider?: string
   model?: string
   promptTokens?: number
@@ -417,6 +419,10 @@ export class TaskStore {
     if (input.status !== undefined) {
       setClauses.push('status = ?')
       params.push(input.status)
+    }
+    if (input.prompt !== undefined) {
+      setClauses.push('prompt = ?')
+      params.push(input.prompt)
     }
     if (input.provider !== undefined) {
       setClauses.push('provider = ?')
