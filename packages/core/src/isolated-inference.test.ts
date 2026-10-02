@@ -25,6 +25,7 @@ import {
 
 const TOKEN = 'synthetic-service-token-for-tests-0001'
 const TOKEN_SHA = createHash('sha256').update(TOKEN, 'utf8').digest('hex')
+const shaOf = (suffix: string): string => createHash('sha256').update(`${TOKEN}-${suffix}`, 'utf8').digest('hex')
 
 function service(overrides: Partial<IsolatedInferenceService> = {}): IsolatedInferenceService {
   return {
@@ -109,6 +110,34 @@ describe('isolated inference config', () => {
     expect(config.services[0].maxConcurrent).toBe(8)
     expect(config.services[0].dailyCallBudget).toBe(100)
     expect(JSON.stringify(config)).not.toContain(TOKEN)
+  })
+
+  it('keeps an optional providerId reference, trimmed, and treats an empty one as absent', () => {
+    writeConfig({
+      enabled: true,
+      services: [
+        { id: 'svc-a', tokenSha256: shaOf('a'), profiles: ['interview.v1'], providerId: '  prov-b  ' },
+        { id: 'svc-b', tokenSha256: shaOf('b'), profiles: ['interview.v1'], providerId: '   ' },
+        { id: 'svc-c', tokenSha256: shaOf('c'), profiles: ['interview.v1'] },
+      ],
+    })
+    const services = loadIsolatedInferenceConfig().services
+    expect(services.map(s => s.id)).toEqual(['svc-a', 'svc-b', 'svc-c'])
+    expect(services[0].providerId).toBe('prov-b')
+    expect(services[1]).not.toHaveProperty('providerId')
+    expect(services[2]).not.toHaveProperty('providerId')
+  })
+
+  it('drops an entry whose providerId is not a string instead of falling back to the global provider', () => {
+    writeConfig({
+      enabled: true,
+      services: [
+        { id: 'svc-a', tokenSha256: shaOf('a'), profiles: ['interview.v1'], providerId: 42 },
+        { id: 'svc-b', tokenSha256: shaOf('b'), profiles: ['interview.v1'], providerId: { id: 'prov-b' } },
+        { id: 'svc-c', tokenSha256: shaOf('c'), profiles: ['interview.v1'] },
+      ],
+    })
+    expect(loadIsolatedInferenceConfig().services.map(s => s.id)).toEqual(['svc-c'])
   })
 
   it('authenticates only the configured token', () => {

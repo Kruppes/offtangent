@@ -14,6 +14,7 @@ import {
   ISOLATED_INFERENCE_PROFILES,
   resetIsolatedInferenceState,
   runIsolatedInference,
+  type IsolatedInferenceAuditEntry,
   type IsolatedInferenceService,
 } from './isolated-inference.js'
 
@@ -155,6 +156,115 @@ describe('isolated inference over the real provider client', () => {
     await expect(runIsolatedInference(service, { profile: 'interview.v1', input: 'x', maxOutputTokens: 100 }))
       .rejects.toMatchObject({ code: 'model_blocked_by_policy', status: 503 })
     expect(fetchSpy).not.toHaveBeenCalled()
+  })
+
+  describe('per-service providerId', () => {
+    const KEY_A = 'synthetic-key-provider-a'
+    const KEY_B = 'synthetic-key-provider-b'
+
+    /** Two providers enabling the SAME profile model, each with its own key. */
+    function configureTwoProviders(extraB: Record<string, unknown> = {}): void {
+      const base = {
+        type: 'anthropic-messages', providerType: 'anthropic', provider: 'anthropic',
+        baseUrl: 'https://api.anthropic.com/v1', enabledModels: ['claude-sonnet-5-5'],
+      }
+      saveProviders({
+        providers: [
+          { ...base, id: 'prov-a', name: 'Provider A', apiKey: KEY_A },
+          { ...base, id: 'prov-b', name: 'Provider B', apiKey: KEY_B, ...extraB },
+        ],
+        activeProvider: 'prov-a', activeModel: 'claude-sonnet-5-5',
+      } as never)
+    }
+
+    function pinned(providerId: string): IsolatedInferenceService {
+      writeServiceRegistry({ providerId })
+      return { ...service, providerId }
+    }
+
+    /** Fake network that records which API key each call carried. */
+    function captureKeys(): string[] {
+      const keys: string[] = []
+      vi.stubGlobal('fetch', vi.fn(async (_url: unknown, init?: { headers?: ConstructorParameters<typeof Headers>[0] }) => {
+        keys.push(new Headers(init?.headers).get('x-api-key') ?? '')
+        return sseResponse('{"ok":true}')
+      }))
+      return keys
+    }
+
+    it('routes a pinned service through exactly that provider and its key, and audits the provider', async () => {
+      configureTwoProviders()
+      const keys = captureKeys()
+      const audits: IsolatedInferenceAuditEntry[] = []
+      const result = await runIsolatedInference(pinned('prov-b'), {
+        profile: 'interview.v1', input: 'synthetic', maxOutputTokens: 100,
+      }, { audit: e => audits.push(e) })
+      expect(result.json).toEqual({ ok: true })
+      expect(keys).toEqual([KEY_B])
+      expect(audits).toHaveLength(1)
+      expect(audits[0]).toMatchObject({
+        serviceId: 'wire-service', providerId: 'prov-b', model: 'prov-b/claude-sonnet-5-5', status: 'ok',
+      })
+      expect(JSON.stringify(audits)).not.toContain(KEY_B)
+      expect(JSON.stringify(audits)).not.toContain(KEY_A)
+    })
+
+    it('is not ambiguous with two providers enabling the same model when pinned, but stays ambiguous unpinned', async () => {
+      configureTwoProviders()
+      const keys = captureKeys()
+      await expect(runIsolatedInference(pinned('prov-a'), {
+        profile: 'interview.v1', input: 'synthetic', maxOutputTokens: 100,
+      }, { audit: () => {} })).resolves.toMatchObject({ json: { ok: true } })
+      expect(keys).toEqual([KEY_A])
+
+      // Unchanged behaviour without a pin: the global name lookup refuses to
+      // guess between two providers.
+      writeServiceRegistry()
+      await expect(runIsolatedInference(service, {
+        profile: 'interview.v1', input: 'synthetic', maxOutputTokens: 100,
+      }, { audit: () => {} })).rejects.toMatchObject({ code: 'model_not_available', status: 503 })
+      expect(keys).toEqual([KEY_A])
+    })
+
+    it('resolves an unpinned service globally exactly as before', async () => {
+      configureAnthropic()
+      const keys = captureKeys()
+      const audits: IsolatedInferenceAuditEntry[] = []
+      await runIsolatedInference(service, { profile: 'interview.v1', input: 'synthetic', maxOutputTokens: 100 }, { audit: e => audits.push(e) })
+      expect(keys).toEqual(['synthetic-not-a-real-key'])
+      expect(audits[0]).toMatchObject({ providerId: 'anth', model: 'anth/claude-sonnet-5-5', status: 'ok' })
+    })
+
+    it('fails closed with model_not_available for an unknown provider, a name instead of an id, or a provider without the model', async () => {
+      const fetchSpy = vi.fn()
+      vi.stubGlobal('fetch', fetchSpy)
+      const audits: IsolatedInferenceAuditEntry[] = []
+      configureTwoProviders()
+      for (const ref of ['prov-missing', 'Provider B']) {
+        await expect(runIsolatedInference(pinned(ref), { profile: 'interview.v1', input: 'x', maxOutputTokens: 100 }, { audit: e => audits.push(e) }))
+          .rejects.toMatchObject({ code: 'model_not_available', status: 503 })
+      }
+      // Provider exists but has the profile model switched off.
+      configureTwoProviders({ enabledModels: ['some-other-model'] })
+      await expect(runIsolatedInference(pinned('prov-b'), { profile: 'interview.v1', input: 'x', maxOutputTokens: 100 }, { audit: e => audits.push(e) }))
+        .rejects.toMatchObject({ code: 'model_not_available', status: 503 })
+      expect(fetchSpy).not.toHaveBeenCalled()
+      expect(audits.map(e => [e.code, e.providerId, e.model])).toEqual([
+        ['model_not_available', 'prov-missing', ''],
+        ['model_not_available', 'Provider B', ''],
+        ['model_not_available', 'prov-b', ''],
+      ])
+    })
+
+    it('refuses a pinned provider blocked by the data policy and does not fall back to another provider', async () => {
+      configureTwoProviders({ dataPolicy: { region: 'cn', training: 'unknown' } })
+      writeSettings({ modelGate: 'enforce' })
+      const fetchSpy = vi.fn()
+      vi.stubGlobal('fetch', fetchSpy)
+      await expect(runIsolatedInference(pinned('prov-b'), { profile: 'interview.v1', input: 'x', maxOutputTokens: 100 }, { audit: () => {} }))
+        .rejects.toMatchObject({ code: 'model_blocked_by_policy', status: 503 })
+      expect(fetchSpy).not.toHaveBeenCalled()
+    })
   })
 
   it('keeps the profile ceiling even when the model would allow far more', () => {

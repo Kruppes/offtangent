@@ -122,6 +122,14 @@ export interface IsolatedInferenceService {
   expiresAt: string
   /** Revoked credentials authenticate nothing, even before they expire. */
   revoked: boolean
+  /**
+   * Optional id of ONE provider in `providers.json` that this service's
+   * profile model is resolved against (e.g. a provider with its own API key).
+   * Only a reference: credentials stay in `providers.json`, never in this
+   * file. Absent = the profile model is resolved globally by name, as before.
+   * The data-policy gate and key resolution are the same in both cases.
+   */
+  providerId?: string
 }
 
 export interface IsolatedInferenceConfig {
@@ -150,8 +158,17 @@ function normalizeService(raw: unknown): IsolatedInferenceService | null {
     const parsed = typeof entry.expiresAt === 'string' ? Date.parse(entry.expiresAt) : NaN
     expiresAt = Number.isFinite(parsed) ? new Date(parsed).toISOString() : '1970-01-01T00:00:00.000Z'
   }
+  // A non-string provider reference is NOT silently dropped: falling back to
+  // the global resolution would route the service's calls through a provider
+  // (and a key) the operator did not pick for it. The entry is rejected.
+  let providerId: string | undefined
+  if (entry.providerId !== undefined && entry.providerId !== null) {
+    if (typeof entry.providerId !== 'string') return null
+    providerId = entry.providerId.trim() || undefined
+  }
   return {
     id,
+    ...(providerId ? { providerId } : {}),
     tokenSha256,
     profiles,
     expiresAt,
@@ -286,6 +303,13 @@ export interface IsolatedInferenceAuditEntry {
   requestId: string
   serviceId: string
   profile: string
+  /**
+   * Provider id the call went to. Before (or without) a resolved model it is
+   * the provider the service is pinned to, '' for an unpinned service. Never
+   * a key.
+   */
+  providerId: string
+  /** `<providerId>/<modelId>`; '' when nothing was resolved. */
   model: string
   status: 'ok' | 'error'
   code: string
@@ -684,7 +708,7 @@ export interface RunIsolatedInferenceOptions {
    * gate. A test that overrides this is testing the request path, not the gate
    * — the gate has its own tests.
    */
-  resolveModel?: (profile: IsolatedInferenceProfile) => Promise<ResolvedProfileModel>
+  resolveModel?: (profile: IsolatedInferenceProfile, service?: IsolatedInferenceService) => Promise<ResolvedProfileModel>
   /** Test seam for the idempotency window. */
   now?: number
   idempotencyKey?: string | null
@@ -700,10 +724,26 @@ export interface RunIsolatedInferenceOptions {
  * Resolve the profile's model, run the ONE data-policy gate and hand back the
  * pi-ai handle. Separated so the negative tests can assert the gate without a
  * provider call.
+ *
+ * A service with `providerId` resolves the profile model against exactly that
+ * provider (by id, not by display name), so a second provider enabling the
+ * same model cannot make the lookup ambiguous and the call cannot drift to
+ * another provider's key. The gate and key resolution below are unchanged.
  */
-export async function resolveProfileModel(profile: IsolatedInferenceProfile): Promise<ResolvedProfileModel> {
-  const resolved = resolveProviderModelInput({ model: profile.modelSpec })
+export async function resolveProfileModel(
+  profile: IsolatedInferenceProfile,
+  service?: IsolatedInferenceService,
+): Promise<ResolvedProfileModel> {
+  const pinned = service?.providerId?.trim() || ''
+  const resolved = pinned
+    ? resolveProviderModelInput({ provider: pinned, model: profile.modelSpec })
+    : resolveProviderModelInput({ model: profile.modelSpec })
   if (!resolved.ok) throw new IsolatedInferenceError('model_not_available', 503, 'profile model is not configured')
+  // `resolveProviderModelInput` also accepts a display name; the service pin
+  // is an id reference only.
+  if (pinned && resolved.providerId !== pinned) {
+    throw new IsolatedInferenceError('model_not_available', 503, 'profile model is not configured')
+  }
   let providers
   try {
     providers = loadProvidersDecrypted().providers
@@ -739,12 +779,14 @@ async function runOnce(
   const started = Date.now()
   const requestId = options.requestId ?? randomUUID()
   const audit = options.audit ?? appendAuditLine
+  let providerId = service.providerId ?? ''
   const record = (status: 'ok' | 'error', code: string, model: string, usageOut: { inputTokens: number; outputTokens: number }): void => {
     audit({
       at: new Date(now).toISOString(),
       requestId,
       serviceId: service.id,
       profile: request.profile,
+      providerId,
       model,
       status,
       code,
@@ -773,12 +815,13 @@ async function runOnce(
   try {
     let handle: ResolvedProfileModel
     try {
-      handle = await (options.resolveModel ?? resolveProfileModel)(profile)
+      handle = await (options.resolveModel ?? resolveProfileModel)(profile, service)
     } catch (err) {
       release(true)
       if (err instanceof IsolatedInferenceError) fail(err)
       throw err
     }
+    providerId = handle.providerId
     const model = `${handle.providerId}/${handle.modelId}`
     // Last check before money is spent: a revoke that landed in the meantime
     // (config file rewritten) stops the call here.

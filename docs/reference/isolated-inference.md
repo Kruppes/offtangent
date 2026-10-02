@@ -96,6 +96,19 @@ the call never leaves the process (`model_blocked_by_policy`).
   so a revoke that lands while a request waits for a concurrency slot still prevents the spend
   (`401 unauthorized`, provider never contacted). A request already handed to the provider
   cannot be un-spent — that is the documented limit.
+- **Optional `providerId` per service**: pins the profile model to ONE provider in
+  `providers.json`, referenced by its provider **id** (not its display name), e.g.
+  `"providerId": "prov-b"` next to `"id": "svc-a"`. Typical use: a service whose calls must run
+  over a separate API key instead of the globally configured provider. The file holds only the
+  reference; the key stays in `providers.json`. Without `providerId` the profile model is
+  resolved globally by name as before — which fails as `model_not_available` as soon as two
+  providers enable the same model (ambiguous); with a pin that ambiguity does not arise.
+  The data-policy gate and key resolution are identical on both paths. A pinned provider that
+  does not exist, is referenced by name, or does not enable the profile model →
+  `model_not_available`; a pinned provider blocked by the data policy →
+  `model_blocked_by_policy`. There is never a fallback to another provider. A `providerId`
+  that is not a string drops the whole entry (the service then does not authenticate); an
+  empty string counts as absent.
 - Generate a token outside the repo, e.g. `openssl rand -base64 32`, hash it with
   `printf %s "<token>" | sha256sum`. The token itself goes only into the *caller's* environment
   (the inference token setting on the interview service side).
@@ -106,11 +119,11 @@ One JSONL line per request in `<DATA_DIR>/logs/isolated-inference.audit.jsonl`:
 
 ```json
 {"at":"2026-09-30T12:00:00.000Z","requestId":"<uuid>","serviceId":"interview-service",
- "profile":"interview.v1","model":"anth/claude-sonnet-5-5","status":"ok","code":"ok",
+ "profile":"interview.v1","providerId":"anth","model":"anth/claude-sonnet-5-5","status":"ok","code":"ok",
  "inputChars":812,"inputTokens":11,"outputTokens":22,"durationMs":1840}
 ```
 
-Token id (= `serviceId`), request id, profile, model, time, status and spend — **never** the
+Token id (= `serviceId`), request id, profile, provider id, model, time, status and spend — **never** the
 prompt, the answer, the token or its hash (proven by tests on both the unit and the HTTP level).
 Failures are audited with their error code (`unauthorized`, `budget_exhausted`,
 `upstream_failed`, …).
