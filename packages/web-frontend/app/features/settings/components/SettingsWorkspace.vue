@@ -6,12 +6,28 @@
     <p class="text-sm">{{ $t('admin.description') }}</p>
   </div>
 
-  <!-- Settings page -->
-  <div v-else class="flex h-full flex-col overflow-hidden">
-    <!-- Header with save action (hidden on secrets tab which has its own save flow) -->
-    <PageHeader :title="$t('settings.title')" :subtitle="$t('settings.subtitle')">
-      <template v-if="activeTab !== 'secrets' && activeTab !== 'email' && activeTab !== 'models'" #actions>
-        <Button class="h-8 px-3 text-xs md:h-10 md:px-4 md:py-2 md:text-sm" :disabled="saving || !form" @click="handleSave">
+  <!-- Settings page: overview (/settings) or one area (/settings/:section) -->
+  <div v-else class="settings-touch flex h-full flex-col overflow-hidden">
+    <!-- Header with save action — only areas that edit the shared settings form -->
+    <PageHeader :title="headerTitle" :subtitle="headerSubtitle">
+      <template v-if="formSaveVisible" #actions>
+        <span
+          v-if="dirty"
+          data-testid="settings-unsaved"
+          class="inline-flex items-center gap-1.5 rounded-md bg-warning/15 px-2 py-1 text-xs font-medium text-foreground"
+        >
+          <span class="h-2 w-2 rounded-full bg-warning" aria-hidden="true" />
+          {{ $t('settings.unsaved') }}
+        </span>
+        <Button
+          type="button"
+          name="settings-save"
+          data-testid="settings-save"
+          class="min-h-11 px-3 text-xs md:min-h-10 md:px-4 md:py-2 md:text-sm"
+          :disabled="saving || !form"
+          :aria-busy="saving || undefined"
+          @click="handleSave"
+        >
           <span
             v-if="saving"
             class="h-4 w-4 animate-spin rounded-full border-2 border-primary-foreground/30 border-t-primary-foreground"
@@ -22,14 +38,14 @@
       </template>
     </PageHeader>
 
-    <!-- Feedback alerts — only for non-secrets tabs (secrets tab handles its own feedback) -->
-    <div v-if="activeTab !== 'secrets' && activeTab !== 'email' && activeTab !== 'models' && (error || successMessage)" class="shrink-0 border-b border-border px-6 py-3">
-      <Alert v-if="error" variant="destructive">
-        <AlertDescription class="flex items-center justify-between">
-          <span>{{ error }}</span>
+    <!-- Save feedback — the areas with their own save flow report it themselves -->
+    <div v-if="formSaveVisible && form && (error || successMessage)" class="shrink-0 border-b border-border px-4 py-3 md:px-6">
+      <Alert v-if="error" variant="destructive" role="alert" data-testid="settings-save-error">
+        <AlertDescription class="flex items-center justify-between gap-2">
+          <span class="min-w-0 break-words">{{ $t('settings.saveFailed') }} {{ error }}</span>
           <button
             type="button"
-            class="ml-2 opacity-70 transition-opacity hover:opacity-100"
+            class="inline-flex h-11 w-11 shrink-0 items-center justify-center rounded-md opacity-70 transition-opacity hover:opacity-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
             :aria-label="$t('aria.closeAlert')"
             @click="clearMessages()"
           >
@@ -37,12 +53,12 @@
           </button>
         </AlertDescription>
       </Alert>
-      <Alert v-if="successMessage" variant="success" :class="error ? 'mt-2' : ''">
-        <AlertDescription class="flex items-center justify-between">
-          <span>{{ $t('settings.saveSuccess') }}</span>
+      <Alert v-if="successMessage" variant="success" role="status" aria-live="polite" data-testid="settings-save-success" :class="error ? 'mt-2' : ''">
+        <AlertDescription class="flex items-center justify-between gap-2">
+          <span class="min-w-0">{{ $t('settings.saveSuccess') }}</span>
           <button
             type="button"
-            class="ml-2 opacity-70 transition-opacity hover:opacity-100"
+            class="inline-flex h-11 w-11 shrink-0 items-center justify-center rounded-md opacity-70 transition-opacity hover:opacity-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
             :aria-label="$t('aria.closeAlert')"
             @click="clearMessages()"
           >
@@ -52,63 +68,72 @@
       </Alert>
     </div>
 
-    <!-- Settings layout: sidebar nav + content -->
-    <div class="flex min-h-0 flex-1 flex-col md:flex-row">
+    <div class="flex min-h-0 flex-1">
+      <!-- Grouped area navigation (desktop); on phones the overview is the list -->
+      <SettingsSectionNav v-if="activeSection" :active="activeSection" class="hidden md:flex" />
 
-      <!-- Tab navigation — horizontal on mobile, vertical sidebar on desktop -->
-      <nav
-        role="tablist"
-        :aria-label="$t('settings.title')"
-        class="flex shrink-0 gap-0.5 overflow-x-auto border-b border-border px-3 py-2
-               md:w-52 md:flex-col md:overflow-x-visible md:overflow-y-auto md:border-b-0 md:border-r md:px-3 md:py-4"
-      >
-        <button
-          v-for="tab in tabs"
-          :key="tab.id"
-          role="tab"
-          type="button"
-          :aria-selected="activeTab === tab.id"
-          :class="[
-            'flex items-center gap-2 whitespace-nowrap rounded-md px-3 py-2 text-sm transition-colors',
-            'md:w-full',
-            activeTab === tab.id
-              ? 'bg-accent font-medium text-accent-foreground'
-              : 'text-muted-foreground hover:bg-accent/50 hover:text-accent-foreground',
-          ]"
-          @click="activeTab = tab.id"
+      <div class="min-w-0 flex-1 overflow-y-auto overflow-x-hidden">
+        <SettingsOverview v-if="!activeSection" />
+
+        <div
+          v-else
+          data-testid="settings-section"
+          :data-section="activeSection"
+          :class="['mx-auto w-full px-4 py-6 md:px-8 md:py-8', activeSection === 'email' ? 'max-w-5xl' : 'max-w-xl']"
         >
-          <AppIcon :name="tab.icon" size="sm" />
-          <span>{{ tab.label }}</span>
-        </button>
-      </nav>
+          <NuxtLink
+            to="/settings"
+            data-testid="settings-back"
+            class="mb-4 inline-flex min-h-11 items-center gap-2 rounded-md pr-3 text-sm text-muted-foreground transition-colors hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring md:hidden"
+          >
+            <AppIcon name="arrowLeft" size="sm" />
+            {{ $t('settings.back') }}
+          </NuxtLink>
 
-      <!-- Content area -->
-      <div class="flex-1 overflow-y-auto" role="tabpanel">
-        <div :class="['mx-auto px-6 py-6 md:px-8 md:py-8', activeTab === 'email' ? 'max-w-5xl' : 'max-w-xl']">
+          <!-- Unknown area -->
+          <div v-if="!sectionKnown" role="status" class="flex flex-col items-start gap-3 rounded-xl border border-border bg-card p-6" data-testid="settings-not-found">
+            <p class="text-sm text-foreground">{{ $t('settings.notFound') }}</p>
+            <Button as-child variant="outline" class="min-h-11">
+              <NuxtLink to="/settings">{{ $t('settings.back') }}</NuxtLink>
+            </Button>
+          </div>
+
+          <!-- Appearance is a browser preference and needs no server data -->
+          <SettingsAppearance v-else-if="activeSection === 'appearance'" />
 
           <!-- Loading skeletons -->
-          <div v-if="loading" class="flex flex-col gap-6">
+          <div v-else-if="loading" class="flex flex-col gap-6" aria-busy="true" data-testid="settings-loading">
             <div>
               <Skeleton class="mb-2 h-5 w-28" />
-              <Skeleton class="h-4 w-72" />
+              <Skeleton class="h-4 w-72 max-w-full" />
             </div>
             <div>
               <Skeleton class="mb-1.5 h-4 w-24" />
-              <Skeleton class="h-10 w-44" />
-              <Skeleton class="mt-1.5 h-3 w-56" />
+              <Skeleton class="h-10 w-44 max-w-full" />
+              <Skeleton class="mt-1.5 h-3 w-56 max-w-full" />
             </div>
             <div>
               <Skeleton class="mb-1.5 h-4 w-20" />
-              <Skeleton class="h-10 w-56" />
-              <Skeleton class="mt-1.5 h-3 w-48" />
+              <Skeleton class="h-10 w-56 max-w-full" />
+              <Skeleton class="mt-1.5 h-3 w-48 max-w-full" />
             </div>
           </div>
 
-          <!-- Tab content -->
-          <template v-else-if="form">
+          <!-- Load error with retry -->
+          <div v-else-if="!form" role="alert" class="flex flex-col items-start gap-3 rounded-xl border border-destructive/40 bg-card p-6" data-testid="settings-load-error">
+            <p class="text-sm font-medium text-foreground">{{ $t('settings.loadFailed') }}</p>
+            <p v-if="error" class="break-words text-sm text-muted-foreground">{{ error }}</p>
+            <Button type="button" variant="outline" class="min-h-11" @click="loadAll">
+              <AppIcon name="retry" size="sm" />
+              {{ $t('settings.retry') }}
+            </Button>
+          </div>
+
+          <!-- Area content -->
+          <template v-else>
 
             <!-- ═══ Agent ═══ -->
-            <div v-if="activeTab === 'agent'">
+            <div v-if="activeSection === 'agent'">
               <div class="mb-8">
                 <h2 class="text-lg font-semibold tracking-tight text-foreground">
                   {{ $t('settings.tabs.agent') }}
@@ -304,155 +329,6 @@
                   <p class="text-xs text-muted-foreground">{{ $t('settings.uploadRetentionHint') }}</p>
                 </div>
 
-                <!-- ─── Now set ─── -->
-                <Separator />
-
-                <div>
-                  <h3 class="text-base font-semibold tracking-tight text-foreground">
-                    {{ $t('settings.nowSetSection') }}
-                  </h3>
-                  <p class="mt-1 text-sm text-muted-foreground">
-                    {{ $t('settings.nowSetSectionDescription') }}
-                  </p>
-                </div>
-
-                <div class="flex flex-col gap-2">
-                  <Label for="now-set-max">{{ $t('settings.nowSetMax') }}</Label>
-                  <div class="flex items-center gap-2">
-                    <Input
-                      id="now-set-max"
-                      v-model.number="form.offtangent.nowSetMax"
-                      type="number"
-                      :min="NOW_SET_MAX_RANGE.min"
-                      :max="NOW_SET_MAX_RANGE.max"
-                      class="w-full"
-                    />
-                    <span class="text-sm text-muted-foreground">{{ $t('settings.nowSetMaxUnit') }}</span>
-                  </div>
-                  <p class="text-xs text-muted-foreground">
-                    {{ $t('settings.nowSetMaxHint', { min: NOW_SET_MAX_RANGE.min, max: NOW_SET_MAX_RANGE.max }) }}
-                  </p>
-                </div>
-
-                <div class="flex flex-col gap-2">
-                  <Label for="now-set-mode">{{ $t('settings.nowSetMode') }}</Label>
-                  <Select v-model="form.offtangent.nowSetMode">
-                    <SelectTrigger id="now-set-mode">
-                      <SelectValue />
-                    </SelectTrigger>
-                    <SelectContent>
-                      <SelectItem v-for="opt in nowSetModeOptions" :key="opt.value" :value="opt.value">
-                        {{ opt.label }}
-                      </SelectItem>
-                    </SelectContent>
-                  </Select>
-                  <p class="text-xs text-muted-foreground">
-                    {{ $t('settings.nowSetModeHint') }}
-                  </p>
-                </div>
-
-                <!-- ─── "Waiting on you" age limit ─── -->
-                <Separator />
-
-                <div>
-                  <h3 class="text-base font-semibold tracking-tight text-foreground">
-                    {{ $t('settings.attentionSection') }}
-                  </h3>
-                  <p class="mt-1 text-sm text-muted-foreground">
-                    {{ $t('settings.attentionSectionDescription') }}
-                  </p>
-                </div>
-
-                <div class="flex flex-col gap-2">
-                  <Label for="attention-max-age">{{ $t('settings.attentionMaxAge') }}</Label>
-                  <div class="flex items-center gap-2">
-                    <Input
-                      id="attention-max-age"
-                      v-model.number="form.offtangent.attentionMaxAgeHours"
-                      type="number"
-                      :min="ATTENTION_MAX_AGE_HOURS_RANGE.min"
-                      :max="ATTENTION_MAX_AGE_HOURS_RANGE.max"
-                      step="1"
-                      :aria-invalid="attentionMaxAgeInvalid || undefined"
-                      class="w-full"
-                    />
-                    <span class="text-sm text-muted-foreground">{{ $t('settings.attentionMaxAgeUnit') }}</span>
-                  </div>
-                  <p class="text-xs text-muted-foreground">
-                    {{ $t('settings.attentionMaxAgeHint', {
-                      min: ATTENTION_MAX_AGE_HOURS_RANGE.min,
-                      max: ATTENTION_MAX_AGE_HOURS_RANGE.max,
-                    }) }}
-                  </p>
-                  <p v-if="attentionMaxAgeInvalid" class="text-xs text-destructive">
-                    {{ $t('settings.attentionMaxAgeInvalid', {
-                      min: ATTENTION_MAX_AGE_HOURS_RANGE.min,
-                      max: ATTENTION_MAX_AGE_HOURS_RANGE.max,
-                    }) }}
-                  </p>
-                </div>
-
-                <!-- ─── Capture mode: quick question ─── -->
-                <Separator />
-
-                <div>
-                  <h3 class="text-base font-semibold tracking-tight text-foreground">
-                    {{ $t('settings.quickModeSection') }}
-                  </h3>
-                  <p class="mt-1 text-sm text-muted-foreground">
-                    {{ $t('settings.quickModeSectionDescription') }}
-                  </p>
-                </div>
-
-                <div class="flex flex-col gap-2">
-                  <Label for="quick-mode-model">{{ $t('settings.quickModeModel') }}</Label>
-                  <Select :model-value="quickModeModelValue" @update:model-value="(v) => setQuickModeModel(v as string)">
-                    <SelectTrigger id="quick-mode-model">
-                      <SelectValue :placeholder="$t('settings.quickModeModelInherit')" />
-                    </SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value="">{{ $t('settings.quickModeModelInherit') }}</SelectItem>
-                      <SelectItem v-for="opt in providerModelOptions" :key="opt.value" :value="opt.value">
-                        {{ opt.label }}
-                      </SelectItem>
-                    </SelectContent>
-                  </Select>
-                  <p class="text-xs text-muted-foreground">{{ $t('settings.quickModeModelHint') }}</p>
-                </div>
-
-                <div class="flex flex-col gap-2">
-                  <Label for="quick-mode-thinking">{{ $t('settings.quickModeThinkingLevel') }}</Label>
-                  <Select v-model="form.captureModes.quick.thinkingLevel">
-                    <SelectTrigger id="quick-mode-thinking">
-                      <SelectValue />
-                    </SelectTrigger>
-                    <SelectContent>
-                      <SelectItem v-for="opt in thinkingLevelOptions" :key="opt.value" :value="opt.value">
-                        {{ opt.label }}
-                      </SelectItem>
-                    </SelectContent>
-                  </Select>
-                  <p class="text-xs text-muted-foreground">{{ $t('settings.quickModeThinkingLevelHint') }}</p>
-                </div>
-
-                <div class="flex flex-col gap-2">
-                  <Label for="quick-mode-style">{{ $t('settings.quickModeStyleHint') }}</Label>
-                  <textarea id="quick-mode-style" v-model="form.captureModes.quick.styleHint" rows="3" class="flex w-full rounded-md border border-input bg-background px-3 py-2 text-sm ring-offset-background placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring" />
-                  <p class="text-xs text-muted-foreground">{{ $t('settings.quickModeStyleHintHint') }}</p>
-                </div>
-
-                <div class="flex flex-col gap-2">
-                  <Label for="quick-mode-strand">{{ $t('settings.quickModeStrandTitle') }}</Label>
-                  <Input id="quick-mode-strand" v-model="form.captureModes.quick.strandTitle" class="w-full" />
-                  <p class="text-xs text-muted-foreground">{{ $t('settings.quickModeStrandTitleHint') }}</p>
-                </div>
-
-                <div class="flex flex-col gap-2">
-                  <Label for="capture-source-puck">{{ $t('settings.puckStyleHint') }}</Label>
-                  <textarea id="capture-source-puck" v-model="form.captureSources.puck.styleHint" rows="2" class="flex w-full rounded-md border border-input bg-background px-3 py-2 text-sm ring-offset-background placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring" />
-                  <p class="text-xs text-muted-foreground">{{ $t('settings.puckStyleHintHint') }}</p>
-                </div>
-
                 <!-- ─── Resilience (retry + watchdog) ─── -->
                 <Separator />
 
@@ -559,8 +435,183 @@
               </div>
             </div>
 
+            <!-- ═══ now ═══ -->
+            <div v-else-if="activeSection === 'now'">
+              <div class="mb-8">
+                <h2 class="text-lg font-semibold tracking-tight text-foreground">
+                  {{ $t('settings.sections.now') }}
+                </h2>
+                <p class="mt-1 text-sm text-muted-foreground">
+                  {{ $t('settings.sections.nowDescription') }}
+                </p>
+              </div>
+
+              <div class="flex flex-col gap-8">
+                <!-- ─── Now set ─── -->
+                <div>
+                  <h3 class="text-base font-semibold tracking-tight text-foreground">
+                    {{ $t('settings.nowSetSection') }}
+                  </h3>
+                  <p class="mt-1 text-sm text-muted-foreground">
+                    {{ $t('settings.nowSetSectionDescription') }}
+                  </p>
+                </div>
+
+                <div class="flex flex-col gap-2">
+                  <Label for="now-set-max">{{ $t('settings.nowSetMax') }}</Label>
+                  <div class="flex items-center gap-2">
+                    <Input
+                      id="now-set-max"
+                      v-model.number="form.offtangent.nowSetMax"
+                      type="number"
+                      :min="NOW_SET_MAX_RANGE.min"
+                      :max="NOW_SET_MAX_RANGE.max"
+                      class="w-full"
+                    />
+                    <span class="text-sm text-muted-foreground">{{ $t('settings.nowSetMaxUnit') }}</span>
+                  </div>
+                  <p class="text-xs text-muted-foreground">
+                    {{ $t('settings.nowSetMaxHint', { min: NOW_SET_MAX_RANGE.min, max: NOW_SET_MAX_RANGE.max }) }}
+                  </p>
+                </div>
+
+                <div class="flex flex-col gap-2">
+                  <Label for="now-set-mode">{{ $t('settings.nowSetMode') }}</Label>
+                  <Select v-model="form.offtangent.nowSetMode">
+                    <SelectTrigger id="now-set-mode">
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem v-for="opt in nowSetModeOptions" :key="opt.value" :value="opt.value">
+                        {{ opt.label }}
+                      </SelectItem>
+                    </SelectContent>
+                  </Select>
+                  <p class="text-xs text-muted-foreground">
+                    {{ $t('settings.nowSetModeHint') }}
+                  </p>
+                </div>
+
+                <!-- ─── "Waiting on you" age limit ─── -->
+                <Separator />
+
+                <div>
+                  <h3 class="text-base font-semibold tracking-tight text-foreground">
+                    {{ $t('settings.attentionSection') }}
+                  </h3>
+                  <p class="mt-1 text-sm text-muted-foreground">
+                    {{ $t('settings.attentionSectionDescription') }}
+                  </p>
+                </div>
+
+                <div class="flex flex-col gap-2">
+                  <Label for="attention-max-age">{{ $t('settings.attentionMaxAge') }}</Label>
+                  <div class="flex items-center gap-2">
+                    <Input
+                      id="attention-max-age"
+                      v-model.number="form.offtangent.attentionMaxAgeHours"
+                      type="number"
+                      :min="ATTENTION_MAX_AGE_HOURS_RANGE.min"
+                      :max="ATTENTION_MAX_AGE_HOURS_RANGE.max"
+                      step="1"
+                      :aria-invalid="attentionMaxAgeInvalid || undefined"
+                      class="w-full"
+                    />
+                    <span class="text-sm text-muted-foreground">{{ $t('settings.attentionMaxAgeUnit') }}</span>
+                  </div>
+                  <p class="text-xs text-muted-foreground">
+                    {{ $t('settings.attentionMaxAgeHint', {
+                      min: ATTENTION_MAX_AGE_HOURS_RANGE.min,
+                      max: ATTENTION_MAX_AGE_HOURS_RANGE.max,
+                    }) }}
+                  </p>
+                  <p v-if="attentionMaxAgeInvalid" class="text-xs text-destructive">
+                    {{ $t('settings.attentionMaxAgeInvalid', {
+                      min: ATTENTION_MAX_AGE_HOURS_RANGE.min,
+                      max: ATTENTION_MAX_AGE_HOURS_RANGE.max,
+                    }) }}
+                  </p>
+                </div>
+
+              </div>
+            </div>
+
+            <!-- ═══ capture ═══ -->
+            <div v-else-if="activeSection === 'capture'">
+              <div class="mb-8">
+                <h2 class="text-lg font-semibold tracking-tight text-foreground">
+                  {{ $t('settings.sections.capture') }}
+                </h2>
+                <p class="mt-1 text-sm text-muted-foreground">
+                  {{ $t('settings.sections.captureDescription') }}
+                </p>
+              </div>
+
+              <div class="flex flex-col gap-8">
+                <!-- ─── Capture mode: quick question ─── -->
+                <div>
+                  <h3 class="text-base font-semibold tracking-tight text-foreground">
+                    {{ $t('settings.quickModeSection') }}
+                  </h3>
+                  <p class="mt-1 text-sm text-muted-foreground">
+                    {{ $t('settings.quickModeSectionDescription') }}
+                  </p>
+                </div>
+
+                <div class="flex flex-col gap-2">
+                  <Label for="quick-mode-model">{{ $t('settings.quickModeModel') }}</Label>
+                  <Select :model-value="quickModeModelValue" @update:model-value="(v) => setQuickModeModel(v as string)">
+                    <SelectTrigger id="quick-mode-model">
+                      <SelectValue :placeholder="$t('settings.quickModeModelInherit')" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="">{{ $t('settings.quickModeModelInherit') }}</SelectItem>
+                      <SelectItem v-for="opt in providerModelOptions" :key="opt.value" :value="opt.value">
+                        {{ opt.label }}
+                      </SelectItem>
+                    </SelectContent>
+                  </Select>
+                  <p class="text-xs text-muted-foreground">{{ $t('settings.quickModeModelHint') }}</p>
+                </div>
+
+                <div class="flex flex-col gap-2">
+                  <Label for="quick-mode-thinking">{{ $t('settings.quickModeThinkingLevel') }}</Label>
+                  <Select v-model="form.captureModes.quick.thinkingLevel">
+                    <SelectTrigger id="quick-mode-thinking">
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem v-for="opt in thinkingLevelOptions" :key="opt.value" :value="opt.value">
+                        {{ opt.label }}
+                      </SelectItem>
+                    </SelectContent>
+                  </Select>
+                  <p class="text-xs text-muted-foreground">{{ $t('settings.quickModeThinkingLevelHint') }}</p>
+                </div>
+
+                <div class="flex flex-col gap-2">
+                  <Label for="quick-mode-style">{{ $t('settings.quickModeStyleHint') }}</Label>
+                  <textarea id="quick-mode-style" v-model="form.captureModes.quick.styleHint" rows="3" class="flex w-full rounded-md border border-input bg-background px-3 py-2 text-sm ring-offset-background placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring" />
+                  <p class="text-xs text-muted-foreground">{{ $t('settings.quickModeStyleHintHint') }}</p>
+                </div>
+
+                <div class="flex flex-col gap-2">
+                  <Label for="quick-mode-strand">{{ $t('settings.quickModeStrandTitle') }}</Label>
+                  <Input id="quick-mode-strand" v-model="form.captureModes.quick.strandTitle" class="w-full" />
+                  <p class="text-xs text-muted-foreground">{{ $t('settings.quickModeStrandTitleHint') }}</p>
+                </div>
+
+                <div class="flex flex-col gap-2">
+                  <Label for="capture-source-puck">{{ $t('settings.puckStyleHint') }}</Label>
+                  <textarea id="capture-source-puck" v-model="form.captureSources.puck.styleHint" rows="2" class="flex w-full rounded-md border border-input bg-background px-3 py-2 text-sm ring-offset-background placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring" />
+                  <p class="text-xs text-muted-foreground">{{ $t('settings.puckStyleHintHint') }}</p>
+                </div>
+
+              </div>
+            </div>
+
             <!-- ═══ Memory ═══ -->
-            <div v-else-if="activeTab === 'memory'">
+            <div v-else-if="activeSection === 'memory'">
               <div class="mb-8">
                 <h2 class="text-lg font-semibold tracking-tight text-foreground">
                   {{ $t('settings.tabs.memory') }}
@@ -813,7 +864,7 @@
             </div>
 
             <!-- ═══ Agent Heartbeat ═══ -->
-            <div v-else-if="activeTab === 'agentHeartbeat'">
+            <div v-else-if="activeSection === 'agentHeartbeat'">
               <div class="mb-8">
                 <h2 class="text-lg font-semibold tracking-tight text-foreground">
                   {{ $t('settings.tabs.agentHeartbeat') }}
@@ -954,7 +1005,7 @@
             </div>
 
             <!-- ═══ Health Monitor ═══ -->
-            <div v-else-if="activeTab === 'healthMonitor'">
+            <div v-else-if="activeSection === 'healthMonitor'">
               <div class="mb-8">
                 <h2 class="text-lg font-semibold tracking-tight text-foreground">
                   {{ $t('settings.tabs.healthMonitor') }}
@@ -1091,7 +1142,7 @@
             </div>
 
             <!-- ═══ Telegram ═══ -->
-            <div v-else-if="activeTab === 'telegram'">
+            <div v-else-if="activeSection === 'telegram'">
               <div class="mb-8">
                 <h2 class="text-lg font-semibold tracking-tight text-foreground">
                   {{ $t('settings.tabs.telegram') }}
@@ -1343,7 +1394,7 @@
             </div>
 
             <!-- ═══ Tasks ═══ -->
-            <div v-else-if="activeTab === 'tasks'">
+            <div v-else-if="activeSection === 'tasks'">
               <div class="mb-8">
                 <h2 class="text-lg font-semibold tracking-tight text-foreground">
                   {{ $t('settings.tabs.tasks') }}
@@ -1572,7 +1623,7 @@
             </div>
 
             <!-- ═══ Text-to-Speech ═══ -->
-            <div v-else-if="activeTab === 'tts'">
+            <div v-else-if="activeSection === 'tts'">
               <div class="mb-8">
                 <h2 class="text-lg font-semibold tracking-tight text-foreground">
                   {{ $t('settings.ttsTitle') }}
@@ -1583,6 +1634,10 @@
               </div>
 
               <div class="flex flex-col gap-8">
+                <SettingsVoiceReplies />
+
+                <Separator />
+
                 <!-- Enable toggle -->
                 <div class="flex items-center justify-between rounded-lg border border-border px-4 py-3">
                   <div class="flex flex-col gap-0.5 pr-4">
@@ -1907,7 +1962,7 @@
             </div>
 
             <!-- ═══ Speech-to-Text ═══ -->
-            <div v-else-if="activeTab === 'stt'">
+            <div v-else-if="activeSection === 'stt'">
               <div class="mb-8">
                 <h2 class="text-lg font-semibold tracking-tight text-foreground">
                   {{ $t('settings.sttTitle') }}
@@ -2093,7 +2148,7 @@
             </div>
 
             <!-- ═══ Secrets ═══ -->
-            <div v-else-if="activeTab === 'secrets'">
+            <div v-else-if="activeSection === 'secrets'">
               <div class="mb-8">
                 <h2 class="text-lg font-semibold tracking-tight text-foreground">
                   {{ $t('settings.secretsTitle') }}
@@ -2281,7 +2336,7 @@
             </div>
 
             <!-- ═══ Email ═══ -->
-            <div v-else-if="activeTab === 'email'">
+            <div v-else-if="activeSection === 'email'">
               <div class="mb-8">
                 <h2 class="text-lg font-semibold tracking-tight text-foreground">
                   {{ $t('settings.tabs.email') }}
@@ -2295,9 +2350,21 @@
             </div>
 
             <!-- ═══ Models ═══ -->
-            <ModelPolicyPanel v-else-if="activeTab === 'models'" />
+            <div v-else-if="activeSection === 'models'" class="flex flex-col gap-6">
+              <NuxtLink
+                to="/providers"
+                class="flex min-h-11 items-center justify-between gap-3 rounded-xl border border-border bg-card px-4 py-3 text-sm transition-colors hover:bg-accent/50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+              >
+                <span class="min-w-0">
+                  <span class="block font-medium text-foreground">{{ $t('settings.sections.providersLink') }}</span>
+                  <span class="block text-muted-foreground">{{ $t('settings.sections.providersLinkDescription') }}</span>
+                </span>
+                <AppIcon name="externalLink" size="sm" class="shrink-0 text-muted-foreground" />
+              </NuxtLink>
+              <ModelPolicyPanel />
+            </div>
 
-            <SecretHandlesPanel v-else-if="activeTab === 'secretHandles'" />
+            <SecretHandlesPanel v-else-if="activeSection === 'secretHandles'" />
 
           </template>
         </div>
@@ -2315,6 +2382,12 @@ import EmailAccountsWorkspace from '~/features/email/components/EmailAccountsWor
 import ModelPolicyPanel from './ModelPolicyPanel.vue'
 import SecretHandlesPanel from './SecretHandlesPanel.vue'
 import VoiceNotePanel from './VoiceNotePanel.vue'
+import SettingsAppearance from './SettingsAppearance.vue'
+import SettingsOverview from './SettingsOverview.vue'
+import SettingsSectionNav from './SettingsSectionNav.vue'
+import SettingsVoiceReplies from './SettingsVoiceReplies.vue'
+import { findSection, isRoutableSection, showsFormSave } from '../settingsSections'
+import { formSnapshot, isFormDirty } from '../settingsDirty'
 import { useTtsCatalogApi, type TtsCatalogResponse } from '~/api/tts'
 import {
   buildVoiceNotePayload,
@@ -2330,9 +2403,6 @@ const { formatDateTime } = useFormat()
 const { user } = useAuth()
 const isAdmin = computed(() => user.value?.role === 'admin')
 
-/* ── Tab routing — persisted in URL query for deep-linking ── */
-const route = useRoute()
-const router = useRouter()
 const { t } = useI18n()
 
 const timezones = [
@@ -2367,33 +2437,14 @@ const timezones = [
   'America/Argentina/Buenos_Aires',
 ]
 
-const VALID_TABS = ['agent', 'memory', 'agentHeartbeat', 'healthMonitor', 'models', 'telegram', 'tasks', 'tts', 'stt', 'secrets', 'secretHandles', 'email'] as const
-type TabId = (typeof VALID_TABS)[number]
-
-const activeTab = computed<TabId>({
-  get() {
-    const raw = route.query.tab as string
-    return VALID_TABS.includes(raw as TabId) ? (raw as TabId) : 'agent'
-  },
-  set(value: TabId) {
-    router.replace({ query: { tab: value } })
-  },
-})
-
-const tabs = computed(() => [
-  { id: 'agent' as TabId, icon: 'bot', label: t('settings.tabs.agent') },
-  { id: 'agentHeartbeat' as TabId, icon: 'activity', label: t('settings.tabs.agentHeartbeat') },
-  { id: 'email' as TabId, icon: 'mail', label: t('settings.tabs.email') },
-  { id: 'healthMonitor' as TabId, icon: 'activity', label: t('settings.tabs.healthMonitor') },
-  { id: 'memory' as TabId, icon: 'brain', label: t('settings.tabs.memory') },
-  { id: 'models' as TabId, icon: 'bot', label: t('settings.tabs.models') },
-  { id: 'secrets' as TabId, icon: 'key', label: t('settings.tabs.secrets') },
-  { id: 'secretHandles' as TabId, icon: 'lock', label: t('settings.tabs.secretHandles') },
-  { id: 'stt' as TabId, icon: 'mic', label: t('settings.sttTitle') },
-  { id: 'tasks' as TabId, icon: 'bot', label: t('settings.tabs.tasks') },
-  { id: 'telegram' as TabId, icon: 'send', label: t('settings.tabs.telegram') },
-  { id: 'tts' as TabId, icon: 'volume', label: t('settings.ttsTitle') },
-])
+/* ── Area routing: /settings/:section (see settingsSections.ts) ── */
+const props = withDefaults(defineProps<{ section?: string | null }>(), { section: null })
+const activeSection = computed(() => props.section || null)
+const sectionKnown = computed(() => isRoutableSection(activeSection.value))
+const currentSection = computed(() => findSection(activeSection.value))
+const formSaveVisible = computed(() => sectionKnown.value && showsFormSave(activeSection.value))
+const headerTitle = computed(() => currentSection.value ? t(currentSection.value.labelKey) : t('settings.title'))
+const headerSubtitle = computed(() => currentSection.value ? t(currentSection.value.descriptionKey) : t('settings.subtitle'))
 
 /* ── Settings state ── */
 const {
@@ -3416,13 +3467,43 @@ async function handleSave() {
   void loadTtsCatalog()
 
   hydrateForm()
+  await nextTick()
+  markClean()
   setTimeout(() => {
     successMessage.value = null
   }, 3000)
 }
 
+/* ── Unsaved changes ── */
+/** Snapshot of what the server has; `dirty` compares the live form against it. */
+const cleanSnapshot = ref<string | null>(null)
+function markClean() {
+  cleanSnapshot.value = form.value ? formSnapshot({ form: form.value, voiceNote: voiceNoteDraft.value }) : null
+}
+const dirty = computed(() => isFormDirty(
+  cleanSnapshot.value,
+  form.value ? { form: form.value, voiceNote: voiceNoteDraft.value } : null,
+))
+
+function confirmLeave(): boolean {
+  if (!dirty.value) return true
+  return window.confirm(t('settings.unsavedConfirm'))
+}
+// Switching areas keeps the form (one page instance), so only leaving the
+// settings page can lose edits.
+onBeforeRouteLeave(() => confirmLeave())
+function onBeforeUnload(event: BeforeUnloadEvent) {
+  if (!dirty.value) return
+  event.preventDefault()
+  event.returnValue = ''
+}
+onMounted(() => window.addEventListener('beforeunload', onBeforeUnload))
+onBeforeUnmount(() => window.removeEventListener('beforeunload', onBeforeUnload))
+
 /* ── Init ── */
-onMounted(async () => {
+onMounted(() => { void loadAll() })
+
+async function loadAll() {
   if (!isAdmin.value) return
   await Promise.all([
     fetchSettings(),
@@ -3435,6 +3516,8 @@ onMounted(async () => {
     loadTtsCatalog(),
   ])
   hydrateForm()
+  await nextTick()
+  markClean()
   // Auto-fetch Deepgram models on first load so the dropdown is populated by
   // the time the user opens the STT/TTS pane. STT takes precedence when both
   // providers are set to Deepgram — the user can hit either refresh button to
@@ -3447,5 +3530,38 @@ onMounted(async () => {
       void fetchDeepgramModels({ scope: 'tts' })
     }
   }
-})
+}
 </script>
+
+<style>
+/*
+ * Touch targets on phones: every control of the settings areas is at least
+ * 44 px tall. Switches keep their 24 px look and get an invisible 44 px hit
+ * area instead. Desktop keeps the denser 40 px controls.
+ */
+@media (max-width: 767px) {
+  .settings-touch input:not([type='radio']):not([type='checkbox']):not([type='hidden']),
+  .settings-touch textarea,
+  .settings-touch select,
+  .settings-touch [role='combobox'],
+  .settings-touch button:not([role='switch']),
+  .settings-touch a.inline-flex {
+    min-height: 44px;
+  }
+  .settings-touch button:not([role='switch']) {
+    min-width: 44px;
+  }
+  .settings-touch [role='switch'] {
+    position: relative;
+  }
+  .settings-touch [role='switch']::after {
+    content: '';
+    position: absolute;
+    left: 0;
+    right: 0;
+    top: 50%;
+    height: 44px;
+    transform: translateY(-50%);
+  }
+}
+</style>

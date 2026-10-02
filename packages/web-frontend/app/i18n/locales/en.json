@@ -1002,6 +1002,65 @@
       "valueTooLong": "The value is longer than {max} characters.",
       "slugInvalid": "Use lowercase letters, digits and dashes only (up to 64 characters).",
       "adminOnly": "Only administrators can manage secrets."
+    },
+    "groups": {
+      "everyday": "Everyday",
+      "everydayDescription": "How the app looks, what Now shows, how capture and voice behave.",
+      "system": "System",
+      "systemDescription": "Agent, models, memory, background jobs, channels and credentials."
+    },
+    "sections": {
+      "appearance": "Appearance",
+      "appearanceDescription": "Light, dark or follow the system.",
+      "now": "Now",
+      "nowDescription": "Size and mode of the Now set, and how long \"waiting on you\" lasts.",
+      "capture": "Capture",
+      "captureDescription": "Quick-question mode and the style of puck captures.",
+      "ttsDescription": "Read aloud, voice and voice replies.",
+      "sttDescription": "Dictation provider and transcript rewrite.",
+      "agentDescription": "Rules, personas, language, active model, storage and resilience.",
+      "providersLink": "Providers",
+      "providersLinkDescription": "Add accounts and enable models on the providers page.",
+      "logs": "Logs",
+      "logsDescription": "Server and agent logs.",
+      "usage": "Usage",
+      "usageDescription": "Token usage and subscription quotas.",
+      "opensPage": "Opens its own page"
+    },
+    "overview": {
+      "title": "All settings",
+      "searchLabel": "Search settings",
+      "searchPlaceholder": "Search settings, e.g. timezone",
+      "noResults": "No setting matches \"{query}\".",
+      "clearSearch": "Clear search",
+      "resultCount": "{count} areas",
+      "matchesIn": "Found in this area"
+    },
+    "back": "All settings",
+    "sectionNav": "Settings areas",
+    "notFound": "This settings area does not exist.",
+    "loadFailed": "Settings could not be loaded.",
+    "retry": "Try again",
+    "saveFailed": "Saving failed. Your changes are still here.",
+    "unsaved": "Unsaved changes",
+    "unsavedConfirm": "You have unsaved changes. Leave without saving?",
+    "discard": "Discard",
+    "appearance": {
+      "theme": "Theme",
+      "themeHint": "Saved in this browser. \"System\" follows the setting of your device.",
+      "current": "Currently shown: {mode}",
+      "modes": {
+        "auto": "System",
+        "light": "Light",
+        "dark": "Dark"
+      }
+    },
+    "voiceReplies": {
+      "label": "Voice replies",
+      "hint": "Speak a voice note after every answer (your account, all devices).",
+      "saved": "Voice replies saved.",
+      "saveFailed": "Voice replies could not be saved.",
+      "loadFailed": "Voice replies could not be loaded."
     }
   },
   "users": {

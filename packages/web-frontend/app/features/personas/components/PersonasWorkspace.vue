@@ -36,7 +36,7 @@
           <AlertDescription class="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
             <span>{{ $t('personas.multiPersonaDisabled') }}</span>
             <Button as-child variant="outline" size="sm" class="min-h-11 shrink-0 sm:ml-2">
-              <NuxtLink to="/settings?tab=agent">{{ $t('personas.goToSettings') }}</NuxtLink>
+              <NuxtLink to="/settings/agent">{{ $t('personas.goToSettings') }}</NuxtLink>
             </Button>
           </AlertDescription>
         </Alert>

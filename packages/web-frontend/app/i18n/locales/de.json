@@ -1002,6 +1002,65 @@
       "valueTooLong": "Der Wert ist länger als {max} Zeichen.",
       "slugInvalid": "Nur Kleinbuchstaben, Ziffern und Bindestriche (bis 64 Zeichen).",
       "adminOnly": "Nur Administratoren können Secrets verwalten."
+    },
+    "groups": {
+      "everyday": "Alltag",
+      "everydayDescription": "Aussehen, was „Jetzt“ zeigt, wie Erfassen und Stimme arbeiten.",
+      "system": "System",
+      "systemDescription": "Agent, Modelle, Gedächtnis, Hintergrundjobs, Kanäle und Zugangsdaten."
+    },
+    "sections": {
+      "appearance": "Darstellung",
+      "appearanceDescription": "Hell, dunkel oder wie das System.",
+      "now": "Jetzt",
+      "nowDescription": "Größe und Modus des Jetzt-Sets und wie lange „wartet auf dich“ gilt.",
+      "capture": "Erfassen",
+      "captureDescription": "Schnellfrage-Modus und Stil der Puck-Erfassungen.",
+      "ttsDescription": "Vorlesen, Stimme und Sprachantworten.",
+      "sttDescription": "Diktat-Anbieter und Überarbeitung des Transkripts.",
+      "agentDescription": "Regeln, Personas, Sprache, aktives Modell, Speicher und Ausfallsicherheit.",
+      "providersLink": "Anbieter",
+      "providersLinkDescription": "Konten hinzufügen und Modelle freischalten auf der Anbieter-Seite.",
+      "logs": "Logs",
+      "logsDescription": "Server- und Agent-Logs.",
+      "usage": "Nutzung",
+      "usageDescription": "Token-Verbrauch und Abo-Kontingente.",
+      "opensPage": "Öffnet eine eigene Seite"
+    },
+    "overview": {
+      "title": "Alle Einstellungen",
+      "searchLabel": "Einstellungen durchsuchen",
+      "searchPlaceholder": "Einstellungen suchen, z. B. Zeitzone",
+      "noResults": "Keine Einstellung passt zu „{query}“.",
+      "clearSearch": "Suche leeren",
+      "resultCount": "{count} Bereiche",
+      "matchesIn": "Gefunden in diesem Bereich"
+    },
+    "back": "Alle Einstellungen",
+    "sectionNav": "Einstellungsbereiche",
+    "notFound": "Diesen Einstellungsbereich gibt es nicht.",
+    "loadFailed": "Einstellungen konnten nicht geladen werden.",
+    "retry": "Erneut versuchen",
+    "saveFailed": "Speichern fehlgeschlagen. Deine Änderungen sind noch da.",
+    "unsaved": "Ungespeicherte Änderungen",
+    "unsavedConfirm": "Es gibt ungespeicherte Änderungen. Ohne Speichern verlassen?",
+    "discard": "Verwerfen",
+    "appearance": {
+      "theme": "Farbschema",
+      "themeHint": "Wird in diesem Browser gespeichert. „System“ folgt der Einstellung deines Geräts.",
+      "current": "Aktuell angezeigt: {mode}",
+      "modes": {
+        "auto": "System",
+        "light": "Hell",
+        "dark": "Dunkel"
+      }
+    },
+    "voiceReplies": {
+      "label": "Sprachantworten",
+      "hint": "Nach jeder Antwort eine Sprachnachricht sprechen (dein Konto, alle Geräte).",
+      "saved": "Sprachantworten gespeichert.",
+      "saveFailed": "Sprachantworten konnten nicht gespeichert werden.",
+      "loadFailed": "Sprachantworten konnten nicht geladen werden."
     }
   },
   "users": {
