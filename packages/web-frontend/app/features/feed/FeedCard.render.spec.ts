@@ -27,6 +27,11 @@ describe('feed card', () => {
     expect(html).toContain('min-h-[44px]')
     expect(html).toContain('flex-wrap')
   })
+  it('keeps title and body inside the reading measure', async () => {
+    const html = await render({ title: 'A deliberately long synthetic title '.repeat(4) })
+    expect(html).toMatch(/<h2 class="[^"]*max-w-\[32rem\][^"]*" data-testid="feed-title"/)
+    expect(html).toMatch(/id="feed-body-x" class="[^"]*prose-chat[^"]*max-w-\[68ch\]/)
+  })
   it('hides the redundant read action and disables pending actions', async () => {
     const html = await render({ readAt: '2026-09-02T00:00:00Z' }, true)
     expect(html).not.toContain('feed.markRead')

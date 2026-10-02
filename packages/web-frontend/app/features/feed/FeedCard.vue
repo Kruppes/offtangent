@@ -31,7 +31,9 @@ function toggle() {
       <span>{{ $t(`feed.kinds.${item.kind}`) }}</span>
       <time :datetime="item.createdAt">{{ date(item.createdAt) }}</time>
     </div>
-    <h2 class="mt-2 flex items-center gap-2 font-medium">
+    <!-- Title and body keep the reading measure of 60-72 characters per line (M1 tokens): the body via 68ch at
+         text-sm, the 16 px title via 32rem (68ch at 16 px measured 83 characters per line, 32rem measures at most 72). -->
+    <h2 class="mt-2 flex max-w-[32rem] items-center gap-2 font-medium" data-testid="feed-title">
       <AppIcon v-if="item.kind === 'board_update'" name="compass" />
       <span>{{ item.title }}</span>
     </h2>
