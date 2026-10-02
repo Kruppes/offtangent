@@ -2,9 +2,16 @@ import { readFileSync } from 'node:fs'
 import { describe, expect, it } from 'vitest'
 
 const css = readFileSync(new URL('../assets/css/tailwind.css', import.meta.url), 'utf8')
+function block(selector: string) {
+  const start = css.indexOf(`${selector} {`)
+  if (start < 0) throw new Error(`no ${selector} block in tailwind.css`)
+  return new Map([...css.slice(start).split('}')[0]!.matchAll(/--([\w-]+):\s*([^;]+);/g)].map(m => [m[1]!, m[2]!.trim()]))
+}
+// Dark is the default (`:root, .dark`); light overrides it (`:root.light`).
+const DARK = ':root,\n.dark'
+const LIGHT = ':root.light'
 function palette(selector: string) {
-  const block = css.slice(css.indexOf(`${selector} {`)).split('}')[0]!
-  const vars = new Map([...block.matchAll(/--([\w-]+):\s*([^;]+);/g)].map(m => [m[1]!, m[2]!.trim()]))
+  const vars = new Map([...block(DARK), ...(selector === LIGHT ? block(LIGHT) : [])])
   function rgb(name: string): number[] {
     const value = vars.get(name)!
     if (value.startsWith('var(')) return rgb(value.slice(6, -1))
@@ -26,12 +33,12 @@ function palette(selector: string) {
     const values = [luminance(a), luminance(b)].sort((x, y) => y - x)
     return (values[0]! + 0.05) / (values[1]! + 0.05)
   }
-  return { hex, contrast }
+  return { hex, contrast, vars }
 }
 
 describe.each([
-  [':root', '#345D5A', '#FFFFFF', '#F8FAF9', '#F2F4F3', '#2E7D32'],
-  ['.dark', '#4DB8A4', '#00382F', '#101418', '#171C20', '#81C784'],
+  [LIGHT, '#345D5A', '#F8FAF9', '#F8FAF9', '#F2F4F3', '#256A29'],
+  [DARK, '#4DB8A4', '#00382F', '#0F1215', '#171C20', '#81C784'],
 ])('%s Android palette', (selector, primary, onPrimary, background, card, success) => {
   const colors = palette(selector!)
   it('round-trips calculated HSL to exact Android hex', () => {
@@ -49,5 +56,18 @@ describe.each([
     const ratio = colors.contrast(text, background)
     console.log(`${selector} ${text}/${background}: ${ratio.toFixed(2)}:1`)
     expect(ratio).toBeGreaterThanOrEqual(4.5)
+  })
+  it.each([
+    ['muted-foreground', 'background'], ['muted-foreground', 'card'], ['foreground', 'muted'],
+  ])('secondary text %s on %s meets WCAG AA normal text', (text, background) => {
+    expect(colors.contrast(text, background)).toBeGreaterThanOrEqual(4.5)
+  })
+  it.each([
+    ['ring-track', 'background'], ['ring-track', 'card'], ['ring-track', 'muted'], ['input', 'background'], ['input', 'card'],
+  ])('non-text %s on %s meets WCAG 1.4.11 (3:1)', (part, background) => {
+    expect(colors.contrast(part, background)).toBeGreaterThanOrEqual(3)
+  })
+  it('keeps the neutral ramp at seven steps', () => {
+    expect([...colors.vars.keys()].filter(k => /^n\d$/.test(k))).toEqual(['n0', 'n1', 'n2', 'n3', 'n4', 'n5', 'n6'])
   })
 })
