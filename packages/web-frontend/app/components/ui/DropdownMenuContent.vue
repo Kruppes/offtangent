@@ -33,7 +33,7 @@ const forwarded = useForwardPropsEmits(delegatedProps, emits)
     <DropdownMenuContent
       v-bind="forwarded"
       :class="cn(
-        'z-[100] min-w-[160px] overflow-hidden rounded-lg border border-border bg-popover p-1 text-popover-foreground shadow-lg',
+        'z-[100] min-w-[160px] overflow-hidden rounded-lg border border-border bg-popover p-1 text-popover-foreground shadow-overlay',
         'data-[state=open]:animate-fade-in data-[state=closed]:animate-fade-out',
         props.class
       )"

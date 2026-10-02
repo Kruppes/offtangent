@@ -1,10 +1,10 @@
 <template>
   <div
-    class="absolute bottom-full left-0 right-0 z-20 mb-2 overflow-hidden rounded-xl border border-border bg-popover text-popover-foreground shadow-lg"
+    class="absolute bottom-full left-0 right-0 z-20 mb-2 overflow-hidden rounded-xl border border-border bg-popover text-popover-foreground shadow-overlay"
     role="listbox"
     :aria-label="$t('chat.skillAutocomplete.label')"
   >
-    <p class="border-b border-border/60 px-3 py-1.5 text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">
+    <p class="border-b border-border/60 px-3 py-1.5 text-2xs font-semibold uppercase tracking-wider text-muted-foreground">
       {{ $t('chat.skillAutocomplete.label') }}
     </p>
     <ul class="max-h-64 overflow-y-auto py-1">
@@ -26,7 +26,7 @@
             <code class="truncate text-xs text-muted-foreground">/skill:{{ skill.id }}</code>
             <span
               v-if="skill.kind === 'installed'"
-              class="shrink-0 rounded-full border border-border px-1.5 text-[10px] uppercase tracking-wide text-muted-foreground"
+              class="shrink-0 rounded-full border border-border px-1.5 text-2xs uppercase tracking-wide text-muted-foreground"
             >
               {{ $t('chat.skillAutocomplete.installed') }}
             </span>
@@ -35,7 +35,7 @@
         </div>
       </li>
     </ul>
-    <p class="border-t border-border/60 px-3 py-1.5 text-[11px] text-muted-foreground">
+    <p class="border-t border-border/60 px-3 py-1.5 text-2xs text-muted-foreground">
       {{ $t('chat.skillAutocomplete.hint') }}
     </p>
   </div>

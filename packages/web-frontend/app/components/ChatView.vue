@@ -24,7 +24,7 @@
         v-if="isDraggingFiles"
         class="pointer-events-none absolute inset-0 z-50 flex items-center justify-center bg-background/80 backdrop-blur-sm"
       >
-        <div class="flex flex-col items-center gap-3 rounded-2xl border-2 border-dashed border-primary/60 bg-primary/[0.06] px-10 py-8 text-primary shadow-lg">
+        <div class="flex flex-col items-center gap-3 rounded-2xl border-2 border-dashed border-primary/60 bg-primary/[0.06] px-10 py-8 text-primary">
           <AppIcon name="paperclip" class="h-10 w-10" />
           <p class="text-sm font-medium">{{ $t('chat.dropFilesHere') }}</p>
         </div>
@@ -49,13 +49,13 @@
     <ChatMessageList v-else :rows="transcriptRows" :state="contentState" @retry="reloadHistory" />
 
     <Transition enter-active-class="transition duration-200 ease-out" enter-from-class="translate-y-2 opacity-0" enter-to-class="translate-y-0 opacity-100" leave-active-class="transition duration-150 ease-in" leave-from-class="translate-y-0 opacity-100" leave-to-class="translate-y-2 opacity-0">
-      <button v-if="!isNearBottom" class="absolute bottom-28 right-6 z-10 flex h-9 w-9 items-center justify-center rounded-full border border-border bg-background text-muted-foreground shadow-md" @click="jumpToBottom">
+      <button v-if="!isNearBottom" class="absolute bottom-28 right-6 z-10 flex h-9 w-9 items-center justify-center rounded-full border border-border bg-background text-muted-foreground shadow-overlay" @click="jumpToBottom">
         <svg class="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="6 9 12 15 18 9" /></svg>
       </button>
     </Transition>
 
     <Transition enter-active-class="transition duration-200 ease-out" enter-from-class="translate-y-2 opacity-0" enter-to-class="translate-y-0 opacity-100" leave-active-class="transition duration-150 ease-in" leave-from-class="translate-y-0 opacity-100" leave-to-class="translate-y-2 opacity-0">
-      <div v-if="ttsError" class="absolute bottom-24 left-1/2 z-10 w-[min(92%,32rem)] -translate-x-1/2 rounded-md border border-destructive/40 bg-destructive/10 px-3 py-2 text-xs text-destructive shadow-md">
+      <div v-if="ttsError" class="absolute bottom-24 left-1/2 z-10 w-[min(92%,32rem)] -translate-x-1/2 rounded-md border border-destructive/40 bg-destructive/10 px-3 py-2 text-xs text-destructive shadow-overlay">
         <div class="flex items-start gap-2">
           <div class="flex-1">
             <div class="font-medium">{{ $t('chat.ttsErrorTitle') }}</div>

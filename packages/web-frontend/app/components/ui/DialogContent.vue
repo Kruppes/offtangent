@@ -28,7 +28,7 @@ const forwarded = useForwardPropsEmits(delegatedProps, emits)
 <template>
   <DialogPortal>
     <DialogOverlay
-      class="fixed inset-0 z-50 bg-black/60 backdrop-blur-sm data-[state=open]:animate-fade-in data-[state=closed]:animate-fade-out"
+      class="fixed inset-0 z-50 bg-scrim backdrop-blur-sm data-[state=open]:animate-fade-in data-[state=closed]:animate-fade-out"
     />
     <DialogContent
       v-bind="forwarded"
@@ -36,7 +36,7 @@ const forwarded = useForwardPropsEmits(delegatedProps, emits)
         // Centered via auto margins instead of translate(-50%, -50%): a transformed
         // scroll container makes Firefox's async scrolling paint content outside
         // the dialog while scrolling.
-        'fixed inset-0 z-50 m-auto h-fit w-full max-w-md rounded-xl border border-border bg-card p-6 shadow-xl',
+        'fixed inset-0 z-50 m-auto h-fit w-full max-w-md rounded-xl border border-border bg-card p-6 shadow-overlay',
         'focus:outline-none',
         'data-[state=open]:animate-fade-in data-[state=closed]:animate-fade-out',
         props.class

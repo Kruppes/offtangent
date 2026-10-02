@@ -10,7 +10,7 @@
   >
     <div
       v-if="sidebarOpen"
-      class="fixed inset-0 z-40 bg-black/55 md:hidden"
+      class="fixed inset-0 z-40 bg-scrim md:hidden"
       aria-hidden="true"
       @click="sidebarOpen = false"
     />
@@ -34,7 +34,7 @@
         <div class="flex items-center gap-3 border-b border-sidebar-border/60 px-5 py-[18px]">
           <AppLogo />
           <div class="min-w-0">
-            <span class="block truncate text-[18px] font-bold text-sidebar-foreground">
+            <span class="block truncate text-lg font-bold text-sidebar-foreground">
               {{ $t('app.title') }}
             </span>
             <p class="mt-0.5 text-xs text-muted-foreground">
@@ -71,7 +71,7 @@
                 <!-- Name + role -->
                 <div class="flex min-w-0 flex-1 flex-col">
                   <span class="truncate text-sm font-medium text-sidebar-foreground leading-none">{{ user?.username }}</span>
-                  <span class="mt-1 text-[11px] uppercase tracking-wide text-muted-foreground">
+                  <span class="mt-1 text-2xs uppercase tracking-wide text-muted-foreground">
                     {{ isAdmin ? $t('roles.admin') : $t('roles.user') }}
                   </span>
                 </div>
@@ -145,7 +145,7 @@
         <Tooltip v-if="globalHealthMonitorEnabled && isInFallbackMode">
           <TooltipTrigger as-child>
             <div class="hidden items-center gap-1.5 rounded-md bg-warning/10 px-2.5 py-1 ring-1 ring-warning/30 md:flex">
-              <span class="h-2 w-2 shrink-0 rounded-full bg-warning shadow-[0_0_6px_hsl(var(--warning))]" />
+              <span class="h-2 w-2 shrink-0 rounded-full bg-warning" />
               <span class="text-xs font-medium text-warning">{{ t('status.fallback') }}</span>
             </div>
           </TooltipTrigger>
@@ -239,8 +239,8 @@ const { userAvatarUrl, avatarFailed, userInitial, onAvatarError } = useUserAvata
 
 const statusDotClass = computed(() => {
   switch (globalStatus.value) {
-    case 'healthy': return 'bg-success shadow-[0_0_6px_hsl(var(--success))]'
-    case 'degraded': return 'bg-warning shadow-[0_0_6px_hsl(var(--warning))]'
+    case 'healthy': return 'bg-success'
+    case 'degraded': return 'bg-warning'
     default: return 'bg-muted-foreground'
   }
 })

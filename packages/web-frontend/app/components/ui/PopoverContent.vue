@@ -33,7 +33,7 @@ const forwarded = useForwardPropsEmits(delegatedProps, emits)
     <PopoverContent
       v-bind="forwarded"
       :class="cn(
-        'z-50 rounded-md border border-border bg-popover p-4 text-popover-foreground shadow-md outline-none',
+        'z-50 rounded-md border border-border bg-popover p-4 text-popover-foreground shadow-overlay outline-none',
         'data-[state=open]:animate-fade-in data-[state=closed]:animate-fade-out',
         props.class
       )"
