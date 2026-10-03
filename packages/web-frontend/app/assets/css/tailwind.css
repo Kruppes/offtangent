@@ -714,7 +714,7 @@
     .code-block-copy-button {
       @apply inline-flex h-6 w-6 shrink-0 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-muted hover:text-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring;
     }
-    @media (max-width: 767px) {
+    @media (max-width: 767px), (pointer: coarse) {
       .code-block-copy-button { @apply -my-2 h-11 w-11; }
     }
     .code-block-copy-button svg {
@@ -924,5 +924,38 @@ html[data-strand-transition="close"]::view-transition-old(strand-conversation) {
   textarea,
   select {
     font-size: max(16px, 1em);
+  }
+}
+
+/* ─── W11: touch targets on touch-primary devices ───
+   Phones (< 768 px) already get 44 px controls through the max-md: sizes.
+   A touch-primary device can also be wide (tablet, touch laptop), so the hit
+   area follows the input method, not the width: under (pointer: coarse) every
+   control gets an invisible, centred hit box of at least 44 x 44 px. The box
+   is a pseudo element, so the look stays the same; the mouse desktop is not
+   touched at all. Elements that already use ::after (switch hit area,
+   stretched-link rows) and positioned elements (absolute, fixed, sticky keep
+   their own position) are left alone. Inline links inside running text are
+   exempt (WCAG 2.5.8 inline exception); only block or flex links count. */
+@layer base {
+  @media (pointer: coarse) {
+    :is(button, [role='button'], [role='tab'], [role='menuitem'], [role='option'], [role='switch'], [role='checkbox'], [role='radio'], summary, a[href][class*='flex'], a[href][class*='block']):not([class*='after:']):not(.absolute, .fixed, .sticky, .sr-only) {
+      position: relative;
+    }
+    :is(button, [role='button'], [role='tab'], [role='menuitem'], [role='option'], [role='switch'], [role='checkbox'], [role='radio'], summary, a[href][class*='flex'], a[href][class*='block']):not([class*='after:']):not(.sr-only)::after {
+      --touch-hit: 1;
+      content: '';
+      position: absolute;
+      top: 50%;
+      left: 50%;
+      width: max(100%, 44px);
+      height: max(100%, 44px);
+      transform: translate(-50%, -50%);
+    }
+    /* Replaced elements cannot carry a pseudo element: text fields and
+       selects take the 44 px height they already have on phones. */
+    :is(input:not([type='checkbox'], [type='radio'], [type='range'], [type='color'], [type='hidden'], [type='file']), select) {
+      min-height: 44px;
+    }
   }
 }
