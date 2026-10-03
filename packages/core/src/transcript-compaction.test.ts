@@ -249,12 +249,32 @@ describe('TranscriptCompactor provider usage', () => {
     expect(c.stats().trims).toBe(0)
   })
 
-  it('accepts usage again after the transcript is reset', () => {
+  it('accepts usage again from the first response after a transcript reset', () => {
     const c = new TranscriptCompactor({ windowTokens: 6000, targetTokens: 3000, indexLines: 10 })
     c.compact(buildTranscript(40))
-    const msgs = [user('x'.repeat(4000)), user('y'.repeat(4000)), measured('abcd', 10000)]
+    expect(c.stats().trims).toBe(1)
+    // The usage already in the replacement transcript is not trusted (see the
+    // next test); a response that arrives after the reset is.
+    const msgs = [user('x'.repeat(4000)), measured('abcd', 100)]
+    c.compact(msgs)
+    expect(c.stats().trims).toBe(1)
+    msgs.push(user('y'.repeat(4000)), measured('abcd', 10000))
     c.compact(msgs)
     expect(c.stats().trims).toBe(2)
+  })
+
+  it('does not trust a usage from before a reset that measured a trimmed view', () => {
+    const events: Array<{ tokensBefore: number }> = []
+    const c = new TranscriptCompactor({ windowTokens: 6000, targetTokens: 3000, indexLines: 10, onTrim: e => events.push(e) })
+    c.compact(buildTranscript(40))
+    expect(c.stats().trims).toBe(1)
+    // Shorter replacement: its only usage (3.200) measured some trimmed view,
+    // the full transcript sent now is 10.001 tokens by the fallback.
+    const msgs = [user('x'.repeat(40000)), measured('abcd', 3200)]
+    const view = c.compact(msgs)
+    expect(c.stats().trims).toBe(2)
+    expect(events[1].tokensBefore).toBe(10001)
+    expect(view.some(m => m === msgs[0])).toBe(false)
   })
 
   it('keeps counting replayed thinking signatures in the task path', () => {

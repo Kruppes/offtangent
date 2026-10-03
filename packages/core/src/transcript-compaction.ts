@@ -198,7 +198,10 @@ export class TranscriptCompactor {
     if (messages.length < this.lastSeenLength || this.cut > messages.length) {
       this.cut = 0
       this.digest = null
-      this.minUsageIndex = 0
+      // A usage already in the replaced transcript may have measured a
+      // trimmed view of it, not the full transcript that is sent now. Trust
+      // only responses that arrive after the reset.
+      this.minUsageIndex = messages.length
     }
     this.lastSeenLength = messages.length
 
