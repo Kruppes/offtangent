@@ -32,7 +32,9 @@ import { sanitizeHistoryBoundaries, describeHistoryStructure } from './message-h
 import { createEmailTools } from './email-tools.js'
 import { createAskConnectorTool } from './connectors/ask-connector-tool.js'
 import { createProviderQuotaTool } from './quota-tool.js'
-import { withSecretBoundary, redactMessages, sealSystemText } from './secret-boundary.js'
+import { withSecretBoundary, redactMessages, sealSystemText, sealToolText } from './secret-boundary.js'
+import { commandInvokesVaultCli } from './secret-vault-cli.js'
+import { spillToolOutput } from './tool-output-spill.js'
 import type { QuotaServiceLike } from './quota-tool.js'
 import type { AbortScope, AgentRuntimeStateSnapshot, ResponseChunk } from './agent-runtime-types.js'
 import { loadHeuristics } from './heuristics.js'
@@ -346,7 +348,29 @@ export function createYoloTools(): AgentTool[] {
       // Prompt cap (token audit 2026-09-17): the 10 MB guard above only
       // protects memory. A 1,18 Mio char result used to enter the context in
       // full and was then re-sent with every following call.
-      const capped = capHeadTail(output, loadHeuristics().toolOutput.shellMaxChars, 'shell output')
+      const { shellMaxChars, shellSpillChars } = loadHeuristics().toolOutput
+      const inlineChars = shellSpillChars > 0
+        ? (shellMaxChars > 0 ? Math.min(shellSpillChars, shellMaxChars) : shellSpillChars)
+        : shellMaxChars
+      // Long output: head + tail inline, the complete output in a file the
+      // model can page through (tool-output-spill.ts). The file gets the
+      // SEALED text only: the secret boundary seals the returned text after
+      // this function, so seal the full output here first. Password-manager
+      // CLI output is never written to disk; it keeps the plain cap.
+      if (shellSpillChars > 0 && output.length > inlineChars && !commandInvokesVaultCli(command)) {
+        const spilled = spillToolOutput(sealToolText(output, 'shell'), {
+          maxChars: inlineChars,
+          label: 'shell',
+          note: `exit code ${exitCode}`,
+        })
+        if (spilled) {
+          return {
+            content: [{ type: 'text' as const, text: spilled.text }],
+            details: { exitCode, truncated: true, totalChars: spilled.totalChars, fullOutputPath: spilled.path },
+          }
+        }
+      }
+      const capped = capHeadTail(output, shellMaxChars, 'shell output')
       return {
         content: [{ type: 'text' as const, text: capped.text }],
         details: capped.truncated

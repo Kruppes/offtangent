@@ -71,6 +71,12 @@ export interface Heuristics {
     readFileMaxChars: number
     /** Characters of a shell result that may reach the prompt (head + tail) */
     shellMaxChars: number
+    /**
+     * Shell output longer than this is saved to `<DATA_DIR>/tool-output/` and
+     * only head + tail of this many characters reach the prompt; 0 disables
+     * the file and leaves the plain `shellMaxChars` cap.
+     */
+    shellSpillChars: number
   }
   recentMemory: {
     /** Characters of the `<recent_memory>` block in the system prompt */
@@ -187,6 +193,9 @@ export const DEFAULT_HEURISTICS: Heuristics = {
   toolOutput: {
     readFileMaxChars: 20000,
     shellMaxChars: 30000,
+    // tool_calls 2026-09-03..10-03, 67.482 shell calls: p95 8.396 chars,
+    // 5,4 % above 8.000 carrying 19 % of all shell result characters.
+    shellSpillChars: 8000,
   },
   recentMemory: {
     maxChars: 8000,

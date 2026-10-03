@@ -360,6 +360,7 @@ Every numeric heuristic in the backend is a configuration value (Offtangent SPEC
 | `heuristics.taskHistory.indexLines`      | `number` | `60`    | digest lines for task messages that fell out of the window               |
 | `heuristics.toolOutput.readFileMaxChars` | `number` | `20000` | characters of a `read_file` result that may reach the prompt (page with `offset`) |
 | `heuristics.toolOutput.shellMaxChars`    | `number` | `30000` | characters of a `shell` result that may reach the prompt (head + tail)    |
+| `heuristics.toolOutput.shellSpillChars`  | `number` | `8000`  | `shell` output longer than this keeps only head + tail of this many characters inline; the complete (sealed) output goes to `<DATA_DIR>/tool-output/` (mode 600, removed after 24 h), the result names the file and the `read_file` offset; `0` disables the file and leaves the plain `shellMaxChars` cap |
 | `heuristics.recentMemory.maxChars`       | `number` | `8000`  | characters of the `<recent_memory>` block in the system prompt (newest day first, older days cut first) |
 | `heuristics.recentMemory.days`           | `number` | `3`     | daily files read for the full prompt profile (the slim profile always uses 1) |
 | `heuristics.recentMemory.warnFactor`     | `number` | `3`     | log a warning when the raw dailies exceed `maxChars` by this factor (consolidation is not running); `0` disables |
