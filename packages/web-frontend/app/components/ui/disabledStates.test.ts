@@ -57,7 +57,7 @@ describe('form controls disabled state', () => {
     ['Switch.vue', /disabled:data-\[state=checked\]:bg-muted disabled:data-\[state=unchecked\]:bg-muted/],
     ['DropdownMenuItem.vue', /data-\[disabled\]:text-muted-foreground data-\[disabled\]:\[&_svg\]:text-border/],
     ['SelectItem.vue', /data-\[disabled\]:text-muted-foreground data-\[disabled\]:\[&_svg\]:text-border/],
-    ['TabsTrigger.vue', /disabled:text-muted-foreground disabled:line-through/],
+    ['TabsTrigger.vue', /disabled:cursor-not-allowed disabled:text-muted-foreground/],
     ['Label.vue', /peer-disabled:text-muted-foreground/],
   ]
   for (const [file, re] of cases) {
@@ -65,6 +65,8 @@ describe('form controls disabled state', () => {
       const src = read(file)
       expect(src).toMatch(re)
       expect(src).not.toMatch(/(disabled|disabled\]):opacity-/)
+      // W11: a locked element is never struck through (reads as "deleted").
+      expect(src).not.toMatch(/line-through/)
     })
   }
 })
