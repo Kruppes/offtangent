@@ -118,14 +118,14 @@ Follow [Semantic Versioning](https://semver.org/) (while < 1.0.0, minor = breaki
 
 ## Publishing to the public mirror
 
-The GitHub repository is a **public, history-less mirror**. It only ever receives snapshot commits (`offtangent snapshot <version> (<date>)`) whose tree equals a commit on `main` minus the instance-private paths in `PUBLISH_EXCLUDE` (default `.forgejo`, the private CI); the internal history with its commit messages, branches and tags never goes there. The only sanctioned path is
+The GitHub repository is a **public mirror of `main`, one commit per commit**. It starts with a single root commit `Offtangent 0.29.0`; after it every first-parent commit of `main` appears as its own commit with its original message and dates, without the instance-private paths in `PUBLISH_EXCLUDE` (default `.forgejo .github/workflows`). Each public commit ends with a `Source-Commit: <sha>` trailer that tells the next run where to continue. Branches, side commits of merges (a merge becomes one commit listing the merged subjects) and the history before 0.29.0 never go there. The only sanctioned path is
 
 ```
-scripts/publish-snapshot.sh                    # dry run: scans and builds the commit
-PUBLISH_CONFIRM=yes scripts/publish-snapshot.sh
+scripts/publish-commits.sh                    # dry run: builds the commits and runs the gates
+PUBLISH_CONFIRM=yes scripts/publish-commits.sh
 ```
 
-It runs gitleaks and a blocklist kept outside the repository over the exported tree and aborts on any hit. Do not add a `github` remote to a working copy and never push a branch there directly; the `pre-push` hook refuses non-snapshot commits, and a task or agent that needs to publish asks the owner first.
+It runs gitleaks and a blocklist kept outside the repository over every file each new commit adds or changes, checks every commit message against the blocklist, and aborts on any hit. The push is a plain fast-forward (never forced); a `chore(release): x.y.z` commit also gets the tag `vx.y.z`. Fix content on `main`, not in the publish step: a hit of the replacement map kept next to the blocklist aborts the run unless explicitly allowed. A message that must not go public is replaced by a file outside the repository (see the script header), never by rewriting `main`. Do not add a `github` remote to a working copy and never push a branch there directly; a task or agent that needs to publish asks the owner first. `scripts/publish-snapshot.sh` is the legacy snapshot path and no longer applies.
 
 ### Test fixtures are synthetic
 

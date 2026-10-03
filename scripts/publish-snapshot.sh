@@ -1,4 +1,10 @@
 #!/usr/bin/env bash
+# LEGACY: replaced by scripts/publish-commits.sh. Since 2026-10-03 the public
+# mirror carries one commit per main commit (root "Offtangent 0.29.0", then
+# every first-parent commit with a Source-Commit trailer). This script refuses
+# to build on that history (it only accepts snapshot commits) and is kept for
+# reference only.
+#
 # Publish a history-less snapshot of a ref to the PUBLIC GitHub mirror.
 #
 # Why a script: the mirror must never receive the internal history. Every
