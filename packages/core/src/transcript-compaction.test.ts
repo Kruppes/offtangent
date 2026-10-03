@@ -214,3 +214,46 @@ describe('TranscriptCompactor message shape', () => {
     expect(textOf(firstUser)).toContain('here is my answer')
   })
 })
+
+
+describe('TranscriptCompactor provider usage', () => {
+  function measured(text: string, input: number): AgentMessage {
+    return { ...assistant(text), usage: { input, cacheRead: 0, cacheWrite: 0, output: 1 } } as unknown as AgentMessage
+  }
+
+  it('trims using measured context even when the chars heuristic fits', () => {
+    const events: Array<{ tokensBefore: number; tokensAfter: number }> = []
+    const c = new TranscriptCompactor({ windowTokens: 6000, targetTokens: 3000, indexLines: 10, onTrim: e => events.push(e) })
+    const msgs = [user('x'.repeat(4000)), assistant('y'.repeat(4000)), user('z'.repeat(4000)), measured('abcd', 10000)]
+    c.compact(msgs)
+    expect(c.stats().trims).toBe(1)
+    expect(events[0].tokensBefore).toBe(10001)
+    expect(events[0].tokensAfter).toBeLessThanOrEqual(3000)
+
+    // The retained response still describes the OLD prefix. Repeated transforms,
+    // retries and new tool results must not repeatedly compact using that usage.
+    c.compact(msgs)
+    msgs.push(user('next'))
+    c.compact(msgs)
+    expect(c.stats().trims).toBe(1)
+    msgs.push(measured('abcd', 10000))
+    c.compact(msgs)
+    expect(c.stats().trims).toBe(2)
+  })
+
+  it('preserves the body-only budget by subtracting the pinned prompt estimate', () => {
+    const c = new TranscriptCompactor({ windowTokens: 6000, targetTokens: 3000, indexLines: 10 })
+    const system = { role: 'system', content: 's'.repeat(32000), timestamp: 0 } as unknown as AgentMessage
+    const msgs = [system, user('abcd'), measured('abcd', 10000)]
+    expect(c.compact(msgs)).toEqual(msgs)
+    expect(c.stats().trims).toBe(0)
+  })
+
+  it('accepts usage again after the transcript is reset', () => {
+    const c = new TranscriptCompactor({ windowTokens: 6000, targetTokens: 3000, indexLines: 10 })
+    c.compact(buildTranscript(40))
+    const msgs = [user('x'.repeat(4000)), user('y'.repeat(4000)), measured('abcd', 10000)]
+    c.compact(msgs)
+    expect(c.stats().trims).toBe(2)
+  })
+})

@@ -34,23 +34,76 @@ export interface StrandRow {
   content: string
 }
 
-/** Rough token estimate for one in memory agent message (chars / 4 over its content). */
+/**
+ * Fallback estimate of the replayed payload, not just its visible text. Keep
+ * chars/4 unchanged: token_usage has no character counts to calibrate a new
+ * universal ratio. In particular Codex replays thinkingSignature (an opaque
+ * JSON reasoning item), and tool-call arguments can dwarf the visible text.
+ */
 export function estimateMessageTokens(msg: AgentMessage): number {
-  const content = (msg as { content?: unknown }).content
-  if (typeof content === 'string') return estimateTokens(content)
-  if (Array.isArray(content)) {
-    let n = 0
+  const message = msg as { role?: string; content?: unknown; sections?: Record<string, unknown>; toolsAdded?: unknown; toolsRemoved?: unknown }
+  const content = message.content
+  let n = 0
+  if (typeof content === 'string') n = estimateTokens(content)
+  else if (Array.isArray(content)) {
     for (const block of content) {
       if (!block || typeof block !== 'object') continue
       const b = block as Record<string, unknown>
-      if (typeof b.text === 'string') n += estimateTokens(b.text)
-      else if (typeof b.thinking === 'string') n += estimateTokens(b.thinking)
+      if (b.type === 'toolCall') n += estimateTokens(JSON.stringify(b))
+      else if (b.type === 'thinking') {
+        if (typeof b.thinking === 'string') n += estimateTokens(b.thinking)
+        if (typeof b.thinkingSignature === 'string') n += estimateTokens(b.thinkingSignature)
+      } else if (typeof b.text === 'string') n += estimateTokens(b.text)
       else if (b.type === 'image') n += 1000
       else n += estimateTokens(JSON.stringify(b))
     }
-    return n
+  } else n = estimateTokens(JSON.stringify(content ?? ''))
+  if (message.role === 'system') {
+    for (const section of Object.values(message.sections ?? {})) {
+      if (typeof section === 'string') n += estimateTokens(section)
+    }
+    if (message.toolsAdded) n += estimateTokens(JSON.stringify(message.toolsAdded))
+    if (message.toolsRemoved) n += estimateTokens(JSON.stringify(message.toolsRemoved))
   }
-  return estimateTokens(JSON.stringify(content ?? ''))
+  return n
+}
+
+export interface ContextTokenEstimate {
+  tokens: number
+  /** Input only: pi-ai input, cacheRead and cacheWrite are disjoint. */
+  usageTokens: number
+  trailingTokens: number
+  lastUsageIndex: number | null
+}
+
+/**
+ * Anchor at the last valid provider input, then estimate only unsent content.
+ * Inspired by pi-ai's utils/estimate and pi coding-agent compaction. Unlike
+ * their totalTokens/output anchor, use input + cacheRead + cacheWrite: output
+ * can contain non-replayed reasoning. The anchor's OWN response was not part
+ * of its input, so estimate it too, exactly once, including its signature.
+ *
+ * A usage measurement describes the prefix that produced it, not any edited
+ * or trimmed prefix. Callers with a changing view must advance minUsageIndex
+ * past all existing messages on a trim, until a new response measures it.
+ */
+export function estimateContextTokens(messages: readonly AgentMessage[], minUsageIndex = 0): ContextTokenEstimate {
+  let trailingTokens = 0
+  for (let i = messages.length - 1; i >= 0; i--) {
+    const msg = messages[i]
+    trailingTokens += estimateMessageTokens(msg)
+    if (i < minUsageIndex || msg.role !== 'assistant') continue
+    const assistant = msg as { stopReason?: string; usage?: { input?: number; cacheRead?: number; cacheWrite?: number } }
+    if (assistant.stopReason === 'error' || assistant.stopReason === 'aborted' || !assistant.usage) continue
+    const { input, cacheRead = 0, cacheWrite = 0 } = assistant.usage
+    const counts = [input, cacheRead, cacheWrite]
+    if (!counts.every(n => typeof n === 'number' && Number.isFinite(n) && n >= 0)) continue
+    const usageTokens = input! + cacheRead + cacheWrite
+    if (usageTokens > 0 && Number.isFinite(usageTokens)) {
+      return { tokens: usageTokens + trailingTokens, usageTokens, trailingTokens, lastUsageIndex: i }
+    }
+  }
+  return { tokens: trailingTokens, usageTokens: 0, trailingTokens, lastUsageIndex: null }
 }
 
 export interface TrimResult {
@@ -79,11 +132,15 @@ export interface TrimResult {
  * message is not charged against the budget: the budget describes the
  * conversation window, the prompt is a fixed cost on top, as it was before.
  */
-export function trimMessagesToBudget(messages: readonly AgentMessage[], budgetTokens: number): TrimResult {
+export function trimMessagesToBudget(
+  messages: readonly AgentMessage[],
+  budgetTokens: number,
+  measuredWindowTokens?: number,
+): TrimResult {
   if (messages.length === 0) return { messages: [], droppedCount: 0, keptTokens: 0, startIndex: 0 }
   const head = leadingSystemMessage(messages)
   if (head) {
-    const body = trimMessagesToBudget(messages.slice(1), budgetTokens)
+    const body = trimMessagesToBudget(messages.slice(1), budgetTokens, measuredWindowTokens)
     return {
       messages: [head, ...body.messages],
       droppedCount: body.droppedCount,
@@ -91,10 +148,19 @@ export function trimMessagesToBudget(messages: readonly AgentMessage[], budgetTo
       startIndex: body.startIndex + 1,
     }
   }
+  // Allocate the measured window over its messages using their payload sizes.
+  // This is per-view calibration, NOT a changed global chars/token ratio. Never
+  // shrink the fallback estimate. Without it an undercount below targetTokens
+  // would trigger compaction but select no cut at all.
+  const heuristicTokens = messages.reduce((n, m) => n + estimateMessageTokens(m), 0)
+  const scale = measuredWindowTokens !== undefined && Number.isFinite(measuredWindowTokens) && heuristicTokens > 0
+    ? Math.max(1, measuredWindowTokens / heuristicTokens)
+    : 1
+  const size = (msg: AgentMessage) => Math.ceil(estimateMessageTokens(msg) * scale)
   let tokens = 0
   let start = messages.length
   for (let i = messages.length - 1; i >= 0; i--) {
-    const t = estimateMessageTokens(messages[i])
+    const t = size(messages[i])
     if (tokens + t > budgetTokens && start < messages.length) break
     tokens += t
     start = i
@@ -113,7 +179,7 @@ export function trimMessagesToBudget(messages: readonly AgentMessage[], budgetTo
   return {
     messages: kept,
     droppedCount: messages.length - kept.length,
-    keptTokens: kept.reduce((n, m) => n + estimateMessageTokens(m), 0),
+    keptTokens: kept.reduce((n, m) => n + size(m), 0),
     startIndex: s,
   }
 }

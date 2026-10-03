@@ -28,7 +28,7 @@
  */
 
 import type { AgentMessage } from '@earendil-works/pi-agent-core'
-import { estimateMessageTokens, leadingSystemMessage, trimMessagesToBudget } from './strand-context.js'
+import { estimateContextTokens, estimateMessageTokens, leadingSystemMessage, trimMessagesToBudget } from './strand-context.js'
 import { formatMessageDigest, RECALLED_MARKER } from './message-digest.js'
 import { sanitizeHistoryBoundaries } from './message-history.js'
 
@@ -141,6 +141,8 @@ export class TranscriptCompactor {
   private digest: string | null = null
   private digestTimestamp = Date.now()
   private lastSeenLength = 0
+  /** First response that can describe the current (possibly trimmed) view. */
+  private minUsageIndex = 0
   private trims = 0
   /** `chat_messages.id` per transcript message object (assistant rows). */
   private idByMessage = new WeakMap<object, number>()
@@ -185,28 +187,40 @@ export class TranscriptCompactor {
     // position, the digest and the budget all refer to the body behind it.
     const head = leadingSystemMessage(messages)
     if (head) {
-      return [head, ...this.compactBody(messages.slice(1))]
+      return [head, ...this.compactBody(messages.slice(1), estimateMessageTokens(head))]
     }
     return this.compactBody(messages)
   }
 
-  private compactBody(messages: readonly AgentMessage[]): AgentMessage[] {
+  private compactBody(messages: readonly AgentMessage[], pinnedTokens = 0): AgentMessage[] {
     // A transcript that got shorter than our cut position was reset or
     // replaced — start over rather than hide the wrong messages.
     if (messages.length < this.lastSeenLength || this.cut > messages.length) {
       this.cut = 0
       this.digest = null
+      this.minUsageIndex = 0
     }
     this.lastSeenLength = messages.length
 
     const window = messages.slice(this.cut)
-    const windowTokens = window.reduce((n, m) => n + estimateMessageTokens(m), 0)
+    const estimate = estimateContextTokens(window, Math.max(0, this.minUsageIndex - this.cut))
+    // Preserve the existing BODY budget. Provider input also includes the
+    // pinned system/tools and our digest; those stay fixed costs on top.
+    const fixedTokens = pinnedTokens + (this.digest ? estimateMessageTokens({
+      role: 'user', content: this.digest, timestamp: this.digestTimestamp,
+    } as AgentMessage) : 0)
+    const windowTokens = estimate.lastUsageIndex === null
+      ? estimate.tokens
+      : Math.max(0, estimate.tokens - fixedTokens)
 
     if (windowTokens > this.options.windowTokens) {
-      const trimmed = trimMessagesToBudget(window, this.options.targetTokens)
+      const trimmed = trimMessagesToBudget(window, this.options.targetTokens, windowTokens)
       if (trimmed.startIndex > 0) {
         const previousCut = this.cut
         this.cut += trimmed.startIndex
+        // Retained assistant usages still measured the OLD prefix. Invalidate
+        // them even on retries of the exact same transcript (no new response).
+        this.minUsageIndex = messages.length
         this.trims++
         this.rebuildDigest(messages)
         this.options.onTrim?.({

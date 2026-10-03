@@ -6,6 +6,7 @@ import { insertSessionSummary } from './session-summary-store.js'
 import { setHeuristicsOverrideForTests } from './heuristics.js'
 import {
   estimateMessageTokens,
+  estimateContextTokens,
   trimMessagesToBudget,
   countUserTurns,
   loadStrandRows,
@@ -81,6 +82,54 @@ describe('trimMessagesToBudget', () => {
   it('estimates tokens over text blocks', () => {
     expect(estimateMessageTokens(user('abcd'.repeat(10)))).toBe(10)
     expect(countUserTurns([user('a'), assistant('b'), user('c')])).toBe(2)
+  })
+})
+
+describe('context token estimates', () => {
+  const measured = (input: number, cacheRead = 0, cacheWrite = 0): AgentMessage => ({
+    ...assistant('abcd'),
+    usage: { input, cacheRead, cacheWrite, output: 9000, totalTokens: 999999 },
+  }) as unknown as AgentMessage
+
+  it('counts opaque thinking signatures as well as visible thinking', () => {
+    const msg = { role: 'assistant', content: [{ type: 'thinking', thinking: 'abcd', thinkingSignature: 'x'.repeat(40000) }] } as unknown as AgentMessage
+    expect(estimateMessageTokens(msg)).toBe(10001)
+  })
+
+  it('counts tool-call JSON even when an auxiliary text field exists', () => {
+    const block = { type: 'toolCall', id: 'call', name: 'test', arguments: { data: 'x'.repeat(4000) }, text: 'hint' }
+    expect(estimateMessageTokens({ role: 'assistant', content: [block] } as unknown as AgentMessage))
+      .toBe(Math.ceil(JSON.stringify(block).length / 4))
+  })
+
+  it('counts system sections and tool declarations in the fallback', () => {
+    const msg = { role: 'system', content: 'abcd', sections: { rules: 'x'.repeat(400), absent: null }, toolsAdded: [{ name: 'test', parameters: { type: 'object' } }] }
+    expect(estimateMessageTokens(msg as unknown as AgentMessage))
+      .toBe(101 + Math.ceil(JSON.stringify(msg.toolsAdded).length / 4))
+  })
+
+  it('anchors at the latest input usage, then estimates the response and appended messages only', () => {
+    const msgs = [user('x'.repeat(40000)), measured(20000), user('old'), measured(100, 200, 300), toolResult('call', 'x'.repeat(40))]
+    // Provider input excludes its own response: add that response (1) and the new result (10).
+    expect(estimateContextTokens(msgs)).toMatchObject({ tokens: 611, usageTokens: 600, trailingTokens: 11, lastUsageIndex: 3 })
+  })
+
+  it('falls back without valid usage and ignores aborted, zero and malformed usage', () => {
+    for (const invalid of [
+      { ...measured(999), stopReason: 'error' },
+      { ...measured(999), stopReason: 'aborted' },
+      measured(0), measured(-1), measured(Number.NaN), measured(Number.POSITIVE_INFINITY),
+    ]) {
+      const msgs = [user('abcd'), invalid] as AgentMessage[]
+      expect(estimateContextTokens(msgs)).toMatchObject({ tokens: 2, lastUsageIndex: null })
+    }
+  })
+
+  it('does not reuse a measurement from before a context edit', () => {
+    const msgs = [measured(10000), user('abcd')]
+    expect(estimateContextTokens(msgs, 1)).toMatchObject({ tokens: 2, lastUsageIndex: null })
+    msgs.push(measured(100))
+    expect(estimateContextTokens(msgs, 1).tokens).toBe(101)
   })
 })
 
