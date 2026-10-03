@@ -5,9 +5,9 @@ import Tabs from './Tabs.vue'
 import TabsList from './TabsList.vue'
 import TabsTrigger from './TabsTrigger.vue'
 
-async function render(triggers: Array<Record<string, unknown>>) {
+async function render(triggers: Array<{ value: string, disabled?: boolean, disabledReason?: string }>) {
   const app = createSSRApp(defineComponent({
-    setup: () => () => h(Tabs, { defaultValue: 'a' }, () => h(TabsList, null, () => triggers.map(props => h(TabsTrigger, props, () => String(props.value).toUpperCase())))),
+    setup: () => () => h(Tabs, { defaultValue: 'a' }, () => h(TabsList, null, () => triggers.map(props => h(TabsTrigger, props, () => props.value.toUpperCase())))),
   }))
   app.component('AppIcon', defineComponent({ props: ['name'], setup: props => () => h('i', { 'data-icon': props.name, 'aria-hidden': 'true' }) }))
   return renderToString(app)
