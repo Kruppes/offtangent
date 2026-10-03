@@ -178,4 +178,32 @@ describe('AgentCore strand context (SPEC 11.3)', () => {
     expect(lastPrompt).toContain('first message about kubernetes clusters')
     expect(lastPrompt).toContain(fourth)
   })
+  it('keeps the interactive window on visible text: replayed thinking signatures do not shrink it', async () => {
+    // Default strand budget (24.000). 20 synthetic reasoning turns are 22.000
+    // tokens of visible text plus 30.000 tokens of opaque signatures. The
+    // interactive window must keep all of them, as before the task compactor
+    // learned to count signatures.
+    const t = agent.getSessionManager().createThread('1', 'main', 'T')
+    persistUser(t.id, 'warm up')
+    await drain(agent.sendMessage('1', 'warm up', 'web', undefined, 'main', t.id))
+    const history: unknown[] = []
+    for (let i = 0; i < 20; i++) {
+      history.push({ role: 'user', content: [{ type: 'text', text: `q${i} `.padEnd(2000, 'u') }], timestamp: 1 })
+      history.push({
+        role: 'assistant',
+        content: [
+          { type: 'text', text: `a${i} `.padEnd(2000, 'a') },
+          { type: 'thinking', thinking: 't'.repeat(400), thinkingSignature: 's'.repeat(6000) },
+        ],
+        timestamp: 2,
+      })
+    }
+    runtimes.get('main')!.messages = history as FakeMessage[]
+
+    persistUser(t.id, 'next question')
+    await drain(agent.sendMessage('1', 'next question', 'web', undefined, 'main', t.id))
+    const snapshot = promptSnapshots[promptSnapshots.length - 1]
+    expect(snapshot.history).toHaveLength(40)
+    expect(snapshot.history[0]).toMatch(/^user:q0 /)
+  })
 })

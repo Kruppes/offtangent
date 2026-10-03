@@ -35,12 +35,26 @@ export interface StrandRow {
 }
 
 /**
- * Fallback estimate of the replayed payload, not just its visible text. Keep
- * chars/4 unchanged: token_usage has no character counts to calibrate a new
- * universal ratio. In particular Codex replays thinkingSignature (an opaque
- * JSON reasoning item), and tool-call arguments can dwarf the visible text.
+ * What a chars/4 estimate counts.
+ *
+ * - `visible` (default): the visible text of each block, exactly the estimate
+ *   the interactive strand window has always used. `strand_context.keptTokens`
+ *   and the strand trim warning keep their meaning, and a Codex strand keeps
+ *   as much verbatim history as before.
+ * - `replay`: the payload a provider actually replays. Codex replays the
+ *   thinkingSignature (an opaque JSON reasoning item), tool-call arguments can
+ *   dwarf the visible text, and the system message carries sections and tool
+ *   declarations. Used by the background task compactor, whose estimate is
+ *   anchored to measured provider input ({@link estimateContextTokens}).
  */
-export function estimateMessageTokens(msg: AgentMessage): number {
+export type TokenEstimateMode = 'visible' | 'replay'
+
+/**
+ * chars/4 estimate of one in memory agent message. Keep chars/4 unchanged:
+ * token_usage has no character counts to calibrate a new universal ratio.
+ */
+export function estimateMessageTokens(msg: AgentMessage, mode: TokenEstimateMode = 'visible'): number {
+  const replay = mode === 'replay'
   const message = msg as { role?: string; content?: unknown; sections?: Record<string, unknown>; toolsAdded?: unknown; toolsRemoved?: unknown }
   const content = message.content
   let n = 0
@@ -49,16 +63,17 @@ export function estimateMessageTokens(msg: AgentMessage): number {
     for (const block of content) {
       if (!block || typeof block !== 'object') continue
       const b = block as Record<string, unknown>
-      if (b.type === 'toolCall') n += estimateTokens(JSON.stringify(b))
-      else if (b.type === 'thinking') {
+      if (replay && b.type === 'toolCall') n += estimateTokens(JSON.stringify(b))
+      else if (replay && b.type === 'thinking') {
         if (typeof b.thinking === 'string') n += estimateTokens(b.thinking)
         if (typeof b.thinkingSignature === 'string') n += estimateTokens(b.thinkingSignature)
       } else if (typeof b.text === 'string') n += estimateTokens(b.text)
+      else if (typeof b.thinking === 'string') n += estimateTokens(b.thinking)
       else if (b.type === 'image') n += 1000
       else n += estimateTokens(JSON.stringify(b))
     }
   } else n = estimateTokens(JSON.stringify(content ?? ''))
-  if (message.role === 'system') {
+  if (replay && message.role === 'system') {
     for (const section of Object.values(message.sections ?? {})) {
       if (typeof section === 'string') n += estimateTokens(section)
     }
@@ -86,12 +101,20 @@ export interface ContextTokenEstimate {
  * A usage measurement describes the prefix that produced it, not any edited
  * or trimmed prefix. Callers with a changing view must advance minUsageIndex
  * past all existing messages on a trim, until a new response measures it.
+ *
+ * Precondition: the anchor was produced by the provider/model of the next
+ * request. A usage measured with another tokenizer (or another replay rule:
+ * signatures are dropped on a model switch) does not describe the next input.
+ * The task compactor meets this, a background task keeps its model.
+ *
+ * Always counts the `replay` payload: this is the estimator of the provider
+ * input, not of the visible conversation.
  */
 export function estimateContextTokens(messages: readonly AgentMessage[], minUsageIndex = 0): ContextTokenEstimate {
   let trailingTokens = 0
   for (let i = messages.length - 1; i >= 0; i--) {
     const msg = messages[i]
-    trailingTokens += estimateMessageTokens(msg)
+    trailingTokens += estimateMessageTokens(msg, 'replay')
     if (i < minUsageIndex || msg.role !== 'assistant') continue
     const assistant = msg as { stopReason?: string; usage?: { input?: number; cacheRead?: number; cacheWrite?: number } }
     if (assistant.stopReason === 'error' || assistant.stopReason === 'aborted' || !assistant.usage) continue
@@ -132,15 +155,30 @@ export interface TrimResult {
  * message is not charged against the budget: the budget describes the
  * conversation window, the prompt is a fixed cost on top, as it was before.
  */
+export interface TrimOptions {
+  /**
+   * What the estimate counts. Default `visible`: the interactive strand path
+   * (agent.ts) keeps its pre-anchor semantics; the task compactor passes
+   * `replay`.
+   */
+  estimate?: TokenEstimateMode
+  /**
+   * Provider-measured size of the window, when known. Calibrates the per
+   * message estimates of THIS view (never below the fallback).
+   */
+  measuredWindowTokens?: number
+}
+
 export function trimMessagesToBudget(
   messages: readonly AgentMessage[],
   budgetTokens: number,
-  measuredWindowTokens?: number,
+  options: TrimOptions = {},
 ): TrimResult {
   if (messages.length === 0) return { messages: [], droppedCount: 0, keptTokens: 0, startIndex: 0 }
+  const { estimate = 'visible', measuredWindowTokens } = options
   const head = leadingSystemMessage(messages)
   if (head) {
-    const body = trimMessagesToBudget(messages.slice(1), budgetTokens, measuredWindowTokens)
+    const body = trimMessagesToBudget(messages.slice(1), budgetTokens, options)
     return {
       messages: [head, ...body.messages],
       droppedCount: body.droppedCount,
@@ -152,11 +190,11 @@ export function trimMessagesToBudget(
   // This is per-view calibration, NOT a changed global chars/token ratio. Never
   // shrink the fallback estimate. Without it an undercount below targetTokens
   // would trigger compaction but select no cut at all.
-  const heuristicTokens = messages.reduce((n, m) => n + estimateMessageTokens(m), 0)
+  const heuristicTokens = messages.reduce((n, m) => n + estimateMessageTokens(m, estimate), 0)
   const scale = measuredWindowTokens !== undefined && Number.isFinite(measuredWindowTokens) && heuristicTokens > 0
     ? Math.max(1, measuredWindowTokens / heuristicTokens)
     : 1
-  const size = (msg: AgentMessage) => Math.ceil(estimateMessageTokens(msg) * scale)
+  const size = (msg: AgentMessage) => Math.ceil(estimateMessageTokens(msg, estimate) * scale)
   let tokens = 0
   let start = messages.length
   for (let i = messages.length - 1; i >= 0; i--) {

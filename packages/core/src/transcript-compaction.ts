@@ -187,7 +187,7 @@ export class TranscriptCompactor {
     // position, the digest and the budget all refer to the body behind it.
     const head = leadingSystemMessage(messages)
     if (head) {
-      return [head, ...this.compactBody(messages.slice(1), estimateMessageTokens(head))]
+      return [head, ...this.compactBody(messages.slice(1), estimateMessageTokens(head, 'replay'))]
     }
     return this.compactBody(messages)
   }
@@ -208,13 +208,13 @@ export class TranscriptCompactor {
     // pinned system/tools and our digest; those stay fixed costs on top.
     const fixedTokens = pinnedTokens + (this.digest ? estimateMessageTokens({
       role: 'user', content: this.digest, timestamp: this.digestTimestamp,
-    } as AgentMessage) : 0)
+    } as AgentMessage, 'replay') : 0)
     const windowTokens = estimate.lastUsageIndex === null
       ? estimate.tokens
       : Math.max(0, estimate.tokens - fixedTokens)
 
     if (windowTokens > this.options.windowTokens) {
-      const trimmed = trimMessagesToBudget(window, this.options.targetTokens, windowTokens)
+      const trimmed = trimMessagesToBudget(window, this.options.targetTokens, { estimate: 'replay', measuredWindowTokens: windowTokens })
       if (trimmed.startIndex > 0) {
         const previousCut = this.cut
         this.cut += trimmed.startIndex

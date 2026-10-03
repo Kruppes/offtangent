@@ -85,27 +85,86 @@ describe('trimMessagesToBudget', () => {
   })
 })
 
+describe('trimMessagesToBudget with signature-heavy history', () => {
+  // 20 synthetic reasoning turns: 500 visible tokens per user message and per
+  // answer, 100 thinking tokens plus a 1.500 token opaque signature each.
+  function reasoningHistory(turns: number): AgentMessage[] {
+    const msgs: AgentMessage[] = []
+    for (let i = 0; i < turns; i++) {
+      msgs.push(user(`q${i} `.padEnd(2000, 'u')))
+      msgs.push({
+        role: 'assistant',
+        content: [
+          { type: 'thinking', thinking: 't'.repeat(400), thinkingSignature: 's'.repeat(6000) },
+          { type: 'text', text: `a${i} `.padEnd(2000, 'a') },
+        ],
+        timestamp: 1,
+        stopReason: 'stop',
+      } as unknown as AgentMessage)
+    }
+    return msgs
+  }
+
+  it('keeps the whole interactive window by default (visible estimate, as before the anchor change)', () => {
+    const msgs = reasoningHistory(20)
+    const r = trimMessagesToBudget(msgs, 24000)
+    expect(r.droppedCount).toBe(0)
+    expect(r.messages).toHaveLength(40)
+    expect(r.keptTokens).toBe(20 * (500 + 100 + 500))
+    expect(trimMessagesToBudget(msgs, 24000, { estimate: 'visible' })).toEqual(r)
+  })
+
+  it('counts the replayed signatures only when asked to (task compactor)', () => {
+    const r = trimMessagesToBudget(reasoningHistory(20), 24000, { estimate: 'replay' })
+    expect(r.messages.length).toBeLessThan(40)
+    expect(r.keptTokens).toBeLessThanOrEqual(24000)
+    expect(r.keptTokens).toBe(r.messages.length / 2 * (500 + 100 + 1500 + 500))
+  })
+
+  it('keeps the pinned system message out of the interactive budget', () => {
+    const system = { role: 'system', content: 'p', sections: { rules: 'x'.repeat(400000) }, timestamp: 0 } as unknown as AgentMessage
+    const r = trimMessagesToBudget([system, ...reasoningHistory(20)], 24000)
+    expect(r.droppedCount).toBe(0)
+    expect(r.messages).toHaveLength(41)
+  })
+})
+
 describe('context token estimates', () => {
   const measured = (input: number, cacheRead = 0, cacheWrite = 0): AgentMessage => ({
     ...assistant('abcd'),
     usage: { input, cacheRead, cacheWrite, output: 9000, totalTokens: 999999 },
   }) as unknown as AgentMessage
 
-  it('counts opaque thinking signatures as well as visible thinking', () => {
+  it('counts opaque thinking signatures as well as visible thinking (replay)', () => {
     const msg = { role: 'assistant', content: [{ type: 'thinking', thinking: 'abcd', thinkingSignature: 'x'.repeat(40000) }] } as unknown as AgentMessage
-    expect(estimateMessageTokens(msg)).toBe(10001)
+    expect(estimateMessageTokens(msg, 'replay')).toBe(10001)
   })
 
-  it('counts tool-call JSON even when an auxiliary text field exists', () => {
+  it('counts tool-call JSON even when an auxiliary text field exists (replay)', () => {
     const block = { type: 'toolCall', id: 'call', name: 'test', arguments: { data: 'x'.repeat(4000) }, text: 'hint' }
-    expect(estimateMessageTokens({ role: 'assistant', content: [block] } as unknown as AgentMessage))
+    expect(estimateMessageTokens({ role: 'assistant', content: [block] } as unknown as AgentMessage, 'replay'))
       .toBe(Math.ceil(JSON.stringify(block).length / 4))
   })
 
-  it('counts system sections and tool declarations in the fallback', () => {
+  it('counts system sections and tool declarations in the fallback (replay)', () => {
     const msg = { role: 'system', content: 'abcd', sections: { rules: 'x'.repeat(400), absent: null }, toolsAdded: [{ name: 'test', parameters: { type: 'object' } }] }
-    expect(estimateMessageTokens(msg as unknown as AgentMessage))
+    expect(estimateMessageTokens(msg as unknown as AgentMessage, 'replay'))
       .toBe(101 + Math.ceil(JSON.stringify(msg.toolsAdded).length / 4))
+  })
+
+  it('keeps the visible-text estimate by default (interactive strand window)', () => {
+    const thinking = { role: 'assistant', content: [{ type: 'thinking', thinking: 'abcd', thinkingSignature: 'x'.repeat(40000) }] } as unknown as AgentMessage
+    expect(estimateMessageTokens(thinking)).toBe(1)
+    expect(estimateMessageTokens(thinking, 'visible')).toBe(1)
+    const call = { type: 'toolCall', id: 'call', name: 'test', arguments: { data: 'x'.repeat(4000) }, text: 'hint' }
+    expect(estimateMessageTokens({ role: 'assistant', content: [call] } as unknown as AgentMessage)).toBe(1)
+    const system = { role: 'system', content: 'abcd', sections: { rules: 'x'.repeat(400) }, toolsAdded: [{ name: 'test' }] }
+    expect(estimateMessageTokens(system as unknown as AgentMessage)).toBe(1)
+  })
+
+  it('counts signatures in the anchored estimate (task path)', () => {
+    const msgs = [user('abcd'), { role: 'assistant', content: [{ type: 'thinking', thinking: 'abcd', thinkingSignature: 'x'.repeat(40000) }] } as unknown as AgentMessage]
+    expect(estimateContextTokens(msgs)).toMatchObject({ tokens: 10002, lastUsageIndex: null })
   })
 
   it('anchors at the latest input usage, then estimates the response and appended messages only', () => {

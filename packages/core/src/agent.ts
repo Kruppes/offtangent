@@ -1116,7 +1116,11 @@ export class AgentCore {
     if (typeof runtime.getMessages !== 'function' || typeof runtime.setMessages !== 'function') return null
     try {
       const budget = loadHeuristics().strand.windowTokens
-      const trimmed = trimMessagesToBudget(runtime.getMessages(), budget)
+      // `visible` on purpose: the interactive window keeps the estimate it
+      // had before the task compactor learned to count replayed signatures.
+      // Counting them here shrank a Codex strand to a fraction of its turns
+      // and made every turn trim (and break the prompt cache) sooner.
+      const trimmed = trimMessagesToBudget(runtime.getMessages(), budget, { estimate: 'visible' })
       if (trimmed.droppedCount > 0) {
         runtime.setMessages(trimmed.messages)
         console.log(`[strand] Trimmed ${trimmed.droppedCount} messages from the window of session ${sessionId} (${trimmed.keptTokens} tokens kept, budget ${budget})`)

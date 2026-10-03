@@ -256,4 +256,14 @@ describe('TranscriptCompactor provider usage', () => {
     c.compact(msgs)
     expect(c.stats().trims).toBe(2)
   })
+
+  it('keeps counting replayed thinking signatures in the task path', () => {
+    const c = new TranscriptCompactor({ windowTokens: 6000, targetTokens: 3000, indexLines: 10 })
+    const msgs = [
+      user('abcd'),
+      { role: 'assistant', content: [{ type: 'thinking', thinking: 'abcd', thinkingSignature: 'x'.repeat(40000) }], timestamp: 1, stopReason: 'stop' } as unknown as AgentMessage,
+    ]
+    c.compact(msgs)
+    expect(c.stats().trims).toBe(1)
+  })
 })
