@@ -1,6 +1,7 @@
 import { Agent as PiAgent } from '@earendil-works/pi-agent-core'
 import type { AgentEvent, AgentMessage, AgentTool } from '@earendil-works/pi-agent-core'
 import type { AssistantMessage, Message, Model, Api } from '@earendil-works/pi-ai'
+import { cleanupSessionResources } from '@earendil-works/pi-ai'
 import { completeSimple } from './pi-models.js'
 
 import type { Database } from './database.js'
@@ -2510,6 +2511,21 @@ Hint: Inspect it with get_task (task_id ${task.id}); use cancel_task if anything
     // slot on purpose (E4): the task waits for a human, not for the CPU, and
     // `resumeTask` re-acquires a slot by bypass.
     this.releaseSlot(taskId, 'run ended')
+
+    // The task session id is the provider's prompt-cache key. For ChatGPT
+    // Codex pi-ai keeps one WebSocket per session id open for continuation
+    // and only closes it after 5 idle minutes; many short tasks would hold
+    // sockets against the account's connection limit. Free them now. Scoped
+    // to this session id only — `cleanupSessionResources()` without an id
+    // would close every session's resources. A resumed task reconnects.
+    const finishedSessionId = this.store.getById(taskId)?.sessionId
+    if (finishedSessionId) {
+      try {
+        cleanupSessionResources(finishedSessionId)
+      } catch (err) {
+        console.warn(`[task-runner] provider session cleanup failed for task ${taskId}:`, err)
+      }
+    }
   }
 
   /**

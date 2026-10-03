@@ -10,6 +10,7 @@ import type { TaskRunnerOptions } from './task-runner.js'
 import { SessionManager } from './session-manager.js'
 import type { ProviderConfig } from './provider-config.js'
 import { setHeuristicsOverrideForTests } from './heuristics.js'
+import { registerSessionResourceCleanup } from '@earendil-works/pi-ai'
 
 vi.mock('./provider-config.js', async (importOriginal) => {
   const original = await importOriginal() as Record<string, unknown>
@@ -185,6 +186,24 @@ describe('TaskRunner progress guard', () => {
     expect(row.errorMessage).toContain('input tokens')
     // Two responses at 1500 input each cross the 3000 budget.
     expect(row.promptTokens).toBe(2000)
+  })
+
+  it('frees the provider session resources of exactly the finished task session', async () => {
+    setHeuristicsOverrideForTests({ taskGuard: { maxToolCalls: 300, repeatedToolCalls: 5, maxInputTokens: 30_000_000 } })
+    script.calls = [{ toolName: 'shell', args: { command: 'ls' } }]
+    // pi-ai's Codex adapter registers its WebSocket cleanup the same way.
+    const cleaned: Array<string | undefined> = []
+    const unregister = registerSessionResourceCleanup((sessionId?: string) => { cleaned.push(sessionId) })
+    try {
+      const task = store.create({ name: 'Cleanup', prompt: 'work', triggerType: 'agent', sessionId: 'guard-cleanup' })
+      await runner.startTask(task, mockProvider)
+      await new Promise(resolve => setTimeout(resolve, 150))
+
+      expect(store.getById(task.id)!.status).toBe('completed')
+      expect(cleaned).toEqual(['guard-cleanup'])
+    } finally {
+      unregister()
+    }
   })
 
   it('lets a normal task finish and records a task_usage metric row', async () => {
