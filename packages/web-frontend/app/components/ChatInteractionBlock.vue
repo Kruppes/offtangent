@@ -66,7 +66,7 @@
           class="flex min-h-11 w-full items-start gap-3 px-4 py-2 text-left transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-primary disabled:cursor-not-allowed disabled:text-muted-foreground disabled:[&_svg]:text-border"
           :class="isDestructive(option)
             ? (isSelected(option.id) ? 'bg-destructive/10 text-destructive hover:bg-destructive/15 dark:bg-destructive/15 dark:hover:bg-destructive/20' : 'text-destructive hover:bg-destructive/10')
-            : (isSelected(option.id) ? 'bg-primary-subtle text-foreground hover:bg-primary-subtle-hover' : 'text-foreground hover:bg-muted')"
+            : (isSelected(option.id) ? 'bg-selected-container text-on-selected-container hover:bg-selected-container-hover' : 'text-foreground hover:bg-muted')"
           :disabled="pending"
           @click="isMulti ? toggle(option.id) : choose(option.id)"
         >
@@ -98,7 +98,7 @@
           v-if="!ownAnswerOpen"
           type="button"
           class="flex min-h-11 w-full items-start gap-3 px-4 py-2 text-left transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-primary"
-          :class="multiOwnAnswer ? 'bg-primary-subtle hover:bg-primary-subtle-hover' : 'hover:bg-muted'"
+          :class="multiOwnAnswer ? 'bg-selected-container hover:bg-selected-container-hover' : 'hover:bg-muted'"
           @click="multiOwnAnswer ? clearMultiOwnAnswer() : openOwnAnswer()"
         >
           <AppIcon name="edit" class="mt-1 size-4 shrink-0 text-muted-foreground" />

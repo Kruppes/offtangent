@@ -75,6 +75,14 @@
   --color-primary-subtle: hsl(var(--primary-subtle));
   --color-primary-subtle-hover: hsl(var(--primary-subtle-hover));
   --color-primary-hover: hsl(var(--primary-hover));
+  /* W11: one semantic surface for "active navigation item" and "selected
+     element" (chips, list rows, palette cursor, options). Shared role with the
+     companion app (its nav indicator and selected chips); values per theme in
+     the theme blocks below. Always paired with a second cue (3 px primary bar
+     or primary border), never colour alone. */
+  --color-selected-container: hsl(var(--selected-container));
+  --color-selected-container-hover: hsl(var(--selected-container-hover));
+  --color-on-selected-container: hsl(var(--on-selected-container));
 
   --color-secondary: hsl(var(--secondary));
   --color-secondary-foreground: hsl(var(--secondary-foreground));
@@ -203,6 +211,9 @@
   --primary: 168.785 42.9719% 51.1765%; /* #4DB8A4 */
   --primary-subtle: 171.0638 85.4545% 10.7843%; /* #04332C = oklch(0.29 0.05 179): selected/active surface, chips, badges */
   --primary-subtle-hover: 170.8475 88.0597% 13.1373%; /* #043F36 = oklch(0.33 0.058 179): hover on primary-subtle, search marks */
+  --selected-container: var(--primary-subtle); /* #04332C: active nav item + selected elements */
+  --selected-container-hover: var(--primary-subtle-hover); /* #043F36 */
+  --on-selected-container: var(--on-background); /* N5 #E6E8E8 on #04332C = 11.3:1 */
   --primary-hover: 168.2353 47.2222% 57.6471%; /* #60C6B2 = oklch(0.76 0.1 179): hover of filled primary, link hover */
   --on-primary: 170.3571 100% 10.9804%; /* #00382F */
   --primary-container: 171.8182 42.3077% 20.3922%; /* #1E4A44 */
@@ -272,8 +283,8 @@
   --sidebar: var(--surface-container);
   --sidebar-foreground: var(--on-surface);
   --sidebar-border: var(--outline-variant);
-  --sidebar-accent: var(--primary-container);
-  --sidebar-accent-foreground: var(--on-primary-container);
+  --sidebar-accent: var(--selected-container);
+  --sidebar-accent-foreground: var(--on-selected-container);
   /* Context ring (component lands in W4): the track is the outline step
      (>= 3:1 on every surface), the fill is the signal colour, and from the
      caution threshold on the ring also gets a tick mark at 70 %, so the state
@@ -314,6 +325,9 @@
   --primary: 175.6098 28.2759% 28.4314%; /* #345D5A */
   --primary-subtle: 173.8776 65.3333% 85.2941%; /* #C1F2ED = oklch(0.925 0.05 190) */
   --primary-subtle-hover: 174.9153 56.1905% 79.4118%; /* #ADE8E3 = oklch(0.89 0.06 190) */
+  --selected-container: var(--primary-subtle); /* #C1F2ED: active nav item + selected elements */
+  --selected-container-hover: var(--primary-subtle-hover); /* #ADE8E3 */
+  --on-selected-container: var(--on-background); /* N5 #191C1C on #C1F2ED = 14.0:1 */
   --primary-hover: 175.5 33.3333% 23.5294%; /* #28504D = oklch(0.4 0.045 190) */
   --on-primary: var(--n0); /* on-colour = ground step, keeps the ramp at six neutrals */
   --primary-container: 168.6486 48.0519% 84.902%; /* #C6EBE4 */
@@ -383,8 +397,8 @@
   --sidebar: var(--surface-container);
   --sidebar-foreground: var(--on-surface);
   --sidebar-border: var(--outline-variant);
-  --sidebar-accent: var(--primary-container);
-  --sidebar-accent-foreground: var(--on-primary-container);
+  --sidebar-accent: var(--selected-container);
+  --sidebar-accent-foreground: var(--on-selected-container);
   /* Context ring (component lands in W4): the track is the outline step
      (>= 3:1 on every surface), the fill is the signal colour, and from the
      caution threshold on the ring also gets a tick mark at 70 %, so the state

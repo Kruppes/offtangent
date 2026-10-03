@@ -202,13 +202,13 @@ const chipClass = 'inline-flex min-h-11 items-center gap-2 rounded-full border p
         <div v-show="!compact || filtersOpen" id="strand-filter-panel" data-testid="strand-filters" class="flex flex-col gap-2" :class="compact ? 'pt-2' : 'pb-1 pt-3'">
           <div role="group" :aria-label="$t('strandsW4d.chips')" class="flex min-w-0 flex-wrap items-center gap-2">
             <button v-for="chip in chips" :key="chip" type="button" :data-testid="`strand-chip-${chip}`" :aria-pressed="chipOn(chip)"
-              :class="[chipClass, chipOn(chip) ? 'border-primary bg-primary-container text-on-primary-container' : 'border-border text-foreground hover:bg-accent']"
+              :class="[chipClass, chipOn(chip) ? 'border-primary bg-selected-container text-on-selected-container' : 'border-border text-foreground hover:bg-accent']"
               @click="toggleChip(chip)">
               <AppIcon v-if="chipOn(chip)" name="check" size="sm" />{{ $t(`strandsW4d.chip.${chip}`) }}
             </button>
             <label v-if="!projectId" class="relative inline-flex min-w-0 max-w-full">
               <span class="sr-only">{{ $t('strandsW4d.projectChip') }}</span>
-              <select data-testid="project-filter" :class="[chipClass, 'max-w-full min-w-0 appearance-none truncate pr-8', state.project_id && state.project_id !== 'none' ? 'border-primary bg-primary-container text-on-primary-container' : 'border-input bg-background text-foreground hover:bg-accent']"
+              <select data-testid="project-filter" :class="[chipClass, 'max-w-full min-w-0 appearance-none truncate pr-8', state.project_id && state.project_id !== 'none' ? 'border-primary bg-selected-container text-on-selected-container' : 'border-input bg-background text-foreground hover:bg-accent']"
                 :value="state.project_id === 'none' ? '' : state.project_id" @change="setProject(($event.target as HTMLSelectElement).value)">
                 <option value="">{{ $t('strandsW4d.allProjects') }}</option>
                 <option v-for="p in projects" :key="p.id" :value="p.id">{{ p.name }}</option>
@@ -229,7 +229,7 @@ const chipClass = 'inline-flex min-h-11 items-center gap-2 rounded-full border p
             <div class="inline-flex min-w-0 rounded-md border border-border">
               <button v-for="sort in STRAND_SORTS" :key="sort" type="button" :data-testid="`strand-sort-${sort}`" :aria-pressed="state.sort === sort"
                 class="min-h-11 rounded-md px-3 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
-                :class="state.sort === sort ? 'bg-primary-container font-semibold text-on-primary-container' : 'text-muted-foreground hover:text-foreground'"
+                :class="state.sort === sort ? 'bg-selected-container font-semibold text-on-selected-container' : 'text-muted-foreground hover:text-foreground'"
                 @click="setSort(sort)">{{ $t(`strandsW4d.sortBy.${sort}`) }}</button>
             </div>
           </div>
@@ -265,10 +265,10 @@ const chipClass = 'inline-flex min-h-11 items-center gap-2 rounded-full border p
           <template v-if="compact">
             <article v-for="strand in group.rows" :key="strand.id" data-testid="strand-row" :data-strand-id="strand.id" :data-active="strand.id === activeId ? 'true' : undefined"
               class="relative flex min-w-0 items-start rounded-lg" :style="morphStyle(strand.id)"
-              :class="strand.id === activeId ? 'bg-primary-container text-on-primary-container before:absolute before:inset-y-2 before:left-0 before:w-[3px] before:rounded-full before:bg-primary' : 'hover:bg-accent'">
+              :class="strand.id === activeId ? 'bg-selected-container text-on-selected-container before:absolute before:inset-y-2 before:left-0 before:w-[3px] before:rounded-full before:bg-primary' : 'hover:bg-accent'">
               <NuxtLink :to="linkTo(strand)" data-testid="strand-row-link" :aria-current="strand.id === activeId ? 'page' : undefined"
                 class="flex min-h-11 min-w-0 flex-1 flex-col gap-1 rounded-lg py-2 pl-3 pr-1 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring"
-                :class="strand.id === activeId ? 'text-on-primary-container' : 'text-foreground'">
+                :class="strand.id === activeId ? 'text-on-selected-container' : 'text-foreground'">
                 <span class="flex min-w-0 items-start gap-2">
                   <span v-if="turnState(strand.id)" data-testid="strand-status" class="mt-2 h-2 w-2 shrink-0 rounded-full" :class="turnState(strand.id) === 'running' ? 'bg-primary motion-safe:animate-pulse' : 'border border-current'" aria-hidden="true" />
                   <span class="line-clamp-2 min-w-0 break-words text-sm font-semibold [overflow-wrap:anywhere]"><template v-for="(part, i) in highlightParts(strand.title || $t('strandsW3.untitled'), filters.q)" :key="i"><mark v-if="part.match" class="rounded-sm bg-primary-subtle-hover px-1 text-foreground">{{ part.text }}</mark><template v-else>{{ part.text }}</template></template></span>

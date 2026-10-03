@@ -47,7 +47,7 @@ const isOpen = computed(() => props.forceOpen || open.value)
       v-else
       type="button"
       class="flex w-full items-center gap-2 py-2 pr-2 text-left text-sm transition-colors hover:bg-accent hover:text-accent-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring max-md:min-h-11"
-      :class="selectedPath === node.path ? 'bg-primary-subtle font-medium text-primary' : 'text-foreground'"
+      :class="selectedPath === node.path ? 'bg-selected-container font-medium text-on-selected-container' : 'text-foreground'"
       :style="{ paddingLeft: `${10 + depth * 14 + 18}px` }"
       @click="emit('select', node.path)"
     >

@@ -121,7 +121,7 @@ describe('Offtangent shell navigation', () => {
       const html = await render({ path: '/boards', compact })
       const link = html.match(/<a href="\/boards"[^>]*>/)![0]
       expect(link).toContain('aria-current="page"')
-      expect(link).toContain('bg-primary-container')
+      expect(link).toContain('bg-selected-container')
       expect(link).toContain('before:bg-primary')
     }
   })

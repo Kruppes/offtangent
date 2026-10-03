@@ -44,7 +44,7 @@
           class="group flex w-full items-center gap-2 rounded-md border border-transparent px-2 py-2 text-left text-xs transition-colors"
           :class="msg.pickerResolvedCommand
             ? (opt.command === msg.pickerResolvedCommand
-                ? 'border-primary bg-primary-subtle text-foreground'
+                ? 'border-primary bg-selected-container text-on-selected-container'
                 : 'cursor-not-allowed text-muted-foreground')
             : 'text-foreground hover:border-border hover:bg-muted'"
           :disabled="!!msg.pickerResolvedCommand"

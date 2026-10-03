@@ -49,7 +49,7 @@ function onSubmit() {
                 type="button"
                 class="flex min-h-[44px] items-center justify-center gap-2 rounded-lg border px-3 text-sm font-medium transition-colors"
                 :class="persona === agentId
-                  ? 'border-primary bg-primary-subtle text-primary'
+                  ? 'border-primary bg-selected-container text-on-selected-container'
                   : 'border-border text-foreground hover:bg-accent'"
                 @click="agentId = persona"
               >

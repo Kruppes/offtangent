@@ -64,7 +64,7 @@ function submitRename() {
     class="group flex min-h-[64px] w-full items-start gap-3 rounded-xl border px-3 py-3 transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
     :class="[
       active
-        ? 'border-primary bg-primary-subtle'
+        ? 'border-primary bg-selected-container'
         : 'border-border bg-card hover:border-border hover:bg-accent',
       editing ? '' : 'cursor-pointer',
     ]"

@@ -140,11 +140,11 @@ describe('ChatInteractionBlock', () => {
     expect(html).toMatch(/hover:bg-muted[\s"]/)
     expect(html).not.toMatch(/bg-muted\/\d/)
     expect(html).not.toContain('bg-primary/10')
-    // W10: the selected tint is the opaque primary-subtle token in both themes
-    // (no alpha, no dark-only step-up), the hover on it is primary-subtle-hover.
+    // W10/W11: the selected tint is the shared opaque selected-container token in
+    // both themes (no alpha, no dark-only step-up), its hover is selected-container-hover.
     const source = await import('node:fs').then(fs => fs.readFileSync(new URL('./ChatInteractionBlock.vue', import.meta.url), 'utf8'))
-    expect(source).toContain("bg-primary-subtle text-foreground hover:bg-primary-subtle-hover")
-    expect(source).toContain("'bg-primary-subtle hover:bg-primary-subtle-hover'")
+    expect(source).toContain("bg-selected-container text-on-selected-container hover:bg-selected-container-hover")
+    expect(source).toContain("'bg-selected-container hover:bg-selected-container-hover'")
     expect(source).not.toMatch(/(?:primary|telegram)[\w-]*\/\d/)
     expect(source).toContain('dark:bg-destructive/15')
   })
@@ -226,6 +226,7 @@ describe('ChatInteractionBlock', () => {
     expect(html).not.toContain('hover:bg-muted')
     expect(html).not.toContain('bg-primary/10')
     expect(html).not.toContain('bg-primary-subtle')
+    expect(html).not.toContain('bg-selected-container')
   })
 
   it('renders a closed card when the question was answered in the chat', async () => {

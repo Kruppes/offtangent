@@ -48,7 +48,7 @@ async function loadPersonas() {
 onMounted(() => { void load(); void loadPersonas() })
 const chipClass = (selected: boolean) => [
   'inline-flex min-h-[44px] max-w-full items-center gap-2 rounded-full border px-3 text-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring',
-  selected ? 'border-primary bg-primary-subtle font-medium text-primary' : 'border-border hover:bg-accent',
+  selected ? 'border-primary bg-selected-container font-medium text-on-selected-container' : 'border-border hover:bg-accent',
 ]
 </script>
 

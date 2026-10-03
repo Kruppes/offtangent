@@ -160,3 +160,32 @@ describe.each([
     }
   })
 })
+
+// W11: one semantic surface for the active navigation item and for selected
+// elements. Same opaque tone as primary-subtle (it must read as colour, not as
+// grey), text on it at 4.5:1 and the 3 px primary marker at 3:1 (non-text).
+describe.each([
+  ['dark', DARK, { 'selected-container': '#04332C', 'selected-container-hover': '#043F36', 'on-selected-container': '#E6E8E8' }],
+  ['light', LIGHT, { 'selected-container': '#C1F2ED', 'selected-container-hover': '#ADE8E3', 'on-selected-container': '#191C1C' }],
+])('%s selected-container token', (_theme, selector, expected) => {
+  const p = palette(selector)
+  it('resolves to the documented hex values', () => {
+    for (const [name, hex] of Object.entries(expected)) expect(p.hex(name)).toBe(hex)
+  })
+  it('is the surface of the sidebar accent as well', () => {
+    expect(p.hex('sidebar-accent')).toBe(p.hex('selected-container'))
+    expect(p.hex('sidebar-accent-foreground')).toBe(p.hex('on-selected-container'))
+  })
+  it.each(['selected-container', 'selected-container-hover'])('keeps text on %s at 4.5:1', (surface) => {
+    for (const text of ['on-selected-container', 'muted-foreground', 'primary']) expect(p.contrast(text, surface)).toBeGreaterThanOrEqual(4.5)
+  })
+  it('keeps the primary marker at 3:1 against the surface', () => {
+    expect(p.contrast('primary', 'selected-container')).toBeGreaterThanOrEqual(3)
+  })
+  it('reads as colour, not as a grey surface', () => {
+    expect(p.chroma('selected-container')).toBeGreaterThanOrEqual(0.04)
+    expect(p.deltaE('selected-container', 'n2')).toBeGreaterThanOrEqual(0.04)
+    expect(p.deltaE('selected-container', 'n1')).toBeGreaterThanOrEqual(0.05)
+    expect(p.deltaE('selected-container', 'selected-container-hover')).toBeGreaterThanOrEqual(0.03)
+  })
+})
