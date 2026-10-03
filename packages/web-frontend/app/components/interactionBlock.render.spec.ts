@@ -114,7 +114,8 @@ describe('ChatInteractionBlock', () => {
   it('is one card on the background surface, not a box inside a box', async () => {
     const html = await render({ block: choice, messageId: 42 })
     expect(html).toContain('rounded-lg border border-border bg-background')
-    expect(html).not.toContain('bg-muted/20')
+    // No inner tinted box (neither the old bg-muted/20 nor a card surface).
+    expect(html).not.toMatch(/(?<!hover:)bg-(muted|card)(\/\d+)?[\s"]/)
   })
 
   it('stacks the options in one column and lets long labels wrap', async () => {
@@ -135,13 +136,16 @@ describe('ChatInteractionBlock', () => {
   it('separates hover from selected, in light and dark (review round 2)', async () => {
     const html = await render({ block: choice, messageId: 42 })
     // Idle rows hover on a muted tint; the selected tint is reserved for state.
-    expect(html).toContain('hover:bg-muted/60')
+    // W8: the hover tint is the full high-surface step, never an in-between grey.
+    expect(html).toMatch(/hover:bg-muted[\s"]/)
+    expect(html).not.toMatch(/bg-muted\/\d/)
     expect(html).not.toContain('bg-primary/10')
-    // 10 % primary is barely visible on the dark background, so the selected
-    // tint steps up there and the hover-on-selected step exists in both themes.
+    // W10: the selected tint is the opaque primary-subtle token in both themes
+    // (no alpha, no dark-only step-up), the hover on it is primary-subtle-hover.
     const source = await import('node:fs').then(fs => fs.readFileSync(new URL('./ChatInteractionBlock.vue', import.meta.url), 'utf8'))
-    expect(source).toContain('dark:bg-primary/15')
-    expect(source).toContain('hover:bg-primary/15')
+    expect(source).toContain("bg-primary-subtle text-foreground hover:bg-primary-subtle-hover")
+    expect(source).toContain("'bg-primary-subtle hover:bg-primary-subtle-hover'")
+    expect(source).not.toMatch(/(?:primary|telegram)[\w-]*\/\d/)
     expect(source).toContain('dark:bg-destructive/15')
   })
 
@@ -221,6 +225,7 @@ describe('ChatInteractionBlock', () => {
     expect(html).not.toContain('rounded-full')
     expect(html).not.toContain('hover:bg-muted')
     expect(html).not.toContain('bg-primary/10')
+    expect(html).not.toContain('bg-primary-subtle')
   })
 
   it('renders a closed card when the question was answered in the chat', async () => {
@@ -265,7 +270,7 @@ describe('a multi block as a card', () => {
 
   it('puts the send button in a right-aligned footer, disabled and not full width', async () => {
     const html = await render({ block: multi, messageId: 9 })
-    expect(html).toContain('border-t border-border px-4 py-2.5')
+    expect(html).toContain('border-t border-border px-4 py-2')
     expect(html).toContain('justify-end')
     const sendTag = rowTagOf(html, 'chat.interaction.sendAnswer')
     expect(sendTag).toContain('disabled')

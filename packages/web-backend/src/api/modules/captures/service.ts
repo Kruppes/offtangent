@@ -339,6 +339,14 @@ export interface CaptureResult {
    */
   turn?: QueuedTurnInfo | null
   /**
+   * The capture is stored, but its filing could not run because the agent
+   * core is not up yet (W7 D1). The controller answers `202` with
+   * `code: 'routing_pending'` instead of a `503` after the row was written:
+   * the capture is safe in the tray with its proposal, and a retry with the
+   * same `clientMessageId` resolves to the same row instead of a duplicate.
+   */
+  routingPending?: boolean
+  /**
    * Privacy (plan 2026-09-26, step 1): handles the secret boundary created
    * for THIS text, additive. Empty for a capture without a secret. The value
    * itself never appears here (nor in `captures.text` or any decision row).
@@ -621,6 +629,28 @@ export function createCapturesService(options: CapturesServiceOptions) {
     console.error(`[captures] filing capture ${capture.id} part ${decision.partIndex} into ${decision.strandId ?? 'a new strand'} failed (${reason}), left unsorted`)
     if (count === 1) updateCapture(db, capture.id, { status: 'unsorted', strandId: null, messageId: null, filedAt: null })
     return getCapture(db, String(userId), capture.id)!
+  }
+
+  /** Did a filing fail only because the agent core is not up (yet)? */
+  function isCoreMissing(err: unknown): boolean {
+    return err instanceof CaptureServiceError && err.code === 'agent_unavailable'
+  }
+
+  /**
+   * File a capture on a path that skips the router (quick mode, `new_strand`
+   * destination). Without an agent core the capture is already stored: it is
+   * parked in the tray with its proposal instead of answering 503 after the
+   * write, so nothing is lost and the client hears "stored, routing pending".
+   */
+  function fileOrPark(
+    userId: number, capture: Capture, proposal: RouterProposal, decision: Decision,
+  ): { filed: Capture; pending: boolean } {
+    try {
+      return { filed: file(userId, capture, proposal, decision.id, 'filed', true), pending: false }
+    } catch (err) {
+      if (!isCoreMissing(err)) throw err
+      return { filed: parkUnfiledPart(userId, capture, decision, 1, err), pending: true }
+    }
   }
 
   /** Stamp the doubt band's marker onto a decision that stays a `note`. */
@@ -1113,7 +1143,12 @@ export function createCapturesService(options: CapturesServiceOptions) {
     if (!selection.ok) throw new CaptureServiceError(400, selection.code, selection.error)
     if (body.clientMessageId) {
       const existing = getCaptureByClientKey(db, userKey, body.clientMessageId)
-      if (existing) return { capture: existing, decision: requireDecision(existing), created: false }
+      if (existing) {
+        // A retry of a capture that is stored but still waits for the core
+        // keeps saying so; it never creates a second row.
+        const pending = existing.status === 'unsorted' && !options.getAgentCore()
+        return { capture: existing, decision: requireDecision(existing), created: false, ...(pending ? { routingPending: true } : {}) }
+      }
     }
     body = withCaptureDefaultAgent(body)
 
@@ -1298,6 +1333,7 @@ export function createCapturesService(options: CapturesServiceOptions) {
     const userKey = String(userId)
     const count = split.parts.length
     let firstDecisionId: string | null = null
+    let routingPending = false
     let filed: Capture = capture
 
     for (const part of split.parts) {
@@ -1355,6 +1391,7 @@ export function createCapturesService(options: CapturesServiceOptions) {
           )
         } catch (err) {
           filed = parkUnfiledPart(userId, capture, decision, count, err)
+          if (isCoreMissing(err)) routingPending = true
           continue
         }
         // Only the doubt band asks. `doubtful` already carries every condition
@@ -1378,7 +1415,7 @@ export function createCapturesService(options: CapturesServiceOptions) {
     if (count > 1) filed = syncCaptureStatus(userId, capture.id) ?? filed
     const current = getDecision(db, firstDecisionId!)!
     emitRouted(userId, filed, current)
-    return { capture: filed, decision: current, created: true, turn: takeTurn(filed.id) }
+    return { capture: filed, decision: current, created: true, turn: takeTurn(filed.id), ...(routingPending ? { routingPending } : {}) }
 
   }
 
@@ -1427,10 +1464,10 @@ export function createCapturesService(options: CapturesServiceOptions) {
         alternatives: [], projectSuggestion: null,
       }
     const decision = persistProposal(capture.id, proposal, { model: QUICK_MODE_MODEL, latencyMs: 0 })
-    const filed = file(userId, capture, proposal, decision.id, 'filed', true)
+    const { filed, pending } = fileOrPark(userId, capture, proposal, decision)
     const current = getDecision(db, decision.id)!
     emitRouted(userId, filed, current)
-    return { capture: filed, decision: current, created: true, turn: takeTurn(filed.id) }
+    return { capture: filed, decision: current, created: true, turn: takeTurn(filed.id), ...(pending ? { routingPending: true } : {}) }
   }
 
   /**
@@ -1458,10 +1495,10 @@ export function createCapturesService(options: CapturesServiceOptions) {
       alternatives: [], projectSuggestion: null,
     }
     const decision = persistProposal(capture.id, proposal, { model: NEW_STRAND_MODEL, latencyMs: 0 })
-    const filed = file(userId, capture, proposal, decision.id, 'filed', true)
+    const { filed, pending } = fileOrPark(userId, capture, proposal, decision)
     const current = getDecision(db, decision.id)!
     emitRouted(userId, filed, current)
-    return { capture: filed, decision: current, created: true, turn: takeTurn(filed.id) }
+    return { capture: filed, decision: current, created: true, turn: takeTurn(filed.id), ...(pending ? { routingPending: true } : {}) }
   }
 
   /** The client's proposed title, else the first line of the capture. */

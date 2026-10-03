@@ -21,13 +21,13 @@ function toggle() {
 </script>
 
 <template>
-  <li class="rounded-lg border bg-card p-4 text-card-foreground [overflow-wrap:anywhere]" :class="!item.readAt ? 'border-primary/40' : 'border-border'">
+  <li class="rounded-lg bg-card p-4 text-card-foreground [overflow-wrap:anywhere]">
     <div class="flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
-      <span v-if="personaLabel" class="inline-flex min-w-0 items-center gap-1.5 font-medium text-foreground" data-testid="feed-persona">
-        <span class="grid h-5 w-5 shrink-0 place-items-center rounded-full bg-secondary text-[10px] font-semibold text-secondary-foreground" aria-hidden="true">{{ personaInitials(personaLabel) }}</span>
+      <span v-if="personaLabel" class="inline-flex min-w-0 items-center gap-2 font-medium text-foreground" data-testid="feed-persona">
+        <span class="grid h-5 w-5 shrink-0 place-items-center rounded-full bg-secondary text-2xs font-semibold text-secondary-foreground" aria-hidden="true">{{ personaInitials(personaLabel) }}</span>
         <span class="truncate">{{ personaLabel }}</span>
       </span>
-      <span v-if="!item.readAt" class="rounded-full bg-primary/10 px-2 py-1 font-medium text-primary">{{ $t('feed.unread') }}</span>
+      <span v-if="!item.readAt" class="rounded-full bg-muted px-2 py-1 font-medium text-foreground">{{ $t('feed.unread') }}</span>
       <span>{{ $t(`feed.kinds.${item.kind}`) }}</span>
       <time :datetime="item.createdAt">{{ date(item.createdAt) }}</time>
     </div>
@@ -38,7 +38,7 @@ function toggle() {
       <span>{{ item.title }}</span>
     </h2>
     <!-- eslint-disable-next-line vue/no-v-html -- renderSafeMarkdown escapes raw HTML and drops non-http(s) links. -->
-    <div v-if="item.body && (clamped || feedBodyVisible(item, expanded))" :id="bodyId" class="prose-chat mt-2 max-w-[68ch] break-words text-sm" :class="clamped ? 'feed-clamp max-h-16 overflow-hidden' : ''" v-html="renderSafeMarkdown(item.body)" />
+    <div v-if="item.body && (clamped || feedBodyVisible(item, expanded))" :id="bodyId" class="prose-chat measure mt-2 break-words text-sm" :class="clamped ? 'feed-clamp max-h-16 overflow-hidden' : ''" v-html="renderSafeMarkdown(item.body)" />
     <div class="mt-3 flex flex-wrap items-center gap-2">
       <Button v-if="feedExpandable(item)" variant="ghost" class="min-h-[44px]" :aria-expanded="expanded ? 'true' : 'false'" :aria-controls="bodyId" data-testid="feed-toggle" @click="toggle">
         <AppIcon :name="expanded ? 'chevronDown' : 'chevronRight'" />{{ $t(expanded ? 'feed.showLess' : 'feed.showMore') }}

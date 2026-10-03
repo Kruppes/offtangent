@@ -49,7 +49,7 @@ onBeforeUnmount(() => { if (props.open) overlay.setOverlayOpen(false) })
                   <td class="whitespace-nowrap py-2 text-right">
                     <template v-for="(combo, i) in row.combos" :key="i">
                       <span v-if="i > 0" class="px-1 text-muted-foreground">{{ t('shortcuts.or') }}</span>
-                      <kbd v-for="key in combo" :key="key" class="ml-1 inline-block min-w-6 rounded-md border border-border bg-muted px-1.5 text-center font-mono text-xs">{{ key }}</kbd>
+                      <kbd v-for="key in combo" :key="key" class="ml-1 inline-block min-w-6 rounded-md border border-border bg-muted px-2 text-center font-mono text-xs">{{ key }}</kbd>
                     </template>
                   </td>
                 </tr>

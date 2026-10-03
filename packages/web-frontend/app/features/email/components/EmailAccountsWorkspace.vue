@@ -1,5 +1,5 @@
 <template>
-  <div class="flex min-h-0 flex-1 flex-col overflow-hidden">
+  <div class="flex min-h-0 flex-1 flex-col overflow-auto">
     <div class="flex min-h-0 flex-1 flex-col overflow-y-auto">
       <div class="mb-4 flex justify-end">
         <Button @click="openCreate">
@@ -40,8 +40,8 @@
         {{ $t('common.loading') }}
       </div>
 
-      <div v-else-if="accounts.length === 0" class="flex flex-1 flex-col items-center justify-center gap-3 py-20 text-center text-muted-foreground">
-        <AppIcon name="mail" size="xl" class="opacity-40" />
+      <div v-else-if="accounts.length === 0" class="flex flex-1 flex-col items-start justify-center gap-3 py-20 text-left text-muted-foreground">
+        <AppIcon name="mail" size="xl" />
         <p class="text-sm">{{ $t('email.empty') }}</p>
       </div>
 

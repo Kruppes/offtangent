@@ -60,7 +60,7 @@ onMounted(load)
     </section>
     <template v-else>
       <p class="text-lg font-medium" data-testid="week-claim">{{ $t(`week.claim.${claim}`, { count: stats.captures, strands: stats.strandsTouched }) }}</p>
-      <section v-if="stats.captures === 0" class="rounded-xl border p-6 text-center" data-testid="week-empty">
+      <section v-if="stats.captures === 0" class="rounded-xl border p-6 text-left" data-testid="week-empty">
         <p class="text-muted-foreground">{{ $t('week.emptyText') }}</p>
         <NuxtLink to="/" class="mt-3 inline-flex min-h-11 items-center rounded-md border px-3 hover:bg-accent focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring">{{ $t('week.toHome') }}</NuxtLink>
       </section>
@@ -73,10 +73,10 @@ onMounted(load)
         </dl>
         <section class="rounded-xl border bg-card p-4" aria-labelledby="week-days-heading">
           <h2 id="week-days-heading" class="mb-3 font-semibold">{{ $t('week.perDay') }}</h2>
-          <ol class="grid grid-cols-7 items-end gap-1.5" data-testid="week-bars">
+          <ol class="grid grid-cols-7 items-end gap-2" data-testid="week-bars">
             <li v-for="(count, index) in stats.perDay" :key="index" class="flex min-w-0 flex-col items-center gap-1" :aria-label="$t('week.dayCount', { day: dayName(index, 'long'), count })">
               <span class="text-xs tabular-nums text-muted-foreground" aria-hidden="true">{{ count }}</span>
-              <span class="flex h-24 w-full items-end" aria-hidden="true"><span class="w-full rounded-t-sm" :class="index === stats.todayIndex ? 'bg-primary' : count ? 'bg-primary/50' : 'bg-muted'" :style="{ height: bars[index] + '%' }" /></span>
+              <span class="flex h-24 w-full items-end" aria-hidden="true"><span class="w-full rounded-t-sm" :class="index === stats.todayIndex ? 'bg-primary' : count ? 'bg-primary-container' : 'bg-muted'" :style="{ height: bars[index] + '%' }" /></span>
               <span class="text-xs" :class="index === stats.todayIndex ? 'font-semibold' : 'text-muted-foreground'" aria-hidden="true">{{ dayName(index, 'short') }}</span>
             </li>
           </ol>

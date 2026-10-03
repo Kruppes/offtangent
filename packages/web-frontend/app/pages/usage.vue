@@ -4,7 +4,7 @@
     v-if="!isAdmin"
     class="flex h-full flex-col items-center justify-center gap-3 p-10 text-center text-muted-foreground"
   >
-    <AppIcon name="lock" size="xl" class="opacity-50" />
+    <AppIcon name="lock" size="xl" />
     <h1 class="text-lg font-semibold text-foreground">{{ $t('admin.title') }}</h1>
     <p class="max-w-xs text-sm">{{ $t('admin.description') }}</p>
   </div>
@@ -79,8 +79,8 @@
       <template v-else>
         <!-- No usage at all — first-time empty state -->
         <Card v-if="!hasAnyUsage">
-          <CardContent class="flex flex-col items-center gap-3 py-14 text-center">
-            <AppIcon name="trendDown" size="xl" class="opacity-40" />
+          <CardContent class="flex flex-col items-start gap-3 py-14 text-left">
+            <AppIcon name="trendDown" size="xl" />
             <h2 class="text-base font-semibold text-foreground">{{ $t('usage.emptyTitle') }}</h2>
             <p class="max-w-md text-sm text-muted-foreground">{{ $t('usage.emptyDescription') }}</p>
           </CardContent>
@@ -91,7 +91,7 @@
           <section class="mb-4 grid grid-cols-1 gap-3 sm:grid-cols-3">
             <Card v-for="card in kpiCards" :key="card.label">
               <CardContent class="p-5">
-                <span class="text-xs font-semibold uppercase tracking-widest text-muted-foreground">
+                <span class="text-xs font-semibold uppercase tracking-label text-muted-foreground">
                   {{ card.label }}
                 </span>
                 <strong class="mt-2 block text-2xl font-bold tracking-tight text-foreground">
@@ -107,20 +107,20 @@
             <CardContent class="p-5">
               <div class="mb-4">
                 <h2 class="text-base font-semibold text-foreground">{{ $t('usage.stalls.title') }}</h2>
-                <p class="mt-1 text-sm text-muted-foreground">{{ $t('usage.stalls.description') }}</p>
+                <p class="measure mt-1 text-sm text-muted-foreground">{{ $t('usage.stalls.description') }}</p>
               </div>
 
               <div
                 v-if="stalls.total === 0"
-                class="flex items-center gap-2 rounded-lg border border-dashed border-border/70 px-4 py-6 text-sm text-muted-foreground"
+                class="flex items-center gap-2 rounded-lg border border-dashed border-border px-4 py-6 text-sm text-muted-foreground"
               >
-                <AppIcon name="check" class="h-4 w-4 opacity-60" />
+                <AppIcon name="check" class="h-4 w-4" />
                 {{ $t('usage.stalls.empty') }}
               </div>
 
               <div v-else class="grid grid-cols-2 gap-3 sm:grid-cols-4">
-                <div v-for="card in stallCards" :key="card.label" class="rounded-lg border border-border/70 p-4">
-                  <span class="text-xs font-semibold uppercase tracking-widest text-muted-foreground">
+                <div v-for="card in stallCards" :key="card.label" class="rounded-lg border border-border p-4">
+                  <span class="text-xs font-semibold uppercase tracking-label text-muted-foreground">
                     {{ card.label }}
                   </span>
                   <strong class="mt-2 block text-xl font-bold tracking-tight tabular-nums text-foreground">
@@ -134,8 +134,8 @@
 
           <!-- No results for current filters -->
           <Card v-if="!hasFilteredResults" class="mb-4">
-            <CardContent class="flex flex-col items-center gap-3 py-10 text-center">
-              <AppIcon name="compass" size="xl" class="opacity-40" />
+            <CardContent class="flex flex-col items-start gap-3 py-10 text-left">
+              <AppIcon name="compass" size="xl" />
               <h2 class="text-base font-semibold text-foreground">{{ $t('usage.emptyFilteredTitle') }}</h2>
               <p class="max-w-md text-sm text-muted-foreground">{{ $t('usage.emptyFilteredDescription') }}</p>
             </CardContent>
@@ -148,16 +148,16 @@
                 <div class="mb-5 flex flex-wrap items-start justify-between gap-3">
                   <div>
                     <h2 class="text-base font-semibold text-foreground">{{ $t('usage.chart.title') }}</h2>
-                    <p class="mt-1 text-sm text-muted-foreground">{{ $t('usage.chart.description') }}</p>
+                    <p class="measure mt-1 text-sm text-muted-foreground">{{ $t('usage.chart.description') }}</p>
                   </div>
                   <!-- Legend -->
                   <div class="flex items-center gap-4 text-xs text-muted-foreground">
-                    <span class="flex items-center gap-1.5">
+                    <span class="flex items-center gap-2">
                       <span class="h-2.5 w-2.5 rounded-sm bg-primary" />
                       {{ $t('usage.chart.prompt') }}
                     </span>
-                    <span class="flex items-center gap-1.5">
-                      <span class="h-2.5 w-2.5 rounded-sm bg-primary/40" />
+                    <span class="flex items-center gap-2">
+                      <span class="h-2.5 w-2.5 rounded-sm bg-primary-container" />
                       {{ $t('usage.chart.completion') }}
                     </span>
                   </div>
@@ -184,9 +184,9 @@
                   <div class="relative min-h-[220px] flex-1 sm:min-h-[280px]">
                     <!-- Horizontal grid lines -->
                     <div class="pointer-events-none absolute inset-0 flex flex-col justify-between pb-7">
-                      <div class="border-t border-dashed border-border/60" />
-                      <div class="border-t border-dashed border-border/60" />
-                      <div class="border-t border-dashed border-border/60" />
+                      <div class="border-t border-dashed border-border" />
+                      <div class="border-t border-dashed border-border" />
+                      <div class="border-t border-dashed border-border" />
                     </div>
 
                     <!-- Bars -->
@@ -207,13 +207,13 @@
                         :title="chartTooltip(point)"
                       >
                         <div
-                          class="w-full max-w-[26px] overflow-hidden rounded-t-sm transition-opacity group-hover:opacity-80"
+                          class="w-full max-w-[26px] overflow-hidden rounded-t-sm group-hover:outline-2 group-hover:outline-offset-1 group-hover:outline-foreground"
                           :style="{ height: `${point.height}%` }"
                         >
                           <!-- Completion (output) on top -->
                           <div
                             v-if="point.completionShare > 0"
-                            class="w-full bg-primary/40"
+                            class="w-full bg-primary-container"
                             :style="{ height: `${point.completionShare}%` }"
                           />
                           <!-- Prompt (input) on bottom -->
@@ -254,19 +254,19 @@
                 <div class="mb-5 flex flex-wrap items-start justify-between gap-3">
                   <div>
                     <h2 class="text-base font-semibold text-foreground">{{ $t('usage.sourceChart.title') }}</h2>
-                    <p class="mt-1 text-sm text-muted-foreground">{{ $t('usage.sourceChart.description') }}</p>
+                    <p class="measure mt-1 text-sm text-muted-foreground">{{ $t('usage.sourceChart.description') }}</p>
                   </div>
                   <!-- Legend -->
                   <div class="flex items-center gap-4 text-xs text-muted-foreground">
-                    <span class="flex items-center gap-1.5">
+                    <span class="flex items-center gap-2">
                       <span class="h-2.5 w-2.5 rounded-sm bg-primary" />
                       {{ $t('usage.sourceChart.mainAgent') }}
                     </span>
-                    <span class="flex items-center gap-1.5">
+                    <span class="flex items-center gap-2">
                       <span class="h-2.5 w-2.5 rounded-sm bg-warning" />
                       {{ $t('usage.sourceChart.taskAgent') }}
                     </span>
-                    <span class="flex items-center gap-1.5">
+                    <span class="flex items-center gap-2">
                       <span class="h-2.5 w-2.5 rounded-sm bg-success" />
                       {{ $t('usage.sourceChart.heartbeat') }}
                     </span>
@@ -294,9 +294,9 @@
                   <div class="relative min-h-[220px] flex-1 sm:min-h-[280px]">
                     <!-- Horizontal grid lines -->
                     <div class="pointer-events-none absolute inset-0 flex flex-col justify-between pb-7">
-                      <div class="border-t border-dashed border-border/60" />
-                      <div class="border-t border-dashed border-border/60" />
-                      <div class="border-t border-dashed border-border/60" />
+                      <div class="border-t border-dashed border-border" />
+                      <div class="border-t border-dashed border-border" />
+                      <div class="border-t border-dashed border-border" />
                     </div>
 
                     <!-- Bars -->
@@ -317,7 +317,7 @@
                         :title="sourceChartTooltip(point)"
                       >
                         <div
-                          class="flex w-full max-w-[26px] flex-col justify-end overflow-hidden rounded-t-sm transition-opacity group-hover:opacity-80"
+                          class="flex w-full max-w-[26px] flex-col justify-end overflow-hidden rounded-t-sm group-hover:outline-2 group-hover:outline-offset-1 group-hover:outline-foreground"
                           :style="{ height: `${point.height}%` }"
                         >
                           <!-- Heartbeat (top) -->
@@ -369,7 +369,7 @@
               <CardContent class="p-5">
                 <div class="mb-4">
                   <h2 class="text-base font-semibold text-foreground">{{ $t('usage.table.title') }}</h2>
-                  <p class="mt-1 text-sm text-muted-foreground">{{ $t('usage.table.description') }}</p>
+                  <p class="measure mt-1 text-sm text-muted-foreground">{{ $t('usage.table.description') }}</p>
                 </div>
 
                 <div class="overflow-x-auto">
@@ -415,7 +415,7 @@
                         </TableRow>
 
                         <!-- Totals row -->
-                        <TableRow class="border-t-2 border-border bg-muted/30">
+                        <TableRow class="border-t-2 border-border bg-card">
                           <TableCell colspan="2" class="font-semibold">
                             {{ $t('usage.table.total') }}
                           </TableCell>

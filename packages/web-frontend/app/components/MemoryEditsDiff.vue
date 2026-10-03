@@ -23,12 +23,12 @@
     </div>
 
     <!-- Diff blocks -->
-    <div v-for="(edit, idx) in edits" :key="idx" :class="idx > 0 ? 'border-t border-border/40' : ''">
+    <div v-for="(edit, idx) in edits" :key="idx" :class="idx > 0 ? 'border-t border-border' : ''">
       <!-- Removed lines -->
       <div
         v-for="(line, li) in splitLines(edit.oldText)"
         :key="`r-${li}`"
-        class="flex items-start gap-2.5 border-l-2 border-l-destructive/60 bg-destructive/10 px-3 py-1 font-mono text-2xs leading-4 text-destructive"
+        class="flex items-start gap-2 border-l-2 border-l-destructive/60 bg-destructive/10 px-3 py-1 font-mono text-2xs leading-4 text-destructive"
       >
         <span class="mt-px w-4 shrink-0 text-center font-semibold leading-4">-</span>
         <span class="min-w-0 whitespace-pre-wrap break-words">{{ line || ' ' }}</span>
@@ -38,7 +38,7 @@
       <div
         v-for="(line, li) in splitLines(edit.newText)"
         :key="`a-${li}`"
-        class="flex items-start gap-2.5 border-l-2 border-l-success/60 bg-success/10 px-3 py-1 font-mono text-2xs leading-4 text-success"
+        class="flex items-start gap-2 border-l-2 border-l-success/60 bg-success/10 px-3 py-1 font-mono text-2xs leading-4 text-success"
       >
         <span class="mt-px w-4 shrink-0 text-center font-semibold leading-4">+</span>
         <span class="min-w-0 whitespace-pre-wrap break-words">{{ line || ' ' }}</span>

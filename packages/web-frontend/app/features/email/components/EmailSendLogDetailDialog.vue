@@ -18,31 +18,31 @@
           <AlertDescription>{{ entry.errorMessage }}</AlertDescription>
         </Alert>
 
-        <div v-if="entry.reason" class="rounded-lg border border-border bg-muted/40 px-3 py-2 text-xs text-muted-foreground">
+        <div v-if="entry.reason" class="rounded-lg border border-border bg-card px-3 py-2 text-xs text-muted-foreground">
           {{ entry.reason }}
         </div>
 
-        <p v-if="decisionKey" class="text-xs text-muted-foreground">
+        <p v-if="decisionKey" class="measure text-help text-muted-foreground">
           {{ $t(decisionKey, { user: entry.decidedBy }) }}
           <span v-if="entry.decidedAt"> · {{ formatDateTime(entry.decidedAt) }}</span>
         </p>
 
         <dl class="grid gap-2">
           <div v-for="field in recipientFields" :key="field.label" class="grid grid-cols-[4rem_1fr] gap-2">
-            <dt class="text-xs font-medium uppercase tracking-wide text-muted-foreground">{{ field.label }}</dt>
+            <dt class="text-xs font-medium uppercase tracking-label text-muted-foreground">{{ field.label }}</dt>
             <dd class="break-all">{{ field.value }}</dd>
           </div>
         </dl>
 
         <div v-if="entry.attachments.length > 0">
-          <h3 class="mb-1.5 text-xs font-medium uppercase tracking-wide text-muted-foreground">
+          <h3 class="mb-2 text-xs font-medium uppercase tracking-label text-muted-foreground">
             {{ $t('email.sentLog.attachments') }}
           </h3>
           <ul class="space-y-1">
             <li
               v-for="attachment in entry.attachments"
               :key="attachment.filename"
-              class="flex items-center gap-2 rounded-lg border border-border px-3 py-1.5"
+              class="flex items-center gap-2 rounded-lg border border-border px-3 py-2"
             >
               <AppIcon name="paperclip" class="h-4 w-4 shrink-0 text-muted-foreground" />
               <span class="truncate">{{ attachment.filename }}</span>
@@ -52,17 +52,17 @@
         </div>
 
         <div>
-          <h3 class="mb-1.5 text-xs font-medium uppercase tracking-wide text-muted-foreground">
+          <h3 class="mb-2 text-xs font-medium uppercase tracking-label text-muted-foreground">
             {{ $t('email.sentLog.body') }}
           </h3>
-          <pre class="whitespace-pre-wrap break-words rounded-lg border border-border bg-muted/40 p-3 font-sans text-sm">{{ entry.bodyText }}</pre>
+          <pre class="whitespace-pre-wrap break-words rounded-lg border border-border bg-card p-3 font-sans text-sm">{{ entry.bodyText }}</pre>
         </div>
 
         <div v-if="entry.bodyHtml">
-          <h3 class="mb-1.5 text-xs font-medium uppercase tracking-wide text-muted-foreground">
+          <h3 class="mb-2 text-xs font-medium uppercase tracking-label text-muted-foreground">
             {{ $t('email.sentLog.bodyHtml') }}
           </h3>
-          <pre class="max-h-64 overflow-auto whitespace-pre-wrap break-words rounded-lg border border-border bg-muted/40 p-3 font-mono text-xs">{{ entry.bodyHtml }}</pre>
+          <pre class="max-h-64 overflow-auto whitespace-pre-wrap break-words rounded-lg border border-border bg-card p-3 font-mono text-xs">{{ entry.bodyHtml }}</pre>
         </div>
       </div>
 

@@ -45,21 +45,21 @@ function quotaLine(model: SelectableModel) {
           <button
             type="button"
             class="flex min-h-11 w-full items-center rounded-lg border px-3 text-left text-sm outline-none hover:bg-muted focus-visible:ring-2 focus-visible:ring-ring"
-            :class="!pinned ? 'border-primary bg-primary/5' : 'border-border'"
+            :class="!pinned ? 'border-primary bg-primary-subtle' : 'border-border'"
             :disabled="saving"
             @click="emit('select', null)"
           >
             {{ $t('threads.useDefaultModel') }}
           </button>
           <section v-for="([provider, entries]) in grouped" :key="provider">
-            <h3 class="mb-2 text-xs font-semibold uppercase tracking-wide text-muted-foreground">{{ provider }}</h3>
+            <h3 class="mb-2 text-xs font-semibold uppercase tracking-label text-muted-foreground">{{ provider }}</h3>
             <div class="space-y-2">
               <button
                 v-for="model in entries"
                 :key="`${model.providerId}:${model.modelId}`"
                 type="button"
                 class="flex min-h-11 w-full items-center gap-3 rounded-lg border px-3 py-2 text-left outline-none focus-visible:ring-2 focus-visible:ring-ring"
-                :class="model.selectable ? 'hover:bg-muted' : 'cursor-not-allowed opacity-45'"
+                :class="model.selectable ? 'hover:bg-muted' : 'cursor-not-allowed text-muted-foreground'"
                 :disabled="!model.selectable || saving"
                 :title="model.unavailableReason || undefined"
                 @click="emit('select', model)"

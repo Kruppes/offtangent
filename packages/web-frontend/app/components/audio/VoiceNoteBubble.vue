@@ -3,10 +3,10 @@
        the spoken version of an answer, a kept dictation, or an audio file.
        It is never regenerated here; it plays what the server stored. -->
   <div
-    class="mt-2 w-full max-w-sm rounded-lg border border-primary/40 bg-primary/[0.08] px-2 py-1.5"
+    class="mt-2 w-full max-w-sm rounded-lg border border-primary bg-primary-subtle px-2 py-2"
     :data-voice-note="kind"
   >
-    <p class="flex items-center gap-1.5 px-1 text-xs font-medium text-foreground">
+    <p class="flex items-center gap-2 px-1 text-xs font-medium text-foreground">
       <AppIcon :name="kind === 'dictation' ? 'mic' : 'volume'" size="sm" class="h-3.5 w-3.5 text-primary" />
       <span class="min-w-0 truncate">{{ title }}</span>
       <span v-if="seconds > 0" class="ml-auto shrink-0 tabular-nums text-muted-foreground">{{ formatClock(seconds) }}</span>

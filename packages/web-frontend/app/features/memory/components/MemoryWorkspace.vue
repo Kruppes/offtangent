@@ -22,7 +22,7 @@
         </AlertDescription>
       </Alert>
 
-      <Tabs v-model="activeTab" class="flex min-h-0 flex-1 flex-col overflow-hidden">
+      <Tabs v-model="activeTab" class="flex min-h-0 flex-1 flex-col overflow-auto">
         <TabsList class="mb-4 shrink-0 self-start">
           <TabsTrigger value="files">{{ $t('memory.filesTab') }}</TabsTrigger>
           <TabsTrigger value="facts">{{ $t('memory.factsTab') }}</TabsTrigger>
@@ -30,11 +30,11 @@
         </TabsList>
 
         <!-- Files tab -->
-        <TabsContent value="files" class="mt-0 flex min-h-0 flex-1 flex-col overflow-hidden">
+        <TabsContent value="files" class="mt-0 flex min-h-0 flex-1 flex-col overflow-auto">
           <div class="flex min-h-0 flex-1 gap-4 overflow-hidden">
             <!-- Sidebar: file tree -->
             <aside class="flex w-64 shrink-0 flex-col overflow-hidden rounded-xl border border-border">
-              <div class="flex items-center gap-2 border-b border-border px-3 py-2.5">
+              <div class="flex items-center gap-2 border-b border-border px-3 py-2">
                 <input
                   v-model="searchQuery"
                   type="text"
@@ -59,7 +59,7 @@
                   {{ $t('memory.loading') }}
                 </div>
                 <div v-else-if="filteredTree.length === 0" class="flex flex-col items-center justify-center gap-2 px-4 py-8 text-center text-muted-foreground">
-                  <AppIcon name="file" size="xl" class="h-8 w-8 opacity-40" />
+                  <AppIcon name="file" size="xl" class="h-8 w-8" />
                   <p class="text-xs">{{ searchQuery ? $t('memory.noResults') : $t('memory.empty') }}</p>
                 </div>
                 <MemoryFileTreeItem
@@ -78,7 +78,7 @@
             </aside>
 
             <!-- Content area -->
-            <div class="flex min-h-0 flex-1 flex-col overflow-hidden">
+            <div class="flex min-h-0 flex-1 flex-col overflow-auto">
               <!-- New file creation form -->
               <div v-if="creatingNewFile" class="mb-3 flex shrink-0 items-center gap-2">
                 <Button variant="outline" size="icon" class="h-8 w-8 shrink-0" :aria-label="$t('common.cancel')" @click="cancelNewFile">
@@ -89,7 +89,7 @@
                   v-model="newFilePath"
                   type="text"
                   :placeholder="$t('memory.newFilePlaceholder')"
-                  class="flex-1 rounded-md border border-border bg-background px-3 py-1.5 text-sm outline-none ring-offset-background focus:ring-2 focus:ring-ring"
+                  class="flex-1 rounded-md border border-border bg-background px-3 py-2 text-sm outline-none ring-offset-background focus:ring-2 focus:ring-ring"
                   @keydown.enter="confirmNewFile"
                   @keydown.escape="cancelNewFile"
                 >
@@ -120,11 +120,11 @@
               </div>
 
               <!-- Empty state -->
-              <div v-if="!selectedPath && !creatingNewFile" class="flex flex-1 flex-col items-center justify-center gap-3 text-center text-muted-foreground">
-                <AppIcon name="file" size="xl" class="h-12 w-12 opacity-30" />
+              <div v-if="!selectedPath && !creatingNewFile" class="flex flex-1 flex-col items-start justify-center gap-3 text-left text-muted-foreground">
+                <AppIcon name="file" size="xl" class="h-12 w-12" />
                 <div>
-                  <p class="font-medium text-foreground/70">{{ $t('memory.selectFileTitle') }}</p>
-                  <p class="mt-1 text-sm">{{ $t('memory.selectFileDescription') }}</p>
+                  <p class="font-medium text-muted-foreground">{{ $t('memory.selectFileTitle') }}</p>
+                  <p class="measure mt-1 text-sm">{{ $t('memory.selectFileDescription') }}</p>
                 </div>
                 <Button variant="outline" size="sm" @click="startNewFile">
                   <AppIcon name="add" class="mr-2 h-4 w-4" />
@@ -138,7 +138,7 @@
               </div>
 
               <!-- Editor -->
-              <div v-else-if="selectedPath" class="flex min-h-0 flex-1 flex-col overflow-hidden">
+              <div v-else-if="selectedPath" class="flex min-h-0 flex-1 flex-col overflow-auto">
                 <MarkdownEditor
                   v-model="fileContent"
                   :saving="saving"
@@ -151,12 +151,12 @@
         </TabsContent>
 
         <!-- Facts tab -->
-        <TabsContent value="facts" class="mt-0 flex min-h-0 flex-1 flex-col overflow-hidden">
+        <TabsContent value="facts" class="mt-0 flex min-h-0 flex-1 flex-col overflow-auto">
           <MemoryFactsTab />
         </TabsContent>
 
         <!-- Stats tab -->
-        <TabsContent value="stats" class="mt-0 flex min-h-0 flex-1 flex-col overflow-hidden">
+        <TabsContent value="stats" class="mt-0 flex min-h-0 flex-1 flex-col overflow-auto">
           <MemoryStatsTab />
         </TabsContent>
       </Tabs>

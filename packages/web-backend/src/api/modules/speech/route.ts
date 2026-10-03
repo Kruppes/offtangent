@@ -40,7 +40,8 @@
  */
 import { Router } from 'express'
 import type { Database } from '@axiom/core'
-import { jwtMiddleware } from '../../../auth.js'
+import type { NextFunction, Response } from 'express'
+import { jwtMiddleware, type AuthenticatedRequest } from '../../../auth.js'
 import { createSpeechController } from './controller.js'
 import { createSpeechService, type SpeechServiceOptions } from './service.js'
 
@@ -93,6 +94,38 @@ export function createSpeechRouter(options: SpeechRouterOptions): Router {
   router.post('/voice-note', controller.voiceNote)
   router.get('/voice-replies', controller.getVoiceReplies)
   router.put('/voice-replies', controller.putVoiceReplies)
+
+  // W7: read-aloud disk cache, admin only. Figures and "empty it"; neither
+  // takes any input, so no request part can reach a path. Errors carry a
+  // code, never a path or a message from the file system.
+  const requireAdmin = (req: AuthenticatedRequest, res: Response, next: NextFunction): void => {
+    if (req.user?.role !== 'admin') {
+      res.status(403).json({ error: 'forbidden' })
+      return
+    }
+    next()
+  }
+  const cache = options.cache ?? null
+  const cacheView = () => cache
+    ? { enabled: true, ...cache.stats() }
+    : { enabled: false, entries: 0, bytes: 0, maxBytes: 0, hits: 0, misses: 0 }
+  router.get('/cache', requireAdmin, (_req, res) => {
+    try {
+      res.json(cacheView())
+    } catch (err) {
+      console.error('[speech-cache] stats failed:', err)
+      res.status(500).json({ error: 'internal' })
+    }
+  })
+  router.delete('/cache', requireAdmin, (_req, res) => {
+    try {
+      const removed = cache ? cache.clear() : { entries: 0, bytes: 0 }
+      res.json({ removedEntries: removed.entries, removedBytes: removed.bytes, ...cacheView() })
+    } catch (err) {
+      console.error('[speech-cache] clear failed:', err)
+      res.status(500).json({ error: 'internal' })
+    }
+  })
 
   return router
 }

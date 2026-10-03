@@ -89,7 +89,7 @@
           <div v-if="form.actionType !== 'injection'" class="border border-border rounded-md">
             <button
               type="button"
-              class="flex w-full items-center justify-between px-4 py-3 text-sm font-medium hover:bg-muted/50 transition-colors"
+              class="flex w-full items-center justify-between px-4 py-3 text-sm font-medium hover:bg-muted transition-colors"
               @click="advancedOpen = !advancedOpen"
             >
               <span class="flex items-center gap-2">
@@ -136,7 +136,7 @@
                   <div
                     v-for="tool in staleDisabledTools"
                     :key="`stale-${tool}`"
-                    class="flex items-center justify-between py-1 opacity-60"
+                    class="flex items-center justify-between py-1 text-muted-foreground"
                   >
                     <span class="text-sm font-mono line-through">{{ tool }}</span>
                     <Switch
@@ -179,7 +179,7 @@
                   <div
                     v-for="skill in staleDisabledSkills"
                     :key="`stale-skill-${skill}`"
-                    class="flex items-center justify-between py-1 opacity-60"
+                    class="flex items-center justify-between py-1 text-muted-foreground"
                   >
                     <span class="text-sm line-through">{{ skill }}</span>
                     <Switch
@@ -214,7 +214,7 @@
                       <span v-if="skill.emoji" class="mr-1">{{ skill.emoji }}</span>
                       <span class="font-mono">{{ skill.id }}</span>
                       <span
-                        class="ml-1 text-xs uppercase tracking-wide"
+                        class="ml-1 text-xs uppercase tracking-label"
                         :class="skill.kind === 'agent' ? 'text-primary' : 'text-muted-foreground'"
                       >
                         {{ skill.kind === 'agent' ? $t('cronjobs.form.skillKindAgent') : $t('cronjobs.form.skillKindInstalled') }}
@@ -225,7 +225,7 @@
                       @update:checked="(val: boolean) => toggleAttachedSkill(skill.id, val)"
                     />
                   </div>
-                  <div v-if="attachedSkills.length > 0" class="flex flex-wrap gap-1.5 pt-1">
+                  <div v-if="attachedSkills.length > 0" class="flex flex-wrap gap-2 pt-1">
                     <Badge
                       v-for="skill in attachedSkills"
                       :key="`attached-selected-${skill}`"

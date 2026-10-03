@@ -104,6 +104,8 @@ let nowMode: 'auto' | 'manual' | undefined
 let resurfaceItems: unknown[] = []
 let resurfaceFail = false
 let splitLatest = false
+/** W7 D1: the server stored the capture, filing waits for the agent core (202). */
+let routingPending = false
 /** STT on the server: `GET /api/stt/settings` answers `{ enabled }`. */
 let sttConfigured = false
 /** Synthetic transcription answer; `hold` keeps the request open (transcribing). */
@@ -118,7 +120,7 @@ function splitResult() {
 }
 beforeEach(() => {
  status = 'filed'; max = 7; nowIds = []; nowMode = undefined; failLoad = false; holdLoad = false; saved = false
- resurfaceItems = []; resurfaceFail = false; splitLatest = false
+ resurfaceItems = []; resurfaceFail = false; splitLatest = false; routingPending = false
  sttConfigured = false; latestKind = undefined
  transcribe = { status: 200, body: { transcript: 'Synthetic spoken words.' } }
  setupFetch()
@@ -140,6 +142,7 @@ beforeEach(() => {
   else if (path.startsWith('/api/strands/')) data = { strand: { id: path.split('/').pop(), title: 'Resolved destination' } }
   else if (path === '/api/now') { if (_options?.method === 'PUT') nowIds = JSON.parse(_options.body as string).strandIds; data = { strands: nowIds.map(id => ({ id, title: id })), max, ...(nowMode ? { mode: nowMode } : {}) } }
   else if (path.startsWith('/api/strands?')) data = { strands: [{ id: 's2', title: 'House' }] }
+  else if (path === '/api/captures' && routingPending) { saved = true; return new Response(JSON.stringify({ ...result('unsorted'), code: 'routing_pending' }), { status: 202 }) }
   else if (path === '/api/captures' || (splitLatest && /\/(apply|undo|keep-as-one)$/.test(path))) { data = splitLatest && !path.endsWith('/keep-as-one') ? splitResult() : result(); saved = !splitLatest }
   else if (path.endsWith('/undo')) { status = 'unsorted'; data = result() }
   else if (path.endsWith('/apply')) { status = 'filed'; data = result() }
@@ -158,6 +161,14 @@ async function draft(root: Node, value = 'Roof note') {
 }
 async function send(root: Node) { (all(root).find(n => n.tag === 'form')!.props.onSubmit as (e: unknown) => void)({ preventDefault() {} }); await flush() }
 describe('Capture Home rendered', () => {
+ it('says "saved, routing pending" on a 202 and clears the box (no retry of a stored capture)', async () => {
+  routingPending = true
+  const { root } = mount(Home); await flush(); await draft(root); await send(root)
+  expect(text(root)).toContain('capture.routingPending')
+  expect(text(root)).not.toContain('capture.sendError')
+  expect(all(root).find(n => n.tag === 'textarea')?.props.value).toBe('')
+  expect(request.mock.calls.filter(([url]) => url === 'https://test.example/api/captures')).toHaveLength(1)
+ })
  it.each(['filed', 'needs_review', 'unsorted'])('sends text and renders the %s router outcome and alternatives', async state => {
   status = state
   const { root } = mount(Home); await flush(); await draft(root); await send(root)

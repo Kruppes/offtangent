@@ -4,7 +4,7 @@
     v-if="!isAdmin"
     class="flex h-full flex-col items-center justify-center gap-3 p-10 text-center text-muted-foreground"
   >
-    <AppIcon name="lock" size="xl" class="opacity-50" />
+    <AppIcon name="lock" size="xl" />
     <h1 class="text-lg font-semibold text-foreground">{{ $t('admin.title') }}</h1>
     <p class="max-w-xs text-sm">{{ $t('admin.description') }}</p>
   </div>
@@ -26,7 +26,7 @@
             <Button variant="outline" class="flex-1 justify-start gap-2">
               <AppIcon name="filter" size="sm" />
               {{ $t('cronjobs.filters.button') }}
-              <Badge v-if="activeFilterCount > 0" variant="default" class="ml-auto px-1.5 py-0 text-2xs">
+              <Badge v-if="activeFilterCount > 0" variant="default" class="ml-auto px-2 py-0 text-2xs">
                 {{ activeFilterCount }}
               </Badge>
             </Button>
@@ -116,9 +116,9 @@
       <!-- Empty state -->
       <div
         v-else-if="cronjobs.length === 0"
-        class="flex flex-1 flex-col items-center justify-center gap-3 p-10 text-center"
+        class="flex flex-1 flex-col items-start justify-center gap-3 p-10 text-left"
       >
-        <AppIcon name="calendar" size="xl" class="opacity-40" />
+        <AppIcon name="calendar" size="xl" />
         <h2 class="text-base font-semibold text-foreground">{{ $t('cronjobs.emptyTitle') }}</h2>
         <p class="max-w-md text-sm text-muted-foreground">{{ $t('cronjobs.emptyDescription') }}</p>
         <Button class="mt-2 gap-2" @click="openCreateCronjob">
@@ -130,9 +130,9 @@
       <!-- No filter matches -->
       <div
         v-else-if="filteredCronjobs.length === 0"
-        class="flex flex-1 flex-col items-center justify-center gap-3 p-10 text-center"
+        class="flex flex-1 flex-col items-start justify-center gap-3 p-10 text-left"
       >
-        <AppIcon name="filter" size="xl" class="opacity-40" />
+        <AppIcon name="filter" size="xl" />
         <h2 class="text-base font-semibold text-foreground">{{ $t('cronjobs.noFilterMatchesTitle') }}</h2>
         <p class="max-w-md text-sm text-muted-foreground">{{ $t('cronjobs.noFilterMatchesDescription') }}</p>
         <Button variant="outline" class="mt-2" @click="resetFilters">
@@ -177,7 +177,7 @@
                 @click="openEditCronjob(cj)"
               >
                 <TableCell class="max-w-[260px] font-medium">
-                  <div class="flex flex-wrap items-center gap-1.5">
+                  <div class="flex flex-wrap items-center gap-2">
                     <span class="truncate">{{ cj.name }}</span>
                     <Badge v-if="cj.toolsOverride" variant="outline" class="shrink-0 text-xs">
                       {{ $t('cronjobs.badges.customTools') }}
@@ -189,7 +189,7 @@
                       {{ $t('cronjobs.badges.customPrompt') }}
                     </Badge>
                   </div>
-                  <div v-if="cj.attachedSkills?.length" class="mt-1 flex flex-wrap items-center gap-1.5">
+                  <div v-if="cj.attachedSkills?.length" class="mt-1 flex flex-wrap items-center gap-2">
                     <Badge
                       v-for="skill in cj.attachedSkills"
                       :key="`attached-${skill}`"
@@ -223,7 +223,7 @@
                 </TableCell>
                 <TableCell>
                   <div v-if="cj.lastRunAt" class="flex flex-col gap-1">
-                    <div class="flex items-center gap-1.5">
+                    <div class="flex items-center gap-2">
                       <Badge :variant="cronjobLastRunVariant(cj.lastRunStatus)">
                         {{ cj.lastRunStatus ?? '—' }}
                       </Badge>

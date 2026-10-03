@@ -43,7 +43,7 @@ export function createTasksController(service: TasksService): TasksController {
           return
         }
 
-        const { tasks, total, providerOptions } = service.listTasks(parsedQuery.value)
+        const { tasks, total, providerOptions } = service.listTasks(parsedQuery.value, req.user?.userId)
 
         res.json(
           mapTasksListResponse({

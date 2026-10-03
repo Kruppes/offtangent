@@ -3,7 +3,8 @@ export type { Capture, Decision, UploadDescriptor }
 /** One topic part of a capture (split on intake); a single part capture has exactly one. */
 export interface CapturePart { index: number; title: string | null; text: string; sentenceIds: number[]; decision: Decision }
 /** `parts`/`partCount` are additive: an older backend omits them, which means one part. */
-export interface CaptureResult { capture: Capture; decision: Decision; parts?: CapturePart[]; partCount?: number }
+/** `code: 'routing_pending'` (HTTP 202): stored, but filing waits for the agent core. */
+export interface CaptureResult { capture: Capture; decision: Decision; parts?: CapturePart[]; partCount?: number; code?: 'routing_pending' }
 /** `destination: 'new_strand'` makes the server open a strand instead of routing; `strandTitle` names it. */
 /** `kind: 'voice'` marks a dictated capture (only the transcript is stored, never audio); absent means typed text. */
 export interface CaptureInput { text: string; clientMessageId: string; source: 'web'; attachments: UploadDescriptor[]; kind?: 'text' | 'voice'; agentId?: string; modelProviderId?: string; modelId?: string; destination?: 'new_strand'; strandTitle?: string }

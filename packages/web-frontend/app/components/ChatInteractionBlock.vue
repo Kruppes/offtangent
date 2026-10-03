@@ -10,8 +10,8 @@
       class="w-full overflow-hidden rounded-lg border border-border bg-background"
       role="status"
     >
-      <p class="px-4 pb-2.5 pt-3 text-sm font-medium leading-snug text-foreground">{{ block.question }}</p>
-      <p class="border-t border-border px-4 py-2.5 text-xs text-muted-foreground">{{ staleReason }}</p>
+      <p class="px-4 pb-2 pt-3 text-sm font-medium leading-snug text-foreground">{{ block.question }}</p>
+      <p class="border-t border-border px-4 py-2 text-xs text-muted-foreground">{{ staleReason }}</p>
     </div>
 
     <!-- Answered: the question stays, only the chosen row(s) remain. -->
@@ -22,16 +22,16 @@
       role="status"
       :aria-label="`${block.question} — ${closedAriaLabel}`"
     >
-      <p class="px-4 pb-2.5 pt-3 text-sm font-medium leading-snug text-foreground">{{ block.question }}</p>
+      <p class="px-4 pb-2 pt-3 text-sm font-medium leading-snug text-foreground">{{ block.question }}</p>
       <div class="divide-y divide-border border-t border-border">
         <div
           v-for="row in closedRows"
           :key="`${row.icon}-${row.label}`"
-          class="flex min-h-11 w-full items-start gap-3 px-4 py-2.5 text-left"
+          class="flex min-h-11 w-full items-start gap-3 px-4 py-2 text-left"
         >
           <AppIcon
             :name="row.icon"
-            class="mt-0.5 size-4 shrink-0"
+            class="mt-1 size-4 shrink-0"
             :class="row.icon === 'check' ? 'text-primary' : 'text-muted-foreground'"
           />
           <span class="text-sm leading-5 text-foreground">{{ row.label }}</span>
@@ -47,9 +47,9 @@
       :aria-labelledby="questionId"
       :aria-busy="pending ? 'true' : 'false'"
     >
-      <div class="border-b border-border px-4 pb-2.5 pt-3">
+      <div class="border-b border-border px-4 pb-2 pt-3">
         <p :id="questionId" class="text-sm font-medium leading-snug text-foreground">{{ block.question }}</p>
-        <p v-if="isMulti" class="mt-0.5 text-xs text-muted-foreground">{{ $t('chat.interaction.multiHint') }}</p>
+        <p v-if="isMulti" class="mt-1 text-xs text-muted-foreground">{{ $t('chat.interaction.multiHint') }}</p>
       </div>
 
       <div
@@ -63,15 +63,15 @@
           type="button"
           :role="isMulti ? 'checkbox' : 'radio'"
           :aria-checked="isSelected(option.id) ? 'true' : 'false'"
-          class="flex min-h-11 w-full items-start gap-3 px-4 py-2.5 text-left transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-primary disabled:cursor-not-allowed disabled:opacity-60"
+          class="flex min-h-11 w-full items-start gap-3 px-4 py-2 text-left transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-primary disabled:cursor-not-allowed disabled:text-muted-foreground disabled:[&_svg]:text-border"
           :class="isDestructive(option)
             ? (isSelected(option.id) ? 'bg-destructive/10 text-destructive hover:bg-destructive/15 dark:bg-destructive/15 dark:hover:bg-destructive/20' : 'text-destructive hover:bg-destructive/10')
-            : (isSelected(option.id) ? 'bg-primary/10 text-foreground hover:bg-primary/15 dark:bg-primary/15 dark:hover:bg-primary/20' : 'text-foreground hover:bg-muted/60')"
+            : (isSelected(option.id) ? 'bg-primary-subtle text-foreground hover:bg-primary-subtle-hover' : 'text-foreground hover:bg-muted')"
           :disabled="pending"
           @click="isMulti ? toggle(option.id) : choose(option.id)"
         >
           <span
-            class="mt-0.5 flex size-4 shrink-0 items-center justify-center border"
+            class="mt-1 flex size-4 shrink-0 items-center justify-center border"
             :class="[
               isMulti ? 'rounded-sm' : 'rounded-full',
               isSelected(option.id)
@@ -87,7 +87,7 @@
           <AppIcon
             v-if="pending && pendingOption === option.id"
             name="loader"
-            class="ml-auto mt-0.5 size-4 shrink-0 motion-safe:animate-spin"
+            class="ml-auto mt-1 size-4 shrink-0 motion-safe:animate-spin"
           />
         </button>
       </div>
@@ -97,11 +97,11 @@
         <button
           v-if="!ownAnswerOpen"
           type="button"
-          class="flex min-h-11 w-full items-start gap-3 px-4 py-2.5 text-left transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-primary"
-          :class="multiOwnAnswer ? 'bg-primary/10 hover:bg-primary/15 dark:bg-primary/15 dark:hover:bg-primary/20' : 'hover:bg-muted/60'"
+          class="flex min-h-11 w-full items-start gap-3 px-4 py-2 text-left transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-primary"
+          :class="multiOwnAnswer ? 'bg-primary-subtle hover:bg-primary-subtle-hover' : 'hover:bg-muted'"
           @click="multiOwnAnswer ? clearMultiOwnAnswer() : openOwnAnswer()"
         >
-          <AppIcon name="edit" class="mt-0.5 size-4 shrink-0 text-muted-foreground" />
+          <AppIcon name="edit" class="mt-1 size-4 shrink-0 text-muted-foreground" />
           <span class="text-sm leading-5 text-foreground">{{ multiOwnAnswer || $t('chat.interaction.ownAnswer') }}</span>
         </button>
         <!-- 36 px button in a 44 px row: 4 px of air on every side, and the
@@ -123,7 +123,7 @@
           >
           <button
             type="button"
-            class="inline-flex h-9 shrink-0 items-center gap-1.5 rounded bg-primary px-3 text-sm font-medium text-primary-foreground disabled:opacity-50"
+            class="inline-flex h-9 shrink-0 items-center gap-2 rounded bg-primary px-3 text-sm font-medium text-primary-foreground disabled:text-muted-foreground disabled:[&_svg]:text-border disabled:bg-muted"
             :aria-label="$t('chat.interaction.sendAnswer')"
             :disabled="ownAnswerText.trim().length === 0"
             @click="confirmOwnAnswer"
@@ -133,10 +133,10 @@
         </div>
       </div>
 
-      <div v-if="isMulti" class="flex justify-end border-t border-border px-4 py-2.5">
+      <div v-if="isMulti" class="flex justify-end border-t border-border px-4 py-2">
         <button
           type="button"
-          class="inline-flex h-9 items-center gap-2 rounded-md bg-primary px-4 text-sm font-medium text-primary-foreground transition-colors hover:bg-primary/90 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary focus-visible:ring-offset-1 disabled:cursor-not-allowed disabled:opacity-50"
+          class="inline-flex h-9 items-center gap-2 rounded-md bg-primary px-4 text-sm font-medium text-primary-foreground transition-colors hover:bg-primary-hover focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary focus-visible:ring-offset-1 disabled:cursor-not-allowed disabled:text-muted-foreground disabled:[&_svg]:text-border disabled:bg-muted"
           :disabled="pending || (selected.length === 0 && !multiOwnAnswer)"
           @click="sendSelection"
         >

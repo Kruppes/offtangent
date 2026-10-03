@@ -10,7 +10,7 @@ const props = defineProps<{
 <template>
   <th
     :class="cn(
-      'h-12 px-4 text-left align-middle text-xs font-semibold uppercase tracking-wide text-muted-foreground [&:has([role=checkbox])]:pr-0',
+      'h-12 px-4 text-left align-middle text-xs font-semibold uppercase tracking-label text-muted-foreground [&:has([role=checkbox])]:pr-0',
       props.class
     )"
     v-bind="$attrs"

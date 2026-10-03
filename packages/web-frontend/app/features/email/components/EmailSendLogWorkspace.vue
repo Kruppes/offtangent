@@ -1,5 +1,5 @@
 <template>
-  <div class="flex min-h-0 flex-1 flex-col gap-4 overflow-hidden">
+  <div class="flex min-h-0 flex-1 flex-col gap-4 overflow-auto">
     <Alert v-if="error" variant="destructive" class="shrink-0">
       <AlertDescription class="flex items-center justify-between">
         <span>{{ error }}</span>
@@ -41,12 +41,12 @@
         <Input v-model="filters.dateTo" type="date" :aria-label="$t('email.sentLog.filters.dateTo')" @change="fetchEntries" />
       </div>
 
-      <div class="flex flex-wrap items-center gap-1.5">
+      <div class="flex flex-wrap items-center gap-2">
         <button
           v-for="status in EMAIL_SEND_LOG_STATUSES"
           :key="status"
           type="button"
-          class="rounded-full border px-2.5 py-0.5 text-xs font-medium transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring max-md:min-h-11 max-md:px-3.5"
+          class="rounded-full border px-2 py-1 text-xs font-medium transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring max-md:min-h-11 max-md:px-4"
           :class="filters.status.includes(status)
             ? 'border-primary bg-primary text-primary-foreground'
             : 'border-border text-muted-foreground hover:bg-muted'"
@@ -75,8 +75,8 @@
         {{ $t('common.loading') }}
       </div>
 
-      <div v-else-if="entries.length === 0" class="flex flex-col items-center justify-center gap-3 py-16 text-center text-muted-foreground">
-        <AppIcon name="send" size="xl" class="opacity-40" />
+      <div v-else-if="entries.length === 0" class="flex flex-col items-start justify-center gap-3 py-16 text-left text-muted-foreground">
+        <AppIcon name="send" size="xl" />
         <p class="text-sm">{{ hasActiveFilters ? $t('email.sentLog.noResults') : $t('email.sentLog.empty') }}</p>
       </div>
 
@@ -115,7 +115,7 @@
                 </TableCell>
                 <TableCell class="max-w-xs truncate text-xs">{{ recipientSummary(entry) }}</TableCell>
                 <TableCell>
-                  <div class="flex items-center gap-1.5">
+                  <div class="flex items-center gap-2">
                     <span class="truncate">{{ entry.subject || $t('email.sentLog.noSubject') }}</span>
                     <AppIcon
                       v-if="entry.attachments.length > 0"
@@ -127,7 +127,7 @@
                 <TableCell class="text-xs text-muted-foreground">{{ entry.accountName }}</TableCell>
                 <TableCell class="text-xs text-muted-foreground">{{ formatDateTime(entry.createdAt) }}</TableCell>
                 <TableCell @click.stop>
-                  <div v-if="entry.status === 'pending'" class="flex gap-1.5">
+                  <div v-if="entry.status === 'pending'" class="flex gap-2">
                     <Button size="sm" :disabled="decidingId === entry.id" @click="decide(entry.id, 'approve')">
                       {{ $t('email.sentLog.actions.approve') }}
                     </Button>

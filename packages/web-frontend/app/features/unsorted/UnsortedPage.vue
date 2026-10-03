@@ -103,9 +103,9 @@ onMounted(load)
       <p>{{ $t('unsorted.loadError') }}</p>
       <Button variant="outline" class="mt-2 min-h-11" @click="load">{{ $t('common.retry') }}</Button>
     </section>
-    <section v-else-if="!tray.length" class="rounded-xl border p-6 text-center" data-testid="unsorted-empty">
+    <section v-else-if="!tray.length" class="rounded-xl border p-6 text-left" data-testid="unsorted-empty">
       <p class="font-medium">{{ $t('unsorted.emptyTitle') }}</p>
-      <p class="mt-1 text-sm text-muted-foreground">{{ $t('unsorted.emptyText') }}</p>
+      <p class="measure mt-1 text-sm text-muted-foreground">{{ $t('unsorted.emptyText') }}</p>
       <NuxtLink to="/" class="mt-3 inline-flex min-h-11 items-center rounded-md border px-3 hover:bg-accent focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring">{{ $t('unsorted.toHome') }}</NuxtLink>
     </section>
     <section v-else class="space-y-3" :aria-label="$t('unsorted.listLabel', { count: tray.length })">

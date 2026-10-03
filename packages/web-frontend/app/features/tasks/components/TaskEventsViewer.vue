@@ -7,7 +7,7 @@
       <div class="flex items-center gap-2 md:gap-3">
         <Button
           variant="ghost"
-          class="min-h-[44px] min-w-[44px] shrink-0 gap-1.5 p-0 md:w-auto md:px-3 md:text-xs"
+          class="min-h-[44px] min-w-[44px] shrink-0 gap-2 p-0 md:w-auto md:px-3 md:text-xs"
           :title="$t('taskViewer.back')"
           :aria-label="$t('taskViewer.back')"
           @click="$emit('back')"
@@ -36,7 +36,7 @@
           v-if="isLive"
           variant="outline"
           size="sm"
-          class="gap-1.5"
+          class="gap-2"
           :class="{ 'text-muted-foreground': !autoScroll }"
           role="checkbox"
           :aria-checked="autoScroll"
@@ -54,7 +54,7 @@
           v-if="!editing && canRestart"
           variant="outline"
           size="sm"
-          class="gap-1.5"
+          class="gap-2"
           :title="$t('taskViewer.restartButtonHint')"
           @click="startEdit"
         >
@@ -65,7 +65,7 @@
           v-else-if="!editing && taskInfo?.status && !canRestart"
           variant="outline"
           size="sm"
-          class="gap-1.5"
+          class="gap-2"
           disabled
           :title="$t(`taskViewer.restartDisabled.${taskInfo.status}`)"
         >
@@ -84,7 +84,7 @@
     <p v-if="controlNotice" role="status" class="mx-3 mt-2 rounded-md bg-muted p-2 text-sm md:mx-5" data-testid="task-notice">{{ $t(controlNotice) }}</p>
     <TaskControls v-if="taskInfo && !loading" :task="taskInfo" :events="events" @changed="onControlChanged" @follow-up="(id: string) => emit('restarted', id)" />
 
-    <Alert v-if="error && events.length > 0" variant="destructive" class="m-4">
+    <Alert v-if="error && events.length > 0" variant="destructive" class="m-4 w-auto">
       <AlertDescription>{{ error }}</AlertDescription>
     </Alert>
 
@@ -95,7 +95,7 @@
     </div>
 
     <!-- Error state -->
-    <Alert v-else-if="error && events.length === 0" variant="destructive" role="alert" class="m-4 flex flex-wrap items-center gap-3">
+    <Alert v-else-if="error && events.length === 0" variant="destructive" role="alert" class="m-4 flex w-auto flex-wrap items-center gap-3">
       <AlertDescription class="flex-1">{{ error }}</AlertDescription>
       <Button variant="outline" class="min-h-[44px]" data-testid="task-retry" @click="loadTaskEvents(taskId)">{{ $t('common.retry') }}</Button>
     </Alert>
@@ -105,7 +105,7 @@
       v-else-if="events.length === 0"
       class="flex flex-1 flex-col items-center justify-center gap-3 p-10 text-center"
     >
-      <AppIcon name="clock" size="xl" class="opacity-40" />
+      <AppIcon name="clock" size="xl" />
       <p class="text-sm text-muted-foreground">{{ $t('taskViewer.noEvents') }}</p>
     </div>
 
@@ -117,7 +117,7 @@
       @scroll="onEventsScroll"
     >
       <!-- Edit & Restart form (replaces the read-only Prompt block while editing) -->
-      <div v-if="editing" class="rounded-lg border border-primary/50 bg-card px-5 py-4">
+      <div v-if="editing" class="rounded-lg border border-primary bg-card px-5 py-4">
         <div class="mb-4 flex items-center gap-2">
           <AppIcon name="refresh" size="sm" class="text-primary" />
           <h3 class="text-sm font-semibold">{{ $t('taskViewer.restartFormTitle') }}</h3>
@@ -153,7 +153,7 @@
               v-model="form.prompt"
               :disabled="submitting"
               rows="10"
-              class="flex w-full rounded-md border border-input bg-background px-3 py-2 text-sm ring-offset-background placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-50 font-mono"
+              class="flex w-full rounded-md border border-input bg-background px-3 py-2 text-sm ring-offset-background placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 disabled:cursor-not-allowed disabled:bg-muted disabled:text-muted-foreground font-mono"
             />
           </div>
 
@@ -194,7 +194,7 @@
           <Button variant="ghost" :disabled="submitting" @click="cancelEdit">
             {{ $t('common.cancel') }}
           </Button>
-          <Button :disabled="submitting || !canSubmit" class="gap-1.5" @click="submitRestart">
+          <Button :disabled="submitting || !canSubmit" class="gap-2" @click="submitRestart">
             <AppIcon name="refresh" size="sm" :class="{ 'animate-spin': submitting }" />
             {{ $t('taskViewer.restartSubmit') }}
           </Button>
@@ -237,26 +237,26 @@
             >
               {{ getToolCallSummary(event.toolName ?? '', event.toolArgs) }}
             </span>
-            <Badge v-if="event.toolIsError" variant="destructive" class="text-2xs px-1.5 py-0">
+            <Badge v-if="event.toolIsError" variant="destructive" class="text-2xs px-2 py-0">
               {{ $t('taskViewer.error') }}
             </Badge>
           </template>
 
           <div class="space-y-3">
             <div v-if="event.toolArgs">
-              <p class="mb-1 text-xs font-medium uppercase tracking-wide text-muted-foreground">
+              <p class="mb-1 text-xs font-medium uppercase tracking-label text-muted-foreground">
                 {{ $t('taskViewer.arguments') }}
               </p>
-              <div class="rounded border border-border bg-background p-2.5 text-xs">
+              <div class="rounded border border-border bg-background p-2 text-xs">
                 <ToolDataDisplay :data="event.toolArgs" />
               </div>
             </div>
 
             <div v-if="event.type === 'tool_call_end' && event.toolResult !== undefined">
-              <p class="mb-1 text-xs font-medium uppercase tracking-wide text-muted-foreground">
+              <p class="mb-1 text-xs font-medium uppercase tracking-label text-muted-foreground">
                 {{ $t('taskViewer.result') }}
               </p>
-              <div class="max-h-[300px] overflow-y-auto rounded border border-border bg-background p-2.5 text-xs">
+              <div class="max-h-[300px] overflow-y-auto rounded border border-border bg-background p-2 text-xs">
                 <ToolDataDisplay :data="event.toolResult" :is-error="event.toolIsError" />
               </div>
             </div>
@@ -268,7 +268,7 @@
           v-if="event.type === 'text_delta' && event.thinking"
           collapsible
           icon="sparkles"
-          icon-class="text-muted-foreground/50"
+          icon-class="text-muted-foreground"
           :timestamp="formatTime(event.timestamp)"
           :expanded="isExpanded(`thinking-${idx}`)"
           @toggle="toggleExpanded(`thinking-${idx}`)"

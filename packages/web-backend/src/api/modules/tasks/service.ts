@@ -47,6 +47,12 @@ export interface TaskRequester {
   role: string
 }
 
+/** W7: strand membership of a task row in the global list (see `annotateStrandActivity`). */
+export interface TaskStrandActivity {
+  strandId: string | null
+  dismissedAt: string | null
+}
+
 export interface ListTasksInput {
   status?: TaskStatus
   triggerType?: TaskTriggerType
@@ -149,7 +155,7 @@ export class TasksService {
     return this.options.getTaskRuntime?.() ?? null
   }
 
-  listTasks(input: ListTasksInput): { tasks: Task[]; total: number; providerOptions: TaskProviderFilterOption[] } {
+  listTasks(input: ListTasksInput, viewerUserId?: number): { tasks: Array<Task & TaskStrandActivity>; total: number; providerOptions: TaskProviderFilterOption[] } {
     const listFilters = {
       status: input.status,
       triggerType: input.triggerType,
@@ -174,7 +180,58 @@ export class TasksService {
     ).count
     const providerOptions = this.listProviderFilterOptions(input)
 
-    return { tasks, total, providerOptions }
+    return { tasks: this.annotateStrandActivity(tasks, viewerUserId), total, providerOptions }
+  }
+
+  /**
+   * W7: the global task list can acknowledge finished entries through the
+   * strand contract (`POST /api/strands/:id/activity/dismiss`), so each row
+   * says which strand it belongs to and whether it is dismissed there.
+   *
+   * The strand is the root of the task session's parent chain, and only when
+   * that root is an interactive session owned by the viewer: a cronjob or
+   * heartbeat task (no parent) and a foreign strand both get `strandId: null`
+   * (not dismissable here, no existence oracle). Additive fields; a client
+   * that does not know them ignores them.
+   */
+  private annotateStrandActivity(tasks: Task[], viewerUserId: number | undefined): Array<Task & TaskStrandActivity> {
+    if (viewerUserId === undefined || tasks.length === 0) {
+      return tasks.map(task => ({ ...task, strandId: null, dismissedAt: null }))
+    }
+    const db = this.options.db
+    const rootOf = db.prepare(`
+      WITH RECURSIVE chain(id, parent, depth) AS (
+        SELECT id, parent_session_id, 0 FROM sessions WHERE id = ?
+        UNION ALL
+        SELECT s.id, s.parent_session_id, c.depth + 1
+          FROM sessions s JOIN chain c ON s.id = c.parent
+         WHERE c.depth < 32
+      )
+      SELECT c.id AS id, c.depth AS depth, s.type AS type, s.user_id AS user_id, s.session_user AS session_user
+        FROM chain c JOIN sessions s ON s.id = c.id
+       WHERE c.parent IS NULL
+       ORDER BY c.depth DESC
+       LIMIT 1
+    `)
+    const dismissedAt = db.prepare('SELECT dismissed_at FROM strand_task_dismissals WHERE strand_id = ? AND task_id = ?')
+    return tasks.map((task) => {
+      let strandId: string | null = null
+      let dismissed: string | null = null
+      if (task.sessionId) {
+        const root = rootOf.get(task.sessionId) as { id: string; depth: number; type: string; user_id: number | null; session_user: string | null } | undefined
+        // Same ownership rule as `SessionManager.getThread` (session_user or user_id).
+        const owned = !!root && (root.session_user === String(viewerUserId) || (root.user_id != null && String(root.user_id) === String(viewerUserId)))
+        if (root && root.depth > 0 && root.type === 'interactive' && owned) {
+          strandId = root.id
+          try {
+            dismissed = (dismissedAt.get(strandId, task.id) as { dismissed_at: string } | undefined)?.dismissed_at ?? null
+          } catch {
+            dismissed = null
+          }
+        }
+      }
+      return { ...task, strandId, dismissedAt: dismissed }
+    })
   }
 
   private listProviderFilterOptions(input: ListTasksInput): TaskProviderFilterOption[] {

@@ -12,7 +12,7 @@ const props = withDefaults(defineProps<{
 <template>
   <component
     :is="props.as"
-    :class="cn('text-2xl font-semibold leading-none tracking-tight', props.class)"
+    :class="cn('text-2xl font-semibold leading-tight tracking-tight', props.class)"
     v-bind="$attrs"
   >
     <slot />

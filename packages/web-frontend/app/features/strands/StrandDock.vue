@@ -96,7 +96,7 @@ const activityClass = computed(() => {
             @click="dock.toggleSection('context')"
           >
             <AppIcon :name="contextOpen ? 'chevronDown' : 'chevronRight'" class="h-4 w-4 shrink-0 text-muted-foreground" />
-            <span class="text-xs font-semibold uppercase tracking-wider text-muted-foreground">{{ t('shell.context') }}</span>
+            <span class="text-xs font-semibold uppercase tracking-label text-muted-foreground">{{ t('shell.context') }}</span>
           </button>
         </h3>
         <div v-if="contextOpen" id="strand-context-body" class="min-h-0 flex-1">

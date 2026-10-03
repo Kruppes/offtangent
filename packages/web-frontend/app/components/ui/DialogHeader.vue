@@ -9,7 +9,7 @@ const props = defineProps<{
 
 <template>
   <div
-    :class="cn('flex flex-col gap-1.5 text-left mb-4', props.class)"
+    :class="cn('flex flex-col gap-2 text-left mb-4', props.class)"
     v-bind="$attrs"
   >
     <slot />

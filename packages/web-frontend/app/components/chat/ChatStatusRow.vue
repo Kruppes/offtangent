@@ -4,15 +4,15 @@
        is still making progress without the row looking like a
        completed-task card. -->
   <template v-if="msg.isTaskStatusUpdate">
-    <div class="w-full overflow-hidden rounded-lg border border-border/60 bg-muted/20 px-3 py-1.5 text-xs text-muted-foreground">
+    <div class="w-full overflow-hidden rounded-lg border border-border bg-card px-3 py-2 text-xs text-muted-foreground">
       <div class="flex items-center gap-2">
-        <AppIcon name="zap" class="h-3 w-3 shrink-0 opacity-60" />
-        <span class="font-medium text-foreground/80">{{ msg.taskStatusUpdateName ?? 'Background Task' }}</span>
-        <span class="ml-auto flex shrink-0 items-center gap-2 text-2xs text-muted-foreground/80">
+        <AppIcon name="zap" class="h-3 w-3 shrink-0" />
+        <span class="font-medium text-foreground">{{ msg.taskStatusUpdateName ?? 'Background Task' }}</span>
+        <span class="ml-auto flex shrink-0 items-center gap-2 text-2xs text-muted-foreground">
           <span v-if="typeof msg.taskStatusRuntimeMinutes === 'number'">⏱ {{ msg.taskStatusRuntimeMinutes }}min</span>
           <span v-if="typeof msg.taskStatusToolCallCount === 'number'">• {{ msg.taskStatusToolCallCount }} tools</span>
           <span v-if="typeof msg.taskStatusTokensUsed === 'number'">• ~{{ formatTokenCount(msg.taskStatusTokensUsed) }} tok</span>
-          <span class="rounded bg-warning/10 px-1.5 py-0.5 font-medium text-warning">Running</span>
+          <span class="rounded bg-warning/10 px-2 py-1 font-medium text-warning">Running</span>
         </span>
       </div>
     </div>
@@ -23,7 +23,7 @@
        in place when the provider recovers or the turn is aborted. -->
   <template v-else-if="msg.stallInfo">
     <div
-      class="w-full overflow-hidden rounded-lg border px-3 py-1.5 text-xs"
+      class="w-full overflow-hidden rounded-lg border px-3 py-2 text-xs"
       :class="msg.stallInfo.outcome === 'recovered'
         ? 'border-success/30 bg-success/5 text-muted-foreground'
         : msg.stallInfo.outcome === 'aborted'
@@ -33,10 +33,10 @@
       <div class="flex items-center gap-2">
         <AppIcon
           :name="msg.stallInfo.outcome === 'recovered' ? 'check' : msg.stallInfo.outcome === 'aborted' ? 'warning' : 'clock'"
-          class="h-3 w-3 shrink-0 opacity-70"
+          class="h-3 w-3 shrink-0"
         />
-        <span class="min-w-0 flex-1 break-words text-foreground/80">{{ msg.content }}</span>
-        <span class="shrink-0 text-2xs text-muted-foreground/80">
+        <span class="min-w-0 flex-1 break-words text-foreground">{{ msg.content }}</span>
+        <span class="shrink-0 text-2xs text-muted-foreground">
           {{ formatStallDuration(msg.stallInfo.durationMs) }}
         </span>
       </div>

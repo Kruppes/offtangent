@@ -40,14 +40,14 @@ export function useLogDisplay() {
 
   /** Tailwind classes for the tool badge */
   function toolBadgeClass(name: string): string {
-    if (!name) return 'border-transparent bg-primary/15 text-primary'
+    if (!name) return 'border-transparent bg-primary-subtle text-primary'
     const lower = name.toLowerCase()
     if (lower === 'load skill')
       return 'border-transparent bg-tertiary/15 text-tertiary'
     if (lower === 'session_start')
       return 'border-transparent bg-success/15 text-success'
     if (lower === 'session_end')
-      return 'border-transparent bg-primary/15 text-primary'
+      return 'border-transparent bg-primary-subtle text-primary'
     if (lower === 'session_timeout')
       return 'border-transparent bg-warning/15 text-warning'
     if (lower === 'memory_consolidation')
@@ -55,10 +55,10 @@ export function useLogDisplay() {
     if (lower.includes('bash') || lower.includes('exec') || lower.includes('command'))
       return 'border-transparent bg-warning/15 text-warning'
     if (lower.includes('file') || lower.includes('read') || lower.includes('write') || lower.includes('edit'))
-      return 'border-transparent bg-primary/15 text-primary'
+      return 'border-transparent bg-primary-subtle text-primary'
     if (lower.includes('llm') || lower.includes('chat') || lower.includes('generate'))
       return 'border-transparent bg-tertiary/15 text-tertiary'
-    return 'border-transparent bg-primary/15 text-primary'
+    return 'border-transparent bg-primary-subtle text-primary'
   }
 
   /** Icon name for the tool badge */

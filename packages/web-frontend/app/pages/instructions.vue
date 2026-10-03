@@ -27,7 +27,7 @@
         </AlertDescription>
       </Alert>
 
-      <Tabs v-model="activeFile" class="flex min-h-0 flex-1 flex-col overflow-hidden">
+      <Tabs v-model="activeFile" class="flex min-h-0 flex-1 flex-col overflow-auto">
         <div class="mb-4 flex shrink-0 flex-wrap items-center gap-3">
           <TabsList class="self-start">
             <TabsTrigger
@@ -45,12 +45,12 @@
           v-for="item in instructionItems"
           :key="item.id"
           :value="item.id"
-          class="mt-0 flex min-h-0 flex-1 flex-col overflow-hidden"
+          class="mt-0 flex min-h-0 flex-1 flex-col overflow-auto"
         >
           <div v-if="loading && !loadedFiles.has(item.id)" class="flex flex-1 items-center justify-center py-20 text-sm text-muted-foreground">
             {{ $t('instructions.loading') }}
           </div>
-          <div v-else class="flex flex-1 flex-col overflow-hidden min-h-0">
+          <div v-else class="flex flex-1 flex-col overflow-auto min-h-0">
             <MarkdownEditor
               v-model="contents[item.id]"
               :saving="saving"
@@ -61,7 +61,7 @@
                 <Button variant="outline" :disabled="restoringDefault" @click="restoreDialogOpen = true">
                   <span
                     v-if="restoringDefault"
-                    class="h-4 w-4 animate-spin rounded-full border-2 border-foreground/30 border-t-foreground"
+                    class="h-4 w-4 animate-spin rounded-full border-2 border-input border-t-foreground"
                     aria-hidden="true"
                   />
                   {{ restoringDefault ? $t('instructions.restoringDefault') : $t('instructions.restoreDefault') }}

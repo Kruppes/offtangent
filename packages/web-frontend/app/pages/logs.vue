@@ -6,7 +6,7 @@
         <Button
           :variant="liveMode ? 'default' : 'outline'"
           size="sm"
-          class="gap-1.5"
+          class="gap-2"
           @click="toggleLiveMode"
         >
           <span
@@ -55,7 +55,7 @@
       v-else-if="!loading && logs.length === 0"
       class="flex flex-1 flex-col items-center justify-center gap-3 py-20 text-muted-foreground"
     >
-      <AppIcon name="logs" size="xl" class="opacity-40" />
+      <AppIcon name="logs" size="xl" />
       <p class="text-sm">{{ $t('logs.noEntries') }}</p>
     </div>
 
@@ -64,10 +64,10 @@
       <div
         v-for="entry in logs"
         :key="entry.id"
-        class="cursor-pointer border-b border-border transition-colors hover:bg-muted/40"
+        class="cursor-pointer border-b border-border transition-colors hover:bg-card"
         :class="{
           'border-l-2 border-l-destructive': entry.status === 'error',
-          'bg-muted/20': expandedId === entry.id,
+          'bg-card': expandedId === entry.id,
         }"
       >
         <LogEntryRow

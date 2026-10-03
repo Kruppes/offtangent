@@ -98,7 +98,7 @@ function setPreset(preset: string) {
 
     <PopoverContent align="end" class="w-[280px]">
       <!-- Presets -->
-      <div class="flex flex-wrap gap-1.5">
+      <div class="flex flex-wrap gap-2">
         <Button
           v-for="preset in ['last7', 'last30']"
           :key="preset"

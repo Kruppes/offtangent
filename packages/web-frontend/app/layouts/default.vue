@@ -70,7 +70,7 @@
             <DropdownMenuTrigger as-child>
               <button
                 type="button"
-                class="flex w-full cursor-pointer items-center gap-2.5 py-3.5 text-left transition-colors hover:bg-accent focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring"
+                class="flex w-full cursor-pointer items-center gap-2 py-4 text-left transition-colors hover:bg-accent focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring"
                 :class="compact ? 'justify-center px-1' : 'px-4'"
                 :aria-label="$t('aria.userMenu')"
               >
@@ -79,19 +79,19 @@
                   v-if="userAvatarUrl && !avatarFailed"
                   :src="userAvatarUrl"
                   :alt="user?.username"
-                  class="h-9 w-9 shrink-0 rounded-full object-cover ring-1 ring-primary/25"
+                  class="h-9 w-9 shrink-0 rounded-full object-cover"
                   @error="onAvatarError"
                 >
                 <span
                   v-else
-                  class="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-primary/15 text-sm font-semibold text-primary ring-1 ring-primary/25"
+                  class="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-muted text-sm font-semibold text-foreground"
                 >
                   {{ userInitial }}
                 </span>
                 <!-- Name + role -->
                 <div v-if="!compact" class="flex min-w-0 flex-1 flex-col">
-                  <span class="truncate text-sm font-medium text-sidebar-foreground leading-none">{{ user?.username }}</span>
-                  <span class="mt-1 text-2xs uppercase tracking-wide text-muted-foreground">
+                  <span class="truncate text-sm font-medium text-sidebar-foreground leading-tight">{{ user?.username }}</span>
+                  <span class="text-2xs uppercase tracking-label text-muted-foreground">
                     {{ isAdmin ? $t('roles.admin') : $t('roles.user') }}
                   </span>
                 </div>
@@ -140,7 +140,7 @@
         given h-12 header, h-10 button, xl 24px icon). Desktop keeps the
         normal px-6. Right side stays pr-4 for the teleported action row.
       -->
-      <header class="flex h-12 shrink-0 items-center gap-3 border-b border-border bg-background/90 pl-1 pr-4 backdrop-blur-md md:px-6">
+      <header class="flex h-12 shrink-0 items-center gap-3 border-b border-border bg-background pl-1 pr-4 backdrop-blur-md md:px-6">
         <!-- Mobile hamburger -->
         <button
           type="button"
@@ -181,7 +181,7 @@
         <!-- Fallback mode indicator (desktop only) -->
         <Tooltip v-if="globalHealthMonitorEnabled && isInFallbackMode">
           <TooltipTrigger as-child>
-            <div class="hidden items-center gap-1.5 rounded-md bg-warning/10 px-2.5 py-1 ring-1 ring-warning/30 md:flex">
+            <div class="hidden items-center gap-2 rounded-md bg-warning/10 px-2 py-1 ring-1 ring-warning/30 md:flex">
               <span class="h-2 w-2 shrink-0 rounded-full bg-warning" />
               <span class="text-xs font-medium text-warning">{{ t('status.fallback') }}</span>
             </div>
@@ -197,7 +197,7 @@
         <!-- Subscriber quota (desktop, wide viewports only) -->
         <div v-if="quotaTopBarParts.length > 0" class="hidden items-center gap-2 lg:flex">
           <template v-for="(part, idx) in quotaTopBarParts" :key="part.key">
-            <span v-if="idx > 0" class="text-muted-foreground/40">·</span>
+            <span v-if="idx > 0" class="text-muted-foreground">·</span>
             <span class="text-xs">
               <span class="font-medium" :class="part.colorClass">{{ part.label }}: {{ part.utilization }}%</span>
               <span v-if="part.reset" class="text-muted-foreground"> ({{ part.reset }})</span>
@@ -215,7 +215,7 @@
         -->
         <div
           id="page-toolbar-actions"
-          class="flex min-w-0 items-center gap-1.5 md:hidden"
+          class="flex min-w-0 items-center gap-2 md:hidden"
         />
 
         <!-- Command palette: the keyboard way in (Ctrl/Cmd+K), also reachable by touch. -->
@@ -232,7 +232,7 @@
             >
               <AppIcon name="search" />
               <span class="hidden text-sm lg:inline">{{ $t('palette.trigger') }}</span>
-              <kbd class="hidden rounded-md border border-border bg-muted px-1.5 font-mono text-xs lg:inline">{{ paletteKeys }}</kbd>
+              <kbd class="hidden rounded-md border border-border bg-muted px-2 font-mono text-xs lg:inline">{{ paletteKeys }}</kbd>
             </button>
           </TooltipTrigger>
           <TooltipContent side="bottom">{{ $t('palette.open') }} ({{ paletteKeys }})</TooltipContent>

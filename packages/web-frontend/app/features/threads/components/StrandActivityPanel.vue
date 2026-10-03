@@ -29,7 +29,7 @@
         @click="open = !open"
       >
         <AppIcon :name="open ? 'chevronDown' : 'chevronRight'" class="h-4 w-4 shrink-0 text-muted-foreground" />
-        <span class="shrink-0 text-xs font-semibold uppercase tracking-wider text-muted-foreground">
+        <span class="shrink-0 text-xs font-semibold uppercase tracking-label text-muted-foreground">
           {{ $t('strandActivity.title') }}
         </span>
         <!-- Live dot: pulses while anything runs; reduced motion keeps it still. -->
@@ -48,7 +48,7 @@
         <span v-else class="flex-1" />
         <span
           v-if="turnRunning"
-          class="shrink-0 rounded-full bg-success/15 px-2 py-0.5 text-2xs font-medium text-success"
+          class="shrink-0 rounded-full bg-success/15 px-2 py-1 text-2xs font-medium text-success"
         >{{ $t('strandActivity.turnRunning') }}</span>
       </button>
     </h3>
@@ -58,6 +58,7 @@
     <div
       v-if="open"
       :id="bodyElementId"
+      ref="listRegion"
       class="min-h-0 flex-1 overflow-y-auto px-3 pb-2 focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-primary"
       tabindex="0"
       role="region"
@@ -97,14 +98,14 @@
             v-if="lastDismissed"
             ref="undoButton"
             type="button"
-            class="inline-flex min-h-11 shrink-0 items-center rounded-lg px-2 text-xs font-medium text-primary hover:bg-muted/60 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+            class="inline-flex min-h-11 shrink-0 items-center rounded-lg px-2 text-xs font-medium text-primary hover:bg-muted focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
             data-testid="activity-undo"
             @click="undo"
           >{{ $t('strandActivity.undo') }}</button>
           <button
             v-else-if="dismissableRoots.length > 0"
             type="button"
-            class="inline-flex min-h-11 shrink-0 items-center gap-1.5 rounded-lg px-2 text-xs font-medium text-muted-foreground hover:bg-muted/60 hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+            class="inline-flex min-h-11 shrink-0 items-center gap-2 rounded-lg px-2 text-xs font-medium text-muted-foreground hover:bg-muted hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
             data-testid="activity-dismiss-all"
             @click="dismissAll"
           >
@@ -119,7 +120,7 @@
         </p>
 
         <!-- Success -->
-        <div v-else class="flex flex-col gap-0.5" data-testid="activity-rows">
+        <div v-else class="flex flex-col gap-1" data-testid="activity-rows">
           <StrandActivityRow
             v-for="row in visibleRows"
             :key="row.id"
@@ -166,6 +167,7 @@ import { useTasksApi } from '../../../api/tasks'
 import { createTaskMetadataCache, type TaskMetadata } from '../taskMetadata'
 import { useStrandTasks } from '../composables/useStrandTasks'
 import { isDismissable } from '../taskActivity'
+import { focusRestored } from '~/utils/focusRestored'
 import StrandActivityRow from './StrandActivityRow.vue'
 
 const props = defineProps<{
@@ -207,6 +209,7 @@ const hiddenIds = computed(() => new Set(partition.value.hidden.map(r => r.id)))
 /** Finished roots in the default view that "hide all" would take. */
 const dismissableRoots = computed(() => partition.value.open.filter(isDismissable))
 const undoButton = ref<HTMLButtonElement | null>(null)
+const listRegion = ref<HTMLElement | null>(null)
 let undoTimer: ReturnType<typeof setTimeout> | null = null
 
 const statusLine = computed(() => {
@@ -242,7 +245,9 @@ async function undo(): Promise<void> {
   const ids = lastDismissed.value
   if (!ids) return
   if (undoTimer) clearTimeout(undoTimer)
-  await restore(ids)
+  // W7: the Undo button disappears with the restore; keyboard focus goes to
+  // the restored row's dismiss button (or the list) instead of <body>.
+  if (await restore(ids)) void nextTick(() => focusRestored(listRegion.value, ids))
 }
 onBeforeUnmount(() => { if (undoTimer) clearTimeout(undoTimer) })
 

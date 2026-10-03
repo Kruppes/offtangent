@@ -115,14 +115,14 @@ function navigateFromSheet() {
       class="relative flex min-h-14 min-w-0 flex-col items-center justify-center gap-1 text-2xs font-medium"
       :class="active(path, item.path) ? 'bg-primary-container text-on-primary-container before:absolute before:inset-x-4 before:top-0 before:h-[3px] before:rounded-full before:bg-primary' : 'text-muted-foreground'" @click="emit('navigate')">
       <AppIcon :name="item.icon" />
-      <span class="w-full truncate px-0.5 text-center">{{ $t(`nav.${item.label}`) }}</span>
+      <span class="w-full truncate px-1 text-center">{{ $t(`nav.${item.label}`) }}</span>
       <span v-if="item.path === '/feed' && unreadCount > 0" class="h-2 w-2 shrink-0 rounded-full bg-primary" role="status"><span class="sr-only">{{ $t('feed.unreadCount', { count: unreadCount }) }}</span></span>
     </NuxtLink>
     <button ref="moreButton" type="button" data-testid="nav-more" class="relative flex min-h-14 min-w-0 flex-col items-center justify-center gap-1 text-2xs font-medium"
-      :class="inSystem || inCapture || sheetOpen ? 'bg-primary/10 text-primary' : 'text-muted-foreground'"
+      :class="inSystem || inCapture || sheetOpen ? 'bg-primary-subtle text-primary before:absolute before:inset-x-4 before:top-0 before:h-[3px] before:rounded-full before:bg-primary' : 'text-muted-foreground'"
       :aria-expanded="sheetOpen" aria-controls="system-sheet" aria-haspopup="dialog" @click="sheetOpen ? closeSheet() : openSheet()">
       <AppIcon name="more" />
-      <span class="w-full truncate px-0.5 text-center">{{ $t('nav.more') }}</span>
+      <span class="w-full truncate px-1 text-center">{{ $t('nav.more') }}</span>
       <span v-if="unsorted.label.value" class="absolute right-3 top-1.5 h-2 w-2 rounded-full bg-primary" aria-hidden="true" />
     </button>
     <Teleport to="body">
@@ -138,16 +138,16 @@ function navigateFromSheet() {
           </div>
           <div class="mb-2 grid grid-cols-1 gap-1 border-b border-border pb-2 min-[360px]:grid-cols-2" data-testid="nav-sheet-capture">
             <NuxtLink v-for="item in captureItems" :key="item.path" :to="item.path" :aria-current="active(path, item.path) ? 'page' : undefined"
-              class="flex min-h-12 min-w-0 items-center gap-3 rounded-lg px-3 text-sm font-medium"
-              :class="active(path, item.path) ? 'bg-primary/10 text-primary' : 'text-foreground hover:bg-accent'" @click="navigateFromSheet">
+              class="relative flex min-h-12 min-w-0 items-center gap-3 rounded-lg px-3 text-sm font-medium"
+              :class="active(path, item.path) ? 'bg-primary-subtle text-primary before:absolute before:inset-y-2 before:left-0 before:w-[3px] before:rounded-full before:bg-primary' : 'text-foreground hover:bg-accent'" @click="navigateFromSheet">
               <AppIcon :name="item.icon" /><span class="min-w-0 flex-1 truncate">{{ $t(item.labelKey) }}</span>
               <span v-if="item.counter && unsorted.label.value" class="shrink-0 rounded-full bg-primary px-2 text-xs font-semibold text-primary-foreground">{{ unsorted.label.value }}<span class="sr-only"> {{ $t('unsorted.navCount', { count: unsorted.label.value }) }}</span></span>
             </NuxtLink>
           </div>
           <div class="grid grid-cols-1 gap-1 min-[360px]:grid-cols-2">
             <NuxtLink v-for="item in systemItems" :key="item.path" :to="item.path" :aria-current="active(path, item.path) ? 'page' : undefined"
-              class="flex min-h-12 min-w-0 items-center gap-3 rounded-lg px-3 text-sm font-medium"
-              :class="active(path, item.path) ? 'bg-primary/10 text-primary' : 'text-foreground hover:bg-accent'" @click="navigateFromSheet">
+              class="relative flex min-h-12 min-w-0 items-center gap-3 rounded-lg px-3 text-sm font-medium"
+              :class="active(path, item.path) ? 'bg-primary-subtle text-primary before:absolute before:inset-y-2 before:left-0 before:w-[3px] before:rounded-full before:bg-primary' : 'text-foreground hover:bg-accent'" @click="navigateFromSheet">
               <AppIcon :name="item.icon" /><span class="truncate">{{ $t(`nav.${item.label}`) }}</span>
             </NuxtLink>
           </div>
@@ -156,7 +156,7 @@ function navigateFromSheet() {
     </Teleport>
   </nav>
   <nav v-else :aria-label="$t('nav.primary')" data-testid="nav-desktop" :data-compact="compact ? 'true' : undefined"
-    class="flex flex-1 flex-col gap-1 overflow-y-auto overflow-x-hidden py-3.5" :class="compact ? 'items-center px-1.5' : 'p-2.5'">
+    class="flex flex-1 flex-col gap-1 overflow-y-auto overflow-x-hidden py-4" :class="compact ? 'items-center px-2' : 'p-2'">
     <div class="hidden space-y-1 md:block">
       <template v-for="item in primary" :key="item.path">
         <Tooltip v-if="compact">

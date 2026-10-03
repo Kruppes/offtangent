@@ -60,6 +60,15 @@ export function createCapturesController(service: CapturesService): CapturesCont
         // `turn` (plan 2026-09-19, D5): null when no answer turn was started
         // or when it started right away; an object when it has to wait, so the
         // client can say what it waits for instead of showing a mute card.
+        //
+        // `routingPending` (W7 D1): the capture is stored, the filing waits for
+        // the agent core. 202 is honest about that and still a success for
+        // every client (web `res.ok`, Android `isSuccessful`), so no client
+        // retries a capture that is already safe.
+        if (result.routingPending) {
+          res.status(202).json({ ...resultBody(result), code: 'routing_pending' })
+          return
+        }
         res.status(result.created ? 201 : 200).json(resultBody(result))
       } catch (err) {
         sendError(res, err, 'Failed to accept capture')

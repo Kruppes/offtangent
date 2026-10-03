@@ -71,13 +71,13 @@ function cancel() {
       <AppIcon name="arrowLeft" class="h-5 w-5" />
     </button>
 
-    <Badge v-if="personaLabel" variant="muted" class="shrink-0 uppercase tracking-wide">
+    <Badge v-if="personaLabel" variant="muted" class="shrink-0 uppercase tracking-label">
       {{ personaLabel }}
     </Badge>
 
     <!-- Title: click to rename inline -->
     <div class="min-w-0 flex-1">
-      <div v-if="editing" class="flex items-center gap-1.5">
+      <div v-if="editing" class="flex items-center gap-2">
         <input
           ref="titleInput"
           v-model="draftTitle"
@@ -90,7 +90,7 @@ function cancel() {
         >
         <button
           type="button"
-          class="flex h-11 w-11 shrink-0 items-center justify-center rounded-md text-primary hover:bg-primary/10"
+          class="flex h-11 w-11 shrink-0 items-center justify-center rounded-md text-primary hover:bg-primary-subtle"
           :aria-label="$t('common.save')"
           @click="submit"
         >
@@ -109,7 +109,7 @@ function cancel() {
       <button
         v-else
         type="button"
-        class="flex min-h-[44px] w-full items-center gap-2 rounded-md px-2 text-left transition-colors hover:bg-muted/60"
+        class="flex min-h-[44px] w-full items-center gap-2 rounded-md px-2 text-left transition-colors hover:bg-muted"
         :title="$t('threads.renameThread')"
         @click="startEditing"
       >
@@ -117,19 +117,19 @@ function cancel() {
         <span class="min-w-0 flex-1 truncate text-sm font-semibold text-foreground">{{ displayTitle }}</span>
         <span
           v-if="activity?.state === 'running'"
-          class="hidden shrink-0 items-center gap-1 rounded-full bg-success/10 px-2 py-0.5 text-2xs font-medium text-success sm:inline-flex"
+          class="hidden shrink-0 items-center gap-1 rounded-full bg-success/10 px-2 py-1 text-2xs font-medium text-success sm:inline-flex"
         >
           <span class="h-1.5 w-1.5 animate-pulse rounded-full bg-current" />
           {{ $t('threads.running') }}
         </span>
-        <AppIcon name="edit" class="h-3.5 w-3.5 shrink-0 text-muted-foreground/60" />
+        <AppIcon name="edit" class="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
       </button>
     </div>
 
     <button
       v-if="thread"
       type="button"
-      class="flex min-h-11 max-w-32 shrink-0 items-center gap-1.5 rounded-full border border-border px-3 text-xs outline-none hover:bg-muted focus-visible:ring-2 focus-visible:ring-ring"
+      class="flex min-h-11 max-w-32 shrink-0 items-center gap-2 rounded-full border border-border px-3 text-xs outline-none hover:bg-muted focus-visible:ring-2 focus-visible:ring-ring"
       :aria-label="$t('threads.chooseModel')"
       @click="emit('chooseModel')"
     >

@@ -16,10 +16,10 @@ const isEmpty = computed(() => !props.summary && (!pretty.value || pretty.value 
 
 <template>
   <div class="flex flex-col gap-4 [overflow-wrap:anywhere]">
-    <p role="status" class="text-sm text-muted-foreground">{{ $t('boards.unknownKind', { kind }) }}</p>
+    <p role="status" class="measure text-sm text-muted-foreground">{{ $t('boards.unknownKind', { kind }) }}</p>
     <p v-if="isEmpty" class="rounded-lg border p-6 text-center text-muted-foreground">{{ $t('boards.emptyPayload') }}</p>
     <!-- eslint-disable-next-line vue/no-v-html -- renderSafeMarkdown escapes raw HTML and drops non-http(s) links. -->
-    <div v-if="summary" class="prose-chat break-words text-sm" v-html="renderSafeMarkdown(summary)" />
+    <div v-if="summary" class="prose-chat measure break-words text-sm" v-html="renderSafeMarkdown(summary)" />
     <section v-if="pretty && pretty !== '{}'" class="rounded-lg border bg-card text-card-foreground">
       <button type="button" class="flex min-h-[44px] w-full items-center gap-2 px-4 text-left text-sm font-medium focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring"
         :aria-expanded="open" aria-controls="board-raw-json" @click="open = !open">

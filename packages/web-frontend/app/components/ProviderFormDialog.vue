@@ -8,7 +8,7 @@
 
       <form class="flex flex-col gap-4" @submit.prevent="handleSubmit">
         <!-- Name -->
-        <div class="flex flex-col gap-1.5">
+        <div class="flex flex-col gap-2">
           <Label for="provider-name">{{ $t('providers.name') }}</Label>
           <Input
             id="provider-name"
@@ -21,7 +21,7 @@
         </div>
 
         <!-- Type -->
-        <div class="flex flex-col gap-1.5">
+        <div class="flex flex-col gap-2">
           <Label for="provider-type">{{ $t('providers.type') }}</Label>
           <Select
             v-model="form.providerType"
@@ -51,7 +51,7 @@
         </div>
 
         <!-- Base URL (only for providers with editable URLs) -->
-        <div v-if="form.providerType && !isOAuthProvider && selectedPreset?.urlEditable" class="flex flex-col gap-1.5">
+        <div v-if="form.providerType && !isOAuthProvider && selectedPreset?.urlEditable" class="flex flex-col gap-2">
           <Label for="provider-url">{{ $t('providers.baseUrl') }}</Label>
           <Input
             id="provider-url"
@@ -69,7 +69,7 @@
         </div>
 
         <!-- API Key (all non-OAuth providers; optional for providers that don't require it) -->
-        <div v-if="form.providerType && !isOAuthProvider" class="flex flex-col gap-1.5">
+        <div v-if="form.providerType && !isOAuthProvider" class="flex flex-col gap-2">
           <Label for="provider-key">
             {{ $t('providers.apiKey') }}
             <span v-if="!selectedPreset?.requiresApiKey" class="text-xs font-normal text-muted-foreground">({{ $t('providers.optional') }})</span>
@@ -86,7 +86,7 @@
 
         <!-- Provider-specific extra fields declared by the selected preset -->
         <template v-if="extraFieldDefs.length > 0">
-          <div v-for="field in extraFieldDefs" :key="field.key" class="flex flex-col gap-1.5">
+          <div v-for="field in extraFieldDefs" :key="field.key" class="flex flex-col gap-2">
             <Label :for="`provider-extra-${field.key}`">
               {{ extraFieldLabel(field) }}
               <span v-if="!field.required" class="text-xs font-normal text-muted-foreground">({{ $t('providers.optional') }})</span>
@@ -111,7 +111,7 @@
             <Label>{{ $t('providers.ollamaModels') }}</Label>
             <button
               type="button"
-              class="text-xs text-primary hover:underline disabled:opacity-50"
+              class="text-xs text-primary hover:underline disabled:text-muted-foreground disabled:[&_svg]:text-border"
               :disabled="ollamaLoading"
               @click="loadOllamaModels"
             >
@@ -120,13 +120,13 @@
           </div>
 
           <!-- Not loaded yet -->
-          <div v-if="!ollamaLoaded && !ollamaLoading && !ollamaError" class="rounded-md border border-dashed border-border bg-muted/30 px-3 py-3 text-xs text-muted-foreground">
+          <div v-if="!ollamaLoaded && !ollamaLoading && !ollamaError" class="rounded-md border border-dashed border-border bg-card px-3 py-3 text-xs text-muted-foreground">
             {{ $t('providers.ollamaNoModelsHint') }}
           </div>
 
           <!-- Loading -->
-          <div v-else-if="ollamaLoading" class="flex items-center gap-2 rounded-md border border-border bg-muted/30 px-3 py-3 text-xs text-muted-foreground">
-            <span class="h-3 w-3 animate-spin rounded-full border-2 border-primary/30 border-t-primary" />
+          <div v-else-if="ollamaLoading" class="flex items-center gap-2 rounded-md border border-border bg-card px-3 py-3 text-xs text-muted-foreground">
+            <span class="h-3 w-3 animate-spin rounded-full border-2 border-primary-subtle-hover border-t-primary" />
             {{ $t('providers.ollamaModelsLoading') }}
           </div>
 
@@ -145,7 +145,7 @@
           </div>
 
           <!-- Empty -->
-          <div v-else-if="ollamaModels.length === 0" class="rounded-md border border-dashed border-border bg-muted/30 px-3 py-3 text-xs text-muted-foreground">
+          <div v-else-if="ollamaModels.length === 0" class="rounded-md border border-dashed border-border bg-card px-3 py-3 text-xs text-muted-foreground">
             {{ $t('providers.ollamaModelsEmpty') }}
           </div>
 
@@ -155,8 +155,8 @@
               v-for="model in ollamaModels"
               :key="model.name"
               :class="[
-                'flex items-center gap-3 px-3 py-2 text-sm cursor-pointer transition-colors hover:bg-accent/50',
-                form.enabledModels.includes(model.name) ? 'bg-accent/30' : '',
+                'flex items-center gap-3 px-3 py-2 text-sm cursor-pointer transition-colors hover:bg-accent',
+                form.enabledModels.includes(model.name) ? 'bg-accent' : '',
               ]"
             >
               <input
@@ -179,7 +179,7 @@
           <p v-if="ollamaModels.length > 0" class="text-xs text-muted-foreground">{{ $t('providers.enabledModelsHint') }}</p>
 
           <!-- Pull model -->
-          <div class="flex flex-col gap-1.5 mt-1">
+          <div class="flex flex-col gap-2 mt-1">
             <Label>{{ $t('providers.ollamaPullModel') }}</Label>
             <div class="flex gap-2">
               <Input
@@ -199,14 +199,14 @@
               >
                 <span
                   v-if="ollamaPulling"
-                  class="mr-1.5 h-3 w-3 animate-spin rounded-full border-2 border-primary/30 border-t-primary"
+                  class="mr-2 h-3 w-3 animate-spin rounded-full border-2 border-primary-subtle-hover border-t-primary"
                 />
                 {{ ollamaPulling ? $t('providers.ollamaPulling') : 'Pull' }}
               </Button>
             </div>
 
             <!-- Pull progress -->
-            <div v-if="ollamaPulling" class="flex flex-col gap-1.5">
+            <div v-if="ollamaPulling" class="flex flex-col gap-2">
               <div class="flex items-center justify-between text-xs text-muted-foreground">
                 <span>{{ ollamaPullStatus || $t('providers.ollamaPulling') + '...' }}</span>
                 <span v-if="ollamaPullProgress > 0" class="font-medium tabular-nums text-foreground">{{ ollamaPullProgress }}%</span>
@@ -235,7 +235,7 @@
 
 
         <!-- Degraded Threshold -->
-        <div v-if="form.providerType" class="flex flex-col gap-1.5">
+        <div v-if="form.providerType" class="flex flex-col gap-2">
           <Label for="provider-degraded-threshold">{{ $t('providers.degradedThreshold') }}</Label>
           <div class="flex items-center gap-2">
             <Input
@@ -254,7 +254,7 @@
         </div>
 
         <!-- Health Check Timeout -->
-        <div v-if="form.providerType" class="flex flex-col gap-1.5">
+        <div v-if="form.providerType" class="flex flex-col gap-2">
           <Label for="provider-health-check-timeout">{{ $t('providers.healthCheckTimeout') }}</Label>
           <div class="flex items-center gap-2">
             <Input
@@ -274,7 +274,7 @@
         </div>
 
         <!-- Text verbosity (OpenAI Codex Responses) -->
-        <div v-if="supportsTextVerbosity" class="flex flex-col gap-1.5">
+        <div v-if="supportsTextVerbosity" class="flex flex-col gap-2">
           <Label>{{ $t('providers.textVerbosity') }}</Label>
           <Select v-model="form.textVerbosity">
             <SelectTrigger>
@@ -291,7 +291,7 @@
         </div>
 
         <!-- Transport (OpenAI Codex Responses) -->
-        <div v-if="supportsTransport" class="flex flex-col gap-1.5">
+        <div v-if="supportsTransport" class="flex flex-col gap-2">
           <Label>{{ $t('providers.transport') }}</Label>
           <Select v-model="form.transport">
             <SelectTrigger>
@@ -311,10 +311,10 @@
         <!-- OAuth Login Section -->
         <div v-if="isOAuthProvider && (mode === 'create' || oauthInProgress || oauthError)" class="flex flex-col gap-3">
           <!-- OAuth status messages -->
-          <div v-if="oauthInProgress" class="rounded-md border border-border bg-muted/50 p-4">
+          <div v-if="oauthInProgress" class="rounded-md border border-border bg-muted p-4">
             <div class="flex items-center gap-3">
               <span
-                class="h-4 w-4 animate-spin rounded-full border-2 border-primary/30 border-t-primary"
+                class="h-4 w-4 animate-spin rounded-full border-2 border-primary-subtle-hover border-t-primary"
                 aria-hidden="true"
               />
               <div class="flex-1">
@@ -324,7 +324,7 @@
             </div>
 
             <!-- Manual code input fallback -->
-            <div v-if="oauthUsesCallback" class="mt-3 flex flex-col gap-1.5">
+            <div v-if="oauthUsesCallback" class="mt-3 flex flex-col gap-2">
               <Label for="oauth-code" class="text-xs">{{ $t('providers.oauthManualCode') }}</Label>
               <div class="flex gap-2">
                 <Input
@@ -370,7 +370,7 @@
               @click="cancelOAuthRenew"
             >
               <span
-                class="mr-1.5 h-4 w-4 animate-spin rounded-full border-2 border-primary/30 border-t-primary"
+                class="mr-2 h-4 w-4 animate-spin rounded-full border-2 border-primary-subtle-hover border-t-primary"
                 aria-hidden="true"
               />
               {{ $t('providers.oauthCancelRenew') }}
@@ -398,7 +398,7 @@
             >
               <span
                 v-if="oauthInProgress"
-                class="mr-1.5 h-4 w-4 animate-spin rounded-full border-2 border-primary-foreground/30 border-t-primary-foreground"
+                class="mr-2 h-4 w-4 animate-spin rounded-full border-2 border-transparent border-t-current"
                 aria-hidden="true"
               />
               {{ oauthInProgress ? $t('providers.oauthConnecting') : $t('providers.oauthLogin') }}

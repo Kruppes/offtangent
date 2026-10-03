@@ -4,7 +4,7 @@
       <h2 class="text-lg font-semibold tracking-tight text-foreground">
         {{ $t('settings.secretHandles.title') }}
       </h2>
-      <p class="mt-1 max-w-[70ch] text-sm text-muted-foreground">
+      <p class="mt-1 measure text-sm text-muted-foreground">
         {{ $t('settings.secretHandles.subtitle') }}
       </p>
     </div>
@@ -39,13 +39,13 @@
         data-secrets-empty
       >
         <div class="flex items-start gap-3">
-          <AppIcon name="lock" class="mt-0.5 h-5 w-5 shrink-0 text-muted-foreground" />
+          <AppIcon name="lock" class="mt-1 h-5 w-5 shrink-0 text-muted-foreground" />
           <div class="min-w-0">
             <h3 class="text-sm font-semibold text-foreground">{{ $t('settings.secretHandles.emptyTitle') }}</h3>
-            <p class="mt-1 max-w-[65ch] text-sm text-muted-foreground">
+            <p class="mt-1 measure text-sm text-muted-foreground">
               {{ $t('settings.secretHandles.emptyBody', { example: exampleHandle }) }}
             </p>
-            <p class="mt-2 max-w-[65ch] text-xs text-muted-foreground">
+            <p class="mt-2 measure text-help text-muted-foreground">
               {{ $t('settings.secretHandles.emptyHint') }}
             </p>
           </div>
@@ -124,7 +124,7 @@
               class="mt-3 flex flex-col gap-2 border-t border-border pt-3 sm:flex-row sm:items-end"
               @submit.prevent="submitRename()"
             >
-              <div class="flex flex-1 flex-col gap-1.5">
+              <div class="flex flex-1 flex-col gap-2">
                 <Label :for="`secret-rename-${entry.slug}`" class="text-xs">
                   {{ $t('settings.secretHandles.renameLabel') }}
                 </Label>
@@ -157,10 +157,10 @@
       <form class="flex flex-col gap-4" data-secrets-form @submit.prevent="submitCreate()">
         <div>
           <h3 class="text-sm font-semibold text-foreground">{{ $t('settings.secretHandles.addTitle') }}</h3>
-          <p class="mt-1 max-w-[65ch] text-sm text-muted-foreground">{{ $t('settings.secretHandles.addBody') }}</p>
+          <p class="mt-1 measure text-sm text-muted-foreground">{{ $t('settings.secretHandles.addBody') }}</p>
         </div>
 
-        <div class="flex flex-col gap-1.5">
+        <div class="flex flex-col gap-2">
           <Label for="secret-new-value" class="text-sm">{{ $t('settings.secretHandles.valueLabel') }}</Label>
           <div class="flex flex-col gap-2 sm:flex-row">
             <Input
@@ -187,26 +187,26 @@
               {{ showValue ? $t('settings.secretHandles.valueHide') : $t('settings.secretHandles.valueShow') }}
             </Button>
           </div>
-          <p id="secret-new-value-hint" class="text-xs text-muted-foreground">
+          <p id="secret-new-value-hint" class="measure text-help text-muted-foreground">
             {{ $t('settings.secretHandles.valueHint', { max: maxValueLength }) }}
             {{ $t('settings.secretHandles.valueMinHint', { min: minValueLength }) }}
           </p>
         </div>
 
         <div class="grid gap-4 sm:grid-cols-2">
-          <div class="flex flex-col gap-1.5">
+          <div class="flex flex-col gap-2">
             <Label for="secret-new-kind" class="text-sm">{{ $t('settings.secretHandles.kindLabel') }}</Label>
             <select
               id="secret-new-kind"
               v-model="kindDraft"
               class="h-11 w-full rounded-md border border-border bg-background px-3 text-sm text-foreground
-                     focus:outline-none focus:ring-2 focus:ring-ring disabled:opacity-50 sm:h-10"
+                     focus:outline-none focus:ring-2 focus:ring-ring disabled:bg-muted disabled:text-muted-foreground sm:h-10"
             >
               <option v-for="kind in kinds" :key="kind" :value="kind">{{ kind }}</option>
             </select>
           </div>
 
-          <div class="flex flex-col gap-1.5">
+          <div class="flex flex-col gap-2">
             <Label for="secret-new-slug" class="text-sm">{{ $t('settings.secretHandles.slugLabel') }}</Label>
             <Input
               id="secret-new-slug"
@@ -219,7 +219,7 @@
               :pattern="slugPattern"
               aria-describedby="secret-new-slug-hint"
             />
-            <p id="secret-new-slug-hint" class="text-xs text-muted-foreground">
+            <p id="secret-new-slug-hint" class="measure text-help text-muted-foreground">
               {{ $t('settings.secretHandles.slugHint') }}
             </p>
           </div>
@@ -229,7 +229,7 @@
           <Button type="submit" class="min-h-11" :disabled="saving">
             <span
               v-if="saving"
-              class="h-4 w-4 animate-spin rounded-full border-2 border-primary-foreground/30 border-t-primary-foreground"
+              class="h-4 w-4 animate-spin rounded-full border-2 border-transparent border-t-current"
               aria-hidden="true"
             />
             {{ saving ? $t('settings.secretHandles.submitting') : $t('settings.secretHandles.submit') }}

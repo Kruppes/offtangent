@@ -4,7 +4,7 @@
       <h2 class="text-lg font-semibold tracking-tight text-foreground">
         {{ $t('settings.tabs.models') }}
       </h2>
-      <p class="mt-1 text-sm text-muted-foreground">
+      <p class="measure mt-1 text-sm text-muted-foreground">
         {{ $t('settings.tabs.modelsDescription') }}
       </p>
     </div>
@@ -45,13 +45,13 @@
 
       <!-- Data-policy gate (privacy.modelGate) -->
       <div class="flex flex-col gap-3 rounded-xl border border-border bg-card px-4 py-4">
-        <div class="flex flex-col gap-1.5">
+        <div class="flex flex-col gap-2">
           <Label for="model-gate-mode" class="text-sm">{{ $t('settings.modelGate.modeLabel') }}</Label>
           <select
             id="model-gate-mode"
             v-model="gateMode"
-            class="h-10 w-full rounded-md border border-border bg-background px-3 text-sm text-foreground
-                   focus:outline-none focus:ring-2 focus:ring-ring disabled:opacity-50"
+            class="h-10 w-full rounded-md border border-input bg-background px-3 text-sm text-foreground
+                   focus:outline-none focus:ring-2 focus:ring-ring disabled:bg-muted disabled:text-muted-foreground"
             :disabled="gateSaving"
             @change="saveGateMode()"
           >
@@ -59,11 +59,11 @@
             <option value="audit">{{ $t('settings.modelGate.modeAudit') }}</option>
             <option value="enforce">{{ $t('settings.modelGate.modeEnforce') }}</option>
           </select>
-          <p class="text-xs text-muted-foreground">{{ $t('settings.modelGate.modeHint') }}</p>
+          <p class="measure text-help text-muted-foreground">{{ $t('settings.modelGate.modeHint') }}</p>
         </div>
 
         <!-- privacy.blockedModelFamilies -->
-        <div class="flex flex-col gap-1.5">
+        <div class="flex flex-col gap-2">
           <Label for="model-gate-families" class="text-sm">{{ $t('settings.modelGate.familiesLabel') }}</Label>
           <div class="flex flex-wrap items-center gap-2">
             <Input
@@ -82,10 +82,10 @@
             <li
               v-for="family in familyChips"
               :key="family"
-              class="rounded bg-muted px-1.5 py-0.5 font-mono text-2xs text-muted-foreground"
+              class="rounded bg-muted px-2 py-1 font-mono text-2xs text-muted-foreground"
             >{{ family }}</li>
           </ul>
-          <p class="text-xs text-muted-foreground">{{ $t('settings.modelGate.familiesHint') }}</p>
+          <p class="measure text-help text-muted-foreground">{{ $t('settings.modelGate.familiesHint') }}</p>
         </div>
 
         <Separator />
@@ -113,7 +113,7 @@
         </Alert>
 
         <!-- Empty -->
-        <p v-else-if="auditEntries.length === 0" class="text-xs text-muted-foreground">
+        <p v-else-if="auditEntries.length === 0" class="measure text-help text-muted-foreground">
           {{ $t('settings.modelGate.auditEmpty') }}
         </p>
 
@@ -122,10 +122,10 @@
           <li
             v-for="(entry, index) in auditEntries"
             :key="`${entry.at}-${index}`"
-            class="flex flex-wrap items-center gap-2 rounded-md border border-border bg-muted/30 px-2 py-1.5"
+            class="flex flex-wrap items-center gap-2 rounded-md border border-border bg-card px-2 py-2"
           >
             <span
-              :class="['rounded px-1.5 py-0.5 text-2xs font-semibold uppercase',
+              :class="['rounded px-2 py-1 text-2xs font-semibold uppercase tracking-label',
                        entry.blocked ? 'bg-destructive/15 text-destructive' : 'bg-muted text-muted-foreground']"
             >
               {{ entry.blocked ? $t('settings.modelGate.blocked') : $t('settings.modelGate.allowed') }}
@@ -141,7 +141,7 @@
 
       <!-- Roles -->
       <div class="flex flex-col gap-5">
-        <div v-for="role in roleRows" :key="role.role" class="flex flex-col gap-1.5">
+        <div v-for="role in roleRows" :key="role.role" class="flex flex-col gap-2">
           <Label :for="`model-policy-${role.role}`" class="text-sm">{{ role.role }}</Label>
 
           <!-- Chain roles: free text, validated on save -->
@@ -161,8 +161,8 @@
             v-else
             :id="`model-policy-${role.role}`"
             v-model="draft[role.role]"
-            class="h-10 w-full rounded-md border border-border bg-background px-3 text-sm text-foreground
-                   focus:outline-none focus:ring-2 focus:ring-ring disabled:opacity-50"
+            class="h-10 w-full rounded-md border border-input bg-background px-3 text-sm text-foreground
+                   focus:outline-none focus:ring-2 focus:ring-ring disabled:bg-muted disabled:text-muted-foreground"
           >
             <option value="">{{ inheritLabel(role) }}</option>
             <optgroup v-for="group in modelGroups" :key="group.providerId" :label="group.label">
@@ -177,8 +177,8 @@
             </optgroup>
           </select>
 
-          <p v-if="role.warning" class="text-xs text-destructive">{{ role.warning }}</p>
-          <p v-else class="text-xs text-muted-foreground">{{ hintFor(role) }}</p>
+          <p v-if="role.warning" class="measure text-help text-destructive">{{ role.warning }}</p>
+          <p v-else class="measure text-help text-muted-foreground">{{ hintFor(role) }}</p>
         </div>
       </div>
 
@@ -186,7 +186,7 @@
         <Button :disabled="saving" @click="save()">
           <span
             v-if="saving"
-            class="h-4 w-4 animate-spin rounded-full border-2 border-primary-foreground/30 border-t-primary-foreground"
+            class="h-4 w-4 animate-spin rounded-full border-2 border-transparent border-t-current"
             aria-hidden="true"
           />
           {{ $t('settings.save') }}
@@ -200,11 +200,11 @@
       <div class="flex flex-col gap-3">
         <h3 class="text-sm font-semibold text-foreground">{{ $t('settings.modelPolicy.resolveTitle') }}</h3>
         <div class="flex flex-col gap-2 sm:flex-row sm:items-end">
-          <div class="flex flex-1 flex-col gap-1.5">
+          <div class="flex flex-1 flex-col gap-2">
             <Label for="model-policy-resolve-role" class="text-xs">{{ $t('settings.modelPolicy.resolveRole') }}</Label>
             <Input id="model-policy-resolve-role" v-model="resolveRoleInput" type="text" class="font-mono text-xs" />
           </div>
-          <div class="flex flex-1 flex-col gap-1.5">
+          <div class="flex flex-1 flex-col gap-2">
             <Label for="model-policy-resolve-kind" class="text-xs">{{ $t('settings.modelPolicy.resolveKind') }}</Label>
             <Input id="model-policy-resolve-kind" v-model="resolveKindInput" type="text" class="font-mono text-xs" />
           </div>
@@ -215,7 +215,7 @@
         <Alert v-if="resolveError" variant="destructive">
           <AlertDescription>{{ resolveError }}</AlertDescription>
         </Alert>
-        <ol v-if="resolveResult" class="flex flex-col gap-1 rounded-lg border border-border bg-muted/30 p-3">
+        <ol v-if="resolveResult" class="flex flex-col gap-1 rounded-lg border border-border bg-card p-3">
           <li
             v-for="(step, index) in resolveResult.steps"
             :key="index"

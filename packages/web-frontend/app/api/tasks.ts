@@ -32,6 +32,14 @@ export interface Task {
   thinkingLevel?: string | null
   /** Why this model/thinking was chosen (task policy); null for legacy rows. */
   routing?: TaskRouting | null
+  /**
+   * W7: the viewer's strand this task belongs to (root of its session chain);
+   * null for cronjob/heartbeat tasks and foreign strands. Optional: older
+   * servers omit it, and then nothing in the global list is dismissable.
+   */
+  strandId?: string | null
+  /** W7: when the task was acknowledged in its strand, null = not dismissed. */
+  dismissedAt?: string | null
 }
 
 /** Routing record of `create_task` (core `task-policy.ts`). */

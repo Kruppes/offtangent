@@ -25,10 +25,18 @@
  *   (LIKE fallback: message id descending) — and the cursor carries the last
  *   (rank, id) seen, so pages neither repeat nor skip a hit (keyset, not an
  *   offset window). A cursor that is malformed, of another query/filter or
- *   of the other search mode -> 400 `invalid_cursor`. Caveat: bm25 ranks
- *   depend on the whole index, so a message written between two pages can
- *   shift ranks; the newest message then may show up late or not at all,
- *   but the pages still never repeat a hit of the same order.
+ *   of the other search mode -> 400 `invalid_cursor`.
+ * - bm25 drift (W7): bm25 scores depend on index-wide statistics, so any
+ *   message written between two pages shifts every score, and a pure
+ *   (score, id) keyset then repeats or skips hits. An FTS cursor therefore
+ *   also carries `b`, the newest message id when page 1 was ranked: later
+ *   pages rank only messages up to `b` (a newcomer waits for a fresh search)
+ *   and continue after the POSITION of the cursor's message in that ranking,
+ *   not after its old score. Only if that message is gone (deleted, strand
+ *   archived) does the (score, id) keyset take over. A W6b cursor without
+ *   `b` still works and is answered with a bounded cursor from then on.
+ *   Residual caveat: the newcomers still change the statistics, so two old
+ *   hits of nearly equal score can swap places across a page boundary.
  * - `snippet` is PLAIN text (no markup); `highlights` are UTF-16 offsets into
  *   it, so a client can mark the hits without ever rendering HTML.
  * - Without a usable FTS index (or a query without word characters) an
@@ -78,6 +86,8 @@ interface SearchCursor {
   h: string
   r?: number
   id: number
+  /** W7: upper message id bound of the ranking (FTS only; absent in W6b cursors). */
+  b?: number
 }
 
 const CURSOR_MAX_LENGTH = 400
@@ -108,7 +118,9 @@ export function decodeSearchCursor(raw: unknown): SearchCursor | null {
   if (c.v !== 1 || (c.m !== 'fts' && c.m !== 'like') || typeof c.h !== 'string' || !/^[A-Za-z0-9_-]{16}$/.test(c.h)) return null
   if (typeof c.id !== 'number' || !Number.isSafeInteger(c.id) || c.id < 1) return null
   if (c.m === 'fts') {
-    if (keys !== 'h,id,m,r,v' || typeof c.r !== 'number' || !Number.isFinite(c.r)) return null
+    if (keys !== 'h,id,m,r,v' && keys !== 'b,h,id,m,r,v') return null
+    if (typeof c.r !== 'number' || !Number.isFinite(c.r)) return null
+    if (c.b !== undefined && (typeof c.b !== 'number' || !Number.isSafeInteger(c.b) || c.b < 1)) return null
   } else if (keys !== 'h,id,m,v') {
     return null
   }
@@ -174,6 +186,58 @@ function isoUtc(value: string): string {
   return Number.isNaN(parsed.getTime()) ? value : parsed.toISOString()
 }
 
+/**
+ * One FTS page: rank every match up to `bound` (rank ASC, id DESC), continue
+ * after the cursor message's position (W7), and build snippets for the page
+ * only. Without the cursor message in the ranking, fall back to the
+ * (score, id) keyset of W6b.
+ */
+function ftsPage(
+  db: Database,
+  input: { ftsQuery: string; filters: string; filterParams: unknown[]; bound: number; cursor: SearchCursor | null; take: number },
+): HitRow[] {
+  const { ftsQuery, filters, filterParams, bound, cursor, take } = input
+  const ranked = `
+    WITH ranked AS (
+      SELECT chat_messages_fts.rank AS score, cm.id AS messageId
+        FROM chat_messages_fts
+        JOIN chat_messages cm ON cm.id = chat_messages_fts.rowid
+        JOIN sessions s ON s.id = cm.session_id
+       WHERE chat_messages_fts MATCH ? AND ${filters} AND cm.id <= ?
+    ), ordered AS (
+      SELECT score, messageId, ROW_NUMBER() OVER (ORDER BY score, messageId DESC) AS pos FROM ranked
+    )`
+  const baseParams = [ftsQuery, ...filterParams, bound]
+  let keys: Array<{ score: number; messageId: number }>
+  if (!cursor) {
+    keys = db.prepare(`${ranked} SELECT score, messageId FROM ordered ORDER BY pos LIMIT ?`)
+      .all(...baseParams, take) as typeof keys
+  } else {
+    const at = db.prepare(`${ranked} SELECT pos FROM ordered WHERE messageId = ?`)
+      .get(...baseParams, cursor.id) as { pos: number } | undefined
+    keys = at
+      ? db.prepare(`${ranked} SELECT score, messageId FROM ordered WHERE pos > ? ORDER BY pos LIMIT ?`)
+        .all(...baseParams, at.pos, take) as typeof keys
+      : db.prepare(`${ranked} SELECT score, messageId FROM ordered WHERE (score > ? OR (score = ? AND messageId < ?)) ORDER BY pos LIMIT ?`)
+        .all(...baseParams, cursor.r!, cursor.r!, cursor.id, take) as typeof keys
+  }
+  if (keys.length === 0) return []
+  const ids = keys.map(k => k.messageId)
+  const details = db.prepare(
+    `SELECT cm.id AS messageId, cm.session_id AS strandId, s.title AS strandTitle, cm.role AS role,
+            snippet(chat_messages_fts, 0, ?, ?, '…', 16) AS raw, cm.timestamp AS timestamp
+       FROM chat_messages_fts
+       JOIN chat_messages cm ON cm.id = chat_messages_fts.rowid
+       JOIN sessions s ON s.id = cm.session_id
+      WHERE chat_messages_fts MATCH ? AND cm.id IN (${ids.map(() => '?').join(',')})`,
+  ).all(MARK_OPEN, MARK_CLOSE, ftsQuery, ...ids) as Array<Omit<HitRow, 'score'>>
+  const byId = new Map(details.map(row => [row.messageId, row]))
+  return keys.flatMap((k) => {
+    const row = byId.get(k.messageId)
+    return row ? [{ ...row, score: k.score } as HitRow] : []
+  })
+}
+
 export function searchMessages(
   db: Database,
   userId: number,
@@ -201,26 +265,12 @@ export function searchMessages(
   const ftsQuery = toFtsPrefixQuery(q)
   let rows: HitRow[] | null = null
   if (ftsQuery && cursor?.m === 'like') throw new SearchCursorError()
+  let bound: number | null = null
   if (ftsQuery) {
-    // Keyset over (rank ASC, id DESC): the page starts strictly after the
-    // cursor's (rank, id). The inner query names the rank so the outer one
-    // can compare it; the snippet is built for the returned page only.
-    const after = cursor ? 'WHERE (score > ? OR (score = ? AND messageId < ?))' : ''
-    const afterParams = cursor ? [cursor.r!, cursor.r!, cursor.id] : []
+    // The ranking of page 1 is frozen to the messages that existed for it.
+    bound = cursor?.b ?? ((db.prepare('SELECT MAX(id) AS id FROM chat_messages').get() as { id: number | null } | undefined)?.id ?? 0)
     try {
-      rows = db.prepare(
-        `SELECT * FROM (
-           SELECT chat_messages_fts.rank AS score, cm.id AS messageId, cm.session_id AS strandId,
-                  s.title AS strandTitle, cm.role AS role,
-                  snippet(chat_messages_fts, 0, ?, ?, '…', 16) AS raw, cm.timestamp AS timestamp
-             FROM chat_messages_fts
-             JOIN chat_messages cm ON cm.id = chat_messages_fts.rowid
-             JOIN sessions s ON s.id = cm.session_id
-            WHERE chat_messages_fts MATCH ? AND ${filters}
-         ) ${after}
-         ORDER BY score, messageId DESC
-         LIMIT ?`,
-      ).all(MARK_OPEN, MARK_CLOSE, ftsQuery, ...filterParams, ...afterParams, take) as HitRow[]
+      rows = ftsPage(db, { ftsQuery, filters, filterParams, bound, cursor, take })
     } catch (err) {
       // toFtsPrefixQuery never yields a malformed expression, so this is a
       // missing or unusable index: answer from the LIKE fallback below.
@@ -277,7 +327,7 @@ export function searchMessages(
   if (truncated) {
     const last = keys[options.limit - 1]!
     nextCursor = encodeSearchCursor(rows !== null
-      ? { v: 1, m: 'fts', h: fingerprint, r: last.r!, id: last.id }
+      ? { v: 1, m: 'fts', h: fingerprint, r: last.r!, id: last.id, b: Math.max(1, bound ?? 1) }
       : { v: 1, m: 'like', h: fingerprint, id: last.id })
   }
   return { query: q, hits: hits.slice(0, options.limit), truncated, nextCursor }

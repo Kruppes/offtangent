@@ -63,11 +63,21 @@ describe.each([
     expect(colors.contrast(text, background)).toBeGreaterThanOrEqual(4.5)
   })
   it.each([
-    ['ring-track', 'background'], ['ring-track', 'card'], ['ring-track', 'muted'], ['input', 'background'], ['input', 'card'],
+    ['ring-track', 'background'], ['ring-track', 'card'], ['ring-track', 'muted'], ['input', 'background'], ['input', 'card'], ['input', 'muted'],
+    ['border', 'background'], ['border', 'card'], ['border', 'muted'], ['sidebar-border', 'sidebar'],
   ])('non-text %s on %s meets WCAG 1.4.11 (3:1)', (part, background) => {
     expect(colors.contrast(part, background)).toBeGreaterThanOrEqual(3)
   })
-  it('keeps the neutral ramp at seven steps', () => {
-    expect([...colors.vars.keys()].filter(k => /^n\d$/.test(k))).toEqual(['n0', 'n1', 'n2', 'n3', 'n4', 'n5', 'n6'])
+  it('keeps the neutral ramp at six steps', () => {
+    expect([...colors.vars.keys()].filter(k => /^n\d$/.test(k))).toEqual(['n0', 'n1', 'n2', 'n3', 'n4', 'n5'])
+  })
+})
+
+describe('placeholder colour', () => {
+  it('pins input/textarea placeholders to the secondary-text token at full opacity', () => {
+    const rule = /input::placeholder,\s*textarea::placeholder\s*\{([^}]*)\}/.exec(css)
+    expect(rule).not.toBeNull()
+    expect(rule![1]).toMatch(/color:\s*var\(--color-muted-foreground\)/)
+    expect(rule![1]).toMatch(/opacity:\s*1/)
   })
 })

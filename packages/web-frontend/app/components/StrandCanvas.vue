@@ -15,7 +15,7 @@
     <!-- Splitter, wide + open only. Double click resets to the default width. -->
     <div
       v-if="wide && isOpen"
-      class="w-2 shrink-0 cursor-col-resize bg-border/40 hover:bg-border"
+      class="w-2 shrink-0 cursor-col-resize bg-border hover:bg-border"
       role="separator"
       aria-orientation="vertical"
       :aria-label="$t('canvas.resize')"
@@ -78,13 +78,13 @@
       </div>
 
       <!-- Tabs stay at the bottom of the panel on both axes (SPEC 2.8). -->
-      <nav v-if="views.length > 1" class="flex gap-1 overflow-x-auto border-t border-border px-2 py-1.5" :aria-label="$t('canvas.views')">
+      <nav v-if="views.length > 1" class="flex gap-1 overflow-x-auto border-t border-border px-2 py-2" :aria-label="$t('canvas.views')">
         <button
           v-for="view in views"
           :key="view.viewKey"
           type="button"
           class="h-9 shrink-0 rounded-md px-3 text-xs"
-          :class="view.viewKey === openViewKey ? 'bg-primary text-primary-foreground' : 'bg-muted text-muted-foreground hover:bg-muted/70'"
+          :class="view.viewKey === openViewKey ? 'bg-primary text-primary-foreground' : 'bg-muted text-muted-foreground hover:bg-muted'"
           :aria-current="view.viewKey === openViewKey ? 'true' : undefined"
           @click="openCanvas(view.viewKey)"
         >

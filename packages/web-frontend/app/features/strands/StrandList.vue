@@ -172,7 +172,7 @@ onUnmounted(() => {
   if (searchTimer) clearTimeout(searchTimer)
   if (clock) clearInterval(clock)
 })
-const chipClass = 'inline-flex min-h-11 items-center gap-1.5 rounded-full border px-3 text-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring'
+const chipClass = 'inline-flex min-h-11 items-center gap-2 rounded-full border px-3 text-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring'
 </script>
 
 <template>
@@ -191,7 +191,7 @@ const chipClass = 'inline-flex min-h-11 items-center gap-1.5 rounded-full border
               <AppIcon name="close" />
             </button>
           </div>
-          <p id="strand-search-hint" class="mt-1 text-xs text-muted-foreground" :class="compact ? 'sr-only' : ''">{{ $t('strandsW3.searchHint') }}</p>
+          <p id="strand-search-hint" class="measure mt-1 text-help text-muted-foreground" :class="compact ? 'sr-only' : ''">{{ $t('strandsW3.searchHint') }}</p>
         </div>
         <button v-if="compact" type="button" data-testid="strand-filters-toggle" class="mt-2 flex min-h-11 w-full items-center gap-2 rounded-md px-2 text-sm font-medium hover:bg-accent focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
           :aria-expanded="filtersOpen" aria-controls="strand-filter-panel" @click="filtersOpen = !filtersOpen">
@@ -208,7 +208,7 @@ const chipClass = 'inline-flex min-h-11 items-center gap-1.5 rounded-full border
             </button>
             <label v-if="!projectId" class="relative inline-flex min-w-0 max-w-full">
               <span class="sr-only">{{ $t('strandsW4d.projectChip') }}</span>
-              <select data-testid="project-filter" :class="[chipClass, 'max-w-full min-w-0 appearance-none truncate pr-8', state.project_id && state.project_id !== 'none' ? 'border-primary bg-primary-container text-on-primary-container' : 'border-border bg-background text-foreground hover:bg-accent']"
+              <select data-testid="project-filter" :class="[chipClass, 'max-w-full min-w-0 appearance-none truncate pr-8', state.project_id && state.project_id !== 'none' ? 'border-primary bg-primary-container text-on-primary-container' : 'border-input bg-background text-foreground hover:bg-accent']"
                 :value="state.project_id === 'none' ? '' : state.project_id" @change="setProject(($event.target as HTMLSelectElement).value)">
                 <option value="">{{ $t('strandsW4d.allProjects') }}</option>
                 <option v-for="p in projects" :key="p.id" :value="p.id">{{ p.name }}</option>
@@ -217,7 +217,7 @@ const chipClass = 'inline-flex min-h-11 items-center gap-1.5 rounded-full border
             </label>
             <label class="inline-flex min-w-0">
               <span class="sr-only">{{ $t('strandsW3.tag') }}</span>
-              <input data-testid="tag-filter" :class="[chipClass, 'w-28 min-w-0 bg-background placeholder:text-muted-foreground', state.tag ? 'border-primary' : 'border-border']" :placeholder="$t('strandsW4d.tagPlaceholder')"
+              <input data-testid="tag-filter" :class="[chipClass, 'w-28 min-w-0 bg-background placeholder:text-muted-foreground', state.tag ? 'border-primary' : 'border-input']" :placeholder="$t('strandsW4d.tagPlaceholder')"
                 :value="filters.tag" @change="setFilter('tag', ($event.target as HTMLInputElement).value.trim())">
             </label>
             <button v-if="activeFilterCount" type="button" data-testid="strand-filters-clear" class="inline-flex min-h-11 items-center rounded-md px-2 text-sm text-primary underline-offset-4 hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring" @click="resetFilters">
@@ -270,11 +270,11 @@ const chipClass = 'inline-flex min-h-11 items-center gap-1.5 rounded-full border
                 class="flex min-h-11 min-w-0 flex-1 flex-col gap-1 rounded-lg py-2 pl-3 pr-1 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring"
                 :class="strand.id === activeId ? 'text-on-primary-container' : 'text-foreground'">
                 <span class="flex min-w-0 items-start gap-2">
-                  <span v-if="turnState(strand.id)" data-testid="strand-status" class="mt-1.5 h-2 w-2 shrink-0 rounded-full" :class="turnState(strand.id) === 'running' ? 'bg-primary motion-safe:animate-pulse' : 'border border-current'" aria-hidden="true" />
-                  <span class="line-clamp-2 min-w-0 break-words text-sm font-semibold [overflow-wrap:anywhere]"><template v-for="(part, i) in highlightParts(strand.title || $t('strandsW3.untitled'), filters.q)" :key="i"><mark v-if="part.match" class="rounded-sm bg-primary/25 px-0.5 text-foreground">{{ part.text }}</mark><template v-else>{{ part.text }}</template></template></span>
+                  <span v-if="turnState(strand.id)" data-testid="strand-status" class="mt-2 h-2 w-2 shrink-0 rounded-full" :class="turnState(strand.id) === 'running' ? 'bg-primary motion-safe:animate-pulse' : 'border border-current'" aria-hidden="true" />
+                  <span class="line-clamp-2 min-w-0 break-words text-sm font-semibold [overflow-wrap:anywhere]"><template v-for="(part, i) in highlightParts(strand.title || $t('strandsW3.untitled'), filters.q)" :key="i"><mark v-if="part.match" class="rounded-sm bg-primary-subtle-hover px-1 text-foreground">{{ part.text }}</mark><template v-else>{{ part.text }}</template></template></span>
                 </span>
-                <span v-if="searchActive && strand.matchSnippet" data-testid="strand-snippet" class="line-clamp-2 break-words text-xs [overflow-wrap:anywhere]" :class="strand.id === activeId ? '' : 'text-muted-foreground'"><template v-for="(part, i) in highlightParts(strand.matchSnippet, filters.q)" :key="i"><mark v-if="part.match" class="rounded-sm bg-primary/25 px-0.5 text-foreground">{{ part.text }}</mark><template v-else>{{ part.text }}</template></template></span>
-                <span class="flex min-w-0 flex-wrap items-center gap-x-2 gap-y-0.5 text-xs" :class="strand.id === activeId ? '' : 'text-muted-foreground'">
+                <span v-if="searchActive && strand.matchSnippet" data-testid="strand-snippet" class="line-clamp-2 break-words text-xs [overflow-wrap:anywhere]" :class="strand.id === activeId ? '' : 'text-muted-foreground'"><template v-for="(part, i) in highlightParts(strand.matchSnippet, filters.q)" :key="i"><mark v-if="part.match" class="rounded-sm bg-primary-subtle-hover px-1 text-foreground">{{ part.text }}</mark><template v-else>{{ part.text }}</template></template></span>
+                <span class="flex min-w-0 flex-wrap items-center gap-x-2 gap-y-1 text-xs" :class="strand.id === activeId ? '' : 'text-muted-foreground'">
                   <span v-if="turnState(strand.id)" class="font-semibold">{{ $t(`strandsW3.state.${turnState(strand.id)}`) }}</span>
                   <span v-if="strand.nowRank != null">{{ $t('strandsW3.now') }} {{ strand.nowRank }}</span>
                   <span v-if="strand.projectId" class="inline-flex min-w-0 max-w-full items-center gap-1"><span class="h-2 w-2 shrink-0 rounded-full bg-primary" :style="{ backgroundColor: color(strand.projectId) }" /><span class="truncate">{{ project(strand.projectId)?.name || $t('strandsW3.project') }}</span></span>
@@ -291,19 +291,19 @@ const chipClass = 'inline-flex min-h-11 items-center gap-1.5 rounded-full border
             <article v-for="strand in group.rows" :key="strand.id" data-testid="strand-row" :data-strand-id="strand.id" :data-live="isLive(strand.id) ? 'true' : undefined"
               class="relative flex min-w-0 items-start rounded-lg hover:bg-accent" :style="morphStyle(strand.id)">
               <NuxtLink :to="linkTo(strand)" data-testid="strand-row-link"
-                class="flex min-h-11 min-w-0 flex-1 items-start gap-3 rounded-lg py-2.5 pl-3 pr-1 text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring">
-                <span class="mt-1.5 flex h-3 w-3 shrink-0 items-center justify-center" aria-hidden="true">
+                class="flex min-h-11 min-w-0 flex-1 items-start gap-3 rounded-lg py-2 pl-3 pr-1 text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring">
+                <span class="mt-2 flex h-3 w-3 shrink-0 items-center justify-center" aria-hidden="true">
                   <span v-if="isLive(strand.id)" data-testid="strand-status" class="h-2.5 w-2.5 rounded-full" :class="turnState(strand.id) === 'queued' && !tasksOf(strand.id) ? 'border-2 border-primary' : 'bg-primary motion-safe:animate-pulse'" />
                   <AppIcon v-else-if="strand.pinned" name="pin" size="sm" class="text-muted-foreground" />
                 </span>
-                <span class="flex min-w-0 flex-1 flex-col gap-0.5">
+                <span class="flex min-w-0 flex-1 flex-col gap-1">
                   <span class="flex min-w-0 items-baseline gap-3">
-                    <span class="min-w-0 flex-1 truncate text-base font-semibold"><template v-for="(part, i) in highlightParts(strand.title || $t('strandsW3.untitled'), filters.q)" :key="i"><mark v-if="part.match" class="rounded-sm bg-primary/25 px-0.5 text-foreground">{{ part.text }}</mark><template v-else>{{ part.text }}</template></template></span>
+                    <span class="min-w-0 flex-1 truncate text-base font-semibold"><template v-for="(part, i) in highlightParts(strand.title || $t('strandsW3.untitled'), filters.q)" :key="i"><mark v-if="part.match" class="rounded-sm bg-primary-subtle-hover px-1 text-foreground">{{ part.text }}</mark><template v-else>{{ part.text }}</template></template></span>
                     <time class="shrink-0 text-xs tabular-nums text-muted-foreground" :datetime="strand.lastActivity" :title="date(strand.lastActivity)">{{ relative(strand.lastActivity) }}</time>
                   </span>
-                  <span v-if="searchActive && strand.matchSnippet" data-testid="strand-snippet" class="truncate text-sm text-muted-foreground"><template v-for="(part, i) in highlightParts(strand.matchSnippet, filters.q)" :key="i"><mark v-if="part.match" class="rounded-sm bg-primary/25 px-0.5 text-foreground">{{ part.text }}</mark><template v-else>{{ part.text }}</template></template></span>
+                  <span v-if="searchActive && strand.matchSnippet" data-testid="strand-snippet" class="truncate text-sm text-muted-foreground"><template v-for="(part, i) in highlightParts(strand.matchSnippet, filters.q)" :key="i"><mark v-if="part.match" class="rounded-sm bg-primary-subtle-hover px-1 text-foreground">{{ part.text }}</mark><template v-else>{{ part.text }}</template></template></span>
                   <span v-else data-testid="strand-preview" class="truncate text-sm text-muted-foreground"><template v-if="preview(strand)"><span v-if="strand.lastMessage?.role === 'user'">{{ $t('strandsW4d.you') }} </span>{{ preview(strand) }}</template><template v-else>{{ $t('strandsW4d.noPreview') }}</template></span>
-                  <span class="flex min-w-0 flex-wrap items-center gap-x-3 gap-y-0.5 text-xs text-muted-foreground">
+                  <span class="flex min-w-0 flex-wrap items-center gap-x-3 gap-y-1 text-xs text-muted-foreground">
                     <span v-if="turnState(strand.id)" class="font-semibold text-primary">{{ turnState(strand.id) === 'running' ? $t('strandsW4d.turnRunning') : $t('strandsW4d.turnQueued') }}</span>
                     <span v-if="tasksOf(strand.id)" class="font-semibold text-primary">{{ $t('strandsW4d.tasksRunning', tasksOf(strand.id)) }}</span>
                     <span v-if="strand.projectId" class="inline-flex min-w-0 max-w-full items-center gap-1"><span class="h-2 w-2 shrink-0 rounded-full bg-primary" :style="{ backgroundColor: color(strand.projectId) }" /><span class="truncate">{{ project(strand.projectId)?.name || $t('strandsW3.project') }}</span></span>
@@ -322,7 +322,7 @@ const chipClass = 'inline-flex min-h-11 items-center gap-1.5 rounded-full border
           </template>
         </template>
         <MessageSearchResults v-if="searchActive" :query="filters.q" :limit="compact ? 8 : 20" />
-        <p v-if="(state.running || state.pinned) && !ended" class="px-3 pt-2 text-xs text-muted-foreground">{{ $t('strandsW4d.clientFilterHint') }}</p>
+        <p v-if="(state.running || state.pinned) && !ended" class="measure px-3 pt-2 text-help text-muted-foreground">{{ $t('strandsW4d.clientFilterHint') }}</p>
         <p data-testid="loaded-count" role="status" :class="compact ? 'px-3 pt-2 text-xs text-muted-foreground' : 'px-3 pt-4 text-xs text-muted-foreground'">{{ $t('strandsW3.loaded', { count: rows.length }) }}</p>
         <p v-if="truncated" role="status" class="rounded-md border p-3">{{ $t('strandsW3.truncated') }}</p>
         <Button v-if="!ended && !truncated" variant="outline" class="min-h-11 min-w-11" :disabled="loading" @click="pager.next">{{ $t('strandsW3.loadMore') }}</Button>

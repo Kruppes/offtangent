@@ -16,7 +16,7 @@
             class="mr-1 h-4 w-4 animate-spin rounded-full border-2"
             :class="destructive
               ? 'border-destructive-foreground/30 border-t-destructive-foreground'
-              : 'border-primary-foreground/30 border-t-primary-foreground'"
+              : 'border-transparent border-t-current'"
             aria-hidden="true"
           />
           {{ resolvedConfirmLabel }}

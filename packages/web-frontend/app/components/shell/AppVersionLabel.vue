@@ -1,6 +1,6 @@
 <template>
   <!-- W6b: version plus build commit, so the deployed state is visible. -->
-  <p class="mt-0.5 text-xs text-muted-foreground" data-testid="app-version" :data-build-sha="sha || undefined">
+  <p class="mt-1 text-xs text-muted-foreground" data-testid="app-version" :data-build-sha="sha || undefined">
     {{ label }}
   </p>
 </template>

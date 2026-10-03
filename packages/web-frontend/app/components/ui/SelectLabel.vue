@@ -18,7 +18,7 @@ const delegatedProps = computed(() => {
 <template>
   <SelectLabel
     v-bind="delegatedProps"
-    :class="cn('py-1.5 pl-8 pr-2 text-xs font-semibold text-muted-foreground', props.class)"
+    :class="cn('py-2 pl-8 pr-2 text-xs font-semibold text-muted-foreground', props.class)"
   >
     <slot />
   </SelectLabel>

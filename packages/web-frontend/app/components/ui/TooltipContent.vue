@@ -23,7 +23,7 @@ const delegatedProps = computed(() => {
     <TooltipContent
       v-bind="delegatedProps"
       :class="cn(
-        'z-[9999] w-max max-w-[200px] rounded-md bg-foreground px-2.5 py-1.5 text-xs text-background shadow-overlay pointer-events-none',
+        'z-[9999] w-max max-w-[200px] rounded-md bg-foreground px-2 py-2 text-xs text-background shadow-overlay pointer-events-none',
         'data-[state=delayed-open]:animate-fade-in data-[state=closed]:animate-fade-out',
         props.class
       )"

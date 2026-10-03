@@ -4,7 +4,7 @@
       <button
         type="button"
         data-composer-control="thinking"
-        class="flex h-11 w-11 shrink-0 items-center justify-center rounded-lg transition-colors hover:bg-muted/60 disabled:cursor-not-allowed disabled:opacity-40"
+        class="flex h-11 w-11 shrink-0 items-center justify-center rounded-lg transition-colors hover:bg-muted disabled:cursor-not-allowed disabled:text-muted-foreground disabled:[&_svg]:text-border"
         :class="thinkingBrainColorClass"
         :disabled="thinkingLevelSaving"
         :title="$t('chat.thinkingLevelTooltip')"
@@ -18,15 +18,15 @@
       </button>
     </PopoverTrigger>
     <PopoverContent align="start" class="w-56 p-1">
-      <p class="px-2 pb-1 pt-1 text-2xs font-semibold uppercase tracking-wider text-muted-foreground">
+      <p class="px-2 pb-1 pt-1 text-2xs font-semibold uppercase tracking-label text-muted-foreground">
         {{ $t('settings.thinkingLevel') }}
       </p>
       <button
         v-for="lvl in THINKING_LEVELS"
         :key="lvl"
         type="button"
-        class="flex w-full items-center justify-between gap-2 rounded-md px-2 py-1.5 text-sm transition-colors hover:bg-accent hover:text-accent-foreground"
-        :class="currentThinkingLevel === lvl ? 'bg-accent/60 text-accent-foreground' : 'text-foreground'"
+        class="flex w-full items-center justify-between gap-2 rounded-md px-2 py-2 text-sm transition-colors hover:bg-accent hover:text-accent-foreground"
+        :class="currentThinkingLevel === lvl ? 'bg-accent text-accent-foreground' : 'text-foreground'"
         :disabled="thinkingLevelSaving"
         @click="handleThinkingLevelChange(lvl)"
       >

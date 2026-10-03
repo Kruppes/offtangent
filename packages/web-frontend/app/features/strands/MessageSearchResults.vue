@@ -3,7 +3,7 @@
        the strand hits. Snippets are plain text with server-given highlight
        ranges, rendered through text interpolation only (no v-html). -->
   <section v-if="term" ref="sectionEl" class="mt-4 min-w-0" aria-labelledby="message-search-title" data-message-search :data-state="state">
-    <h2 id="message-search-title" class="px-3 pb-1 text-xs font-semibold uppercase tracking-wide text-muted-foreground">{{ $t('search.inMessages') }}</h2>
+    <h2 id="message-search-title" class="px-3 pb-1 text-xs font-semibold uppercase tracking-label text-muted-foreground">{{ $t('search.inMessages') }}</h2>
     <p v-if="state === 'loading'" class="flex min-h-11 items-center gap-2 px-3 text-sm text-muted-foreground" role="status" data-message-search-loading>
       <AppIcon name="loader" size="sm" class="motion-safe:animate-spin" aria-hidden="true" />{{ $t('search.loading') }}
     </p>
@@ -14,20 +14,20 @@
     <p v-else-if="state === 'ready' && !hits.length" class="px-3 py-2 text-sm text-muted-foreground" data-message-search-empty>{{ $t('search.noMessages') }}</p>
     <ul v-else-if="state === 'ready'" class="flex flex-col gap-1" data-message-search-hits>
       <li v-for="hit in hits" :key="hit.messageId" class="min-w-0">
-        <NuxtLink :to="messageRoute(hit.strandId, hit.messageId)" class="flex min-h-11 min-w-0 flex-col gap-0.5 rounded-lg px-3 py-2 hover:bg-accent focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring" :data-message-hit="hit.messageId">
+        <NuxtLink :to="messageRoute(hit.strandId, hit.messageId)" class="flex min-h-11 min-w-0 flex-col gap-1 rounded-lg px-3 py-2 hover:bg-accent focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring" :data-message-hit="hit.messageId">
           <span class="flex min-w-0 items-center gap-2 text-xs text-muted-foreground">
             <AppIcon :name="hit.role === 'assistant' ? 'bot' : 'user'" size="sm" class="shrink-0" />
             <span class="min-w-0 flex-1 truncate font-semibold text-foreground">{{ hit.strandTitle || $t('strandsW3.untitled') }}</span>
             <time v-if="hit.timestamp" class="shrink-0 tabular-nums" :datetime="hit.timestamp">{{ when(hit.timestamp) }}</time>
           </span>
-          <span class="line-clamp-2 min-w-0 break-words text-sm [overflow-wrap:anywhere]" data-message-snippet><span class="sr-only">{{ hit.role === 'assistant' ? $t('search.roleAssistant') : $t('search.roleUser') }}: </span><template v-for="(part, i) in snippetParts(hit)" :key="i"><mark v-if="part.match" class="rounded-sm bg-primary/25 px-0.5 text-foreground">{{ part.text }}</mark><template v-else>{{ part.text }}</template></template></span>
+          <span class="line-clamp-2 min-w-0 break-words text-sm [overflow-wrap:anywhere]" data-message-snippet><span class="sr-only">{{ hit.role === 'assistant' ? $t('search.roleAssistant') : $t('search.roleUser') }}: </span><template v-for="(part, i) in snippetParts(hit)" :key="i"><mark v-if="part.match" class="rounded-sm bg-primary-subtle-hover px-1 text-foreground">{{ part.text }}</mark><template v-else>{{ part.text }}</template></template></span>
         </NuxtLink>
       </li>
       <!-- W6b: keyset paging. A server without `nextCursor` keeps the old hint. -->
       <li v-if="nextCursor" class="flex flex-wrap items-center gap-2 px-3 py-1" data-message-search-more>
         <button
           type="button"
-          class="min-h-11 rounded-md border border-border px-3 text-sm hover:bg-accent focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:opacity-60"
+          class="min-h-11 rounded-md border border-border px-3 text-sm hover:bg-accent focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:text-muted-foreground disabled:[&_svg]:text-border"
           :disabled="moreState === 'loading'"
           :aria-busy="moreState === 'loading' ? 'true' : undefined"
           data-message-search-load-more

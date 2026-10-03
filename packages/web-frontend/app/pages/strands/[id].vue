@@ -170,7 +170,7 @@ const ringLabel = computed(() => {
 /* W5b: the message a link pointed at is marked briefly after the jump. */
 :deep([data-anchored='true']) {
   border-radius: 0.75rem;
-  outline: 2px solid hsl(var(--primary) / 0.6);
+  outline: 2px solid hsl(var(--primary));
   outline-offset: 4px;
 }
 

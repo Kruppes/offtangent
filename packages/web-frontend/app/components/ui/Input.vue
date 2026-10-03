@@ -53,7 +53,7 @@ function handleInput(event: Event) {
       // On touch devices Chrome moves focus into the inner fields of a date/time input, so
       // neither :focus nor :focus-visible matches the host; :focus-within does.
       /^(date|time|datetime-local|month|week)$/.test(type) && 'focus-within:outline-none focus-within:ring-2 focus-within:ring-ring focus-within:ring-offset-2',
-      'disabled:cursor-not-allowed disabled:opacity-50',
+      'disabled:cursor-not-allowed disabled:bg-muted disabled:text-muted-foreground',
       'transition-colors',
       props.class
     )"

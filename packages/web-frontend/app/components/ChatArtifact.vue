@@ -22,7 +22,7 @@
       <div v-if="revisions.length > 1" class="flex items-center gap-1" role="group" :aria-label="$t('chat.artifact.revisions')">
         <button
           type="button"
-          class="min-h-[44px] min-w-[44px] rounded px-2 text-xs hover:bg-muted focus-visible:ring-2 focus-visible:ring-ring disabled:opacity-40"
+          class="min-h-[44px] min-w-[44px] rounded px-2 text-xs hover:bg-muted focus-visible:ring-2 focus-visible:ring-ring disabled:text-muted-foreground disabled:[&_svg]:text-border"
           :disabled="!previousRevision"
           :aria-label="$t('chat.artifact.previousRevision')"
           @click="goTo(previousRevision)"
@@ -32,7 +32,7 @@
         </span>
         <button
           type="button"
-          class="min-h-[44px] min-w-[44px] rounded px-2 text-xs hover:bg-muted focus-visible:ring-2 focus-visible:ring-ring disabled:opacity-40"
+          class="min-h-[44px] min-w-[44px] rounded px-2 text-xs hover:bg-muted focus-visible:ring-2 focus-visible:ring-ring disabled:text-muted-foreground disabled:[&_svg]:text-border"
           :disabled="!nextRevision"
           :aria-label="$t('chat.artifact.nextRevision')"
           @click="goTo(nextRevision)"
@@ -56,7 +56,7 @@
         {{ $t('chat.attachments.download') }}
       </a>
     </header>
-    <p v-if="outdated" class="flex flex-wrap items-center gap-2 border-b border-border bg-muted px-3 py-1.5 text-xs text-muted-foreground" role="status">
+    <p v-if="outdated" class="flex flex-wrap items-center gap-2 border-b border-border bg-muted px-3 py-2 text-xs text-muted-foreground" role="status">
       {{ $t('chat.artifact.outdated') }}
       <button type="button" class="min-h-[44px] rounded px-2 underline hover:bg-muted focus-visible:ring-2 focus-visible:ring-ring" @click="goTo(revisions[revisions.length - 1])">
         {{ $t('chat.artifact.showLatest') }}
@@ -68,7 +68,7 @@
         <p v-if="error" class="max-w-full truncate text-xs text-muted-foreground">{{ error }}</p>
         <button
           type="button"
-          class="inline-flex min-h-[44px] items-center gap-1.5 rounded-md border border-border px-3 text-sm hover:bg-muted focus-visible:ring-2 focus-visible:ring-ring"
+          class="inline-flex min-h-[44px] items-center gap-2 rounded-md border border-border px-3 text-sm hover:bg-muted focus-visible:ring-2 focus-visible:ring-ring"
           data-artifact-retry
           @click="retry"
         >

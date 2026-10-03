@@ -180,7 +180,7 @@ function buttonWithText(root: El, text: string): El | undefined {
   return all(root).find(n => (n.tag === 'button' || n.tag === 'stub-button') && textOf(n).includes(text))
 }
 /** The chat bubbles (user, assistant, system), not the cards. */
-function bubbles(root: El): El[] { return all(root).filter(n => cls(n).includes('rounded-2xl px-4 py-2.5')) }
+function bubbles(root: El): El[] { return all(root).filter(n => cls(n).includes('rounded-2xl px-4 py-2')) }
 function assistantProse(root: El): El[] { return all(root).filter(n => cls(n).includes('prose-chat') && 'innerHTML' in n.props) }
 
 // ── Stubs for leaf components ──────────────────────────────────────────────

@@ -7,7 +7,7 @@
       <button
         v-if="artifact.viewKey"
         type="button"
-        class="my-1 flex w-full max-w-[70ch] items-center gap-2 rounded-md border border-border/60 px-2 py-1.5 text-left text-xs text-muted-foreground hover:bg-muted focus-visible:ring-2 focus-visible:ring-ring"
+        class="my-1 flex w-full max-w-[70ch] items-center gap-2 rounded-md border border-border px-2 py-2 text-left text-xs text-muted-foreground hover:bg-muted focus-visible:ring-2 focus-visible:ring-ring"
         data-testid="canvas-trail-line"
         @click="openCanvasAt(artifact)"
       >

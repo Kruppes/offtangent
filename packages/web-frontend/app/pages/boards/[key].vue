@@ -105,7 +105,7 @@ onMounted(load)
           <span v-if="board.icon" class="text-2xl leading-none" aria-hidden="true">{{ board.icon }}</span>
           <div class="min-w-0 flex-1">
             <h1 class="text-xl font-bold tracking-tight [overflow-wrap:anywhere]">{{ board.title }}</h1>
-            <p class="text-xs text-muted-foreground">
+            <p class="text-2xs text-muted-foreground">
               {{ $t('boards.asOf', { date: board.asOf }) }} ·
               {{ $t('boards.revision', { revision: board.revision }) }} ·
               {{ $t(relativeTimeKey(board.updatedAt).key, { count: relativeTimeKey(board.updatedAt).count }) }}
@@ -146,7 +146,7 @@ onMounted(load)
             <ul v-show="historyOpen" id="board-history" class="space-y-1 px-2 pb-2">
               <li v-for="entry in revisions" :key="entry.revision">
                 <button type="button" class="flex min-h-[44px] w-full flex-wrap items-center gap-x-3 rounded-lg px-2 text-left text-sm hover:bg-accent focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring"
-                  :class="entry.revision === board.revision ? 'bg-accent/60' : ''" @click="openRevision(entry.revision)">
+                  :class="entry.revision === board.revision ? 'bg-accent' : ''" @click="openRevision(entry.revision)">
                   <span class="font-medium">{{ $t('boards.revision', { revision: entry.revision }) }}</span>
                   <span class="text-xs text-muted-foreground">{{ entry.asOf }}</span>
                   <span v-if="entry.summary" class="line-clamp-1 w-full text-xs text-muted-foreground">{{ entry.summary }}</span>

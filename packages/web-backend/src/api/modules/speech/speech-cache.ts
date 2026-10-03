@@ -37,6 +37,7 @@ export const SPEECH_CACHE_VERSION = 1
 
 const ENTRY_SUFFIX = '.entry'
 const HASH_RE = /^[0-9a-f]{64}$/
+const TMP_RE = /^[0-9a-f]{64}\.[0-9a-f]{12}\.tmp$/
 
 export interface SpeechCacheEntry<M> {
   meta: M
@@ -53,7 +54,23 @@ export interface SpeechCache {
   inflight<T>(key: string, produce: () => Promise<T>): Promise<T>
   /** Total payload+meta bytes currently indexed. */
   size(): number
-  clear(): void
+  /**
+   * Remove every entry (and leftover temp files) in the cache directory.
+   * Only names this module writes are touched (`<sha256>.entry`,
+   * `<sha256>.<hex>.tmp`); no caller input ever reaches a path.
+   * Returns what was removed.
+   */
+  clear(): { entries: number; bytes: number }
+  /** W7: figures for the admin view. Hits/misses count since process start. */
+  stats(): SpeechCacheStats
+}
+
+export interface SpeechCacheStats {
+  entries: number
+  bytes: number
+  maxBytes: number
+  hits: number
+  misses: number
 }
 
 export interface SpeechCacheOptions {
@@ -94,6 +111,8 @@ export function createSpeechDiskCache(options: SpeechCacheOptions): SpeechCache 
   let index: Map<string, { bytes: number; lastUsed: number }> | null = null
   let total = 0
   const pending = new Map<string, Promise<unknown>>()
+  let hits = 0
+  let misses = 0
 
   function fileOf(key: string): string {
     if (!HASH_RE.test(key)) throw new Error('invalid speech cache key')
@@ -160,6 +179,7 @@ export function createSpeechDiskCache(options: SpeechCacheOptions): SpeechCache 
         buf = fs.readFileSync(file)
       } catch {
         if (idx.has(key)) { total -= idx.get(key)!.bytes; idx.delete(key) }
+        misses += 1
         return null
       }
       try {
@@ -176,10 +196,12 @@ export function createSpeechDiskCache(options: SpeechCacheOptions): SpeechCache 
         else { idx.set(key, { bytes: buf.length, lastUsed: now }); total += buf.length }
         try { fs.utimesSync(file, new Date(now), new Date(now)) } catch { /* best effort */ }
         const { v: _v, bytes: _b, sha256: _s, ...rest } = meta
+        hits += 1
         return { meta: rest as unknown as M, payload: Buffer.from(payload) }
       } catch {
         // Broken or foreign: never served, and removed so it cannot come back.
         drop(key)
+        misses += 1
         return null
       }
     },
@@ -240,10 +262,34 @@ export function createSpeechDiskCache(options: SpeechCacheOptions): SpeechCache 
     },
 
     clear() {
+      // Rescan instead of trusting the index: whatever lies in the directory
+      // under one of our names goes, nothing else (a foreign file stays).
+      index = null
       const idx = load()
-      for (const key of [...idx.keys()]) drop(key)
+      let entries = 0
+      let bytes = 0
+      for (const [key, known] of [...idx.entries()]) {
+        entries += 1
+        bytes += known.bytes
+        drop(key)
+      }
+      let names: string[] = []
+      try { names = fs.readdirSync(dir) } catch { names = [] }
+      for (const name of names) {
+        if (!TMP_RE.test(name)) continue
+        try { fs.rmSync(path.join(dir, name), { force: true }) } catch { /* ignore */ }
+      }
       index = null
       total = 0
+      return { entries, bytes }
+    },
+
+    stats() {
+      // Rescan so the figures match the directory, not a stale index (hits
+      // refresh the mtime, so the LRU order survives the rescan).
+      index = null
+      const idx = load()
+      return { entries: idx.size, bytes: total, maxBytes, hits, misses }
     },
   }
 }

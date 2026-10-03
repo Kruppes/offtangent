@@ -3,7 +3,7 @@
        + counters, like the app's ContextDetailsSheet) and what belongs to
        the strand (project, linked facts, summaries, tool calls). -->
   <section aria-labelledby="ctx-usage" data-context-usage :data-state="gauge.status">
-    <h4 id="ctx-usage" class="mb-2 text-xs font-semibold uppercase tracking-wide text-muted-foreground">{{ $t('w4b.context.usage') }}</h4>
+    <h4 id="ctx-usage" class="mb-2 text-xs font-semibold uppercase tracking-label text-muted-foreground">{{ $t('w4b.context.usage') }}</h4>
     <p v-if="gauge.status === 'loading'" class="text-sm text-muted-foreground" role="status">{{ $t('w4b.context.loading') }}</p>
     <p v-else-if="gauge.status === 'unsupported'" class="text-sm text-muted-foreground">{{ $t('w4b.context.unsupported') }}</p>
     <div v-else-if="gauge.status === 'error'" class="flex flex-wrap items-center gap-2" role="alert">
@@ -21,7 +21,7 @@
           <p v-if="!gauge.data.measured" class="text-muted-foreground">{{ $t('w4b.context.notMeasured') }}</p>
         </div>
       </div>
-      <p v-if="bandOf(gauge.data) === 'caution' || bandOf(gauge.data) === 'full'" class="mt-2 rounded-md border px-2 py-1.5 text-sm" :class="bandOf(gauge.data) === 'full' ? 'border-destructive text-foreground' : 'border-border text-foreground'" data-context-hint>
+      <p v-if="bandOf(gauge.data) === 'caution' || bandOf(gauge.data) === 'full'" class="mt-2 rounded-md border px-2 py-2 text-sm" :class="bandOf(gauge.data) === 'full' ? 'border-destructive text-foreground' : 'border-border text-foreground'" data-context-hint>
         <strong>{{ bandOf(gauge.data) === 'full' ? $t('w4b.context.fullTitle') : $t('w4b.context.cautionTitle') }}</strong>
         {{ $t('w4b.context.hint') }}
       </p>
@@ -40,7 +40,7 @@
   </section>
 
   <section aria-labelledby="ctx-belongings" data-context-belongings :data-state="belongings.status">
-    <h4 id="ctx-belongings" class="mb-2 text-xs font-semibold uppercase tracking-wide text-muted-foreground">{{ $t('w4b.context.belongings') }}</h4>
+    <h4 id="ctx-belongings" class="mb-2 text-xs font-semibold uppercase tracking-label text-muted-foreground">{{ $t('w4b.context.belongings') }}</h4>
     <p v-if="belongings.status === 'loading'" class="text-sm text-muted-foreground" role="status">{{ $t('common.loading') }}</p>
     <p v-else-if="belongings.status === 'unsupported'" class="text-sm text-muted-foreground">{{ $t('w4b.context.unsupported') }}</p>
     <div v-else-if="belongings.status === 'error'" class="flex flex-wrap items-center gap-2" role="alert">
@@ -57,7 +57,7 @@
       </dl>
       <h5 class="mb-1 mt-3 text-sm font-medium">{{ $t('w4b.context.facts', { count: belongings.data.factsTotal ?? belongings.data.facts.length }) }}</h5>
       <ul v-if="belongings.data.facts.length" class="space-y-1 text-sm" data-context-facts>
-        <li v-for="fact in belongings.data.facts.slice(0, 8)" :key="fact.id" class="rounded-md bg-muted/50 px-2 py-1">{{ fact.text }}</li>
+        <li v-for="fact in belongings.data.facts.slice(0, 8)" :key="fact.id" class="rounded-md bg-muted px-2 py-1">{{ fact.text }}</li>
         <li v-if="(belongings.data.factsTotal ?? belongings.data.facts.length) > 8" class="px-2 text-muted-foreground">{{ $t('w4b.context.moreFacts', { count: (belongings.data.factsTotal ?? belongings.data.facts.length) - 8 }) }}</li>
       </ul>
       <p v-else class="text-sm text-muted-foreground" data-context-facts-empty>{{ $t('w4b.context.noFacts') }}</p>
@@ -68,7 +68,7 @@
        or the automatic strand context). Same request as the gauge, so its
        loading and error states are the gauge's. A click jumps to the message. -->
   <section aria-labelledby="ctx-recalled" data-context-recalled :data-state="recalled.status">
-    <h4 id="ctx-recalled" class="mb-2 text-xs font-semibold uppercase tracking-wide text-muted-foreground">{{ $t('context.recalled.title') }}</h4>
+    <h4 id="ctx-recalled" class="mb-2 text-xs font-semibold uppercase tracking-label text-muted-foreground">{{ $t('context.recalled.title') }}</h4>
     <p v-if="recalled.status === 'loading'" class="text-sm text-muted-foreground" role="status">{{ $t('context.recalled.loading') }}</p>
     <p v-else-if="recalled.status === 'unsupported'" class="text-sm text-muted-foreground">{{ $t('w4b.context.unsupported') }}</p>
     <div v-else-if="recalled.status === 'error'" class="flex flex-wrap items-center gap-2" role="alert">
@@ -80,7 +80,7 @@
     <p v-else-if="!recalled.data.length" class="text-sm text-muted-foreground" data-recalled-empty>{{ $t('context.recalled.empty') }}</p>
     <ul v-else class="space-y-1" data-recalled-list>
       <li v-for="item in recalled.data" :key="`${item.source}-${item.messageId}`">
-        <NuxtLink :to="messageRoute(item.strandId, item.messageId)" class="flex min-h-11 min-w-0 flex-col gap-0.5 rounded-lg px-2 py-1.5 text-sm hover:bg-accent focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring" :data-recalled-message="item.messageId"
+        <NuxtLink :to="messageRoute(item.strandId, item.messageId)" class="flex min-h-11 min-w-0 flex-col gap-1 rounded-lg px-2 py-2 text-sm hover:bg-accent focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring" :data-recalled-message="item.messageId"
           :aria-label="$t('context.recalled.open', { role: roleLabel(item.role), excerpt: item.excerpt })">
           <span class="flex min-w-0 items-center gap-2 text-xs text-muted-foreground">
             <span class="font-semibold">{{ roleLabel(item.role) }}</span>

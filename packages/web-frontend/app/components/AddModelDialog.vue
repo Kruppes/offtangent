@@ -19,7 +19,7 @@
 
         <!-- Loading -->
         <div v-if="loading" class="flex items-center gap-2 py-4 text-xs text-muted-foreground">
-          <span class="h-3 w-3 animate-spin rounded-full border-2 border-primary/30 border-t-primary" />
+          <span class="h-3 w-3 animate-spin rounded-full border-2 border-primary-subtle-hover border-t-primary" />
           {{ $t('providers.loadingModels') }}
         </div>
 
@@ -43,8 +43,8 @@
               :key="model.id"
               :class="[
                 'flex items-center gap-3 px-3 py-2 text-sm transition-colors',
-                isAlreadyEnabled(model.id) ? 'opacity-50' : 'cursor-pointer hover:bg-accent/50',
-                selected.has(model.id) ? 'bg-accent/30' : '',
+                isAlreadyEnabled(model.id) ? 'text-muted-foreground' : 'cursor-pointer hover:bg-accent',
+                selected.has(model.id) ? 'bg-accent' : '',
               ]"
             >
               <input
@@ -86,14 +86,14 @@
             v-if="canAddCustom"
             type="button"
             :class="[
-              'flex items-center gap-3 px-3 py-2 text-left text-sm transition-colors hover:bg-accent/50',
-              selected.has(search.trim()) ? 'bg-accent/30' : '',
+              'flex items-center gap-3 px-3 py-2 text-left text-sm transition-colors hover:bg-accent',
+              selected.has(search.trim()) ? 'bg-accent' : '',
             ]"
             @click="toggleSelected(search.trim())"
           >
             <span class="flex h-4 w-4 items-center justify-center rounded border border-primary text-primary">
               <AppIcon v-if="selected.has(search.trim())" name="check" class="h-3 w-3" />
-              <span v-else class="text-xs leading-none">+</span>
+              <span v-else class="text-xs">+</span>
             </span>
             <span class="flex min-w-0 flex-1 flex-col">
               <span class="truncate">
@@ -116,7 +116,7 @@
         <Button :disabled="selected.size === 0 || saving" @click="handleAdd">
           <span
             v-if="saving"
-            class="mr-1.5 h-3.5 w-3.5 animate-spin rounded-full border-2 border-primary-foreground/30 border-t-primary-foreground"
+            class="mr-2 h-3.5 w-3.5 animate-spin rounded-full border-2 border-transparent border-t-current"
           />
           {{ $t('providers.addModelButton') }}
         </Button>

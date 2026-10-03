@@ -2,7 +2,7 @@
   <!-- State of the read-aloud / summary clip of one answer and of a voice
        note being created: generating, ready (player), error with retry. -->
   <div v-if="entry || job?.status === 'error'" class="mt-1 w-full max-w-conversation space-y-2" data-speech-panel>
-    <div v-if="entry" class="rounded-lg border border-border bg-muted/40 px-2 py-1.5" :data-speech-state="entry.status" :data-speech-mode="entry.mode">
+    <div v-if="entry" class="rounded-lg border border-border bg-card px-2 py-2" :data-speech-state="entry.status" :data-speech-mode="entry.mode">
       <div class="flex items-center gap-2 px-1">
         <AppIcon :name="entry.mode === 'read' ? 'volume' : 'sparkles'" size="sm" class="h-3.5 w-3.5 text-muted-foreground" />
         <span class="min-w-0 flex-1 truncate text-xs font-medium">{{ $t(entry.mode === 'read' ? 'w4b.speech.read' : 'w4b.speech.summary') }}</span>

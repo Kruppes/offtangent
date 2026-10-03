@@ -9,7 +9,7 @@
       <CardContent>
         <form class="flex flex-col gap-5" @submit.prevent="handleLogin">
           <!-- Username -->
-          <div class="flex flex-col gap-1.5">
+          <div class="flex flex-col gap-2">
             <Label for="username">{{ $t('auth.username') }}</Label>
             <Input
               class="min-h-11"
@@ -24,7 +24,7 @@
           </div>
 
           <!-- Password -->
-          <div class="flex flex-col gap-1.5">
+          <div class="flex flex-col gap-2">
             <Label for="password">{{ $t('auth.password') }}</Label>
             <Input
               class="min-h-11"
@@ -50,7 +50,7 @@
           >
             <span
               v-if="loading"
-              class="h-4 w-4 animate-spin rounded-full border-2 border-primary-foreground/30 border-t-primary-foreground"
+              class="h-4 w-4 animate-spin rounded-full border-2 border-transparent border-t-current"
               aria-hidden="true"
             />
             {{ loading ? '…' : $t('auth.loginButton') }}

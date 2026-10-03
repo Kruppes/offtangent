@@ -4,7 +4,7 @@
     v-if="!isAdmin"
     class="flex h-full flex-col items-center justify-center gap-3 p-10 text-center text-muted-foreground"
   >
-    <AppIcon name="lock" class="h-10 w-10 opacity-50" />
+    <AppIcon name="lock" class="h-10 w-10" />
     <h1 class="text-lg font-semibold text-foreground">{{ $t('admin.title') }}</h1>
     <p class="max-w-xs text-sm">{{ $t('admin.description') }}</p>
   </div>
@@ -51,7 +51,7 @@
         <section class="mb-6 grid grid-cols-1 gap-4 sm:grid-cols-3">
           <Card v-for="card in statCards" :key="card.label">
             <CardContent class="p-5">
-              <span class="text-xs font-semibold uppercase tracking-wider text-muted-foreground">
+              <span class="text-xs font-semibold uppercase tracking-label text-muted-foreground">
                 {{ card.label }}
               </span>
               <div class="mt-2 flex items-baseline gap-2">
@@ -66,13 +66,13 @@
         <!-- ─── Active Tasks card ─── -->
         <section class="mb-6">
           <NuxtLink to="/tasks" class="block">
-            <Card class="transition-colors hover:border-primary/40">
+            <Card class="transition-colors hover:border-primary">
               <CardContent class="flex items-center gap-4 p-5">
-                <div class="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg bg-primary/10">
+                <div class="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg bg-primary-subtle">
                   <AppIcon name="bot" class="h-5 w-5 text-primary" />
                 </div>
                 <div class="min-w-0 flex-1">
-                  <span class="text-xs font-semibold uppercase tracking-wider text-muted-foreground">
+                  <span class="text-xs font-semibold uppercase tracking-label text-muted-foreground">
                     {{ $t('dashboard.activeTasks.title') }}
                   </span>
                   <div class="mt-1 flex items-baseline gap-3">
@@ -83,7 +83,7 @@
                       {{ $t('dashboard.activeTasks.running') }}
                     </span>
                   </div>
-                  <span class="mt-0.5 block text-xs text-muted-foreground">
+                  <span class="mt-1 block text-xs text-muted-foreground">
                     {{ $t('dashboard.activeTasks.scheduled', { count: scheduledTaskCount }) }}
                   </span>
                 </div>
@@ -103,10 +103,10 @@
                   <CardTitle as="h2" class="text-base tracking-tight">
                     {{ $t('dashboard.providerHealth') }}
                   </CardTitle>
-                  <CardDescription v-if="providerName" class="mt-0.5 truncate">
+                  <CardDescription v-if="providerName" class="mt-1 truncate">
                     {{ providerName }}
                   </CardDescription>
-                  <CardDescription v-else class="mt-0.5">
+                  <CardDescription v-else class="mt-1">
                     {{ $t('dashboard.notConfigured') }}
                   </CardDescription>
                 </div>
@@ -116,7 +116,7 @@
               </div>
             </CardHeader>
             <CardContent class="pt-0">
-              <dl class="space-y-2.5">
+              <dl class="space-y-2">
                 <!-- Operating mode -->
                 <div class="flex items-center justify-between gap-2 text-sm">
                   <dt class="text-muted-foreground">{{ $t('dashboard.operatingMode') }}</dt>
@@ -138,7 +138,7 @@
                   </div>
                   <div v-if="primaryProvider" class="flex items-center justify-between gap-2 text-sm">
                     <dt class="text-muted-foreground">{{ $t('dashboard.primaryProviderStatus') }}</dt>
-                    <dd class="flex items-center gap-1.5 font-semibold text-foreground">
+                    <dd class="flex items-center gap-2 font-semibold text-foreground">
                       <Badge v-if="primaryProvider.lastHealthStatus" :variant="statusBadgeVariant(primaryProvider.lastHealthStatus)">
                         {{ statusLabel(primaryProvider.lastHealthStatus) }}
                       </Badge>
@@ -161,7 +161,7 @@
                 </div>
                 <div class="flex items-center justify-between gap-2 text-sm">
                   <dt class="text-muted-foreground">{{ $t('dashboard.agentStatus') }}</dt>
-                  <dd class="flex items-center gap-1.5 font-semibold text-foreground">
+                  <dd class="flex items-center gap-2 font-semibold text-foreground">
                     <span
                       class="h-2 w-2 rounded-full"
                       :class="agentStatus === 'running' ? 'bg-success' : 'bg-muted-foreground'"
@@ -202,7 +202,7 @@
             <CardContent class="pt-0">
               <p
                 v-if="healthHistory.length === 0"
-                class="py-6 text-center text-sm text-muted-foreground"
+                class="py-6 text-left text-sm text-muted-foreground"
               >
                 {{ $t('dashboard.noHealthHistory') }}
               </p>
@@ -210,13 +210,13 @@
                 <li
                   v-for="entry in healthHistory"
                   :key="entry.id"
-                  class="flex items-center justify-between gap-3 py-2.5"
+                  class="flex items-center justify-between gap-3 py-2"
                 >
                   <div class="min-w-0">
                     <strong class="block truncate text-sm font-medium text-foreground">
                       {{ entry.provider || $t('dashboard.notConfigured') }}
                     </strong>
-                    <p class="mt-0.5 text-xs text-muted-foreground">
+                    <p class="mt-1 text-xs text-muted-foreground">
                       {{ formatDateTime(entry.timestamp) }}
                     </p>
                   </div>

@@ -51,9 +51,9 @@
       <!-- Empty state -->
       <div
         v-else-if="providers.length === 0"
-        class="flex flex-1 flex-col items-center justify-center gap-4 py-20 text-center text-muted-foreground"
+        class="flex flex-1 flex-col items-start justify-center gap-4 py-20 text-left text-muted-foreground"
       >
-        <AppIcon name="plug" size="xl" class="h-12 w-12 opacity-40" />
+        <AppIcon name="plug" size="xl" class="h-12 w-12" />
         <p class="text-sm">{{ $t('providers.noProviders') }}</p>
         <Button @click="openCreate">
           {{ $t('providers.addProvider') }}
@@ -86,7 +86,7 @@
                       <div class="text-xs text-muted-foreground">
                         {{ getTypeLabel(provider.providerType) }}
                         <template v-if="provider.authMethod === 'oauth' && provider.oauthCredentials">
-                          <span class="opacity-40">·</span>
+                          <span class="text-muted-foreground">·</span>
                           OAuth
                         </template>
                       </div>
@@ -95,22 +95,22 @@
                   <!-- Data policy: region + training per provider, with the badge
                        showing the policy the gate really uses (set vs derived). -->
                   <TableCell class="align-top" @click.stop>
-                    <div class="flex flex-col gap-1.5">
+                    <div class="flex flex-col gap-2">
                       <span
-                        class="w-fit rounded px-1.5 py-0.5 text-2xs font-semibold uppercase"
+                        class="w-fit rounded px-2 py-1 text-2xs font-semibold uppercase tracking-label"
                         :class="dataPolicyBadgeClass(provider)"
                         :title="$t(`providers.dataPolicy.source.${provider.effectiveDataPolicy?.source ?? 'derived'}`)"
                       >
                         {{ dataPolicyBadgeLabel(provider) }}
                       </span>
-                      <div class="flex flex-wrap items-center gap-1.5">
+                      <div class="flex flex-wrap items-center gap-2">
                         <Label :for="`data-region-${provider.id}`" class="sr-only">
                           {{ $t('providers.dataPolicy.region') }}
                         </Label>
                         <select
                           :id="`data-region-${provider.id}`"
                           class="h-8 rounded-md border border-border bg-background px-2 text-xs text-foreground
-                                 focus:outline-none focus:ring-2 focus:ring-ring disabled:opacity-50"
+                                 focus:outline-none focus:ring-2 focus:ring-ring disabled:bg-muted disabled:text-muted-foreground"
                           :value="provider.dataPolicy?.region ?? ''"
                           :disabled="savingDataPolicy === provider.id"
                           :aria-label="$t('providers.dataPolicy.region')"
@@ -127,7 +127,7 @@
                         <select
                           :id="`data-training-${provider.id}`"
                           class="h-8 rounded-md border border-border bg-background px-2 text-xs text-foreground
-                                 focus:outline-none focus:ring-2 focus:ring-ring disabled:opacity-50"
+                                 focus:outline-none focus:ring-2 focus:ring-ring disabled:bg-muted disabled:text-muted-foreground"
                           :value="provider.dataPolicy?.training ?? ''"
                           :disabled="savingDataPolicy === provider.id"
                           :aria-label="$t('providers.dataPolicy.training')"
@@ -142,14 +142,14 @@
                     </div>
                   </TableCell>
                   <TableCell>
-                    <div v-if="isRefreshingQuota(provider.id)" class="flex items-center gap-1.5">
+                    <div v-if="isRefreshingQuota(provider.id)" class="flex items-center gap-2">
                       <span
                         class="h-3.5 w-3.5 animate-spin rounded-full border-2 border-muted-foreground border-t-transparent"
                         aria-hidden="true"
                       />
                       <span class="text-xs text-muted-foreground">{{ $t('providers.quota.refreshing') }}</span>
                     </div>
-                    <div v-else-if="getQuota(provider)" class="flex flex-col gap-0.5 text-xs">
+                    <div v-else-if="getQuota(provider)" class="flex flex-col gap-1 text-xs">
                       <span
                         v-if="getQuota(provider)!.error"
                         class="text-muted-foreground"
@@ -213,17 +213,17 @@
                 <TableRow
                   v-for="modelId in getDisplayModels(provider)"
                   :key="`${provider.id}-${modelId}`"
-                  class="bg-muted/30 hover:bg-muted/50"
+                  class="bg-card hover:bg-muted"
                 >
                   <!-- Model name (indented, compact) -->
-                  <TableCell class="py-1.5">
+                  <TableCell class="py-2">
                     <div class="flex items-center gap-2">
                       <span class="text-xs text-muted-foreground">└</span>
                       <span class="text-sm text-foreground">{{ modelId }}</span>
-                      <Badge v-if="isActiveModel(provider.id, modelId)" variant="default" class="px-1.5 py-0 text-2xs">
+                      <Badge v-if="isActiveModel(provider.id, modelId)" variant="default" class="px-2 py-0 text-2xs">
                         {{ $t('providers.active') }}
                       </Badge>
-                      <Badge v-if="isFallbackModel(provider.id, modelId)" variant="outline" class="px-1.5 py-0 text-2xs">
+                      <Badge v-if="isFallbackModel(provider.id, modelId)" variant="outline" class="px-2 py-0 text-2xs">
                         {{ $t('providers.fallback') }}
                       </Badge>
 
@@ -231,14 +231,14 @@
                   </TableCell>
 
                   <!-- Data policy is a provider-level setting: no cell content here. -->
-                  <TableCell class="py-1.5" />
+                  <TableCell class="py-2" />
 
                   <!-- Cost (single line, no $/M tokens label) -->
-                  <TableCell class="py-1.5">
+                  <TableCell class="py-2">
                     <template v-if="getModelCost(provider, modelId)">
                       <div class="flex items-center gap-1 text-xs">
                         <span class="text-foreground font-medium">${{ formatCost(getModelCost(provider, modelId)!.input) }}</span>
-                        <span class="opacity-40">/</span>
+                        <span class="text-muted-foreground">/</span>
                         <span class="text-foreground font-medium">${{ formatCost(getModelCost(provider, modelId)!.output) }}</span>
                       </div>
                     </template>
@@ -246,8 +246,8 @@
                   </TableCell>
 
                   <!-- Status per model -->
-                  <TableCell class="py-1.5">
-                    <div v-if="isTestingModel(provider.id, modelId)" class="flex items-center gap-1.5">
+                  <TableCell class="py-2">
+                    <div v-if="isTestingModel(provider.id, modelId)" class="flex items-center gap-2">
                       <span
                         class="h-3.5 w-3.5 animate-spin rounded-full border-2 border-muted-foreground border-t-transparent"
                         aria-hidden="true"
@@ -260,7 +260,7 @@
                   </TableCell>
 
                   <!-- Model actions -->
-                  <TableCell class="py-1.5 text-right">
+                  <TableCell class="py-2 text-right">
                     <DropdownMenu>
                       <DropdownMenuTrigger as-child>
                         <Button variant="ghost" size="icon-sm" :aria-label="$t('providers.columns.actions')">
@@ -664,7 +664,7 @@ function dataPolicyBadgeClass(provider: Provider): string {
   if (!effective) return 'bg-muted text-muted-foreground'
   if (effective.region === 'local') return 'bg-success/15 text-success'
   if (effective.region === 'cn') return 'bg-destructive/15 text-destructive'
-  if (effective.training === 'no') return 'bg-primary/15 text-primary'
+  if (effective.training === 'no') return 'bg-primary-subtle text-primary'
   return 'bg-warning/15 text-warning'
 }
 

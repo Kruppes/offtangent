@@ -1,5 +1,5 @@
 <template>
-  <div class="flex flex-1 flex-col overflow-hidden min-h-0">
+  <div class="flex flex-1 flex-col overflow-auto min-h-0">
     <Alert v-if="errorMessage" variant="destructive" class="mb-4 shrink-0">
       <AlertDescription class="flex items-center justify-between gap-3">
         <span>{{ errorMessage }}</span>
@@ -66,7 +66,7 @@
         v-else-if="totalFacts === 0"
         class="flex flex-col items-center justify-center gap-3 px-6 py-16 text-center text-muted-foreground"
       >
-        <AppIcon name="brain" size="xl" class="h-10 w-10 opacity-40" />
+        <AppIcon name="brain" size="xl" class="h-10 w-10" />
         <p class="text-sm">
           {{ hasActiveFilters ? $t('memory.factsNoResults') : $t('memory.factsEmpty') }}
         </p>
@@ -100,7 +100,7 @@
                   <button
                     v-else
                     type="button"
-                    class="w-full rounded-md px-1 py-1 text-left text-sm text-foreground transition hover:bg-muted/70"
+                    class="w-full rounded-md px-1 py-1 text-left text-sm text-foreground transition hover:bg-muted"
                     @click="startEditing(fact)"
                   >
                     <span class="whitespace-normal break-words">{{ fact.content }}</span>
@@ -120,7 +120,7 @@
                     <Button
                       variant="ghost"
                       size="sm"
-                      class="gap-1.5"
+                      class="gap-2"
                       :disabled="saving"
                       @click="startEditing(fact)"
                     >
@@ -130,7 +130,7 @@
                     <Button
                       variant="ghost"
                       size="sm"
-                      class="gap-1.5 text-destructive hover:text-destructive"
+                      class="gap-2 text-destructive hover:text-destructive"
                       :disabled="saving"
                       @click="openDeleteDialog(fact)"
                     >

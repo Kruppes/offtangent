@@ -3,11 +3,11 @@
     <div v-if="msg.content && showSessionSummaries" class="w-full max-w-none px-2 mb-1">
       <div class="mx-auto max-w-lg">
         <button
-          class="group flex w-full items-center gap-2 rounded-t-lg border border-border/60 bg-muted/30 px-3 py-1.5 text-left text-xs text-muted-foreground transition-colors hover:bg-muted/50"
+          class="group flex w-full items-center gap-2 rounded-t-lg border border-border bg-card px-3 py-2 text-left text-xs text-muted-foreground transition-colors hover:bg-muted"
           :class="{ 'rounded-b-lg': !expandedSummaries.has(String(msg.id ?? index)) }"
           @click="toggleSummary(String(msg.id ?? index))"
         >
-          <AppIcon name="file" size="sm" class="h-3 w-3 shrink-0 opacity-50" />
+          <AppIcon name="file" size="sm" class="h-3 w-3 shrink-0" />
           <span class="font-medium">{{ $t('chat.sessionSummary') }}</span>
           <span class="flex-1" />
           <AppIcon
@@ -17,9 +17,9 @@
         </button>
         <div
           v-if="expandedSummaries.has(String(msg.id ?? index))"
-          class="rounded-b-lg border border-t-0 border-border/60 bg-muted/10 px-4 py-3"
+          class="rounded-b-lg border border-t-0 border-border bg-card px-4 py-3"
         >
-          <p class="text-xs leading-relaxed text-muted-foreground/80">
+          <p class="text-xs leading-relaxed text-muted-foreground">
             {{ msg.content }}
           </p>
         </div>

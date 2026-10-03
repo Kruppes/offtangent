@@ -8,7 +8,7 @@
 
       <form class="flex flex-col gap-4" @submit.prevent="handleSubmit">
         <!-- Username (create only) -->
-        <div v-if="mode === 'create'" class="flex flex-col gap-1.5">
+        <div v-if="mode === 'create'" class="flex flex-col gap-2">
           <Label for="modal-username">{{ $t('users.username') }}</Label>
           <Input
             id="modal-username"
@@ -20,7 +20,7 @@
         </div>
 
         <!-- Role -->
-        <div class="flex flex-col gap-1.5">
+        <div class="flex flex-col gap-2">
           <Label for="modal-role">{{ $t('users.role') }}</Label>
           <Select v-model="form.role">
             <SelectTrigger id="modal-role">
@@ -34,7 +34,7 @@
         </div>
 
         <!-- Password -->
-        <div class="flex flex-col gap-1.5">
+        <div class="flex flex-col gap-2">
           <Label for="modal-password">
             {{ mode === 'create' ? $t('users.password') : $t('users.resetPassword') }}
           </Label>
@@ -58,7 +58,7 @@
           <Button type="submit" :disabled="loading">
             <span
               v-if="loading"
-              class="mr-1 h-4 w-4 animate-spin rounded-full border-2 border-primary-foreground/30 border-t-primary-foreground"
+              class="mr-1 h-4 w-4 animate-spin rounded-full border-2 border-transparent border-t-current"
               aria-hidden="true"
             />
             {{ $t('common.save') }}

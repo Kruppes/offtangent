@@ -65,7 +65,7 @@ const hasAnything = computed(() => {
         </li>
       </ul>
       <BoardSparkline v-if="series.length > 1" class="mt-3" :points="series" :label="$t('boards.digest.sparkline')" />
-      <p v-if="series.length > 1" class="mt-1 text-xs text-muted-foreground">{{ $t('boards.digest.sparklineHint', { count: series.length }) }}</p>
+      <p v-if="series.length > 1" class="measure mt-1 text-help text-muted-foreground">{{ $t('boards.digest.sparklineHint', { count: series.length }) }}</p>
     </section>
 
     <section v-if="digest.digest" aria-labelledby="board-text" class="rounded-lg border bg-card p-4 text-card-foreground">
@@ -101,14 +101,14 @@ const hasAnything = computed(() => {
       <h2 id="board-movers" class="text-sm font-medium text-muted-foreground">{{ $t('boards.digest.movers') }}</h2>
       <div class="mt-2 grid gap-4 sm:grid-cols-2">
         <div v-for="group in [{ id: 'gainers', movers: digest.gainers }, { id: 'losers', movers: digest.losers }].filter(entry => entry.movers.length)" :key="group.id">
-          <h3 class="text-xs font-medium uppercase tracking-wide text-muted-foreground">{{ $t(`boards.digest.${group.id}`) }}</h3>
+          <h3 class="text-xs font-medium uppercase tracking-label text-muted-foreground">{{ $t(`boards.digest.${group.id}`) }}</h3>
           <ul class="mt-1 space-y-2 text-sm">
             <li v-for="(entry, index) in group.movers" :key="entry.name ?? index">
               <p class="flex flex-wrap items-baseline justify-between gap-x-2">
                 <span class="font-medium">{{ entry.name }}</span>
                 <span :class="deltaClass(entry.deltaPct)">{{ formatPct(entry.deltaPct) }}</span>
               </p>
-              <p class="text-xs text-muted-foreground">
+              <p class="measure text-help text-muted-foreground">
                 <span v-if="entry.impactEur !== undefined">{{ formatSignedEur(entry.impactEur, true) }}</span>
                 <span v-if="entry.explanation"> · {{ entry.explanation }}</span>
               </p>
@@ -194,7 +194,7 @@ const hasAnything = computed(() => {
       </ul>
     </section>
 
-    <section v-if="digest.footer" aria-labelledby="board-footer" class="rounded-lg border border-dashed p-4 text-xs text-muted-foreground">
+    <section v-if="digest.footer" aria-labelledby="board-footer" class="rounded-lg border border-dashed p-4 text-help text-muted-foreground">
       <h2 id="board-footer" class="sr-only">{{ $t('boards.digest.footer') }}</h2>
       <p v-if="digest.runId">{{ $t('boards.digest.run', { run: digest.runId }) }}<span v-if="digest.slot"> · {{ digest.slot }}</span></p>
       <p v-if="digest.footer.sources.length">{{ $t('boards.digest.sources', { sources: digest.footer.sources.join(', ') }) }}</p>

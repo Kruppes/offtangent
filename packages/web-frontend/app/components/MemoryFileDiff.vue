@@ -26,14 +26,14 @@
     <template v-for="(line, index) in diffLines" :key="`${line.type}-${index}-${line.content}`">
       <div
         v-if="line.type === 'separator'"
-        class="border-y border-border/60 bg-muted/40 px-3 py-1 text-center font-mono text-2xs text-muted-foreground"
+        class="border-y border-border bg-card px-3 py-1 text-center font-mono text-2xs text-muted-foreground"
       >
         … {{ t('logs.unchangedLines', { count: line.count ?? 0 }) }} …
       </div>
 
       <div
         v-else
-        class="flex items-start gap-2.5 px-3 py-1 font-mono text-2xs leading-4"
+        class="flex items-start gap-2 px-3 py-1 font-mono text-2xs leading-4"
         :class="lineClass(line.type)"
       >
         <span class="mt-px w-4 shrink-0 text-center font-semibold leading-4">

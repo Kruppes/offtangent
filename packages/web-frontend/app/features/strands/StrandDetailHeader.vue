@@ -126,7 +126,7 @@ onMounted(() => { void load(); void loadProjects() })
     </div>
     <p v-if="loading" role="status" class="text-sm text-muted-foreground">{{ t('strandDetail.loading') }}</p>
     <!-- W5b lineage: where this strand was forked from, and its forks. -->
-    <nav v-if="strand && (strand.parentStrandId || strand.childStrands?.length)" class="mt-1 flex min-w-0 flex-col gap-0.5 text-sm text-muted-foreground" :aria-label="t('fork.lineageLabel')" data-strand-lineage>
+    <nav v-if="strand && (strand.parentStrandId || strand.childStrands?.length)" class="mt-1 flex min-w-0 flex-col gap-1 text-sm text-muted-foreground" :aria-label="t('fork.lineageLabel')" data-strand-lineage>
       <p v-if="strand.parentStrandId" class="flex min-w-0 flex-wrap items-center gap-x-1" data-lineage-parent>
         <AppIcon name="gitBranch" size="sm" class="shrink-0" />
         <span>{{ t('fork.forkedFrom') }}</span>

@@ -33,7 +33,7 @@
     </svg>
     <span v-if="large" class="absolute inset-0 flex flex-col items-center justify-center text-center leading-tight">
       <span class="text-lg font-semibold tabular-nums">{{ percent === null ? '–' : `${percent} %` }}</span>
-      <span v-if="geometry.band === 'caution' || geometry.band === 'full'" class="text-2xs font-semibold uppercase" :class="geometry.band === 'full' ? 'text-destructive' : 'text-foreground'">{{ geometry.band === 'full' ? '!!' : '!' }}</span>
+      <span v-if="geometry.band === 'caution' || geometry.band === 'full'" class="text-2xs font-semibold uppercase tracking-label" :class="geometry.band === 'full' ? 'text-destructive' : 'text-foreground'">{{ geometry.band === 'full' ? '!!' : '!' }}</span>
     </span>
   </span>
 </template>

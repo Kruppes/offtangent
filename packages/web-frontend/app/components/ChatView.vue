@@ -5,7 +5,7 @@
        pushing it out of the viewport. -->
   <div class="relative flex h-full overflow-hidden">
   <div
-    class="relative flex min-w-0 flex-1 flex-col overflow-hidden"
+    class="relative flex min-w-0 flex-1 flex-col overflow-auto"
     data-file-drop-zone
     @dragenter="handleDragEnter"
     @dragover="handleDragOver"
@@ -26,9 +26,9 @@
       <div
         v-if="isDraggingFiles"
         data-testid="drop-zone"
-        class="pointer-events-none absolute inset-0 z-50 flex items-center justify-center bg-background/80 backdrop-blur-sm"
+        class="pointer-events-none absolute inset-0 z-50 flex items-center justify-center bg-background backdrop-blur-sm"
       >
-        <div class="flex flex-col items-center gap-3 rounded-2xl border-2 border-dashed border-primary/60 bg-primary/[0.06] px-10 py-8 text-primary">
+        <div class="flex flex-col items-center gap-3 rounded-2xl border-2 border-dashed border-primary bg-primary-subtle px-10 py-8 text-primary">
           <AppIcon name="paperclip" class="h-10 w-10" />
           <p class="text-sm font-medium">{{ $t('chat.dropFilesHere') }}</p>
         </div>

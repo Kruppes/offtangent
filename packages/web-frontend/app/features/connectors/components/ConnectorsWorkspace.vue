@@ -43,7 +43,7 @@
       </Alert>
 
       <!-- P2: which model the connector sub-agent runs on -->
-      <p v-if="localModel" class="text-xs text-muted-foreground" data-testid="connectors-local-model">
+      <p v-if="localModel" class="measure text-help text-muted-foreground" data-testid="connectors-local-model">
         <span>{{ $t('connectors.localModel.label') }}:</span>
         <span class="ml-1 font-medium text-foreground">{{ localModelName }}</span>
         <span class="ml-2">{{ localModelStrict }}</span>
@@ -62,9 +62,9 @@
       <!-- Empty -->
       <div
         v-else-if="connectors.length === 0"
-        class="flex flex-1 flex-col items-center justify-center gap-4 py-20 text-center text-muted-foreground"
+        class="flex flex-1 flex-col items-start justify-center gap-4 py-20 text-left text-muted-foreground"
       >
-        <AppIcon name="plug" class="h-12 w-12 opacity-40" />
+        <AppIcon name="plug" class="h-12 w-12" />
         <p class="text-sm">{{ $t('connectors.empty') }}</p>
       </div>
 
@@ -80,9 +80,9 @@
             <h2 :id="`connector-${connector.id}-name`" class="text-base font-semibold text-foreground">
               {{ connector.name }}
             </h2>
-            <p class="mt-1 text-sm text-muted-foreground">{{ connector.description }}</p>
+            <p class="measure mt-1 text-sm text-muted-foreground">{{ connector.description }}</p>
           </div>
-          <div class="flex flex-wrap items-center gap-1.5">
+          <div class="flex flex-wrap items-center gap-2">
             <Badge :variant="statusVariant(connector.status)">
               {{ $t(`connectors.status.${connector.status}`) }}
             </Badge>
@@ -101,7 +101,7 @@
 
         <dl v-if="connector.scopes.length > 0" class="mt-3 text-xs text-muted-foreground">
           <dt class="font-medium">{{ $t('connectors.scopes') }}</dt>
-          <dd class="mt-0.5 break-words">{{ connector.scopes.join(', ') }}</dd>
+          <dd class="mt-1 break-words">{{ connector.scopes.join(', ') }}</dd>
         </dl>
 
         <!--
@@ -113,7 +113,7 @@
         -->
         <div
           v-if="connector.setupSteps.length > 0"
-          class="mt-4 rounded-lg border border-border bg-muted/40 p-3"
+          class="mt-4 rounded-lg border border-border bg-card p-3"
           data-testid="setup-guide"
         >
           <button
@@ -136,24 +136,24 @@
           >
             <li v-for="step in connector.setupSteps" :key="step.id" class="min-w-0">
               <p class="font-medium text-foreground">{{ $t(`connectors.setup.${connector.id}.${step.id}.title`) }}</p>
-              <p class="mt-0.5 break-words text-xs text-muted-foreground">
+              <p class="mt-1 break-words text-xs text-muted-foreground">
                 {{ $t(`connectors.setup.${connector.id}.${step.id}.body`) }}
               </p>
               <!-- Same reason as in the form below: without PUBLIC_BASE_URL there is no URI to copy. -->
               <p
                 v-if="step.copy === 'redirectUri' && !connector.redirectUri"
-                class="mt-1.5 text-xs text-destructive"
+                class="mt-2 text-xs text-destructive"
                 data-testid="setup-redirect-uri-missing"
               >
                 {{ $t('connectors.form.redirectUriMissing') }}
               </p>
-              <div v-if="step.url || stepCopyLabel(connector, step)" class="mt-1.5 flex flex-wrap items-center gap-2">
+              <div v-if="step.url || stepCopyLabel(connector, step)" class="mt-2 flex flex-wrap items-center gap-2">
                 <a
                   v-if="step.url"
                   :href="step.url"
                   target="_blank"
                   rel="noopener noreferrer"
-                  class="inline-flex min-h-11 items-center gap-1.5 rounded-md border border-input bg-background px-3 text-xs font-medium text-foreground transition-colors hover:bg-accent hover:text-accent-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                  class="inline-flex min-h-11 items-center gap-2 rounded-md border border-input bg-background px-3 text-xs font-medium text-foreground transition-colors hover:bg-accent hover:text-accent-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
                 >
                   {{ $t('connectors.setup.open') }}
                   <AppIcon name="externalLink" class="h-3.5 w-3.5" />
@@ -175,7 +175,7 @@
 
         <!-- Client configuration -->
         <form class="mt-4 space-y-3" @submit.prevent="submitClient(connector)">
-          <div class="space-y-1.5">
+          <div class="space-y-2">
             <Label :for="`client-id-${connector.id}`">{{ $t('connectors.form.clientId') }}</Label>
             <Input
               :id="`client-id-${connector.id}`"
@@ -185,7 +185,7 @@
               :placeholder="$t('connectors.form.clientIdPlaceholder')"
             />
           </div>
-          <div class="space-y-1.5">
+          <div class="space-y-2">
             <Label :for="`client-secret-${connector.id}`">{{ $t('connectors.form.clientSecret') }}</Label>
             <Input
               :id="`client-secret-${connector.id}`"
@@ -201,14 +201,14 @@
             </p>
           </div>
 
-          <div class="space-y-1.5">
+          <div class="space-y-2">
             <Label :for="`redirect-uri-${connector.id}`">{{ $t('connectors.form.redirectUri') }}</Label>
             <!--
               Without PUBLIC_BASE_URL the server refuses to start a flow
               (error public_base_url_missing). Showing an empty or guessed URI
               here would send the operator to register a wrong value.
             -->
-            <p v-if="!connector.redirectUri" class="text-xs text-destructive" data-testid="redirect-uri-missing">
+            <p v-if="!connector.redirectUri" class="measure text-help text-destructive" data-testid="redirect-uri-missing">
               {{ $t('connectors.form.redirectUriMissing') }}
             </p>
             <div v-else class="flex flex-wrap items-center gap-2">
@@ -223,7 +223,7 @@
                 {{ copiedKey === `${connector.id}:form` ? $t('common.copied') : $t('common.copy') }}
               </Button>
             </div>
-            <p v-if="connector.redirectUri" class="text-xs text-muted-foreground">{{ $t('connectors.form.redirectUriHelp') }}</p>
+            <p v-if="connector.redirectUri" class="measure text-help text-muted-foreground">{{ $t('connectors.form.redirectUriHelp') }}</p>
           </div>
 
           <div class="flex flex-wrap gap-2 pt-1">

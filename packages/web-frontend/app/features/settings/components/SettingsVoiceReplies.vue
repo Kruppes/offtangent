@@ -19,7 +19,7 @@ onBeforeUnmount(dispose)
 <template>
   <div class="flex flex-col gap-2" data-testid="settings-voice-replies">
     <div v-if="state === 'loading'" class="rounded-lg border border-border px-4 py-3" aria-busy="true">
-      <Skeleton class="mb-1.5 h-4 w-32" />
+      <Skeleton class="mb-2 h-4 w-32" />
       <Skeleton class="h-3 w-64 max-w-full" />
     </div>
     <div v-else-if="state === 'error'" role="alert" class="flex flex-wrap items-center justify-between gap-2 rounded-lg border border-destructive/40 px-4 py-3">
@@ -30,9 +30,9 @@ onBeforeUnmount(dispose)
       </Button>
     </div>
     <div v-else class="flex min-h-11 items-center justify-between rounded-lg border border-border px-4 py-3">
-      <div class="flex flex-col gap-0.5 pr-4">
+      <div class="flex flex-col gap-1 pr-4">
         <Label for="voice-replies-enabled" class="cursor-pointer">{{ $t('settings.voiceReplies.label') }}</Label>
-        <p id="voice-replies-hint" class="text-xs text-muted-foreground">{{ $t('settings.voiceReplies.hint') }}</p>
+        <p id="voice-replies-hint" class="measure text-help text-muted-foreground">{{ $t('settings.voiceReplies.hint') }}</p>
       </div>
       <Switch
         id="voice-replies-enabled"

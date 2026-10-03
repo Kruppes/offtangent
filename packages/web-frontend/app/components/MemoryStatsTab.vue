@@ -94,7 +94,7 @@
                   </TableCell>
                 </TableRow>
                 <TableRow v-if="expandedIds.has(search.id)" class="hover:bg-transparent">
-                  <TableCell colspan="4" class="bg-muted/40 px-6 py-3">
+                  <TableCell colspan="4" class="bg-card px-6 py-3">
                     <ul class="flex flex-col gap-2">
                       <li v-for="(fact, index) in search.facts" :key="index" class="text-sm">
                         <span class="text-foreground">{{ fact.content }}</span>

@@ -57,7 +57,7 @@ onMounted(() => { teleportReady.value = true })
       <div class="flex min-w-0 items-center gap-3">
         <div v-if="title || subtitle" class="min-w-0">
           <h1 v-if="title" class="text-2xl font-bold tracking-tight text-foreground">{{ title }}</h1>
-          <p v-if="subtitle" class="mt-1 text-sm text-muted-foreground">{{ subtitle }}</p>
+          <p v-if="subtitle" class="measure mt-1 text-sm text-muted-foreground">{{ subtitle }}</p>
         </div>
         <!-- Free-form left-side content, desktop-only (never teleported). -->
         <slot />

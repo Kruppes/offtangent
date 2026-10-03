@@ -44,7 +44,7 @@
 
       <!-- Empty state -->
       <div v-else-if="users.length === 0" class="flex flex-1 flex-col items-center justify-center gap-3 py-20 text-center text-muted-foreground">
-        <AppIcon name="users" size="xl" class="h-10 w-10 opacity-40" />
+        <AppIcon name="users" size="xl" class="h-10 w-10" />
         <p class="text-sm">{{ $t('users.empty') }}</p>
       </div>
 
@@ -80,7 +80,7 @@
                     >
                     <span
                       :class="[
-                        'flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-primary/10 text-sm font-bold text-primary',
+                        'flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-primary-subtle text-sm font-bold text-primary',
                         entry.telegramId ? 'hidden' : '',
                       ]"
                     >
@@ -89,7 +89,7 @@
                     <div class="min-w-0">
                       <div class="flex items-center gap-2">
                         <span class="font-semibold text-foreground">{{ entry.username }}</span>
-                        <Badge v-if="entry.id === currentUserId" variant="secondary" class="px-1.5 py-0 text-2xs">
+                        <Badge v-if="entry.id === currentUserId" variant="secondary" class="px-2 py-0 text-2xs">
                           {{ $t('users.you') }}
                         </Badge>
                       </div>

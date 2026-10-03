@@ -57,7 +57,7 @@ function findAll(node: Node, predicate: (n: Node) => boolean): Node[] {
   return hits
 }
 
-const isBubble = (n: Node) => n.type === 1 && staticClassOf(n).includes('rounded-2xl px-4 py-2.5')
+const isBubble = (n: Node) => n.type === 1 && staticClassOf(n).includes('rounded-2xl px-4 py-2')
 const isCard = (n: Node) => n.type === 1 && n.tag === 'ChatInteractionBlock'
 
 describe('ChatView: the interaction card next to the bubble', () => {

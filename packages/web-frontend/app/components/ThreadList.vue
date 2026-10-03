@@ -60,7 +60,7 @@ const emit = defineEmits<{
 
   <!-- Empty state -->
   <div v-else-if="groups.length === 0" class="flex flex-col items-center justify-center gap-4 px-4 py-14 text-center">
-    <AppIcon name="inbox" class="h-10 w-10 text-muted-foreground/40" />
+    <AppIcon name="inbox" class="h-10 w-10 text-muted-foreground" />
     <div class="max-w-sm space-y-1">
       <p class="text-sm font-semibold text-foreground">{{ $t('threads.emptyTitle') }}</p>
       <p class="text-sm text-muted-foreground">{{ $t('threads.emptyDescription') }}</p>
@@ -74,7 +74,7 @@ const emit = defineEmits<{
   <!-- Rows -->
   <div v-else class="flex flex-col gap-5">
     <section v-for="group in groups" :key="group.key" class="flex flex-col gap-2">
-      <h2 class="px-1 text-2xs font-semibold uppercase tracking-wider text-muted-foreground">
+      <h2 class="px-1 text-2xs font-semibold uppercase tracking-label text-muted-foreground">
         {{ group.key === 'pinned' ? $t('threads.groupPinned') : $t('threads.groupRecent') }}
       </h2>
       <ThreadRow

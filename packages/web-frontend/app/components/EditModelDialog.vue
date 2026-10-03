@@ -10,13 +10,13 @@
 
       <div v-if="provider && modelId" class="flex flex-col gap-4">
         <!-- Model identity -->
-        <div class="flex flex-col gap-0.5">
+        <div class="flex flex-col gap-1">
           <span class="text-sm font-medium text-foreground">{{ provider.name }}</span>
           <span class="font-mono text-xs text-muted-foreground">{{ modelId }}</span>
         </div>
 
         <!-- Description -->
-        <div class="flex flex-col gap-1.5">
+        <div class="flex flex-col gap-2">
           <Label for="model-description">{{ $t('providers.editModelDescriptionLabel') }}</Label>
           <textarea
             id="model-description"
@@ -109,7 +109,7 @@
         <Button :disabled="!canSave || saving" @click="handleSave">
           <span
             v-if="saving"
-            class="mr-1.5 h-3.5 w-3.5 animate-spin rounded-full border-2 border-primary-foreground/30 border-t-primary-foreground"
+            class="mr-2 h-3.5 w-3.5 animate-spin rounded-full border-2 border-transparent border-t-current"
           />
           {{ $t('providers.editModelSave') }}
         </Button>

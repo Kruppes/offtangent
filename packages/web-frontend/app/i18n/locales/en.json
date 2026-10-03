@@ -1081,6 +1081,24 @@
       "saved": "Voice replies saved.",
       "saveFailed": "Voice replies could not be saved.",
       "loadFailed": "Voice replies could not be loaded."
+    },
+    "speechCache": {
+      "title": "Read-aloud cache",
+      "hint": "Finished read-aloud summaries and audio stay on the server so reading again starts at once. Emptying is safe: entries are rebuilt on the next read-aloud.",
+      "loadFailed": "Could not load the cache figures.",
+      "off": "The read-aloud cache is switched off (SPEECH_CACHE_MAX_MB=0).",
+      "entries": "Entries",
+      "size": "Size",
+      "hits": "Hits",
+      "misses": "Built new",
+      "sinceStart": "Since server start: {rate} % hit rate.",
+      "sinceStartEmpty": "Nothing read aloud since server start.",
+      "clear": "Empty cache",
+      "empty": "The cache is empty.",
+      "cleared": "Cache emptied: {count} entry ({size}) removed. | Cache emptied: {count} entries ({size}) removed.",
+      "clearFailed": "Emptying failed. Please try again.",
+      "confirmTitle": "Empty the read-aloud cache?",
+      "confirmText": "{count} entry ({size}) will be deleted. The next read-aloud takes a little longer again. | {count} entries ({size}) will be deleted. The next read-aloud takes a little longer again."
     }
   },
   "users": {
@@ -1400,7 +1418,20 @@
         "tooLong": "The answer is too long (8000 characters at most)."
       }
     },
-    "actionsColumn": "Actions"
+    "actionsColumn": "Actions",
+    "ack": {
+      "dismiss": "Acknowledge",
+      "dismissOne": "Acknowledge and hide {name}",
+      "dismissAll": "Hide all finished ({count})",
+      "dismissed": "{count} entry hidden | {count} entries hidden",
+      "undo": "Undo",
+      "dismissError": "Hiding failed. Please try again.",
+      "showHidden": "Show hidden ({count})",
+      "hideHidden": "Collapse hidden",
+      "restore": "Show again",
+      "restoreOne": "Show {name} again",
+      "allHidden": "Every task on this page is acknowledged."
+    }
   },
   "email": {
     "title": "Email",
@@ -1958,6 +1989,7 @@
       "link": "Link strands"
     },
     "routingWait": "Sending capture and waiting for routing. The server returns both together; live routing progress is unavailable.",
+    "routingPending": "Saved. Routing follows once the agent is ready; until then the thought waits in Unsorted.",
     "refreshing": "Routing result received. Refreshing lists…",
     "reviewRequired": "Review this routing decision",
     "confidenceLabel": "Routing confidence",

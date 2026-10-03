@@ -26,7 +26,7 @@ const shownLabel = computed(() => t(`settings.appearance.modes.${resolvedMode.va
       <h2 class="text-lg font-semibold tracking-tight text-foreground">
         {{ $t('settings.sections.appearance') }}
       </h2>
-      <p class="mt-1 text-sm text-muted-foreground">
+      <p class="measure mt-1 text-sm text-muted-foreground">
         {{ $t('settings.sections.appearanceDescription') }}
       </p>
     </div>
@@ -39,7 +39,7 @@ const shownLabel = computed(() => t(`settings.appearance.modes.${resolvedMode.va
           :key="option.value"
           :class="[
             'flex min-h-11 cursor-pointer items-center gap-2 rounded-lg border px-3 py-2 text-sm transition-colors has-[:focus-visible]:ring-2 has-[:focus-visible]:ring-ring',
-            current === option.value ? 'border-primary bg-accent font-medium text-accent-foreground' : 'border-border text-foreground hover:bg-accent/50',
+            current === option.value ? 'border-primary bg-accent font-medium text-accent-foreground' : 'border-border text-foreground hover:bg-accent',
           ]"
         >
           <input
@@ -55,8 +55,8 @@ const shownLabel = computed(() => t(`settings.appearance.modes.${resolvedMode.va
           <span>{{ $t(`settings.appearance.modes.${option.value}`) }}</span>
         </label>
       </div>
-      <p class="text-xs text-muted-foreground">{{ $t('settings.appearance.themeHint') }}</p>
-      <p class="text-xs text-muted-foreground" aria-live="polite">{{ $t('settings.appearance.current', { mode: shownLabel }) }}</p>
+      <p class="measure text-help text-muted-foreground">{{ $t('settings.appearance.themeHint') }}</p>
+      <p class="measure text-help text-muted-foreground" aria-live="polite">{{ $t('settings.appearance.current', { mode: shownLabel }) }}</p>
     </fieldset>
   </div>
 </template>

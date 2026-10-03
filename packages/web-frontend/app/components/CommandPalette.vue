@@ -242,7 +242,7 @@ function retry() {
             @keydown="onKeydown"
           >
           <button type="button" class="inline-flex h-11 shrink-0 items-center rounded-md px-2 text-xs hover:bg-accent focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring" :aria-label="t('common.close')" @click="close">
-            <kbd class="rounded-md border border-border bg-muted px-1.5 font-mono text-xs">Esc</kbd>
+            <kbd class="rounded-md border border-border bg-muted px-2 font-mono text-xs">Esc</kbd>
           </button>
         </div>
 
@@ -262,7 +262,7 @@ function retry() {
               @mousemove="cursor = index"
             >
               <AppIcon :name="entry.icon" size="sm" class="shrink-0" :class="index === cursor ? '' : 'text-muted-foreground'" aria-hidden="true" />
-              <span v-if="entry.parts" class="min-w-0 flex-1 truncate" data-message-snippet><template v-for="(part, pi) in entry.parts" :key="pi"><mark v-if="part.match" class="rounded-sm bg-primary/25 px-0.5 text-foreground">{{ part.text }}</mark><template v-else>{{ part.text }}</template></template></span>
+              <span v-if="entry.parts" class="min-w-0 flex-1 truncate" data-message-snippet><template v-for="(part, pi) in entry.parts" :key="pi"><mark v-if="part.match" class="rounded-sm bg-primary-subtle-hover px-1 text-foreground">{{ part.text }}</mark><template v-else>{{ part.text }}</template></template></span>
               <span v-else class="min-w-0 flex-1 truncate">{{ entry.label }}</span>
               <span v-if="entry.hint" class="shrink-0 text-xs" :class="[index === cursor ? '' : 'text-muted-foreground', entry.parts ? 'max-w-[40%] truncate' : '']">{{ entry.hint }}</span>
             </div>
@@ -293,9 +293,9 @@ function retry() {
         </div>
 
         <div class="hidden shrink-0 gap-4 border-t border-border px-4 py-2 text-xs text-muted-foreground sm:flex" aria-hidden="true">
-          <span><kbd class="rounded-md border border-border bg-muted px-1.5 font-mono">↑</kbd> <kbd class="rounded-md border border-border bg-muted px-1.5 font-mono">↓</kbd> {{ t('palette.footMove') }}</span>
-          <span><kbd class="rounded-md border border-border bg-muted px-1.5 font-mono">Enter</kbd> {{ t('palette.footRun') }}</span>
-          <span><kbd class="rounded-md border border-border bg-muted px-1.5 font-mono">Esc</kbd> {{ t('palette.footClose') }}</span>
+          <span><kbd class="rounded-md border border-border bg-muted px-2 font-mono">↑</kbd> <kbd class="rounded-md border border-border bg-muted px-2 font-mono">↓</kbd> {{ t('palette.footMove') }}</span>
+          <span><kbd class="rounded-md border border-border bg-muted px-2 font-mono">Enter</kbd> {{ t('palette.footRun') }}</span>
+          <span><kbd class="rounded-md border border-border bg-muted px-2 font-mono">Esc</kbd> {{ t('palette.footClose') }}</span>
         </div>
         <p class="sr-only" aria-live="polite">{{ strandState === 'loading' ? t('palette.loading') : t('palette.count', { count: list.length }) }}</p>
       </DialogContent>

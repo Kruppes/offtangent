@@ -32,11 +32,11 @@ onMounted(load)
             <NuxtLink :to="`/boards/${encodeURIComponent(board.key)}`"
               class="flex min-h-[44px] items-start gap-3 rounded-lg p-4 hover:bg-accent focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring">
               <span v-if="board.icon" class="text-2xl leading-none" aria-hidden="true">{{ board.icon }}</span>
-              <AppIcon v-else name="compass" class="mt-0.5 shrink-0" />
+              <AppIcon v-else name="compass" class="mt-1 shrink-0" />
               <span class="min-w-0 flex-1">
                 <span class="flex flex-wrap items-center gap-2">
                   <h2 class="font-medium">{{ board.title }}</h2>
-                  <span class="rounded-full bg-muted px-2 py-0.5 text-2xs text-muted-foreground">{{ board.kind }}</span>
+                  <span class="rounded-full bg-muted px-2 py-1 text-2xs text-muted-foreground">{{ board.kind }}</span>
                 </span>
                 <span v-if="board.summary" class="mt-1 line-clamp-1 block text-sm text-muted-foreground">{{ plainSummary(board.summary) }}</span>
                 <span class="mt-1 block text-xs text-muted-foreground">

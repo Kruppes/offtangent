@@ -48,7 +48,7 @@ async function loadPersonas() {
 onMounted(() => { void load(); void loadPersonas() })
 const chipClass = (selected: boolean) => [
   'inline-flex min-h-[44px] max-w-full items-center gap-2 rounded-full border px-3 text-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring',
-  selected ? 'border-primary bg-primary/10 font-medium text-primary' : 'border-border hover:bg-accent',
+  selected ? 'border-primary bg-primary-subtle font-medium text-primary' : 'border-border hover:bg-accent',
 ]
 </script>
 
@@ -73,7 +73,7 @@ const chipClass = (selected: boolean) => [
         <div v-if="personaChips.length" role="group" :aria-label="$t('feed.personaFilter')" class="flex flex-wrap gap-2" data-testid="feed-personas">
           <button type="button" :class="chipClass(persona === null)" :aria-pressed="persona === null ? 'true' : 'false'" @click="persona = null">{{ $t('feed.allPersonas') }}</button>
           <button v-for="key in personaChips" :key="key || 'default'" type="button" :class="chipClass(persona === key)" :aria-pressed="persona === key ? 'true' : 'false'" @click="persona = persona === key ? null : key">
-            <span class="grid h-5 w-5 shrink-0 place-items-center rounded-full bg-secondary text-[10px] font-semibold text-secondary-foreground" aria-hidden="true">{{ personaLabel(key).slice(0, 1).toUpperCase() }}</span>
+            <span class="grid h-5 w-5 shrink-0 place-items-center rounded-full bg-secondary text-2xs font-semibold text-secondary-foreground" aria-hidden="true">{{ personaLabel(key).slice(0, 1).toUpperCase() }}</span>
             <span class="truncate">{{ personaLabel(key) }}</span>
           </button>
         </div>

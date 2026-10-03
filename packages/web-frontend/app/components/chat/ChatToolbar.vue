@@ -45,7 +45,7 @@
                and stays flush right; rows are 44 px touch targets below md. -->
           <PopoverContent data-testid="display-filters" :collision-padding="8" class="w-max min-w-64 max-w-[min(24rem,calc(100vw-1rem))]">
             <div class="flex flex-col gap-1 md:gap-2">
-              <p class="text-xs font-semibold uppercase tracking-wider text-muted-foreground [overflow-wrap:anywhere]">{{ $t('chat.displayFilters') }}</p>
+              <p class="text-xs font-semibold uppercase tracking-label text-muted-foreground [overflow-wrap:anywhere]">{{ $t('chat.displayFilters') }}</p>
               <div data-filter-row class="flex min-h-11 items-center justify-between gap-3 md:min-h-8">
                 <Label class="min-w-0 flex-1 cursor-pointer self-stretch py-1 text-sm leading-5 [overflow-wrap:anywhere] flex items-center" for="filter-thinking">{{ $t('chat.filterThinking') }}</Label>
                 <Switch id="filter-thinking" v-model:checked="showThinking" class="shrink-0" />

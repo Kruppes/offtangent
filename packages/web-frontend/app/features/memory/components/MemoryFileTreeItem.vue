@@ -22,7 +22,7 @@ const isOpen = computed(() => props.forceOpen || open.value)
     <template v-if="node.type === 'dir'">
       <button
         type="button"
-        class="flex w-full items-center gap-1.5 py-1.5 pr-2 text-left text-sm text-foreground/80 transition-colors hover:bg-accent hover:text-accent-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring max-md:min-h-11"
+        class="flex w-full items-center gap-2 py-2 pr-2 text-left text-sm text-foreground transition-colors hover:bg-accent hover:text-accent-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring max-md:min-h-11"
         :style="{ paddingLeft: `${10 + depth * 14}px` }"
         @click="open = !open"
       >
@@ -46,8 +46,8 @@ const isOpen = computed(() => props.forceOpen || open.value)
     <button
       v-else
       type="button"
-      class="flex w-full items-center gap-1.5 py-1.5 pr-2 text-left text-sm transition-colors hover:bg-accent hover:text-accent-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring max-md:min-h-11"
-      :class="selectedPath === node.path ? 'bg-primary/10 font-medium text-primary' : 'text-foreground/80'"
+      class="flex w-full items-center gap-2 py-2 pr-2 text-left text-sm transition-colors hover:bg-accent hover:text-accent-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring max-md:min-h-11"
+      :class="selectedPath === node.path ? 'bg-primary-subtle font-medium text-primary' : 'text-foreground'"
       :style="{ paddingLeft: `${10 + depth * 14 + 18}px` }"
       @click="emit('select', node.path)"
     >

@@ -39,7 +39,7 @@
       </Alert>
 
       <!-- Tabs -->
-      <Tabs v-model="activeTab" class="flex flex-1 flex-col overflow-hidden min-h-0">
+      <Tabs v-model="activeTab" class="flex flex-1 flex-col overflow-auto min-h-0">
         <div class="mb-4 flex shrink-0 flex-wrap items-center gap-3">
           <TabsList class="self-start">
             <TabsTrigger value="installed" @click="switchTab('installed')">{{ $t('skills.installedTab') }}</TabsTrigger>
@@ -49,17 +49,17 @@
         </div>
 
         <!-- Installed Skills tab -->
-        <TabsContent value="installed" class="flex flex-1 flex-col overflow-hidden min-h-0 mt-0">
+        <TabsContent value="installed" class="flex flex-1 flex-col overflow-auto min-h-0 mt-0">
           <div v-if="loading" class="flex flex-1 items-center justify-center py-20 text-sm text-muted-foreground">
             {{ $t('skills.loading') }}
           </div>
 
           <!-- Empty state -->
-          <div v-else-if="skills.length === 0" class="flex flex-1 flex-col items-center justify-center gap-4 py-20 text-center text-muted-foreground">
-            <AppIcon name="puzzle" size="xl" class="h-12 w-12 opacity-40" />
+          <div v-else-if="skills.length === 0" class="flex flex-1 flex-col items-start justify-center gap-4 py-20 text-left text-muted-foreground">
+            <AppIcon name="puzzle" size="xl" class="h-12 w-12" />
             <div>
               <p class="text-sm font-medium text-foreground">{{ $t('skills.emptyTitle') }}</p>
-              <p class="mt-1 text-sm">{{ $t('skills.emptyDescription') }}</p>
+              <p class="measure mt-1 text-sm">{{ $t('skills.emptyDescription') }}</p>
             </div>
             <Button @click="showInstallDialog = true">
               <AppIcon name="add" class="mr-1 h-4 w-4" />
@@ -83,7 +83,7 @@
                   <div class="flex items-center gap-2">
                     <span class="font-semibold text-foreground truncate">{{ skill.id.startsWith('uploaded/') ? skill.id.slice('uploaded/'.length) : skill.id }}</span>
                   </div>
-                  <p v-if="skill.description" class="mt-0.5 text-sm text-muted-foreground line-clamp-1">
+                  <p v-if="skill.description" class="mt-1 text-sm text-muted-foreground line-clamp-1">
                     {{ skill.description }}
                   </p>
                 </div>
@@ -123,17 +123,17 @@
         </TabsContent>
 
         <!-- Agent Skills tab -->
-        <TabsContent value="agent" class="flex flex-1 flex-col overflow-hidden min-h-0 mt-0">
+        <TabsContent value="agent" class="flex flex-1 flex-col overflow-auto min-h-0 mt-0">
           <div v-if="agentLoading" class="flex flex-1 items-center justify-center py-20 text-sm text-muted-foreground">
             {{ $t('skills.agentLoading') }}
           </div>
 
           <!-- Empty state -->
-          <div v-else-if="agentSkills.length === 0" class="flex flex-1 flex-col items-center justify-center gap-4 py-20 text-center text-muted-foreground">
-            <AppIcon name="puzzle" size="xl" class="h-12 w-12 opacity-40" />
+          <div v-else-if="agentSkills.length === 0" class="flex flex-1 flex-col items-start justify-center gap-4 py-20 text-left text-muted-foreground">
+            <AppIcon name="puzzle" size="xl" class="h-12 w-12" />
             <div>
               <p class="text-sm font-medium text-foreground">{{ $t('skills.agentEmpty') }}</p>
-              <p class="mt-1 text-sm">{{ $t('skills.agentEmptyDescription') }}</p>
+              <p class="measure mt-1 text-sm">{{ $t('skills.agentEmptyDescription') }}</p>
             </div>
           </div>
 
@@ -146,12 +146,12 @@
                 </div>
                 <div class="min-w-0 flex-1">
                   <span class="font-semibold text-foreground truncate">{{ skill.name }}</span>
-                  <p v-if="skill.description" class="mt-0.5 text-sm text-muted-foreground line-clamp-1">
+                  <p v-if="skill.description" class="mt-1 text-sm text-muted-foreground line-clamp-1">
                     {{ skill.description }}
                   </p>
                   <div
                     v-if="hasMetadataBadges(skill)"
-                    class="mt-2 flex flex-wrap items-center gap-1.5"
+                    class="mt-2 flex flex-wrap items-center gap-2"
                   >
                     <!-- Missing env vars (warning) -->
                     <Badge
@@ -188,7 +188,7 @@
         </TabsContent>
 
         <!-- Built-in Tools tab -->
-        <TabsContent value="builtin" class="flex flex-1 flex-col overflow-hidden min-h-0 mt-0">
+        <TabsContent value="builtin" class="flex flex-1 flex-col overflow-auto min-h-0 mt-0">
           <div v-if="builtinLoading" class="flex flex-1 items-center justify-center py-20 text-sm text-muted-foreground">
             {{ $t('skills.loading') }}
           </div>
@@ -204,7 +204,7 @@
                     </div>
                     <div>
                       <CardTitle class="text-base">{{ $t('skills.webFetchTitle') }}</CardTitle>
-                      <CardDescription class="mt-0.5">{{ $t('skills.webFetchDescription') }}</CardDescription>
+                      <CardDescription class="mt-1">{{ $t('skills.webFetchDescription') }}</CardDescription>
                     </div>
                   </div>
                   <Switch
@@ -226,7 +226,7 @@
                     </div>
                     <div>
                       <CardTitle class="text-base">{{ $t('skills.webSearchTitle') }}</CardTitle>
-                      <CardDescription class="mt-0.5">{{ $t('skills.webSearchDescription') }}</CardDescription>
+                      <CardDescription class="mt-1">{{ $t('skills.webSearchDescription') }}</CardDescription>
                     </div>
                   </div>
                   <Switch
@@ -299,7 +299,7 @@
                 <Button size="sm" :disabled="savingBuiltin" @click="handleSaveWebSearch">
                   <span
                     v-if="savingBuiltin"
-                    class="mr-1 h-4 w-4 animate-spin rounded-full border-2 border-primary-foreground/30 border-t-primary-foreground"
+                    class="mr-1 h-4 w-4 animate-spin rounded-full border-2 border-transparent border-t-current"
                     aria-hidden="true"
                   />
                   {{ $t('common.save') }}
@@ -365,18 +365,18 @@
           <!-- Drop zone / file display -->
           <div
             v-if="!selectedFile"
-            class="flex cursor-pointer flex-col items-center justify-center gap-2 rounded-lg border-2 border-dashed border-muted-foreground/25 p-8 text-center transition-colors hover:border-muted-foreground/50 hover:bg-muted/50"
+            class="flex cursor-pointer flex-col items-center justify-center gap-2 rounded-lg border-2 border-dashed border-input p-8 text-center transition-colors hover:border-input hover:bg-muted"
             @click="triggerFileInput"
           >
-            <AppIcon name="upload" class="h-8 w-8 text-muted-foreground/50" />
+            <AppIcon name="upload" class="h-8 w-8 text-muted-foreground" />
             <div>
               <p class="text-sm font-medium text-foreground">{{ $t('skills.uploadDropzone') }}</p>
-              <p class="mt-0.5 text-xs text-muted-foreground">{{ $t('skills.uploadHint') }}</p>
+              <p class="mt-1 text-xs text-muted-foreground">{{ $t('skills.uploadHint') }}</p>
             </div>
           </div>
 
           <!-- Selected file -->
-          <div v-else class="flex items-center gap-3 rounded-lg border bg-muted/50 p-3">
+          <div v-else class="flex items-center gap-3 rounded-lg border bg-muted p-3">
             <AppIcon name="file" class="h-5 w-5 shrink-0 text-muted-foreground" />
             <div class="min-w-0 flex-1">
               <p class="truncate text-sm font-medium">{{ selectedFile.name }}</p>
@@ -410,7 +410,7 @@
         >
           <span
             v-if="installing"
-            class="mr-1 h-4 w-4 animate-spin rounded-full border-2 border-primary-foreground/30 border-t-primary-foreground"
+            class="mr-1 h-4 w-4 animate-spin rounded-full border-2 border-transparent border-t-current"
             aria-hidden="true"
           />
           {{ installing ? $t('skills.installing') : $t('skills.install') }}
@@ -481,7 +481,7 @@
         <Button :disabled="savingSettings" @click="handleSaveSettings">
           <span
             v-if="savingSettings"
-            class="mr-1 h-4 w-4 animate-spin rounded-full border-2 border-primary-foreground/30 border-t-primary-foreground"
+            class="mr-1 h-4 w-4 animate-spin rounded-full border-2 border-transparent border-t-current"
             aria-hidden="true"
           />
           {{ $t('common.save') }}

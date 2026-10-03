@@ -2,7 +2,7 @@
   <div
     role="button"
     tabindex="0"
-    class="flex w-full cursor-pointer flex-col gap-2 rounded-lg border border-border bg-card px-4 py-3 text-left transition-colors hover:bg-muted/50"
+    class="flex w-full cursor-pointer flex-col gap-2 rounded-lg border border-border bg-card px-4 py-3 text-left transition-colors hover:bg-muted"
     @click="$emit('edit')"
     @keydown.enter.self="$emit('edit')"
   >
@@ -35,7 +35,7 @@
       </DropdownMenu>
     </div>
 
-    <div v-if="hasBadges" class="flex flex-wrap items-center gap-1.5">
+    <div v-if="hasBadges" class="flex flex-wrap items-center gap-2">
       <Badge v-if="cronjob.toolsOverride" variant="outline" class="text-xs">
         {{ $t('cronjobs.badges.customTools') }}
       </Badge>
@@ -56,17 +56,17 @@
       </Badge>
     </div>
 
-    <dl class="grid grid-cols-2 gap-x-4 gap-y-1.5 text-xs">
+    <dl class="grid grid-cols-2 gap-x-4 gap-y-2 text-xs">
       <div class="flex min-w-0 flex-col">
         <span class="text-foreground">{{ cronjob.scheduleHuman }}</span>
         <span class="font-mono text-muted-foreground">{{ cronjob.schedule }}</span>
       </div>
       <div class="min-w-0">
-        <dt class="text-2xs font-medium uppercase tracking-wide text-muted-foreground/70">
+        <dt class="text-2xs font-medium uppercase tracking-label text-muted-foreground">
           {{ $t('cronjobs.columns.lastRun') }}
         </dt>
-        <dd v-if="cronjob.lastRunAt" class="flex min-w-0 flex-col items-start gap-0.5">
-          <Badge :variant="cronjobLastRunVariant(cronjob.lastRunStatus)" class="px-1.5 py-0 text-2xs">
+        <dd v-if="cronjob.lastRunAt" class="flex min-w-0 flex-col items-start gap-1">
+          <Badge :variant="cronjobLastRunVariant(cronjob.lastRunStatus)" class="px-2 py-0 text-2xs">
             {{ cronjob.lastRunStatus ?? '—' }}
           </Badge>
           <span class="truncate text-muted-foreground">{{ formatTimestamp(cronjob.lastRunAt) }}</span>
@@ -77,7 +77,7 @@
 
     <div class="flex items-end justify-between gap-3 text-xs">
       <div v-if="cronjob.actionType === 'task'" class="min-w-0 flex-1">
-        <div class="text-2xs font-medium uppercase tracking-wide text-muted-foreground/70">
+        <div class="text-2xs font-medium uppercase tracking-label text-muted-foreground">
           {{ $t('cronjobs.columns.provider') }}
         </div>
         <div class="truncate text-foreground">{{ providerLabel }}</div>

@@ -67,13 +67,13 @@ async function send() {
     </p>
     <div v-if="task.resultSummary || task.errorMessage" class="space-y-1 rounded-lg border border-border bg-card p-3 [overflow-wrap:anywhere]" data-testid="task-result">
       <h3 class="text-sm font-semibold">{{ $t(task.errorMessage && !task.resultSummary ? 'tasks.detail.errorHeading' : 'tasks.detail.resultHeading') }}</h3>
-      <p v-if="task.resultSummary" class="max-w-[68ch] whitespace-pre-wrap text-sm">{{ task.resultSummary }}</p>
-      <p v-if="task.errorMessage" class="max-w-[68ch] whitespace-pre-wrap text-sm text-destructive">{{ task.errorMessage }}</p>
+      <p v-if="task.resultSummary" class="measure whitespace-pre-wrap text-sm">{{ task.resultSummary }}</p>
+      <p v-if="task.errorMessage" class="measure whitespace-pre-wrap text-sm text-destructive">{{ task.errorMessage }}</p>
     </div>
     <p v-if="error" role="alert" class="rounded-md border border-destructive p-2 text-sm">{{ $t(error) }}</p>
 
-    <form v-if="actions.canAnswer" class="space-y-2 rounded-lg border border-primary/40 p-3" data-testid="task-reply" @submit.prevent="send">
-      <p v-if="question" class="max-w-[68ch] whitespace-pre-wrap text-sm [overflow-wrap:anywhere]"><span class="font-medium">{{ $t('tasks.detail.reply.question') }}</span> {{ question }}</p>
+    <form v-if="actions.canAnswer" class="space-y-2 rounded-lg border border-primary p-3" data-testid="task-reply" @submit.prevent="send">
+      <p v-if="question" class="measure whitespace-pre-wrap text-sm [overflow-wrap:anywhere]"><span class="font-medium">{{ $t('tasks.detail.reply.question') }}</span> {{ question }}</p>
       <label for="task-reply-text" class="block text-sm font-medium">{{ $t('tasks.detail.reply.label') }}</label>
       <textarea id="task-reply-text" v-model="reply" rows="3" :maxlength="TASK_REPLY_MAX_LENGTH" :disabled="sending" :aria-invalid="replyError ? 'true' : undefined" :aria-describedby="replyError ? 'task-reply-error' : undefined"
         class="block w-full resize-y rounded-md border border-input bg-background p-2 text-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"

@@ -6,11 +6,11 @@
   >
     <template #header>
       <span class="font-medium">{{ msg.taskResultName ?? 'Background Task' }}</span>
-      <span v-if="msg.taskResultDuration" class="ml-1 text-2xs text-muted-foreground/60">({{ msg.taskResultDuration }}min)</span>
+      <span v-if="msg.taskResultDuration" class="ml-1 text-2xs text-muted-foreground">({{ msg.taskResultDuration }}min)</span>
     </template>
     <template #trailing>
       <span
-        class="rounded px-1.5 py-0.5 text-2xs font-medium"
+        class="rounded px-2 py-1 text-2xs font-medium"
         :class="msg.taskResultStatus === 'failed'
           ? 'bg-destructive/10 text-destructive'
           : msg.taskResultStatus === 'question'
@@ -26,12 +26,12 @@
            stays in tasks.result_summary and is fetched on demand. -->
       <template v-if="msg.taskResultTruncated && msg.taskResultTaskId">
         <p v-if="taskReportError.get(index)" class="mt-2 text-2xs text-destructive" role="alert">{{ $t('chat.taskResult.loadFailed') }}</p>
-        <p v-else-if="msg.taskResultFullLength" class="mt-2 text-2xs text-muted-foreground/70">
+        <p v-else-if="msg.taskResultFullLength" class="mt-2 text-2xs text-muted-foreground">
           {{ $t('chat.taskResult.truncated', { count: msg.taskResultFullLength }) }}
         </p>
         <button
           type="button"
-          class="mt-1 inline-flex min-h-[44px] items-center gap-1.5 rounded-md border border-border px-2.5 py-1.5 text-2xs font-medium text-foreground transition-colors hover:bg-muted focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary disabled:opacity-60"
+          class="mt-1 inline-flex min-h-[44px] items-center gap-2 rounded-md border border-border px-2 py-2 text-2xs font-medium text-foreground transition-colors hover:bg-muted focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary disabled:text-muted-foreground disabled:[&_svg]:text-border"
           :disabled="taskReportLoading.has(index)"
           :aria-expanded="taskReports.has(index)"
           @click="toggleTaskReport(msg, index)"

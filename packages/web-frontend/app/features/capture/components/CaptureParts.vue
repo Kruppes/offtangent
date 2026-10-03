@@ -37,11 +37,11 @@ function move(part: CapturePart) {
   <section class="space-y-2 rounded-lg border border-border p-3" data-testid="capture-parts" :aria-label="$t('home.parts.label', { count: parts.length })">
     <h4 class="text-sm font-semibold">{{ $t('home.parts.heading', { count: parts.length }) }}</h4>
     <ol class="space-y-2">
-      <li v-for="part in parts" :key="part.index" class="space-y-2 rounded-md bg-muted/50 p-3 [overflow-wrap:anywhere]" data-testid="capture-part">
+      <li v-for="part in parts" :key="part.index" class="space-y-2 rounded-md bg-muted p-3 [overflow-wrap:anywhere]" data-testid="capture-part">
         <div class="flex flex-wrap items-baseline gap-x-2 gap-y-1">
           <span class="text-xs font-medium text-muted-foreground">{{ $t('home.parts.number', { n: part.index + 1 }) }}</span>
           <span class="font-medium">{{ partLabel(part) }}</span>
-          <span class="rounded-full px-2 text-xs" :class="partState(part) === 'placed' ? 'bg-primary/10 text-primary' : 'bg-muted text-muted-foreground'">{{ $t(`home.parts.state.${partState(part)}`) }}</span>
+          <span class="rounded-full px-2 text-xs" :class="partState(part) === 'placed' ? 'bg-primary-subtle text-primary' : 'bg-muted text-muted-foreground'">{{ $t(`home.parts.state.${partState(part)}`) }}</span>
         </div>
         <p class="text-sm text-muted-foreground">
           {{ $t(part.decision.action === 'new_strand' ? 'home.parts.toNew' : 'home.parts.to') }}

@@ -2,8 +2,8 @@
   <div class="rounded-lg border border-border bg-card">
     <component
       :is="collapsible ? 'button' : 'div'"
-      class="flex w-full items-center gap-3 px-4 py-2.5 text-left text-sm"
-      :class="collapsible && 'transition-colors hover:bg-muted/50'"
+      class="flex w-full items-center gap-3 px-4 py-2 text-left text-sm"
+      :class="collapsible && 'transition-colors hover:bg-muted'"
       @click="collapsible && $emit('toggle')"
     >
       <AppIcon :name="icon" size="sm" class="shrink-0" :class="iconClass ?? 'text-muted-foreground'" />
@@ -11,7 +11,7 @@
       <span class="flex-1" />
       <span v-if="meta || timestamp" class="shrink-0 whitespace-nowrap text-xs text-muted-foreground tabular-nums">
         <template v-if="meta">{{ meta }}</template>
-        <span v-if="meta && timestamp" class="mx-1.5" aria-hidden="true">·</span>
+        <span v-if="meta && timestamp" class="mx-2" aria-hidden="true">·</span>
         <template v-if="timestamp">{{ timestamp }}</template>
       </span>
       <AppIcon
@@ -24,7 +24,7 @@
       <span v-else class="w-3.5 shrink-0" aria-hidden="true" />
     </component>
 
-    <div v-if="showBody" class="px-4 pb-3 sm:pl-10.5">
+    <div v-if="showBody" class="px-4 pb-3 sm:pl-10">
       <slot />
     </div>
   </div>

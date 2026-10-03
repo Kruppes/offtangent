@@ -26,15 +26,15 @@
       class="mb-1 text-xs font-semibold text-muted-foreground"
       data-speaker-label
     >{{ personaLabel }}</p>
-    <div v-if="!interactionCard(msg) || hasBubbleBody(msg)" class="min-w-0 max-w-full rounded-2xl px-4 py-2.5 text-sm leading-relaxed" :class="{
-      'rounded-br-sm border border-primary/[0.22] bg-primary/[0.12] text-foreground': msg.role === 'user' && msg.source !== 'telegram',
-      'rounded-br-sm border border-telegram/30 bg-telegram/10 text-foreground': msg.role === 'user' && msg.source === 'telegram',
+    <div v-if="!interactionCard(msg) || hasBubbleBody(msg)" class="min-w-0 max-w-full rounded-2xl px-4 py-2 text-sm leading-relaxed" :class="{
+      'rounded-br-sm bg-card text-foreground': msg.role === 'user' && msg.source !== 'telegram',
+      'rounded-br-sm bg-telegram-subtle text-foreground': msg.role === 'user' && msg.source === 'telegram',
       'rounded-bl-sm border border-border bg-muted text-foreground': msg.role === 'assistant' && !msg.telegramDelivered && !interactionCard(msg),
       // With a card below it the bubble drops its outline: one card,
       // one frame, no nested boxes of nearly the same colour.
       'bg-muted text-foreground': msg.role === 'assistant' && !msg.telegramDelivered && !!interactionCard(msg),
-      'rounded-bl-sm border border-telegram/30 bg-telegram/10 text-foreground': msg.role === 'assistant' && msg.telegramDelivered,
-      'rounded-lg border border-border bg-muted/50 text-muted-foreground text-xs': msg.role === 'system',
+      'rounded-bl-sm bg-telegram-subtle text-foreground': msg.role === 'assistant' && msg.telegramDelivered,
+      'rounded-lg border border-border bg-muted text-muted-foreground text-xs': msg.role === 'system',
     }">
       <p v-if="msg.role === 'assistant' || msg.role === 'user' || msg.role === 'system'" class="mb-1 text-xs font-semibold text-muted-foreground" data-speaker-label>
         {{ msg.role === 'assistant' ? personaLabel : msg.role === 'system' ? $t('w4Content.system') : (msg.senderName || user?.username || $t('w4Content.you')) }}
@@ -51,7 +51,7 @@
            another message. -->
       <div
         v-if="msg.role === 'user' && msg.replyContext"
-        class="mb-1.5 rounded-md border-l-2 border-primary/60 bg-background/60 px-2 py-1 text-xs text-muted-foreground"
+        class="mb-2 rounded-md border-l-2 border-primary bg-background px-2 py-1 text-xs text-muted-foreground"
       >
         <span class="whitespace-pre-wrap break-words">[Replying to: "{{ msg.replyContext }}"]</span>
       </div>
@@ -87,9 +87,9 @@
       <VoiceNoteBubble v-if="msg.role === 'assistant' && voiceNoteOf(msg)" :url="voiceNoteOf(msg)!.url" :seconds="voiceNoteOf(msg)!.seconds" kind="assistant" />
       <ChatAttachments v-if="msg.attachments?.length" :attachments="msg.attachments" :role="msg.role" />
       <ChatArtifactLinks v-if="msg.artifacts?.length" :artifacts="msg.artifacts" :attachments="msg.attachments" :fences="artifactFences(msg)" />
-      <div v-if="msg.streaming" class="mt-1.5 flex items-center gap-1"><span class="h-1.5 w-1.5 animate-pulse rounded-full bg-current opacity-60" /><span class="h-1.5 w-1.5 animate-pulse rounded-full bg-current opacity-60" /><span class="h-1.5 w-1.5 animate-pulse rounded-full bg-current opacity-60" /></div>
-      <div v-if="msg.timestamp && !msg.streaming" class="mt-1 flex items-center justify-end gap-1.5">
-        <span class="text-2xs leading-none text-muted-foreground">{{ formatTimeShort(msg.timestamp) }}</span>
+      <div v-if="msg.streaming" class="mt-2 flex items-center gap-1"><span class="h-1.5 w-1.5 animate-pulse rounded-full bg-current opacity-60" /><span class="h-1.5 w-1.5 animate-pulse rounded-full bg-current opacity-60" /><span class="h-1.5 w-1.5 animate-pulse rounded-full bg-current opacity-60" /></div>
+      <div v-if="msg.timestamp && !msg.streaming" class="flex items-center justify-end gap-2">
+        <span class="text-2xs text-muted-foreground">{{ formatTimeShort(msg.timestamp) }}</span>
       </div>
     </div>
     <ChatMessageActions v-if="msg.role === 'assistant' && !msg.streaming && msg.content.trim()" :markdown="msg.content">

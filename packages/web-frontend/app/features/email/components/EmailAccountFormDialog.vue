@@ -136,7 +136,7 @@
         <!-- Folder restriction -->
         <section class="space-y-3">
           <h3 class="text-sm font-semibold text-foreground">{{ $t('email.form.foldersSection') }}</h3>
-          <p class="text-xs text-muted-foreground">{{ $t('email.form.foldersHelp') }}</p>
+          <p class="measure text-help text-muted-foreground">{{ $t('email.form.foldersHelp') }}</p>
           <div class="space-y-2">
             <label class="flex items-center gap-2 text-sm">
               <input v-model="form.folderMode" type="radio" value="all" class="h-4 w-4">
@@ -168,7 +168,7 @@
                 <span class="truncate">{{ folder }}</span>
               </label>
             </div>
-            <p v-else-if="!connection.foldersLoading.value" class="text-xs text-muted-foreground">
+            <p v-else-if="!connection.foldersLoading.value" class="measure text-help text-muted-foreground">
               {{ $t('email.form.noFoldersLoaded') }}
             </p>
           </div>
@@ -184,7 +184,7 @@
           >
             <div class="min-w-0">
               <p class="text-sm">{{ $t(`email.form.${flag.key}`) }}</p>
-              <p class="text-xs text-muted-foreground">{{ $t(`email.form.${flag.key}Help`) }}</p>
+              <p class="measure text-help text-muted-foreground">{{ $t(`email.form.${flag.key}Help`) }}</p>
             </div>
             <Switch :checked="form[flag.key]" @update:checked="(val: boolean) => (form[flag.key] = val)" />
           </div>
@@ -193,7 +193,7 @@
         <!-- Allowlist -->
         <section class="space-y-3">
           <h3 class="text-sm font-semibold text-foreground">{{ $t('email.form.allowlistSection') }}</h3>
-          <p class="text-xs text-muted-foreground">{{ $t('email.form.allowlistHelp') }}</p>
+          <p class="measure text-help text-muted-foreground">{{ $t('email.form.allowlistHelp') }}</p>
           <div class="grid grid-cols-1 gap-3 sm:grid-cols-2">
             <div class="space-y-2">
               <Label for="email-allowlist-addresses">{{ $t('email.form.allowlistAddresses') }}</Label>
@@ -242,14 +242,14 @@
           >
             <div class="min-w-0">
               <p class="text-sm">{{ $t(`email.form.${flag.key}`) }}</p>
-              <p class="text-xs text-muted-foreground">{{ $t(`email.form.${flag.key}Help`) }}</p>
+              <p class="measure text-help text-muted-foreground">{{ $t(`email.form.${flag.key}Help`) }}</p>
             </div>
             <Switch :checked="form[flag.key]" @update:checked="(val: boolean) => (form[flag.key] = val)" />
           </div>
           <div class="space-y-2">
             <Label for="email-attachment-path">{{ $t('email.form.attachmentDownloadPath') }}</Label>
             <Input id="email-attachment-path" v-model="form.attachmentDownloadPath" placeholder="email-attachments" />
-            <p class="text-xs text-muted-foreground">{{ $t('email.form.attachmentDownloadPathHelp') }}</p>
+            <p class="measure text-help text-muted-foreground">{{ $t('email.form.attachmentDownloadPathHelp') }}</p>
           </div>
         </section>
 

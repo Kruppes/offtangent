@@ -91,23 +91,23 @@ const isSkillLoad = computed(() => {
     <template v-else-if="entry">
       <!-- Input (hidden if empty or skill load) -->
       <div v-if="showInput" class="mb-3">
-        <h4 class="mb-1.5 text-xs font-semibold uppercase tracking-wider text-muted-foreground">
+        <h4 class="mb-2 text-xs font-semibold uppercase tracking-label text-muted-foreground">
           {{ t('logs.input') }}
         </h4>
-        <div class="oa-scrollbar max-h-[200px] overflow-y-auto rounded-md border border-border bg-muted/50 p-3 text-xs leading-snug">
+        <div class="oa-scrollbar max-h-[200px] overflow-y-auto rounded-md border border-border bg-muted p-3 text-xs leading-snug">
           <ToolDataDisplay :data="parseLogData(entry.input)" />
         </div>
       </div>
 
       <!-- Output -->
       <div class="mb-3">
-        <h4 v-if="!showMemoryDiff" class="mb-1.5 text-xs font-semibold uppercase tracking-wider text-muted-foreground">
+        <h4 v-if="!showMemoryDiff" class="mb-2 text-xs font-semibold uppercase tracking-label text-muted-foreground">
           {{ t('logs.output') }}
         </h4>
         <!-- Memory diffs: edge-to-edge inside a single border container -->
         <div
           v-if="memoryEditsInfo || memoryFileDiff"
-          class="oa-scrollbar max-h-[420px] overflow-y-auto overflow-x-hidden rounded-md border border-border bg-muted/50 text-xs leading-snug"
+          class="oa-scrollbar max-h-[420px] overflow-y-auto overflow-x-hidden rounded-md border border-border bg-muted text-xs leading-snug"
         >
           <template v-if="memoryEditsInfo">
             <MemoryEditsDiff
@@ -126,7 +126,7 @@ const isSkillLoad = computed(() => {
         <!-- Standard output -->
         <div
           v-else
-          class="oa-scrollbar max-h-[300px] overflow-y-auto rounded-md border border-border bg-muted/50 p-3 text-xs leading-snug"
+          class="oa-scrollbar max-h-[300px] overflow-y-auto rounded-md border border-border bg-muted p-3 text-xs leading-snug"
         >
           <template v-if="isSkillLoad">
             <pre class="whitespace-pre-wrap break-all text-foreground">{{ extractSkillContent(entry.output) ?? '' }}</pre>

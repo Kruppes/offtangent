@@ -68,7 +68,7 @@
           v-else-if="visiblePersonas.length === 0 && !loading"
           class="flex flex-1 flex-col items-center justify-center gap-4 px-4 py-16 text-center"
         >
-          <AppIcon name="bot" size="xl" class="h-12 w-12 opacity-40" />
+          <AppIcon name="bot" size="xl" class="h-12 w-12" />
           <div class="max-w-md space-y-2">
             <h2 class="text-base font-semibold text-foreground">{{ $t('personas.emptyTitle') }}</h2>
             <p class="text-sm text-muted-foreground">{{ $t('personas.emptyBody') }}</p>
@@ -88,7 +88,7 @@
               v-for="persona in visiblePersonas"
               :key="persona.id"
               class="group flex flex-col rounded-xl border border-border bg-card p-4"
-              :class="persona.archived ? 'opacity-70' : ''"
+              :class="persona.archived ? 'text-muted-foreground' : ''"
             >
               <div class="flex items-start gap-3">
                 <span
@@ -143,7 +143,7 @@
                 {{ persona.role || $t('personas.noRole') }}
               </p>
 
-              <div class="mt-3 flex flex-wrap gap-1.5">
+              <div class="mt-3 flex flex-wrap gap-2">
                 <Badge v-if="persona.isDefault" variant="outline" class="text-xs">{{ $t('personas.defaultBadge') }}</Badge>
                 <Badge v-if="persona.archived" variant="outline" class="text-xs">{{ $t('personas.archivedBadge') }}</Badge>
                 <Badge v-if="persona.hasTelegramBinding" variant="success" class="text-xs">
@@ -178,7 +178,7 @@
           <Button class="min-h-11" :disabled="saving || editLoading" @click="handleSave">
             <span
               v-if="saving"
-              class="mr-1 h-4 w-4 animate-spin rounded-full border-2 border-primary-foreground/30 border-t-primary-foreground"
+              class="mr-1 h-4 w-4 animate-spin rounded-full border-2 border-transparent border-t-current"
               aria-hidden="true"
             />
             {{ $t('common.save') }}
@@ -389,7 +389,7 @@
             <Button type="submit" class="min-h-11" :disabled="creating || !createForm.id.trim()">
               <span
                 v-if="creating"
-                class="mr-1 h-4 w-4 animate-spin rounded-full border-2 border-primary-foreground/30 border-t-primary-foreground"
+                class="mr-1 h-4 w-4 animate-spin rounded-full border-2 border-transparent border-t-current"
                 aria-hidden="true"
               />
               {{ $t('personas.createNew') }}

@@ -3,7 +3,7 @@
        stretches over the whole card, the kill button sits above it. -->
   <div
     data-testid="task-list-card"
-    class="relative flex w-full flex-col gap-2 rounded-lg border border-border bg-card px-4 py-3 text-left transition-colors focus-within:ring-2 focus-within:ring-ring hover:bg-muted/50"
+    class="relative flex w-full flex-col gap-2 rounded-lg border border-border bg-card px-4 py-3 text-left transition-colors focus-within:ring-2 focus-within:ring-ring hover:bg-muted"
   >
     <div class="flex items-start gap-2">
       <button
@@ -18,12 +18,26 @@
         v-if="task.status === 'running'"
         variant="ghost"
         size="sm"
-        class="relative z-10 -my-1 -mr-2 h-7 w-7 shrink-0 p-0 text-destructive hover:bg-destructive/10 hover:text-destructive max-md:-my-2.5 max-md:h-11 max-md:w-11"
+        class="relative z-10 -my-1 -mr-2 h-7 w-7 shrink-0 p-0 text-destructive hover:bg-destructive/10 hover:text-destructive max-md:-my-2 max-md:h-11 max-md:w-11"
         :title="$t('tasks.killButton')"
         :aria-label="$t('tasks.killButton')"
         @click.stop="$emit('kill')"
       >
         <AppIcon name="kill" size="sm" />
+      </Button>
+      <Button
+        v-else-if="dismissable || restorable"
+        variant="ghost"
+        size="sm"
+        class="relative z-10 -my-1 -mr-2 h-7 w-7 shrink-0 p-0 text-muted-foreground hover:text-foreground max-md:-my-2 max-md:h-11 max-md:w-11"
+        :disabled="busy"
+        :title="restorable ? $t('tasks.ack.restore') : $t('tasks.ack.dismiss')"
+        :aria-label="restorable ? $t('tasks.ack.restoreOne', { name: task.name }) : $t('tasks.ack.dismissOne', { name: task.name })"
+        :data-testid="restorable ? 'tasks-ack-restore' : 'tasks-ack-one'"
+        :data-ack-id="task.id"
+        @click.stop="restorable ? $emit('restore') : $emit('dismiss')"
+      >
+        <AppIcon :name="restorable ? 'eye' : 'check'" size="sm" />
       </Button>
     </div>
 
@@ -34,9 +48,9 @@
       <span v-if="triggerModel" class="truncate" :title="routingTooltip ?? triggerModel">{{ triggerModel }}</span>
     </div>
 
-    <dl class="grid grid-cols-2 gap-x-4 gap-y-1.5 text-xs">
+    <dl class="grid grid-cols-2 gap-x-4 gap-y-2 text-xs">
       <div v-for="cell in statCells" :key="cell.label" class="min-w-0">
-        <dt class="text-2xs font-medium uppercase tracking-wide text-muted-foreground">
+        <dt class="text-2xs font-medium uppercase tracking-label text-muted-foreground">
           {{ cell.label }}
         </dt>
         <dd class="truncate tabular-nums text-foreground">
@@ -62,11 +76,18 @@ import {
 
 const props = defineProps<{
   task: Task
+  /** W7: finished task of the viewer's strand, not yet acknowledged. */
+  dismissable?: boolean
+  /** W7: acknowledged task, shown in the opened hidden group. */
+  restorable?: boolean
+  busy?: boolean
 }>()
 
 defineEmits<{
   open: []
   kill: []
+  dismiss: []
+  restore: []
 }>()
 
 const { t } = useI18n()

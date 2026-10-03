@@ -20,11 +20,11 @@ const delegatedProps = computed(() => {
   <Label
     v-bind="delegatedProps"
     :class="cn(
-      'text-sm font-medium leading-none peer-disabled:cursor-not-allowed peer-disabled:opacity-70',
+      'text-sm font-medium leading-tight peer-disabled:cursor-not-allowed peer-disabled:text-muted-foreground',
       props.class
     )"
   >
     <slot />
-    <span v-if="required" class="ml-0.5 text-destructive" aria-hidden="true">*</span>
+    <span v-if="required" class="ml-1 text-destructive" aria-hidden="true">*</span>
   </Label>
 </template>

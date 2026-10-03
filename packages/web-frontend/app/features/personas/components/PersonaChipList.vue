@@ -31,7 +31,7 @@
       <li
         v-for="(entry, index) in modelValue"
         :key="`${entry}-${index}`"
-        class="flex items-center gap-1 rounded-full border border-border bg-muted/50 py-1 pl-3 pr-1 text-sm text-foreground"
+        class="flex items-center gap-1 rounded-full border border-border bg-muted py-1 pl-3 pr-1 text-sm text-foreground"
       >
         <span class="max-w-[14rem] truncate">{{ entry }}</span>
         <button

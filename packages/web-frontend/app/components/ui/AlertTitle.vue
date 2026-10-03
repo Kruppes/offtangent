@@ -9,7 +9,7 @@ const props = defineProps<{
 
 <template>
   <h5
-    :class="cn('mb-1 font-medium leading-none tracking-tight', props.class)"
+    :class="cn('mb-1 font-medium leading-tight tracking-tight', props.class)"
     v-bind="$attrs"
   >
     <slot />

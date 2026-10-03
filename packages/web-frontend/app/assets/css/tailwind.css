@@ -14,10 +14,18 @@
   --font-sans: Roboto, "Segoe UI Variable Text", "Segoe UI", system-ui, -apple-system, BlinkMacSystemFont, "Helvetica Neue", Arial, sans-serif;
   --font-mono: "Roboto Mono", ui-monospace, "SF Mono", "Cascadia Mono", Menlo, Consolas, "DejaVu Sans Mono", monospace;
 
-  /* Type scale: 11 · 12 · 14 · 16 · 18 · 20 · 24, nothing in between.
-     `text-2xs` is the label size (times, counters, badges). */
-  --text-2xs: 11px;
+  /* Type scale (design review 03.10.): three text steps 12 · 14 · 16 plus the
+     title steps 18 · 20 · 24, nothing in between. `text-2xs` is the label
+     step (times, counters, badges) and is 12 px on every width: the 11 px
+     desktop special case is gone. Reading text is never 12 px. */
+  --text-2xs: 12px;
   --text-2xs--line-height: 16px;
+
+  /* Reading measure, see `@utility measure` below. */
+  --measure: 30em;
+
+  /* Upper-case labels get a little air: one tracking value for all of them. */
+  --tracking-label: 0.05em;
 
   /* Two cuts only: regular (400) and one emphasis cut (600). Every emphasis
      utility resolves to the same cut, so `font-medium`, `font-semibold` and
@@ -61,6 +69,12 @@
   --color-primary-foreground: hsl(var(--primary-foreground));
   --color-primary-container: hsl(var(--primary-container));
   --color-on-primary-container: hsl(var(--on-primary-container));
+  /* W10: opaque primary tints (no alpha: an alpha tint turns into a different
+     colour on every surface). Built in OKLCH at N1/N2 lightness with the hue of
+     the primary colour; values per theme in the theme blocks below. */
+  --color-primary-subtle: hsl(var(--primary-subtle));
+  --color-primary-subtle-hover: hsl(var(--primary-subtle-hover));
+  --color-primary-hover: hsl(var(--primary-hover));
 
   --color-secondary: hsl(var(--secondary));
   --color-secondary-foreground: hsl(var(--secondary-foreground));
@@ -94,6 +108,7 @@
 
   /* Messenger source marker (brand hue, darker in light for >= 4.5:1). */
   --color-telegram: hsl(var(--telegram));
+  --color-telegram-subtle: hsl(var(--telegram-subtle));
 
   /* Board values only: rising / falling figures. */
   --color-gain: hsl(var(--gain));
@@ -186,6 +201,9 @@
 .dark {
   color-scheme: dark;
   --primary: 168.785 42.9719% 51.1765%; /* #4DB8A4 */
+  --primary-subtle: 171.0638 85.4545% 10.7843%; /* #04332C = oklch(0.29 0.05 179): selected/active surface, chips, badges */
+  --primary-subtle-hover: 170.8475 88.0597% 13.1373%; /* #043F36 = oklch(0.33 0.058 179): hover on primary-subtle, search marks */
+  --primary-hover: 168.2353 47.2222% 57.6471%; /* #60C6B2 = oklch(0.76 0.1 179): hover of filled primary, link hover */
   --on-primary: 170.3571 100% 10.9804%; /* #00382F */
   --primary-container: 171.8182 42.3077% 20.3922%; /* #1E4A44 */
   --on-primary-container: 168.3333 70.5882% 80%; /* #A8F0E2 */
@@ -196,29 +214,28 @@
   --on-tertiary: 245.4545 27.2727% 23.7255%; /* #2F2C4D */
   --tertiary-container: 247.0588 20.4819% 32.549%; /* #464264 */
   --on-tertiary-container: 249.375 100% 93.7255%; /* #E4DFFF */
-  /* Neutral ramp: exactly seven steps (N0 ground … N6 text). Every neutral role
+  /* Neutral ramp: exactly six steps (N0 ground … N5 text; W8: hairline and outline merged into one line step >= 3:1). Every neutral role
      below is one of these, nothing in between. */
   --n0: 210 16.6667% 7.0588%; /* #0F1215, ground */
-  --n1: 206.6667 16.3636% 10.7843%; /* #171C20, raised surface: cards, sidebar, composer */
+  --n1: 206.667 16.3636% 10.7843%; /* #171C20, raised surface: cards, sidebar, composer */
   --n2: 204 11.6279% 16.8627%; /* #262C30, high surface: hover, inputs, popovers, tags */
-  --n3: 168 7.3529% 26.6667%; /* #3F4947, hairline: dividers, card borders */
-  --n4: 168 4.4248% 55.6863%; /* #899391, outline: input borders, quote bar, ring track (>= 3:1) */
-  --n5: 163.6364 9.2437% 76.6667%; /* #BEC9C6, secondary text (>= 4.5:1) */
-  --n6: 180 4.1667% 90.5882%; /* #E6E8E8, text */
+  --n3: 168 4.2735% 45.8824%; /* #707A78, line: dividers, card and input borders, quote bar, ring track (>= 3:1 on n0, n1 and n2) */
+  --n4: 163.636 9.2437% 76.6667%; /* #BEC9C6, secondary text (>= 4.5:1 on n0, n1 and n2) */
+  --n5: 180 4.1667% 90.5882%; /* #E6E8E8, text */
   --background: var(--n0);
-  --on-background: var(--n6);
+  --on-background: var(--n5);
   --surface: var(--n0);
-  --on-surface: var(--n6);
+  --on-surface: var(--n5);
   --surface-variant: var(--n3);
-  --on-surface-variant: var(--n5);
+  --on-surface-variant: var(--n4);
   --surface-container-lowest: var(--n0);
   --surface-container-low: var(--n1);
   --surface-container: var(--n1);
   --surface-container-high: var(--n2);
   --surface-container-highest: var(--n2);
-  --outline: var(--n4);
+  --outline: var(--n3);
   --outline-variant: var(--n3);
-  --inverse-surface: var(--n6);
+  --inverse-surface: var(--n5);
   --inverse-on-surface: var(--n0);
   --error: 6.4286 100% 83.5294%; /* #FFB4AB */
   --on-error: 357.1429 100% 20.5882%; /* #690005 */
@@ -282,9 +299,8 @@
   --color-user-bubble: hsl(var(--primary));
   --color-assistant-bubble: hsl(var(--card));
   --color-system-bubble: hsl(var(--container));
-  --color-primary-hover: hsl(var(--primary) / 0.9);
-  --color-primary-bg: hsl(var(--primary) / 0.1);
   --telegram: 200.5102 85.2174% 54.902%; /* #2AABEE */
+  --telegram-subtle: 200.625 86.4865% 14.5098%; /* #052F45 = oklch(0.29 0.06 238): Telegram bubble */
   --scrim: rgb(0 0 0 / 0.55);
   --overlay-shadow: 0 16px 48px rgb(0 0 0 / 0.5), 0 2px 8px rgb(0 0 0 / 0.4);
   --shadow-color: 0 0% 0%;
@@ -296,54 +312,56 @@
 :root.light {
   color-scheme: light;
   --primary: 175.6098 28.2759% 28.4314%; /* #345D5A */
-  --on-primary: var(--n0); /* on-colour = ground step, keeps the ramp at seven neutrals */
+  --primary-subtle: 173.8776 65.3333% 85.2941%; /* #C1F2ED = oklch(0.925 0.05 190) */
+  --primary-subtle-hover: 174.9153 56.1905% 79.4118%; /* #ADE8E3 = oklch(0.89 0.06 190) */
+  --primary-hover: 175.5 33.3333% 23.5294%; /* #28504D = oklch(0.4 0.045 190) */
+  --on-primary: var(--n0); /* on-colour = ground step, keeps the ramp at six neutrals */
   --primary-container: 168.6486 48.0519% 84.902%; /* #C6EBE4 */
   --on-primary-container: 172.5 52.1739% 9.0196%; /* #0B2320 */
-  --on-secondary: var(--n0); /* on-colour = ground step, keeps the ramp at seven neutrals */
+  --on-secondary: var(--n0); /* on-colour = ground step, keeps the ramp at six neutrals */
   --secondary-container: 169.0909 32.3529% 86.6667%; /* #D2E8E4 */
   --on-secondary-container: 173.6842 46.3415% 8.0392%; /* #0B1E1C */
   --tertiary: 247.0588 15.8879% 41.9608%; /* #5E5A7C */
-  --on-tertiary: var(--n0); /* on-colour = ground step, keeps the ramp at seven neutrals */
+  --on-tertiary: var(--n0); /* on-colour = ground step, keeps the ramp at six neutrals */
   --tertiary-container: 249.375 100% 93.7255%; /* #E4DFFF */
   --on-tertiary-container: 249.0909 44% 14.7059%; /* #1A1536 */
-  /* Neutral ramp: exactly seven steps (N0 ground … N6 text). Every neutral role
+  /* Neutral ramp: exactly six steps (N0 ground … N5 text; W8: hairline and outline merged into one line step >= 3:1). Every neutral role
      below is one of these, nothing in between. */
   --n0: 150 16.6667% 97.6471%; /* #F8FAF9, ground */
   --n1: 150 8.3333% 95.2941%; /* #F2F4F3, raised surface: cards, sidebar, composer */
   --n2: 160 6.383% 90.7843%; /* #E6E9E8, high surface: hover, inputs, popovers, tags */
-  --n3: 163.6364 9.2437% 76.6667%; /* #BEC9C6, hairline: dividers, card borders */
-  --n4: 168 4.3103% 45.4902%; /* #6F7977, outline: input borders, quote bar, ring track (>= 3:1) */
-  --n5: 168 7.3529% 26.6667%; /* #3F4947, secondary text (>= 4.5:1) */
-  --n6: 180 5.6604% 10.3922%; /* #191C1C, text */
+  --n3: 168 4% 49.0196%; /* #788280, line: dividers, card and input borders, quote bar, ring track (>= 3:1 on n0, n1 and n2) */
+  --n4: 168 7.3529% 26.6667%; /* #3F4947, secondary text (>= 4.5:1 on n0, n1 and n2) */
+  --n5: 180 5.6604% 10.3922%; /* #191C1C, text */
   --background: var(--n0);
-  --on-background: var(--n6);
+  --on-background: var(--n5);
   --surface: var(--n0);
-  --on-surface: var(--n6);
+  --on-surface: var(--n5);
   --surface-variant: var(--n3);
-  --on-surface-variant: var(--n5);
+  --on-surface-variant: var(--n4);
   --surface-container-lowest: var(--n0);
   --surface-container-low: var(--n1);
   --surface-container: var(--n1);
   --surface-container-high: var(--n2);
   --surface-container-highest: var(--n2);
-  --outline: var(--n4);
+  --outline: var(--n3);
   --outline-variant: var(--n3);
-  --inverse-surface: var(--n6);
+  --inverse-surface: var(--n5);
   --inverse-on-surface: var(--n0);
   --error: 0 75.4717% 41.5686%; /* #BA1A1A */
-  --on-error: var(--n0); /* on-colour = ground step, keeps the ramp at seven neutrals */
+  --on-error: var(--n0); /* on-colour = ground step, keeps the ramp at six neutrals */
   --error-container: 5.8537 100% 91.9608%; /* #FFDAD6 */
   --on-error-container: 358.1538 100% 12.7451%; /* #410002 */
   --inverse-primary: 167.5862 41.4286% 72.549%; /* #9CD6CA */
   --secondary-tone: 171 11.236% 34.902%; /* #4F6360 */
   --success: 123.4783 48.2517% 28.0392%; /* #256A29 */
-  --success-foreground: var(--n0); /* on-colour = ground step, keeps the ramp at seven neutrals */
+  --success-foreground: var(--n0); /* on-colour = ground step, keeps the ramp at six neutrals */
   --warning: 40.3125 100% 25.098%; /* #805600 */
-  --warning-foreground: var(--n0); /* on-colour = ground step, keeps the ramp at seven neutrals */
+  --warning-foreground: var(--n0); /* on-colour = ground step, keeps the ramp at six neutrals */
   --gain: 150.3614 63.3588% 25.6863%; /* #186B42 */
   --loss: 3.913 64.486% 41.9608%; /* #B02F26 */
   --badge: 247.0588 15.8879% 41.9608%; /* #5E5A7C */
-  --on-badge: var(--n0); /* on-colour = ground step, keeps the ramp at seven neutrals */
+  --on-badge: var(--n0); /* on-colour = ground step, keeps the ramp at six neutrals */
   --foreground: var(--on-background);
   --card: var(--surface-container-low);
   --card-foreground: var(--on-surface);
@@ -392,9 +410,12 @@
   --color-user-bubble: hsl(var(--primary));
   --color-assistant-bubble: hsl(var(--card));
   --color-system-bubble: hsl(var(--container));
-  --color-primary-hover: hsl(var(--primary) / 0.9);
-  --color-primary-bg: hsl(var(--primary) / 0.1);
   --telegram: 200.9302 70.4918% 35.8824%; /* #1B6F9C */
+  /* #C8E8FE = oklch(0.915 0.045 238). Target for the chroma tokens: dE OKLab >= 0.045
+     against N2 (the guard floor stays 0.04; the gap covers rounding, display
+     profiles and later L tweaks). L 0.92 -> 0.915 because at L 0.92 / h 238 the
+     largest in-gamut sRGB chroma is 0.044, which only reaches dE 0.0432 (gamut edge). */
+  --telegram-subtle: 204.4444 96.4286% 89.0196%;
   --scrim: rgb(16 20 24 / 0.4);
   --overlay-shadow: 0 12px 32px rgb(16 20 24 / 0.18), 0 2px 6px rgb(16 20 24 / 0.12);
   --shadow-color: 0 0% 0%;
@@ -420,12 +441,22 @@
     font-family: var(--font-sans);
     @apply bg-background text-foreground;
     line-height: 1.5;
+    /* Two real cuts only (400/600): never fake a bold or an italic. */
+    font-synthesis: none;
     -webkit-font-smoothing: antialiased;
     -moz-osx-font-smoothing: grayscale;
   }
 
   #__nuxt {
     height: 100%;
+  }
+
+  /* Placeholders are text: always N4, never the browser's half-transparent
+     currentColor (that mixes a non-token grey below 4.5:1). */
+  input::placeholder,
+  textarea::placeholder {
+    color: var(--color-muted-foreground);
+    opacity: 1;
   }
 
   /* Two cuts only: the browser default `bolder` would render 700. */
@@ -440,7 +471,7 @@
   }
 
   a:hover {
-    @apply text-primary/80;
+    @apply text-primary-hover;
   }
 
   button {
@@ -465,6 +496,33 @@
   }
 }
 
+/* ─── Reading measure (design review 03.10.) ───
+   Running text is set to about 65 characters per line, hard limit 75 at
+   1440 px: a `max-width` in em on the text block itself (em, so it follows
+   the block's own size), left-aligned on the card axis. The ruling named
+   36em; measured with Roboto that is 80-83 characters per line (W7,
+   design measurements), over the hard limit, so the token is 30em
+   (about 65-69 characters). One token, one place to change it. The grid and the card
+   width do not change; only the text block stops early. German text is
+   hyphenated (needs a correct `lang` on the document, see app.vue).
+   Not for table rows, code, monospace output, form fields, navigation or
+   one-line labels. Running text inside a table cell uses `measure-cell`. */
+@utility measure {
+  max-width: var(--measure);
+  hyphens: auto;
+  -webkit-hyphens: auto;
+}
+@utility measure-cell {
+  max-width: 40em;
+  hyphens: auto;
+  -webkit-hyphens: auto;
+}
+/* Small reading text (help texts, board text): 14 px on 1.5, never 12 px. */
+@utility text-help {
+  font-size: var(--text-sm);
+  line-height: 1.5;
+}
+
 /* ─── Custom scrollbar utility ─── */
 @utility oa-scrollbar {
   scrollbar-width: thin;
@@ -487,7 +545,7 @@
   }
 
   &::-webkit-scrollbar-thumb:hover {
-    background-color: hsl(var(--muted-foreground) / 0.55);
+    background-color: hsl(var(--muted-foreground));
   }
 }
 
@@ -510,7 +568,9 @@
 @layer components {
   .prose-chat {
     font-size: 1rem;
-    line-height: 1.625;
+    line-height: 1.5; /* design review 03.10.: reading text 1.4-1.6, 24 px at 16 */
+    hyphens: auto;
+    -webkit-hyphens: auto;
     min-width: 0;
 
     & > *:first-child {
@@ -527,8 +587,8 @@
 
     /* Paragraphs */
     p {
-      margin: 0 0 1em;
-      line-height: 1.625;
+      margin: 0 0 1rem;
+      line-height: 1.5; /* design review 03.10.: reading text 1.4-1.6 */
     }
 
     /* Reading measure: running text stops at 31em (= 31rem at the 16 px
@@ -578,6 +638,7 @@
     }
     h5, h6 {
       font-size: 0.875em;        /* 14 */
+      font-size: max(12px, round(down, 0.875em, 2px)); /* 14 at 16, 12 at 14: stays on the scale */
       line-height: 1.4286;       /* 20 */
       margin: 1.4286em 0 0.5714em; /* 20 / 8 */
       color: hsl(var(--muted-foreground));
@@ -585,8 +646,8 @@
 
     /* Lists */
     ul, ol {
-      margin: 0 0 1em;
-      padding-left: 1.5em;
+      margin: 0 0 1rem;
+      padding-left: 1.5rem;
     }
     ul {
       list-style-type: disc;
@@ -596,19 +657,19 @@
     }
     li {
       margin: 0;
-      line-height: 1.625;
+      line-height: 1.5;
     }
     li + li {
-      margin-top: 0.375em;
+      margin-top: 0.25rem;
     }
     li::marker {
       color: hsl(var(--muted-foreground));
     }
     li > ul, li > ol {
-      margin: 0.375em 0 0;
+      margin: 0.25rem 0 0;
     }
     li > p {
-      margin-bottom: 0.5em;
+      margin-bottom: 0.5rem;
     }
     li > p:last-child {
       margin-bottom: 0;
@@ -618,18 +679,19 @@
     code {
       @apply rounded-md font-mono;
       font-size: max(12px, 0.875em); /* 14 at the reading base */
-      padding: 0.125em 0.375em;
+      font-size: max(12px, round(down, 0.875em, 2px)); /* never 12.25 in 14-px contexts */
+      padding: 0 0.25rem;
       background-color: hsl(var(--background));
       border: 1px solid hsl(var(--border));
       overflow-wrap: anywhere;
     }
 
-    /* Code blocks: at least 13 px, long lines scroll inside the block. */
+    /* Code blocks: at least 12 px (14 at the reading base), long lines scroll inside the block. */
     .code-block-wrapper {
       @apply mb-4 mt-0 max-w-full overflow-hidden rounded-lg border border-border bg-background;
     }
     .code-block-header {
-      @apply flex select-none items-center justify-between gap-2 rounded-t-lg border-b border-border bg-card px-3 py-1.5;
+      @apply flex select-none items-center justify-between gap-2 rounded-t-lg border-b border-border bg-card px-3 py-2;
     }
     .code-block-language {
       @apply truncate font-mono font-medium uppercase tracking-wide text-muted-foreground;
@@ -639,14 +701,15 @@
       @apply inline-flex h-6 w-6 shrink-0 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-muted hover:text-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring;
     }
     @media (max-width: 767px) {
-      .code-block-copy-button { @apply -my-1.5 h-11 w-11; }
+      .code-block-copy-button { @apply -my-2 h-11 w-11; }
     }
     .code-block-copy-button svg {
       @apply h-3.5 w-3.5;
     }
     pre {
       @apply mb-4 mt-0 max-w-full overflow-x-auto rounded-lg border border-border bg-background p-3 font-mono oa-scrollbar;
-      font-size: max(13px, 0.8125em);
+      font-size: max(12px, 0.875em);
+      font-size: max(12px, round(down, 0.875em, 2px)); /* 14 at the reading base, 12 in small contexts, never 13 */
       line-height: 1.54;
       white-space: pre;
     }
@@ -664,13 +727,13 @@
 
     /* Blockquotes */
     blockquote {
-      margin: 0 0 1em;
-      padding-left: 1em;
+      margin: 0 0 1rem;
+      padding-left: 1rem;
       border-left: 3px solid hsl(var(--outline));
       color: hsl(var(--muted-foreground));
     }
     blockquote p {
-      margin-bottom: 0.5em;
+      margin-bottom: 0.5rem;
     }
     blockquote > *:last-child {
       margin-bottom: 0;
@@ -679,7 +742,7 @@
     /* Horizontal rules */
     hr {
       @apply border-t border-border;
-      margin: 1.5em 0;
+      margin: 1.5rem 0;
     }
 
     /* Links */
@@ -688,10 +751,10 @@
       text-decoration: underline;
       text-decoration-thickness: 1px;
       text-underline-offset: 3px;
-      text-decoration-color: hsl(var(--primary) / 0.4);
+      text-decoration-color: hsl(var(--border));
     }
     a:hover {
-      text-decoration-color: hsl(var(--primary) / 0.8);
+      text-decoration-color: hsl(var(--primary));
     }
 
     /* Images never leave the column. */
@@ -717,6 +780,7 @@
       width: 100%;
       margin: 0;
       font-size: max(12px, 0.875em); /* 14 at the reading base */
+      font-size: max(12px, round(down, 0.875em, 2px)); /* never 12.25 in 14-px contexts */
       line-height: 1.4286;       /* 20 */
       border-collapse: collapse;
       font-variant-numeric: tabular-nums;
@@ -726,7 +790,7 @@
       display: block;
       overflow-x: auto;
       max-width: 100%;
-      margin: 0 0 1em;
+      margin: 0 0 1rem;
     }
     th, td {
       padding: 0.5rem 0.75rem;   /* 8 / 12 */
@@ -759,14 +823,14 @@
    focusable so keyboard users reach the tooltip too. */
 @layer components {
   .secret-chip {
-    @apply inline-flex max-w-full items-center gap-1 rounded-md border border-border bg-muted/70 px-1.5 py-0.5
-      align-baseline font-mono text-[0.75em] leading-tight text-muted-foreground transition-colors;
+    @apply inline-flex max-w-full items-center gap-1 rounded-md border border-border bg-muted px-2 py-1
+      align-baseline font-mono text-2xs leading-tight text-muted-foreground transition-colors;
     cursor: help;
     vertical-align: baseline;
   }
   .secret-chip:hover,
   .secret-chip:focus-visible {
-    @apply border-primary/50 bg-primary/10 text-foreground;
+    @apply border-primary bg-primary-subtle text-foreground;
   }
   .secret-chip:focus-visible {
     @apply outline-none ring-2 ring-ring ring-offset-1 ring-offset-background;
@@ -836,8 +900,15 @@ html[data-strand-transition="close"]::view-transition-old(strand-conversation) {
   }
 }
 
-/* Mobile web (< 768 px, W6a): no text below 12 px. The label step keeps its
-   11 px on desktop and grows to 12 px on phones; the line height stays 16 px. */
+
+/* Form fields on phones (design review 03.10.): at least 16 px, so the browser does not
+   zoom into the field and the typed text is never smaller than the reading
+   base. Unlayered on purpose: it wins over the `text-sm`/`text-xs` utilities of
+   the field components without touching every call site. */
 @media (max-width: 767px) {
-  :root { --text-2xs: 12px; }
+  input:not([type='checkbox'], [type='radio'], [type='range'], [type='color'], [type='file'], [type='button'], [type='submit'], [type='reset'], [type='image']),
+  textarea,
+  select {
+    font-size: max(16px, 1em);
+  }
 }

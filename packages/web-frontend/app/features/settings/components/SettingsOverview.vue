@@ -43,7 +43,7 @@ const searching = computed(() => query.value.trim().length > 0)
         <p class="break-words">{{ $t('settings.overview.noResults', { query: query.trim() }) }}</p>
         <button
           type="button"
-          class="mt-3 inline-flex min-h-11 items-center rounded-md border border-border px-3 text-sm text-foreground hover:bg-accent/50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+          class="mt-3 inline-flex min-h-11 items-center rounded-md border border-border px-3 text-sm text-foreground hover:bg-accent focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
           @click="query = ''"
         >
           {{ $t('settings.overview.clearSearch') }}
@@ -54,17 +54,17 @@ const searching = computed(() => query.value.trim().length > 0)
           <NuxtLink
             :to="sectionPath(hit.section)"
             :data-section-link="hit.section.id"
-            class="flex min-h-11 items-start gap-3 rounded-xl border border-border bg-card px-4 py-3 transition-colors hover:bg-accent/50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+            class="flex min-h-11 items-start gap-3 rounded-xl border border-border bg-card px-4 py-3 transition-colors hover:bg-accent focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
           >
-            <AppIcon :name="hit.section.icon" size="sm" class="mt-0.5 shrink-0 text-muted-foreground" />
+            <AppIcon :name="hit.section.icon" size="sm" class="mt-1 shrink-0 text-muted-foreground" />
             <span class="min-w-0 flex-1">
               <span class="block text-sm font-medium text-foreground">{{ hit.label }}</span>
-              <span v-if="hit.matches.length" class="mt-0.5 block break-words text-sm text-muted-foreground">
+              <span v-if="hit.matches.length" class="mt-1 block break-words text-sm text-muted-foreground">
                 <span class="sr-only">{{ $t('settings.overview.matchesIn') }}: </span>{{ hit.matches.join(' · ') }}
               </span>
-              <span v-else class="mt-0.5 block break-words text-sm text-muted-foreground">{{ $t(hit.section.descriptionKey) }}</span>
+              <span v-else class="mt-1 block break-words text-sm text-muted-foreground">{{ $t(hit.section.descriptionKey) }}</span>
             </span>
-            <AppIcon :name="hit.section.save === 'link' ? 'externalLink' : 'chevronRight'" size="sm" class="mt-0.5 shrink-0 text-muted-foreground" />
+            <AppIcon :name="hit.section.save === 'link' ? 'externalLink' : 'chevronRight'" size="sm" class="mt-1 shrink-0 text-muted-foreground" />
           </NuxtLink>
         </li>
       </ul>
@@ -73,21 +73,21 @@ const searching = computed(() => query.value.trim().length > 0)
     <!-- Grouped list -->
     <div v-else class="flex flex-col gap-8">
       <section v-for="group in groups" :key="group.id" :aria-labelledby="`settings-group-${group.id}`">
-        <h3 :id="`settings-group-${group.id}`" class="text-sm font-semibold uppercase tracking-wide text-muted-foreground">
+        <h3 :id="`settings-group-${group.id}`" class="text-sm font-semibold uppercase tracking-label text-muted-foreground">
           {{ $t(group.labelKey) }}
         </h3>
-        <p class="mb-3 mt-1 text-sm text-muted-foreground">{{ $t(group.descriptionKey) }}</p>
+        <p class="measure mb-3 mt-1 text-sm text-muted-foreground">{{ $t(group.descriptionKey) }}</p>
         <ul class="divide-y divide-border overflow-hidden rounded-xl border border-border bg-card">
           <li v-for="section in group.sections" :key="section.id">
             <NuxtLink
               :to="sectionPath(section)"
               :data-section-link="section.id"
-              class="flex min-h-14 items-center gap-3 px-4 py-3 transition-colors hover:bg-accent/50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring"
+              class="flex min-h-14 items-center gap-3 px-4 py-3 transition-colors hover:bg-accent focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring"
             >
               <AppIcon :name="section.icon" size="sm" class="shrink-0 text-muted-foreground" />
               <span class="min-w-0 flex-1">
                 <span class="block text-sm font-medium text-foreground">{{ $t(section.labelKey) }}</span>
-                <span class="block break-words text-sm text-muted-foreground">{{ $t(section.descriptionKey) }}</span>
+                <span class="measure block break-words text-sm text-muted-foreground">{{ $t(section.descriptionKey) }}</span>
               </span>
               <AppIcon
                 :name="section.save === 'link' ? 'externalLink' : 'chevronRight'"

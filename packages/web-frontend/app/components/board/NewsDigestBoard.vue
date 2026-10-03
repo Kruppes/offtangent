@@ -334,7 +334,7 @@ const listHidden = computed(() => selected.value !== null)
               @click.prevent="openStory(item)">
               <span class="flex flex-wrap items-center gap-[8px]">
                 <span v-if="item.rankLabel" class="nd-meta nd-strong nd-t2 nd-tnum">{{ item.rankLabel }}</span>
-                <span v-if="item.verdict" class="nd-label inline-flex min-h-[20px] items-center rounded-sm px-[8px] py-[2px]" :class="pillClass(item.verdict)">
+                <span v-if="item.verdict" class="nd-label inline-flex min-h-[20px] items-center rounded-sm px-[8px] py-1" :class="pillClass(item.verdict)">
                   {{ verdictText(item.verdict) }}
                 </span>
                 <span v-if="item.categoryLabel" class="nd-meta nd-t2">{{ item.categoryLabel }}</span>
@@ -404,7 +404,7 @@ const listHidden = computed(() => selected.value !== null)
         <div class="px-[16px] pb-[48px] min-[600px]:px-[24px]">
           <p class="flex flex-wrap items-center gap-[8px]">
             <span v-if="selected.rankLabel" class="nd-meta nd-strong nd-t2 nd-tnum">{{ selected.rankLabel }}</span>
-            <span v-if="selected.verdict" class="nd-label inline-flex min-h-[20px] items-center rounded-sm px-[8px] py-[2px]" :class="pillClass(selected.verdict)">
+            <span v-if="selected.verdict" class="nd-label inline-flex min-h-[20px] items-center rounded-sm px-[8px] py-1" :class="pillClass(selected.verdict)">
               {{ verdictText(selected.verdict) }}
             </span>
             <span v-if="selected.categoryLabel" class="nd-meta nd-t2">{{ selected.categoryLabel }}</span>
@@ -576,7 +576,7 @@ const listHidden = computed(() => selected.value !== null)
 .nd-lead { font-size: 1.125rem; line-height: 1.625rem; font-weight: 400; }
 .nd-body { font-size: 1rem; line-height: 1.5rem; font-weight: 400; text-wrap: pretty; }
 .nd-meta { font-size: 0.875rem; line-height: 1.25rem; font-weight: 400; }
-.nd-label { font-size: 0.75rem; line-height: 1rem; font-weight: 600; text-transform: uppercase; letter-spacing: 0.06em; }
+.nd-label { font-size: 0.75rem; line-height: 1rem; font-weight: 600; text-transform: uppercase; letter-spacing: 0.05em; }
 .nd-strong { font-weight: 600; }
 .nd-tnum { font-variant-numeric: tabular-nums; }
 

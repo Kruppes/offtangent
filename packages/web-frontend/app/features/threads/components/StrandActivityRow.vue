@@ -6,7 +6,7 @@
     <button
       v-if="row.children.length > 0"
       type="button"
-      class="flex min-h-[44px] min-w-[44px] shrink-0 items-center justify-center rounded-lg hover:bg-muted/60 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+      class="flex min-h-[44px] min-w-[44px] shrink-0 items-center justify-center rounded-lg hover:bg-muted focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
       :aria-expanded="expanded"
       :aria-label="ariaLabel"
       @click="$emit('toggle', row.id)"
@@ -15,7 +15,7 @@
     </button>
     <NuxtLink
       :to="`/tasks/${encodeURIComponent(row.id)}`"
-      class="flex min-h-[44px] min-w-0 flex-1 items-center gap-2 rounded-lg px-2 py-1.5 text-left hover:bg-muted/60 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+      class="flex min-h-[44px] min-w-0 flex-1 items-center gap-2 rounded-lg px-2 py-2 text-left hover:bg-muted focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
       :aria-label="ariaLabel"
     >
       <!-- Status dot. Pulses only while live and only when the user has not
@@ -44,8 +44,9 @@
     <button
       v-if="dismissable || restorable"
       type="button"
-      class="flex min-h-[44px] min-w-[44px] shrink-0 items-center justify-center rounded-lg text-muted-foreground hover:bg-muted/60 hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+      class="flex min-h-[44px] min-w-[44px] shrink-0 items-center justify-center rounded-lg text-muted-foreground hover:bg-muted hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
       :data-testid="restorable ? 'activity-restore' : 'activity-dismiss'"
+      :data-ack-id="row.id"
       :aria-label="restorable ? t('strandActivity.restoreOne', { name: row.name }) : t('strandActivity.dismissOne', { name: row.name })"
       :title="restorable ? t('strandActivity.restore') : t('strandActivity.dismiss')"
       @click="restorable ? $emit('restore', row.id) : $emit('dismiss', row.id)"
@@ -96,7 +97,7 @@ const dotClass = computed(() => {
     case 'running': return 'bg-success'
     case 'paused': return 'bg-warning'
     case 'failed': return 'bg-destructive'
-    default: return 'bg-muted-foreground/60'
+    default: return 'bg-muted-foreground'
   }
 })
 

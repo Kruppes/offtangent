@@ -51,14 +51,14 @@ onBeforeUnmount(() => {
 
 <template>
   <div data-testid="dictation-audio-chip" class="inline-flex max-w-full items-center gap-1 rounded-full border border-border bg-muted pl-1 pr-1 text-xs" :title="$t('chat.dictation.audio.attached')">
-    <button type="button" class="inline-flex h-11 w-11 shrink-0 items-center justify-center rounded-full text-foreground hover:bg-background/60 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+    <button type="button" class="inline-flex h-11 w-11 shrink-0 items-center justify-center rounded-full text-foreground hover:bg-background focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
       :aria-label="playing ? $t('chat.dictation.audio.pause', { n: index }) : $t('chat.dictation.audio.play', { n: index })" :aria-pressed="playing" @click="toggle">
       <AppIcon :name="playing ? 'pause' : 'play'" />
     </button>
     <AppIcon name="mic" size="sm" class="text-muted-foreground" />
     <span class="truncate font-medium">{{ $t('chat.dictation.audio.label', { n: index }) }}</span>
     <span v-if="durationMs" class="font-mono tabular-nums text-muted-foreground">{{ formatElapsed(durationMs) }}</span>
-    <button type="button" class="inline-flex h-11 w-11 shrink-0 items-center justify-center rounded-full text-muted-foreground hover:bg-background/60 hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+    <button type="button" class="inline-flex h-11 w-11 shrink-0 items-center justify-center rounded-full text-muted-foreground hover:bg-background hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
       :aria-label="$t('chat.dictation.audio.remove', { n: index })" @click="emit('remove')">
       <AppIcon name="close" />
     </button>

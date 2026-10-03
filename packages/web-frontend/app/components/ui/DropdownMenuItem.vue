@@ -25,7 +25,7 @@ const forwarded = useForwardPropsEmits(delegatedProps, emits)
     :class="cn(
       'flex w-full cursor-default select-none items-center gap-2 rounded-md px-3 py-2 text-sm outline-none transition-colors',
       'focus:bg-accent focus:text-accent-foreground',
-      'data-[disabled]:pointer-events-none data-[disabled]:opacity-50',
+      'data-[disabled]:pointer-events-none data-[disabled]:text-muted-foreground data-[disabled]:[&_svg]:text-border',
       destructive && 'text-destructive focus:bg-destructive/10',
       props.class
     )"

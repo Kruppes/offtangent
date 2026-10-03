@@ -23,7 +23,7 @@
           />
         </button>
         <!-- Hover overlay with actions -->
-        <div class="pointer-events-none absolute inset-x-0 bottom-0 flex items-end justify-between gap-2 rounded-b-lg bg-gradient-to-t from-black/60 via-black/30 to-transparent px-2.5 pb-2 pt-8 opacity-0 transition-opacity duration-200 group-focus-within:pointer-events-auto group-focus-within:opacity-100 group-hover:pointer-events-auto group-hover:opacity-100">
+        <div class="pointer-events-none absolute inset-x-0 bottom-0 flex items-end justify-between gap-2 rounded-b-lg bg-gradient-to-t from-black/60 via-black/30 to-transparent px-2 pb-2 pt-8 opacity-0 transition-opacity duration-200 group-focus-within:pointer-events-auto group-focus-within:opacity-100 group-hover:pointer-events-auto group-hover:opacity-100">
           <span class="truncate text-xs text-white/90">{{ attachment.originalName }}</span>
           <div class="flex shrink-0 items-center gap-1">
             <a
@@ -79,7 +79,7 @@
 
       <!-- PDF: a card first; the preview loads only on request, in an
            <object> whose fallback offers open and download. -->
-      <div v-else-if="mediaOf(attachment) === 'pdf'" class="w-full max-w-xl rounded-lg border border-border bg-muted/30" data-attachment-pdf>
+      <div v-else-if="mediaOf(attachment) === 'pdf'" class="w-full max-w-xl rounded-lg border border-border bg-card" data-attachment-pdf>
         <div class="flex items-center gap-3 px-3 py-2">
           <div class="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-muted">
             <AppIcon name="file" class="h-4 w-4 text-muted-foreground" />
@@ -123,7 +123,7 @@
       <template v-else>
         <a
           :href="resolveUrl(attachment.urlPath, true)"
-          class="flex items-center gap-3 rounded-lg border border-border/50 bg-muted/30 px-3 py-2.5 transition-colors hover:bg-muted/60"
+          class="flex items-center gap-3 rounded-lg border border-border bg-card px-3 py-2 transition-colors hover:bg-muted"
         >
           <div class="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-muted">
             <AppIcon name="file" class="h-4 w-4 text-muted-foreground" />
@@ -200,9 +200,9 @@ const imageCount = computed(() => props.attachments.filter(a => a.kind === 'imag
 
 const containerClass = computed(() => {
   if (imageCount.value >= 2 && imageCount.value === props.attachments.length) {
-    return 'mt-2 grid grid-cols-2 gap-1.5'
+    return 'mt-2 grid grid-cols-2 gap-2'
   }
-  return 'mt-2 flex flex-col gap-1.5'
+  return 'mt-2 flex flex-col gap-2'
 })
 
 /**

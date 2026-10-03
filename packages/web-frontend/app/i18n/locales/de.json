@@ -1081,6 +1081,24 @@
       "saved": "Sprachantworten gespeichert.",
       "saveFailed": "Sprachantworten konnten nicht gespeichert werden.",
       "loadFailed": "Sprachantworten konnten nicht geladen werden."
+    },
+    "speechCache": {
+      "title": "Vorlese-Cache",
+      "hint": "Fertige Vorlese-Zusammenfassungen und Audios liegen auf dem Server, damit erneutes Vorlesen sofort startet. Leeren ist gefahrlos: Einträge werden beim nächsten Vorlesen neu erzeugt.",
+      "loadFailed": "Cache-Kennzahlen konnten nicht geladen werden.",
+      "off": "Der Vorlese-Cache ist ausgeschaltet (SPEECH_CACHE_MAX_MB=0).",
+      "entries": "Einträge",
+      "size": "Größe",
+      "hits": "Treffer",
+      "misses": "Neu erzeugt",
+      "sinceStart": "Seit dem Serverstart: {rate} % Trefferquote.",
+      "sinceStartEmpty": "Seit dem Serverstart noch nichts vorgelesen.",
+      "clear": "Cache leeren",
+      "empty": "Der Cache ist leer.",
+      "cleared": "Cache geleert: {count} Eintrag ({size}) entfernt. | Cache geleert: {count} Einträge ({size}) entfernt.",
+      "clearFailed": "Leeren fehlgeschlagen. Bitte erneut versuchen.",
+      "confirmTitle": "Vorlese-Cache leeren?",
+      "confirmText": "{count} Eintrag ({size}) wird gelöscht. Das nächste Vorlesen dauert dann wieder etwas länger. | {count} Einträge ({size}) werden gelöscht. Das nächste Vorlesen dauert dann wieder etwas länger."
     }
   },
   "users": {
@@ -1400,7 +1418,20 @@
         "tooLong": "Die Antwort ist zu lang (höchstens 8000 Zeichen)."
       }
     },
-    "actionsColumn": "Aktionen"
+    "actionsColumn": "Aktionen",
+    "ack": {
+      "dismiss": "Quittieren",
+      "dismissOne": "{name} quittieren und ausblenden",
+      "dismissAll": "Alle abgeschlossenen ausblenden ({count})",
+      "dismissed": "{count} Eintrag ausgeblendet | {count} Einträge ausgeblendet",
+      "undo": "Rückgängig",
+      "dismissError": "Ausblenden fehlgeschlagen. Bitte erneut versuchen.",
+      "showHidden": "Ausgeblendete anzeigen ({count})",
+      "hideHidden": "Ausgeblendete verbergen",
+      "restore": "Wieder anzeigen",
+      "restoreOne": "{name} wieder anzeigen",
+      "allHidden": "Alle Tasks dieser Seite sind quittiert."
+    }
   },
   "email": {
     "title": "E-Mail",
@@ -1958,6 +1989,7 @@
       "link": "Strands verknüpfen"
     },
     "routingWait": "Capture wird gesendet und geroutet. Der Server liefert beides zusammen; kein Live-Fortschritt verfügbar.",
+    "routingPending": "Gespeichert. Die Zuordnung folgt, sobald der Agent bereit ist; der Gedanke liegt so lange in „Unsortiert“.",
     "refreshing": "Routing-Ergebnis erhalten. Listen aktualisieren…",
     "reviewRequired": "Routing-Entscheidung prüfen",
     "confidenceLabel": "Routing-Konfidenz",

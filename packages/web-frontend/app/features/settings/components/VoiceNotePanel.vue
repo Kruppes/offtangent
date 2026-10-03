@@ -4,7 +4,7 @@
       <h3 id="voice-note-heading" class="text-base font-semibold tracking-tight text-foreground">
         {{ $t('settings.voiceNote.title') }}
       </h3>
-      <p class="mt-1 text-xs text-muted-foreground">
+      <p class="mt-1 measure text-help text-muted-foreground">
         {{ $t('settings.voiceNote.subtitle') }}
       </p>
     </div>
@@ -38,7 +38,7 @@
       <!-- Effective route: what a voice note will actually use -->
       <dl
         data-testid="voice-note-effective"
-        class="grid grid-cols-1 gap-x-4 gap-y-1 rounded-lg border border-border bg-muted/30 px-3 py-3 text-xs sm:grid-cols-2"
+        class="grid grid-cols-1 gap-x-4 gap-y-1 rounded-lg border border-border bg-card px-3 py-3 text-xs sm:grid-cols-2"
       >
         <div class="sm:col-span-2 mb-1 font-medium text-foreground">
           {{ $t('settings.voiceNote.effectiveTitle') }}
@@ -50,7 +50,7 @@
       </dl>
 
       <!-- Provider -->
-      <div class="flex flex-col gap-1.5">
+      <div class="flex flex-col gap-2">
         <div class="flex flex-wrap items-center justify-between gap-2">
           <Label for="voice-note-provider">{{ $t('settings.voiceNote.provider') }}</Label>
           <Button
@@ -74,13 +74,13 @@
             {{ provider }}
           </option>
         </select>
-        <p class="text-xs text-muted-foreground">
+        <p class="measure text-help text-muted-foreground">
           {{ inherits('provider') ? inheritedHint(catalog.provider) : $t('settings.voiceNote.providerHint') }}
         </p>
       </div>
 
       <!-- Provider account (credentials; never a key in this UI) -->
-      <div class="flex flex-col gap-1.5">
+      <div class="flex flex-col gap-2">
         <div class="flex flex-wrap items-center justify-between gap-2">
           <Label for="voice-note-provider-id">{{ $t('settings.voiceNote.account') }}</Label>
           <Button
@@ -104,13 +104,13 @@
             {{ account.name }}
           </option>
         </select>
-        <p class="text-xs text-muted-foreground">
+        <p class="measure text-help text-muted-foreground">
           {{ accountOptions.length === 0 ? $t('settings.voiceNote.accountEmpty') : $t('settings.voiceNote.accountHint') }}
         </p>
       </div>
 
       <!-- Model -->
-      <div class="flex flex-col gap-1.5">
+      <div class="flex flex-col gap-2">
         <div class="flex flex-wrap items-center justify-between gap-2">
           <Label for="voice-note-model">{{ $t('settings.voiceNote.model') }}</Label>
           <Button
@@ -143,13 +143,13 @@
           :placeholder="inheritOption(catalog.model || $t('settings.voiceNote.none'))"
           @update:model-value="setField('model', String($event))"
         />
-        <p class="text-xs text-muted-foreground">
+        <p class="measure text-help text-muted-foreground">
           {{ inherits('model') ? inheritedHint(catalog.model || $t('settings.voiceNote.none')) : $t('settings.voiceNote.modelHint') }}
         </p>
       </div>
 
       <!-- Voice -->
-      <div class="flex flex-col gap-1.5">
+      <div class="flex flex-col gap-2">
         <div class="flex flex-wrap items-center justify-between gap-2">
           <Label for="voice-note-voice">{{ $t('settings.voiceNote.voice') }}</Label>
           <Button
@@ -182,13 +182,13 @@
           :placeholder="inheritOption(catalog.voice || $t('settings.voiceNote.none'))"
           @update:model-value="setField('voice', String($event))"
         />
-        <p class="text-xs text-muted-foreground">
+        <p class="measure text-help text-muted-foreground">
           {{ inherits('voice') ? inheritedHint(catalog.voice || $t('settings.voiceNote.none')) : $t('settings.voiceNote.voiceHint') }}
         </p>
       </div>
 
       <!-- Style / delivery hint -->
-      <div class="flex flex-col gap-1.5">
+      <div class="flex flex-col gap-2">
         <div class="flex flex-wrap items-center justify-between gap-2">
           <Label for="voice-note-style">{{ $t('settings.voiceNote.style') }}</Label>
           <Button
@@ -209,13 +209,13 @@
           :placeholder="inheritOption(catalog.style || $t('settings.voiceNote.none'))"
           @update:model-value="setField('style', String($event))"
         />
-        <p class="text-xs text-muted-foreground">
+        <p class="measure text-help text-muted-foreground">
           {{ inherits('style') ? inheritedHint(catalog.style || $t('settings.voiceNote.none')) : $t('settings.voiceNote.styleHint') }}
         </p>
       </div>
 
       <!-- Character cap -->
-      <div class="flex flex-col gap-1.5">
+      <div class="flex flex-col gap-2">
         <div class="flex flex-wrap items-center justify-between gap-2">
           <Label for="voice-note-max-chars">{{ $t('settings.voiceNote.maxChars') }}</Label>
           <Button
@@ -240,16 +240,16 @@
           :aria-invalid="maxCharsError ? 'true' : undefined"
           @update:model-value="setField('maxChars', String($event))"
         />
-        <p v-if="maxCharsError" class="text-xs text-destructive" role="alert" data-testid="voice-note-max-chars-error">
+        <p v-if="maxCharsError" class="measure text-help text-destructive" role="alert" data-testid="voice-note-max-chars-error">
           {{ $t('settings.voiceNote.maxCharsRange', { min: maxCharsRange.min, max: maxCharsRange.max }) }}
         </p>
-        <p v-else class="text-xs text-muted-foreground">
+        <p v-else class="measure text-help text-muted-foreground">
           {{ inherits('maxChars') ? inheritedHint(String(catalog.maxChars)) : $t('settings.voiceNote.maxCharsHint') }}
         </p>
       </div>
 
       <!-- Rewrite for the ear -->
-      <div class="flex flex-col gap-1.5 rounded-lg border border-border px-3 py-3">
+      <div class="flex flex-col gap-2 rounded-lg border border-border px-3 py-3">
         <div class="flex items-center justify-between gap-3">
           <Label for="voice-note-rewrite" class="cursor-pointer">{{ $t('settings.voiceNote.rewrite') }}</Label>
           <Switch
@@ -258,9 +258,9 @@
             @update:checked="setField('rewrite', $event)"
           />
         </div>
-        <p class="text-xs text-muted-foreground">{{ $t('settings.voiceNote.rewriteHint') }}</p>
+        <p class="measure text-help text-muted-foreground">{{ $t('settings.voiceNote.rewriteHint') }}</p>
         <div class="flex flex-wrap items-center justify-between gap-2">
-          <p class="text-xs text-muted-foreground">
+          <p class="measure text-help text-muted-foreground">
             {{ inherits('rewrite')
               ? inheritedHint(catalog.rewrite ? $t('settings.voiceNote.on') : $t('settings.voiceNote.off'))
               : $t('settings.voiceNote.overridden') }}
@@ -336,7 +336,7 @@ const { t } = useI18n()
 const maxCharsRange = VOICE_NOTE_MAX_CHARS_RANGE
 
 const selectClass = 'h-10 w-full rounded-md border border-border bg-background px-3 text-sm text-foreground '
-  + 'focus:outline-none focus:ring-2 focus:ring-ring disabled:opacity-50'
+  + 'focus:outline-none focus:ring-2 focus:ring-ring disabled:bg-muted disabled:text-muted-foreground'
 
 function inherits(field: VoiceNoteDraftField): boolean {
   return voiceNoteInheritsField(props.draft, field)

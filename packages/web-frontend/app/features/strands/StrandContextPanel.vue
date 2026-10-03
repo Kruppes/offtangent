@@ -25,7 +25,7 @@ function when(value: string | null | undefined) {
        details make it taller than the dock (axe scrollable-region-focusable). -->
   <div class="h-full min-h-0 space-y-6 overflow-y-auto p-3 focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-primary" data-testid="strand-context" tabindex="0" role="region" :aria-labelledby="labelledBy ?? 'strand-context-section-title'">
       <section aria-labelledby="ctx-canvas">
-        <h4 id="ctx-canvas" class="mb-2 text-xs font-semibold uppercase tracking-wide text-muted-foreground">{{ $t('shell.contextCanvas') }}</h4>
+        <h4 id="ctx-canvas" class="mb-2 text-xs font-semibold uppercase tracking-label text-muted-foreground">{{ $t('shell.contextCanvas') }}</h4>
         <ul v-if="views.length" class="space-y-1">
           <li v-for="view in views" :key="view.viewKey">
             <button type="button" class="flex min-h-11 w-full min-w-0 items-center gap-2 rounded-lg px-2 text-left text-sm hover:bg-accent focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
@@ -39,7 +39,7 @@ function when(value: string | null | undefined) {
         <p v-else class="text-sm text-muted-foreground" data-testid="context-canvas-empty">{{ $t('shell.contextCanvasEmpty') }}</p>
       </section>
       <section aria-labelledby="ctx-strand">
-        <h4 id="ctx-strand" class="mb-2 text-xs font-semibold uppercase tracking-wide text-muted-foreground">{{ $t('shell.contextStrand') }}</h4>
+        <h4 id="ctx-strand" class="mb-2 text-xs font-semibold uppercase tracking-label text-muted-foreground">{{ $t('shell.contextStrand') }}</h4>
         <p v-if="!strand" class="text-sm text-muted-foreground" role="status">{{ $t('common.loading') }}</p>
         <dl v-else class="grid grid-cols-[auto_1fr] gap-x-3 gap-y-1 text-sm">
           <dt class="text-muted-foreground">{{ $t('shell.contextMessages') }}</dt><dd>{{ strand.messageCount }}</dd>

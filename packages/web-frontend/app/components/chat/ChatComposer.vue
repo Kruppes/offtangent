@@ -81,7 +81,7 @@
 
           <!-- File attachment button (right inside box) -->
           <!-- The file input stays in the Tab order (sr-only, not display:none); the label shows its focus. -->
-          <label data-composer-control="attach" class="flex h-11 w-11 shrink-0 cursor-pointer items-center justify-center rounded-lg text-muted-foreground transition-colors hover:bg-muted/60 hover:text-foreground focus-within:ring-2 focus-within:ring-ring">
+          <label data-composer-control="attach" class="flex h-11 w-11 shrink-0 cursor-pointer items-center justify-center rounded-lg text-muted-foreground transition-colors hover:bg-muted hover:text-foreground focus-within:ring-2 focus-within:ring-ring">
             <input class="sr-only" type="file" multiple data-testid="composer-attach" :aria-label="$t('chat.attachFiles')" @change="handleFileSelection">
             <AppIcon name="paperclip" class="h-4 w-4" />
           </label>
@@ -101,7 +101,7 @@
             dictationPhase === 'recording' || dictationPhase === 'starting'
               ? 'border-destructive bg-destructive/10 text-destructive'
               : dictationPhase === 'transcribing'
-                ? 'border-primary bg-primary/10 text-primary'
+                ? 'border-primary bg-primary-subtle text-primary'
                 : dictationPhase === 'error'
                   ? 'border-destructive text-destructive'
                   : 'border-input text-muted-foreground hover:bg-muted',

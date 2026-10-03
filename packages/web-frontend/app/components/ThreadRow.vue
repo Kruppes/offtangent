@@ -64,8 +64,8 @@ function submitRename() {
     class="group flex min-h-[64px] w-full items-start gap-3 rounded-xl border px-3 py-3 transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
     :class="[
       active
-        ? 'border-primary/40 bg-primary/[0.07]'
-        : 'border-border bg-card hover:border-border hover:bg-accent/40',
+        ? 'border-primary bg-primary-subtle'
+        : 'border-border bg-card hover:border-border hover:bg-accent',
       editing ? '' : 'cursor-pointer',
     ]"
     :role="editing ? undefined : 'button'"
@@ -75,13 +75,13 @@ function submitRename() {
     @keydown.space.prevent="editing ? undefined : emit('open', thread)"
   >
     <!-- Persona badge -->
-    <Badge variant="muted" class="mt-0.5 shrink-0 uppercase tracking-wide">
+    <Badge variant="muted" class="mt-1 shrink-0 uppercase tracking-label">
       {{ thread.agentId }}
     </Badge>
 
     <div class="min-w-0 flex-1">
       <!-- Inline rename -->
-      <div v-if="editing" class="flex items-center gap-1.5" @click.stop>
+      <div v-if="editing" class="flex items-center gap-2" @click.stop>
         <input
           ref="titleInput"
           v-model="draftTitle"
@@ -94,7 +94,7 @@ function submitRename() {
         >
         <button
           type="button"
-          class="flex h-11 w-11 shrink-0 items-center justify-center rounded-md text-primary hover:bg-primary/10"
+          class="flex h-11 w-11 shrink-0 items-center justify-center rounded-md text-primary hover:bg-primary-subtle"
           :aria-label="$t('common.save')"
           @click="submitRename"
         >
@@ -117,29 +117,29 @@ function submitRename() {
           <span class="shrink-0 text-2xs text-muted-foreground">{{ relativeTime }}</span>
         </div>
 
-        <p v-if="excerpt" class="mt-0.5 line-clamp-2 text-xs leading-relaxed text-muted-foreground">
+        <p v-if="excerpt" class="mt-1 line-clamp-2 text-xs leading-relaxed text-muted-foreground">
           {{ excerpt }}
         </p>
-        <p v-else class="mt-0.5 text-xs italic text-muted-foreground/70">{{ $t('threads.noMessagesYet') }}</p>
+        <p v-else class="mt-1 text-xs italic text-muted-foreground">{{ $t('threads.noMessagesYet') }}</p>
 
-        <div class="mt-1.5 flex flex-wrap items-center gap-1.5">
+        <div class="mt-2 flex flex-wrap items-center gap-2">
           <span
             v-if="activity?.state === 'running'"
-            class="inline-flex items-center gap-1 rounded-full bg-success/10 px-2 py-0.5 text-2xs font-medium text-success"
+            class="inline-flex items-center gap-1 rounded-full bg-success/10 px-2 py-1 text-2xs font-medium text-success"
           >
             <span class="h-1.5 w-1.5 animate-pulse rounded-full bg-current" />
             {{ $t('threads.running') }}
           </span>
           <span
             v-else-if="activity?.state === 'queued'"
-            class="inline-flex items-center gap-1 rounded-full bg-warning/10 px-2 py-0.5 text-2xs font-medium text-warning"
+            class="inline-flex items-center gap-1 rounded-full bg-warning/10 px-2 py-1 text-2xs font-medium text-warning"
           >
             <AppIcon name="clock" class="h-3 w-3" />
             {{ activity.position ? $t('threads.queuedWithPosition', { position: activity.position }) : $t('threads.queued') }}
           </span>
           <span
             v-if="thread.archived"
-            class="inline-flex items-center rounded-full bg-muted px-2 py-0.5 text-2xs font-medium text-muted-foreground"
+            class="inline-flex items-center rounded-full bg-muted px-2 py-1 text-2xs font-medium text-muted-foreground"
           >
             {{ $t('threads.archived') }}
           </span>

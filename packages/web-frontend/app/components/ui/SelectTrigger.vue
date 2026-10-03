@@ -23,7 +23,7 @@ const delegatedProps = computed(() => {
       'flex h-10 max-md:h-11 w-full items-center justify-between rounded-md border border-input bg-background px-3 py-2 text-sm ring-offset-background',
       'placeholder:text-muted-foreground',
       'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2',
-      'disabled:cursor-not-allowed disabled:opacity-50',
+      'disabled:cursor-not-allowed disabled:bg-muted disabled:text-muted-foreground',
       'transition-colors',
       '[&>span]:truncate [&>span]:text-left',
       props.class
@@ -31,7 +31,7 @@ const delegatedProps = computed(() => {
   >
     <slot />
     <SelectIcon as-child>
-      <ChevronDown class="h-4 w-4 shrink-0 opacity-50" />
+      <ChevronDown class="h-4 w-4 shrink-0 text-border" />
     </SelectIcon>
   </SelectTrigger>
 </template>

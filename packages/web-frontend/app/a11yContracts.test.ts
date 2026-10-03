@@ -59,7 +59,12 @@ describe('a11y contracts (W6a)', () => {
   })
 
   it('the label text step is at least 12 px on phones', () => {
+    // W7 (design review): the label step is 12 px on every width, so no
+    // phone-only override is needed and no rule may lower it anywhere.
     const css = src('./assets/css/tailwind.css')
-    expect(css).toMatch(/@media \(max-width: 767px\) \{\s*:root \{ --text-2xs: 12px; \}/)
+    expect(css).toMatch(/@theme \{[\s\S]*?--text-2xs: 12px;/)
+    const assigned = [...css.matchAll(/--text-2xs:\s*([0-9.]+)px/g)].map(m => Number(m[1]))
+    expect(assigned.length).toBeGreaterThan(0)
+    expect(Math.min(...assigned)).toBeGreaterThanOrEqual(12)
   })
 })

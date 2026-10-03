@@ -14,7 +14,7 @@
         <span
           v-if="dirty"
           data-testid="settings-unsaved"
-          class="inline-flex items-center gap-1.5 rounded-md bg-warning/15 px-2 py-1 text-xs font-medium text-foreground"
+          class="inline-flex items-center gap-2 rounded-md bg-warning/15 px-2 py-1 text-xs font-medium text-foreground"
         >
           <span class="h-2 w-2 rounded-full bg-warning" aria-hidden="true" />
           {{ $t('settings.unsaved') }}
@@ -30,7 +30,7 @@
         >
           <span
             v-if="saving"
-            class="h-4 w-4 animate-spin rounded-full border-2 border-primary-foreground/30 border-t-primary-foreground"
+            class="h-4 w-4 animate-spin rounded-full border-2 border-transparent border-t-current"
             aria-hidden="true"
           />
           {{ $t('settings.save') }}
@@ -108,14 +108,14 @@
               <Skeleton class="h-4 w-72 max-w-full" />
             </div>
             <div>
-              <Skeleton class="mb-1.5 h-4 w-24" />
+              <Skeleton class="mb-2 h-4 w-24" />
               <Skeleton class="h-10 w-44 max-w-full" />
-              <Skeleton class="mt-1.5 h-3 w-56 max-w-full" />
+              <Skeleton class="mt-2 h-3 w-56 max-w-full" />
             </div>
             <div>
-              <Skeleton class="mb-1.5 h-4 w-20" />
+              <Skeleton class="mb-2 h-4 w-20" />
               <Skeleton class="h-10 w-56 max-w-full" />
-              <Skeleton class="mt-1.5 h-3 w-48 max-w-full" />
+              <Skeleton class="mt-2 h-3 w-48 max-w-full" />
             </div>
           </div>
 
@@ -138,7 +138,7 @@
                 <h2 class="text-lg font-semibold tracking-tight text-foreground">
                   {{ $t('settings.tabs.agent') }}
                 </h2>
-                <p class="mt-1 text-sm text-muted-foreground">
+                <p class="measure mt-1 text-sm text-muted-foreground">
                   {{ $t('settings.tabs.agentDescription') }}
                 </p>
               </div>
@@ -154,10 +154,10 @@
                           {{ $t('settings.agentRulesTitle') }}
                         </h3>
                       </div>
-                      <p class="mt-1 text-sm text-muted-foreground">
+                      <p class="measure mt-1 text-sm text-muted-foreground">
                         {{ $t('settings.agentRulesDescription') }}
                       </p>
-                      <div class="mt-3 inline-flex max-w-full items-center rounded-md border border-border bg-muted/50 px-2.5 py-1">
+                      <div class="mt-3 inline-flex max-w-full items-center rounded-md border border-border bg-muted px-2 py-1">
                         <span class="truncate font-mono text-xs text-muted-foreground">/data/config/AGENTS.md</span>
                       </div>
                     </div>
@@ -178,17 +178,17 @@
                   <h3 class="text-base font-semibold tracking-tight text-foreground">
                     {{ $t('settings.multiPersonaTitle') }}
                   </h3>
-                  <p class="mt-1 text-sm text-muted-foreground">
+                  <p class="measure mt-1 text-sm text-muted-foreground">
                     {{ $t('settings.multiPersonaDescription') }}
                   </p>
                 </div>
 
                 <div class="flex items-center justify-between rounded-lg border border-border px-4 py-3">
-                  <div class="flex flex-col gap-0.5 pr-4">
+                  <div class="flex flex-col gap-1 pr-4">
                     <Label for="multi-persona-enabled" class="cursor-pointer">
                       {{ $t('settings.multiPersonaEnabled') }}
                     </Label>
-                    <p class="text-xs text-muted-foreground">
+                    <p class="measure text-help text-muted-foreground">
                       {{ $t('settings.multiPersonaEnabledHint') }}
                     </p>
                   </div>
@@ -207,7 +207,7 @@
                       disabled
                       class="font-mono"
                     />
-                    <p class="text-xs text-muted-foreground">{{ $t('settings.multiPersonaDefaultAgentIdHint') }}</p>
+                    <p class="measure text-help text-muted-foreground">{{ $t('settings.multiPersonaDefaultAgentIdHint') }}</p>
                   </div>
 
                   <div class="rounded-xl border border-border bg-card px-4 py-4">
@@ -252,7 +252,7 @@
                       <SelectItem value="Korean">{{ $t('settings.languages.korean') }}</SelectItem>
                     </SelectContent>
                   </Select>
-                  <p class="text-xs text-muted-foreground">{{ $t('settings.languageHint') }}</p>
+                  <p class="measure text-help text-muted-foreground">{{ $t('settings.languageHint') }}</p>
                 </div>
 
                 <!-- Timezone -->
@@ -266,7 +266,7 @@
                       <SelectItem v-for="tz in timezones" :key="tz" :value="tz">{{ tz }}</SelectItem>
                     </SelectContent>
                   </Select>
-                  <p class="text-xs text-muted-foreground">{{ $t('settings.timezoneHint') }}</p>
+                  <p class="measure text-help text-muted-foreground">{{ $t('settings.timezoneHint') }}</p>
                 </div>
 
                 <!-- Active Provider -->
@@ -282,7 +282,7 @@
                       </SelectItem>
                     </SelectContent>
                   </Select>
-                  <p class="text-xs text-muted-foreground">{{ $t('settings.activeProviderHint') }}</p>
+                  <p class="measure text-help text-muted-foreground">{{ $t('settings.activeProviderHint') }}</p>
                 </div>
 
                 <!-- Thinking level (main chat agent) -->
@@ -298,7 +298,7 @@
                       </SelectItem>
                     </SelectContent>
                   </Select>
-                  <p class="text-xs text-muted-foreground">{{ $t('settings.thinkingLevelHint') }}</p>
+                  <p class="measure text-help text-muted-foreground">{{ $t('settings.thinkingLevelHint') }}</p>
                 </div>
 
                 <!-- ─── Storage ─── -->
@@ -308,7 +308,7 @@
                   <h3 class="text-base font-semibold tracking-tight text-foreground">
                     {{ $t('settings.storageSection') }}
                   </h3>
-                  <p class="mt-1 text-sm text-muted-foreground">
+                  <p class="measure mt-1 text-sm text-muted-foreground">
                     {{ $t('settings.storageSectionDescription') }}
                   </p>
                 </div>
@@ -326,7 +326,7 @@
                     />
                     <span class="text-sm text-muted-foreground">{{ $t('settings.days') }}</span>
                   </div>
-                  <p class="text-xs text-muted-foreground">{{ $t('settings.uploadRetentionHint') }}</p>
+                  <p class="measure text-help text-muted-foreground">{{ $t('settings.uploadRetentionHint') }}</p>
                 </div>
 
                 <!-- ─── Resilience (retry + watchdog) ─── -->
@@ -336,17 +336,17 @@
                   <h3 class="text-base font-semibold tracking-tight text-foreground">
                     {{ $t('settings.resilienceSection') }}
                   </h3>
-                  <p class="mt-1 text-sm text-muted-foreground">
+                  <p class="measure mt-1 text-sm text-muted-foreground">
                     {{ $t('settings.resilienceSectionDescription') }}
                   </p>
                 </div>
 
                 <div class="flex items-center justify-between rounded-lg border border-border px-4 py-3">
-                  <div class="flex flex-col gap-0.5 pr-4">
+                  <div class="flex flex-col gap-1 pr-4">
                     <Label for="retry-enabled" class="cursor-pointer">
                       {{ $t('settings.retryEnabled') }}
                     </Label>
-                    <p class="text-xs text-muted-foreground">
+                    <p class="measure text-help text-muted-foreground">
                       {{ $t('settings.retryEnabledHint') }}
                     </p>
                   </div>
@@ -371,7 +371,7 @@
                         />
                         <span class="text-sm text-muted-foreground">{{ $t('settings.attemptsUnit') }}</span>
                       </div>
-                      <p class="text-xs text-muted-foreground">{{ $t('settings.retryMaxRetriesHint') }}</p>
+                      <p class="measure text-help text-muted-foreground">{{ $t('settings.retryMaxRetriesHint') }}</p>
                     </div>
 
                     <div class="flex flex-col gap-2">
@@ -388,7 +388,7 @@
                         />
                         <span class="text-sm text-muted-foreground">ms</span>
                       </div>
-                      <p class="text-xs text-muted-foreground">
+                      <p class="measure text-help text-muted-foreground">
                         {{ $t('settings.retryBaseDelayHint', { schedule: retryBackoffSchedule }) }}
                       </p>
                     </div>
@@ -409,7 +409,7 @@
                     />
                     <span class="text-sm text-muted-foreground">ms</span>
                   </div>
-                  <p class="text-xs text-muted-foreground">{{ $t('settings.watchdogStallWarnHint') }}</p>
+                  <p class="measure text-help text-muted-foreground">{{ $t('settings.watchdogStallWarnHint') }}</p>
                 </div>
 
                 <div class="flex flex-col gap-2">
@@ -426,8 +426,8 @@
                     />
                     <span class="text-sm text-muted-foreground">ms</span>
                   </div>
-                  <p class="text-xs text-muted-foreground">{{ $t('settings.watchdogStallAbortHint') }}</p>
-                  <p v-if="watchdogThresholdInvalid" class="text-xs text-destructive">
+                  <p class="measure text-help text-muted-foreground">{{ $t('settings.watchdogStallAbortHint') }}</p>
+                  <p v-if="watchdogThresholdInvalid" class="measure text-help text-destructive">
                     {{ $t('settings.watchdogStallAbortInvalid') }}
                   </p>
                 </div>
@@ -441,7 +441,7 @@
                 <h2 class="text-lg font-semibold tracking-tight text-foreground">
                   {{ $t('settings.sections.now') }}
                 </h2>
-                <p class="mt-1 text-sm text-muted-foreground">
+                <p class="measure mt-1 text-sm text-muted-foreground">
                   {{ $t('settings.sections.nowDescription') }}
                 </p>
               </div>
@@ -452,7 +452,7 @@
                   <h3 class="text-base font-semibold tracking-tight text-foreground">
                     {{ $t('settings.nowSetSection') }}
                   </h3>
-                  <p class="mt-1 text-sm text-muted-foreground">
+                  <p class="measure mt-1 text-sm text-muted-foreground">
                     {{ $t('settings.nowSetSectionDescription') }}
                   </p>
                 </div>
@@ -470,7 +470,7 @@
                     />
                     <span class="text-sm text-muted-foreground">{{ $t('settings.nowSetMaxUnit') }}</span>
                   </div>
-                  <p class="text-xs text-muted-foreground">
+                  <p class="measure text-help text-muted-foreground">
                     {{ $t('settings.nowSetMaxHint', { min: NOW_SET_MAX_RANGE.min, max: NOW_SET_MAX_RANGE.max }) }}
                   </p>
                 </div>
@@ -487,7 +487,7 @@
                       </SelectItem>
                     </SelectContent>
                   </Select>
-                  <p class="text-xs text-muted-foreground">
+                  <p class="measure text-help text-muted-foreground">
                     {{ $t('settings.nowSetModeHint') }}
                   </p>
                 </div>
@@ -499,7 +499,7 @@
                   <h3 class="text-base font-semibold tracking-tight text-foreground">
                     {{ $t('settings.attentionSection') }}
                   </h3>
-                  <p class="mt-1 text-sm text-muted-foreground">
+                  <p class="measure mt-1 text-sm text-muted-foreground">
                     {{ $t('settings.attentionSectionDescription') }}
                   </p>
                 </div>
@@ -519,13 +519,13 @@
                     />
                     <span class="text-sm text-muted-foreground">{{ $t('settings.attentionMaxAgeUnit') }}</span>
                   </div>
-                  <p class="text-xs text-muted-foreground">
+                  <p class="measure text-help text-muted-foreground">
                     {{ $t('settings.attentionMaxAgeHint', {
                       min: ATTENTION_MAX_AGE_HOURS_RANGE.min,
                       max: ATTENTION_MAX_AGE_HOURS_RANGE.max,
                     }) }}
                   </p>
-                  <p v-if="attentionMaxAgeInvalid" class="text-xs text-destructive">
+                  <p v-if="attentionMaxAgeInvalid" class="measure text-help text-destructive">
                     {{ $t('settings.attentionMaxAgeInvalid', {
                       min: ATTENTION_MAX_AGE_HOURS_RANGE.min,
                       max: ATTENTION_MAX_AGE_HOURS_RANGE.max,
@@ -542,7 +542,7 @@
                 <h2 class="text-lg font-semibold tracking-tight text-foreground">
                   {{ $t('settings.sections.capture') }}
                 </h2>
-                <p class="mt-1 text-sm text-muted-foreground">
+                <p class="measure mt-1 text-sm text-muted-foreground">
                   {{ $t('settings.sections.captureDescription') }}
                 </p>
               </div>
@@ -562,7 +562,7 @@
                       </SelectItem>
                     </SelectContent>
                   </Select>
-                  <p class="text-xs text-muted-foreground">{{ $t('settings.captureDefaultAgentHint') }}</p>
+                  <p class="measure text-help text-muted-foreground">{{ $t('settings.captureDefaultAgentHint') }}</p>
                 </div>
 
                 <!-- ─── Capture mode: quick question ─── -->
@@ -570,7 +570,7 @@
                   <h3 class="text-base font-semibold tracking-tight text-foreground">
                     {{ $t('settings.quickModeSection') }}
                   </h3>
-                  <p class="mt-1 text-sm text-muted-foreground">
+                  <p class="measure mt-1 text-sm text-muted-foreground">
                     {{ $t('settings.quickModeSectionDescription') }}
                   </p>
                 </div>
@@ -588,7 +588,7 @@
                       </SelectItem>
                     </SelectContent>
                   </Select>
-                  <p class="text-xs text-muted-foreground">{{ $t('settings.quickModeModelHint') }}</p>
+                  <p class="measure text-help text-muted-foreground">{{ $t('settings.quickModeModelHint') }}</p>
                 </div>
 
                 <div class="flex flex-col gap-2">
@@ -603,25 +603,25 @@
                       </SelectItem>
                     </SelectContent>
                   </Select>
-                  <p class="text-xs text-muted-foreground">{{ $t('settings.quickModeThinkingLevelHint') }}</p>
+                  <p class="measure text-help text-muted-foreground">{{ $t('settings.quickModeThinkingLevelHint') }}</p>
                 </div>
 
                 <div class="flex flex-col gap-2">
                   <Label for="quick-mode-style">{{ $t('settings.quickModeStyleHint') }}</Label>
                   <textarea id="quick-mode-style" v-model="form.captureModes.quick.styleHint" rows="3" class="flex w-full rounded-md border border-input bg-background px-3 py-2 text-sm ring-offset-background placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring" />
-                  <p class="text-xs text-muted-foreground">{{ $t('settings.quickModeStyleHintHint') }}</p>
+                  <p class="measure text-help text-muted-foreground">{{ $t('settings.quickModeStyleHintHint') }}</p>
                 </div>
 
                 <div class="flex flex-col gap-2">
                   <Label for="quick-mode-strand">{{ $t('settings.quickModeStrandTitle') }}</Label>
                   <Input id="quick-mode-strand" v-model="form.captureModes.quick.strandTitle" class="w-full" />
-                  <p class="text-xs text-muted-foreground">{{ $t('settings.quickModeStrandTitleHint') }}</p>
+                  <p class="measure text-help text-muted-foreground">{{ $t('settings.quickModeStrandTitleHint') }}</p>
                 </div>
 
                 <div class="flex flex-col gap-2">
                   <Label for="capture-source-puck">{{ $t('settings.puckStyleHint') }}</Label>
                   <textarea id="capture-source-puck" v-model="form.captureSources.puck.styleHint" rows="2" class="flex w-full rounded-md border border-input bg-background px-3 py-2 text-sm ring-offset-background placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring" />
-                  <p class="text-xs text-muted-foreground">{{ $t('settings.puckStyleHintHint') }}</p>
+                  <p class="measure text-help text-muted-foreground">{{ $t('settings.puckStyleHintHint') }}</p>
                 </div>
 
               </div>
@@ -633,7 +633,7 @@
                 <h2 class="text-lg font-semibold tracking-tight text-foreground">
                   {{ $t('settings.tabs.memory') }}
                 </h2>
-                <p class="mt-1 text-sm text-muted-foreground">
+                <p class="measure mt-1 text-sm text-muted-foreground">
                   {{ $t('settings.tabs.memoryDescription') }}
                 </p>
               </div>
@@ -644,7 +644,7 @@
                   <h3 class="text-base font-semibold tracking-tight text-foreground">
                     {{ $t('settings.sessionSection') }}
                   </h3>
-                  <p class="mt-1 text-sm text-muted-foreground">
+                  <p class="measure mt-1 text-sm text-muted-foreground">
                     {{ $t('settings.sessionSectionDescription') }}
                   </p>
                 </div>
@@ -662,7 +662,7 @@
                     />
                     <span class="text-sm text-muted-foreground">{{ $t('settings.minutes') }}</span>
                   </div>
-                  <p class="text-xs text-muted-foreground">{{ $t('settings.sessionTimeoutHint') }}</p>
+                  <p class="measure text-help text-muted-foreground">{{ $t('settings.sessionTimeoutHint') }}</p>
                 </div>
 
                 <div class="flex flex-col gap-2">
@@ -678,7 +678,7 @@
                       </SelectItem>
                     </SelectContent>
                   </Select>
-                  <p class="text-xs text-muted-foreground">{{ $t('settings.sessionSummaryProviderHint') }}</p>
+                  <p class="measure text-help text-muted-foreground">{{ $t('settings.sessionSummaryProviderHint') }}</p>
                 </div>
 
                 <!-- ─── Fact Extraction ─── -->
@@ -688,17 +688,17 @@
                   <h3 class="text-base font-semibold tracking-tight text-foreground">
                     {{ $t('settings.factExtractionSection') }}
                   </h3>
-                  <p class="mt-1 text-sm text-muted-foreground">
+                  <p class="measure mt-1 text-sm text-muted-foreground">
                     {{ $t('settings.factExtractionSectionDescription') }}
                   </p>
                 </div>
 
                 <div class="flex items-center justify-between rounded-lg border border-border px-4 py-3">
-                  <div class="flex flex-col gap-0.5 pr-4">
+                  <div class="flex flex-col gap-1 pr-4">
                     <Label for="fact-extraction-enabled" class="cursor-pointer">
                       {{ $t('settings.factExtractionEnabled') }}
                     </Label>
-                    <p class="text-xs text-muted-foreground">
+                    <p class="measure text-help text-muted-foreground">
                       {{ $t('settings.factExtractionEnabledHint') }}
                     </p>
                   </div>
@@ -723,7 +723,7 @@
                           </SelectItem>
                         </SelectContent>
                       </Select>
-                      <p class="text-xs text-muted-foreground">{{ $t('settings.factExtractionProviderHint') }}</p>
+                      <p class="measure text-help text-muted-foreground">{{ $t('settings.factExtractionProviderHint') }}</p>
                     </div>
 
                     <div class="flex flex-col gap-2">
@@ -739,7 +739,7 @@
                         />
                         <span class="text-sm text-muted-foreground">{{ $t('settings.messagesUnit') }}</span>
                       </div>
-                      <p class="text-xs text-muted-foreground">{{ $t('settings.factExtractionMinSessionMessagesHint') }}</p>
+                      <p class="measure text-help text-muted-foreground">{{ $t('settings.factExtractionMinSessionMessagesHint') }}</p>
                     </div>
                   </div>
                 </template>
@@ -751,17 +751,17 @@
                   <h3 class="text-base font-semibold tracking-tight text-foreground">
                     {{ $t('settings.consolidationSection') }}
                   </h3>
-                  <p class="mt-1 text-sm text-muted-foreground">
+                  <p class="measure mt-1 text-sm text-muted-foreground">
                     {{ $t('settings.consolidationSectionDescription') }}
                   </p>
                 </div>
 
                 <div class="flex items-center justify-between rounded-lg border border-border px-4 py-3">
-                  <div class="flex flex-col gap-0.5 pr-4">
+                  <div class="flex flex-col gap-1 pr-4">
                     <Label for="consolidation-enabled" class="cursor-pointer">
                       {{ $t('settings.consolidationEnabled') }}
                     </Label>
-                    <p class="text-xs text-muted-foreground">
+                    <p class="measure text-help text-muted-foreground">
                       {{ $t('settings.consolidationEnabledHint') }}
                     </p>
                   </div>
@@ -786,7 +786,7 @@
                         />
                         <span class="text-sm text-muted-foreground">{{ $t('settings.oClock') }}</span>
                       </div>
-                      <p class="text-xs text-muted-foreground">{{ $t('settings.consolidationRunAtHourHint') }}</p>
+                      <p class="measure text-help text-muted-foreground">{{ $t('settings.consolidationRunAtHourHint') }}</p>
                     </div>
 
                     <div class="flex flex-col gap-2">
@@ -802,7 +802,7 @@
                         />
                         <span class="text-sm text-muted-foreground">{{ $t('settings.days') }}</span>
                       </div>
-                      <p class="text-xs text-muted-foreground">{{ $t('settings.consolidationLookbackDaysHint') }}</p>
+                      <p class="measure text-help text-muted-foreground">{{ $t('settings.consolidationLookbackDaysHint') }}</p>
                     </div>
 
                     <div class="flex flex-col gap-2">
@@ -818,11 +818,11 @@
                           </SelectItem>
                         </SelectContent>
                       </Select>
-                      <p class="text-xs text-muted-foreground">{{ $t('settings.consolidationProviderHint') }}</p>
+                      <p class="measure text-help text-muted-foreground">{{ $t('settings.consolidationProviderHint') }}</p>
                     </div>
 
                     <!-- Manual run + status -->
-                    <div class="flex flex-col gap-3 rounded-lg bg-muted/50 px-4 py-3 sm:flex-row sm:items-center sm:justify-between">
+                    <div class="flex flex-col gap-3 rounded-lg bg-muted px-4 py-3 sm:flex-row sm:items-center sm:justify-between">
                       <div v-if="consolidationStatus" class="text-xs text-muted-foreground">
                         <span class="font-medium">{{ $t('settings.consolidationLastRun') }}:</span>
                         {{ consolidationStatus.lastRun ? formatDateTime(consolidationStatus.lastRun) : $t('settings.consolidationNeverRun') }}
@@ -842,7 +842,7 @@
                       >
                         <span
                           v-if="consolidationRunning"
-                          class="h-3.5 w-3.5 animate-spin rounded-full border-2 border-foreground/30 border-t-foreground"
+                          class="h-3.5 w-3.5 animate-spin rounded-full border-2 border-input border-t-foreground"
                           aria-hidden="true"
                         />
                         {{ consolidationRunning ? $t('settings.consolidationRunning') : $t('settings.consolidationRunNow') }}
@@ -861,10 +861,10 @@
                           {{ $t('settings.consolidationRulesTitle') }}
                         </h3>
                       </div>
-                      <p class="mt-1 text-sm text-muted-foreground">
+                      <p class="measure mt-1 text-sm text-muted-foreground">
                         {{ $t('settings.consolidationRulesDescription') }}
                       </p>
-                      <div class="mt-3 inline-flex max-w-full items-center rounded-md border border-border bg-muted/50 px-2.5 py-1">
+                      <div class="mt-3 inline-flex max-w-full items-center rounded-md border border-border bg-muted px-2 py-1">
                         <span class="truncate font-mono text-xs text-muted-foreground">/data/config/CONSOLIDATION.md</span>
                       </div>
                     </div>
@@ -886,7 +886,7 @@
                 <h2 class="text-lg font-semibold tracking-tight text-foreground">
                   {{ $t('settings.tabs.agentHeartbeat') }}
                 </h2>
-                <p class="mt-1 text-sm text-muted-foreground">
+                <p class="measure mt-1 text-sm text-muted-foreground">
                   {{ $t('settings.tabs.agentHeartbeatDescription') }}
                 </p>
               </div>
@@ -894,11 +894,11 @@
               <div class="flex flex-col gap-8">
                 <!-- Enable toggle -->
                 <div class="flex items-center justify-between rounded-lg border border-border px-4 py-3">
-                  <div class="flex flex-col gap-0.5 pr-4">
+                  <div class="flex flex-col gap-1 pr-4">
                     <Label for="heartbeat-enabled" class="cursor-pointer">
                       {{ $t('settings.agentHeartbeatEnabled') }}
                     </Label>
-                    <p class="text-xs text-muted-foreground">
+                    <p class="measure text-help text-muted-foreground">
                       {{ $t('settings.agentHeartbeatEnabledHint') }}
                     </p>
                   </div>
@@ -920,10 +920,10 @@
                             {{ $t('settings.heartbeatTasksTitle') }}
                           </h3>
                         </div>
-                        <p class="mt-1 text-sm text-muted-foreground">
+                        <p class="measure mt-1 text-sm text-muted-foreground">
                           {{ $t('settings.heartbeatTasksDescription') }}
                         </p>
-                        <div class="mt-3 inline-flex max-w-full items-center rounded-md border border-border bg-muted/50 px-2.5 py-1">
+                        <div class="mt-3 inline-flex max-w-full items-center rounded-md border border-border bg-muted px-2 py-1">
                           <span class="truncate font-mono text-xs text-muted-foreground">/data/config/HEARTBEAT.md</span>
                         </div>
                       </div>
@@ -951,7 +951,7 @@
                       />
                       <span class="text-sm text-muted-foreground">{{ $t('settings.minutes') }}</span>
                     </div>
-                    <p class="text-xs text-muted-foreground">{{ $t('settings.agentHeartbeatIntervalHint') }}</p>
+                    <p class="measure text-help text-muted-foreground">{{ $t('settings.agentHeartbeatIntervalHint') }}</p>
                   </div>
 
                   <Separator />
@@ -961,18 +961,18 @@
                     <h3 class="text-base font-semibold tracking-tight text-foreground">
                       {{ $t('settings.agentHeartbeatNightMode') }}
                     </h3>
-                    <p class="mt-1 text-sm text-muted-foreground">
+                    <p class="measure mt-1 text-sm text-muted-foreground">
                       {{ $t('settings.agentHeartbeatNightModeDescription') }}
                     </p>
                   </div>
 
                   <!-- Night mode enable -->
                   <div class="flex items-center justify-between rounded-lg border border-border px-4 py-3">
-                    <div class="flex flex-col gap-0.5 pr-4">
+                    <div class="flex flex-col gap-1 pr-4">
                       <Label for="heartbeat-night-enabled" class="cursor-pointer">
                         {{ $t('settings.agentHeartbeatNightModeEnabled') }}
                       </Label>
-                      <p class="text-xs text-muted-foreground">
+                      <p class="measure text-help text-muted-foreground">
                         {{ $t('settings.agentHeartbeatNightModeEnabledHint') }}
                       </p>
                     </div>
@@ -1013,7 +1013,7 @@
                         />
                         <span class="text-sm text-muted-foreground">{{ $t('settings.oClock') }}</span>
                       </div>
-                      <p class="text-xs text-muted-foreground">{{ $t('settings.agentHeartbeatNightModeHoursHint') }}</p>
+                      <p class="measure text-help text-muted-foreground">{{ $t('settings.agentHeartbeatNightModeHoursHint') }}</p>
                     </div>
                   </template>
 
@@ -1027,7 +1027,7 @@
                 <h2 class="text-lg font-semibold tracking-tight text-foreground">
                   {{ $t('settings.tabs.healthMonitor') }}
                 </h2>
-                <p class="mt-1 text-sm text-muted-foreground">
+                <p class="measure mt-1 text-sm text-muted-foreground">
                   {{ $t('settings.tabs.healthMonitorDescription') }}
                 </p>
               </div>
@@ -1035,11 +1035,11 @@
               <div class="flex flex-col gap-8">
                 <!-- Enable toggle -->
                 <div class="flex items-center justify-between rounded-lg border border-border px-4 py-3">
-                  <div class="flex flex-col gap-0.5 pr-4">
+                  <div class="flex flex-col gap-1 pr-4">
                     <Label for="health-monitor-enabled" class="cursor-pointer">
                       {{ $t('settings.healthMonitorEnabled') }}
                     </Label>
-                    <p class="text-xs text-muted-foreground">
+                    <p class="measure text-help text-muted-foreground">
                       {{ $t('settings.healthMonitorEnabledHint') }}
                     </p>
                   </div>
@@ -1065,7 +1065,7 @@
                     />
                     <span class="text-sm text-muted-foreground">{{ $t('settings.minutes') }}</span>
                   </div>
-                  <p class="text-xs text-muted-foreground">{{ $t('settings.healthMonitorHint') }}</p>
+                  <p class="measure text-help text-muted-foreground">{{ $t('settings.healthMonitorHint') }}</p>
                 </div>
 
                 <!-- Fallback trigger -->
@@ -1080,7 +1080,7 @@
                       <SelectItem value="degraded">{{ $t('settings.healthMonitorFallbackTriggerDegraded') }}</SelectItem>
                     </SelectContent>
                   </Select>
-                  <p class="text-xs text-muted-foreground">{{ $t('settings.healthMonitorFallbackTriggerHint') }}</p>
+                  <p class="measure text-help text-muted-foreground">{{ $t('settings.healthMonitorFallbackTriggerHint') }}</p>
                 </div>
 
                 <!-- Failures before fallback -->
@@ -1093,7 +1093,7 @@
                     min="1"
                     class="w-full"
                   />
-                  <p class="text-xs text-muted-foreground">{{ $t('settings.healthMonitorFailuresBeforeFallbackHint') }}</p>
+                  <p class="measure text-help text-muted-foreground">{{ $t('settings.healthMonitorFailuresBeforeFallbackHint') }}</p>
                 </div>
 
                 <!-- Recovery check interval -->
@@ -1109,7 +1109,7 @@
                     />
                     <span class="text-sm text-muted-foreground">{{ $t('settings.minutes') }}</span>
                   </div>
-                  <p class="text-xs text-muted-foreground">{{ $t('settings.healthMonitorRecoveryCheckIntervalHint') }}</p>
+                  <p class="measure text-help text-muted-foreground">{{ $t('settings.healthMonitorRecoveryCheckIntervalHint') }}</p>
                 </div>
 
                 <!-- Successes before recovery -->
@@ -1122,7 +1122,7 @@
                     min="1"
                     class="w-full"
                   />
-                  <p class="text-xs text-muted-foreground">{{ $t('settings.healthMonitorSuccessesBeforeRecoveryHint') }}</p>
+                  <p class="measure text-help text-muted-foreground">{{ $t('settings.healthMonitorSuccessesBeforeRecoveryHint') }}</p>
                 </div>
 
                 <Separator />
@@ -1132,7 +1132,7 @@
                   <h3 class="text-base font-semibold tracking-tight text-foreground">
                     {{ $t('settings.healthMonitorNotifications') }}
                   </h3>
-                  <p class="mt-1 text-sm text-muted-foreground">
+                  <p class="measure mt-1 text-sm text-muted-foreground">
                     {{ $t('settings.healthMonitorNotificationsDescription') }}
                   </p>
                 </div>
@@ -1143,7 +1143,7 @@
                     :key="toggle.key"
                     class="flex items-center justify-between rounded-lg border border-border px-4 py-3"
                   >
-                    <div class="flex flex-col gap-0.5 pr-4">
+                    <div class="flex flex-col gap-1 pr-4">
                       <Label :for="`notify-${toggle.key}`" class="cursor-pointer">
                         {{ toggle.label }}
                       </Label>
@@ -1164,7 +1164,7 @@
                 <h2 class="text-lg font-semibold tracking-tight text-foreground">
                   {{ $t('settings.tabs.telegram') }}
                 </h2>
-                <p class="mt-1 text-sm text-muted-foreground">
+                <p class="measure mt-1 text-sm text-muted-foreground">
                   {{ $t('settings.tabs.telegramDescription') }}
                 </p>
               </div>
@@ -1172,11 +1172,11 @@
               <div class="flex flex-col gap-8">
                 <!-- Enable toggle -->
                 <div class="flex items-center justify-between rounded-lg border border-border px-4 py-3">
-                  <div class="flex flex-col gap-0.5 pr-4">
+                  <div class="flex flex-col gap-1 pr-4">
                     <Label for="telegram-enabled" class="cursor-pointer">
                       {{ $t('settings.telegramEnabled') }}
                     </Label>
-                    <p class="text-xs text-muted-foreground">
+                    <p class="measure text-help text-muted-foreground">
                       {{ $t('settings.telegramEnabledHint') }}
                     </p>
                   </div>
@@ -1198,7 +1198,7 @@
                     autocomplete="off"
                     :placeholder="$t('settings.telegramBotTokenPlaceholder')"
                   />
-                  <p class="text-xs text-muted-foreground">{{ $t('settings.telegramBotTokenHint') }}</p>
+                  <p class="measure text-help text-muted-foreground">{{ $t('settings.telegramBotTokenHint') }}</p>
                 </div>
 
                 <!-- Batching delay -->
@@ -1216,16 +1216,16 @@
                     />
                     <span class="text-sm text-muted-foreground">ms</span>
                   </div>
-                  <p class="text-xs text-muted-foreground">{{ $t('settings.batchingDelayHint') }}</p>
+                  <p class="measure text-help text-muted-foreground">{{ $t('settings.batchingDelayHint') }}</p>
                 </div>
 
                 <!-- Voice replies -->
                 <div class="flex items-center justify-between rounded-lg border border-border px-4 py-3">
-                  <div class="flex flex-col gap-0.5 pr-4">
+                  <div class="flex flex-col gap-1 pr-4">
                     <Label for="telegram-send-voice-reply" class="cursor-pointer">
                       {{ $t('settings.telegramSendVoiceReply') }}
                     </Label>
-                    <p class="text-xs text-muted-foreground">
+                    <p class="measure text-help text-muted-foreground">
                       {{ $t('settings.telegramSendVoiceReplyHint') }}
                     </p>
                   </div>
@@ -1237,11 +1237,11 @@
 
                 <!-- Stall warnings -->
                 <div class="flex items-center justify-between rounded-lg border border-border px-4 py-3">
-                  <div class="flex flex-col gap-0.5 pr-4">
+                  <div class="flex flex-col gap-1 pr-4">
                     <Label for="telegram-send-stall-warnings" class="cursor-pointer">
                       {{ $t('settings.telegramSendStallWarnings') }}
                     </Label>
-                    <p class="text-xs text-muted-foreground">
+                    <p class="measure text-help text-muted-foreground">
                       {{ $t('settings.telegramSendStallWarningsHint') }}
                     </p>
                   </div>
@@ -1259,7 +1259,7 @@
                     <h3 class="text-base font-semibold tracking-tight text-foreground">
                       {{ $t('settings.telegramUsers') }}
                     </h3>
-                    <p class="mt-1 text-sm text-muted-foreground">
+                    <p class="measure mt-1 text-sm text-muted-foreground">
                       {{ $t('settings.telegramUsersDescription') }}
                     </p>
                   </div>
@@ -1286,7 +1286,7 @@
 
                 <!-- Empty state -->
                 <div v-else-if="telegramUsers.length === 0" class="flex flex-col items-center gap-2 rounded-lg border border-dashed border-border px-4 py-8 text-center">
-                  <AppIcon name="send" size="lg" class="text-muted-foreground/40" />
+                  <AppIcon name="send" size="lg" class="text-muted-foreground" />
                   <p class="text-sm text-muted-foreground">{{ $t('settings.telegramUsersEmpty') }}</p>
                 </div>
 
@@ -1335,7 +1335,7 @@
                           {{ $t(`settings.telegramUsers${tgUser.status.charAt(0).toUpperCase() + tgUser.status.slice(1)}`) }}
                         </Badge>
                       </div>
-                      <div class="mt-0.5 flex items-center gap-1.5 text-xs text-muted-foreground">
+                      <div class="mt-1 flex items-center gap-2 text-xs text-muted-foreground">
                         <span v-if="tgUser.telegramUsername">@{{ tgUser.telegramUsername }}</span>
                         <span v-else>{{ $t('settings.telegramUsersNoUsername') }}</span>
                         <span class="text-border">·</span>
@@ -1416,7 +1416,7 @@
                 <h2 class="text-lg font-semibold tracking-tight text-foreground">
                   {{ $t('settings.tabs.tasks') }}
                 </h2>
-                <p class="mt-1 text-sm text-muted-foreground">
+                <p class="measure mt-1 text-sm text-muted-foreground">
                   {{ $t('settings.tabs.tasksDescription') }}
                 </p>
               </div>
@@ -1427,7 +1427,7 @@
                   <h3 class="text-base font-semibold tracking-tight text-foreground">
                     {{ $t('settings.tasksGeneral') }}
                   </h3>
-                  <p class="mt-1 text-sm text-muted-foreground">
+                  <p class="measure mt-1 text-sm text-muted-foreground">
                     {{ $t('settings.tasksGeneralHint') }}
                   </p>
                 </div>
@@ -1446,7 +1446,7 @@
                       </SelectItem>
                     </SelectContent>
                   </Select>
-                  <p class="text-xs text-muted-foreground">{{ $t('settings.tasksDefaultProviderHint') }}</p>
+                  <p class="measure text-help text-muted-foreground">{{ $t('settings.tasksDefaultProviderHint') }}</p>
                 </div>
 
                 <!-- Max duration -->
@@ -1463,7 +1463,7 @@
                     />
                     <span class="text-sm text-muted-foreground">{{ $t('settings.minutes') }}</span>
                   </div>
-                  <p class="text-xs text-muted-foreground">{{ $t('settings.tasksMaxDurationHint') }}</p>
+                  <p class="measure text-help text-muted-foreground">{{ $t('settings.tasksMaxDurationHint') }}</p>
                 </div>
 
                 <!-- Telegram delivery mode -->
@@ -1478,7 +1478,7 @@
                       <SelectItem value="always">{{ $t('settings.tasksTelegramDeliveryAlways') }}</SelectItem>
                     </SelectContent>
                   </Select>
-                  <p class="text-xs text-muted-foreground">{{ $t('settings.tasksTelegramDeliveryHint') }}</p>
+                  <p class="measure text-help text-muted-foreground">{{ $t('settings.tasksTelegramDeliveryHint') }}</p>
                 </div>
 
                 <!-- Background thinking level (task agent + internal background jobs) -->
@@ -1494,7 +1494,7 @@
                       </SelectItem>
                     </SelectContent>
                   </Select>
-                  <p class="text-xs text-muted-foreground">{{ $t('settings.backgroundThinkingLevelHint') }}</p>
+                  <p class="measure text-help text-muted-foreground">{{ $t('settings.backgroundThinkingLevelHint') }}</p>
                 </div>
 
                 <Separator />
@@ -1504,18 +1504,18 @@
                   <h3 class="text-base font-semibold tracking-tight text-foreground">
                     {{ $t('settings.tasksLoopDetection') }}
                   </h3>
-                  <p class="mt-1 text-sm text-muted-foreground">
+                  <p class="measure mt-1 text-sm text-muted-foreground">
                     {{ $t('settings.tasksLoopDetectionHint') }}
                   </p>
                 </div>
 
                 <!-- Enable toggle -->
                 <div class="flex items-center justify-between rounded-lg border border-border px-4 py-3">
-                  <div class="flex flex-col gap-0.5 pr-4">
+                  <div class="flex flex-col gap-1 pr-4">
                     <Label for="loop-detection-enabled" class="cursor-pointer">
                       {{ $t('settings.tasksLoopDetectionEnabled') }}
                     </Label>
-                    <p class="text-xs text-muted-foreground">
+                    <p class="measure text-help text-muted-foreground">
                       {{ $t('settings.tasksLoopDetectionEnabledHint') }}
                     </p>
                   </div>
@@ -1539,7 +1539,7 @@
                         <SelectItem value="auto">{{ $t('settings.tasksLoopDetectionMethodAuto') }}</SelectItem>
                       </SelectContent>
                     </Select>
-                    <p class="text-xs text-muted-foreground">{{ $t('settings.tasksLoopDetectionMethodHint') }}</p>
+                    <p class="measure text-help text-muted-foreground">{{ $t('settings.tasksLoopDetectionMethodHint') }}</p>
                   </div>
 
                   <!-- Max consecutive failures -->
@@ -1553,7 +1553,7 @@
                       max="20"
                       class="w-full"
                     />
-                    <p class="text-xs text-muted-foreground">{{ $t('settings.tasksLoopDetectionMaxFailuresHint') }}</p>
+                    <p class="measure text-help text-muted-foreground">{{ $t('settings.tasksLoopDetectionMaxFailuresHint') }}</p>
                   </div>
 
                   <!-- Smart provider (shown when method is smart or auto) -->
@@ -1571,7 +1571,7 @@
                           </SelectItem>
                         </SelectContent>
                       </Select>
-                      <p class="text-xs text-muted-foreground">{{ $t('settings.tasksLoopDetectionSmartProviderHint') }}</p>
+                      <p class="measure text-help text-muted-foreground">{{ $t('settings.tasksLoopDetectionSmartProviderHint') }}</p>
                     </div>
 
                     <!-- Smart check interval -->
@@ -1588,7 +1588,7 @@
                         />
                         <span class="text-sm text-muted-foreground">{{ $t('settings.tasksToolCalls') }}</span>
                       </div>
-                      <p class="text-xs text-muted-foreground">{{ $t('settings.tasksLoopDetectionSmartIntervalHint') }}</p>
+                      <p class="measure text-help text-muted-foreground">{{ $t('settings.tasksLoopDetectionSmartIntervalHint') }}</p>
                     </div>
                   </template>
                 </template>
@@ -1600,18 +1600,18 @@
                   <h3 class="text-base font-semibold tracking-tight text-foreground">
                     {{ $t('settings.tasksStatusUpdates') }}
                   </h3>
-                  <p class="mt-1 text-sm text-muted-foreground">
+                  <p class="measure mt-1 text-sm text-muted-foreground">
                     {{ $t('settings.tasksStatusUpdatesHint') }}
                   </p>
                 </div>
 
                 <!-- Enable toggle -->
                 <div class="flex items-center justify-between rounded-lg border border-border px-4 py-3">
-                  <div class="flex flex-col gap-0.5 pr-4">
+                  <div class="flex flex-col gap-1 pr-4">
                     <Label for="status-updates-enabled" class="cursor-pointer">
                       {{ $t('settings.tasksStatusUpdatesEnabled') }}
                     </Label>
-                    <p class="text-xs text-muted-foreground">
+                    <p class="measure text-help text-muted-foreground">
                       {{ $t('settings.tasksStatusUpdatesEnabledHint') }}
                     </p>
                   </div>
@@ -1634,7 +1634,7 @@
                     />
                     <span class="text-sm text-muted-foreground">{{ $t('settings.minutes') }}</span>
                   </div>
-                  <p class="text-xs text-muted-foreground">{{ $t('settings.tasksStatusUpdateIntervalHint') }}</p>
+                  <p class="measure text-help text-muted-foreground">{{ $t('settings.tasksStatusUpdateIntervalHint') }}</p>
                 </div>
               </div>
             </div>
@@ -1645,7 +1645,7 @@
                 <h2 class="text-lg font-semibold tracking-tight text-foreground">
                   {{ $t('settings.ttsTitle') }}
                 </h2>
-                <p class="mt-1 text-sm text-muted-foreground">
+                <p class="measure mt-1 text-sm text-muted-foreground">
                   {{ $t('settings.ttsSubtitle') }}
                 </p>
               </div>
@@ -1653,15 +1653,17 @@
               <div class="flex flex-col gap-8">
                 <SettingsVoiceReplies />
 
+                <SettingsSpeechCache />
+
                 <Separator />
 
                 <!-- Enable toggle -->
                 <div class="flex items-center justify-between rounded-lg border border-border px-4 py-3">
-                  <div class="flex flex-col gap-0.5 pr-4">
+                  <div class="flex flex-col gap-1 pr-4">
                     <Label for="tts-enabled" class="cursor-pointer">
                       {{ $t('settings.ttsEnabled') }}
                     </Label>
-                    <p class="text-xs text-muted-foreground">
+                    <p class="measure text-help text-muted-foreground">
                       {{ $t('settings.ttsEnabledHint') }}
                     </p>
                   </div>
@@ -1688,7 +1690,7 @@
                         </template>
                       </SelectContent>
                     </Select>
-                    <p class="text-xs text-muted-foreground">{{ $t('settings.ttsProviderHint') }}</p>
+                    <p class="measure text-help text-muted-foreground">{{ $t('settings.ttsProviderHint') }}</p>
                   </div>
 
                   <Separator />
@@ -1712,7 +1714,7 @@
                           <SelectItem value="tts-1-hd">tts-1-hd</SelectItem>
                         </SelectContent>
                       </Select>
-                      <p class="text-xs text-muted-foreground">{{ $t('settings.ttsOpenaiModelHint') }}</p>
+                      <p class="measure text-help text-muted-foreground">{{ $t('settings.ttsOpenaiModelHint') }}</p>
                     </div>
 
                     <!-- Voice -->
@@ -1728,7 +1730,7 @@
                           </SelectItem>
                         </SelectContent>
                       </Select>
-                      <p class="text-xs text-muted-foreground">{{ $t('settings.ttsOpenaiVoiceHint') }}</p>
+                      <p class="measure text-help text-muted-foreground">{{ $t('settings.ttsOpenaiVoiceHint') }}</p>
                     </div>
 
                     <!-- Instructions (only for gpt-4o-mini-tts) -->
@@ -1739,7 +1741,7 @@
                         v-model="form.tts.openaiInstructions"
                         :placeholder="$t('settings.ttsOpenaiInstructionsPlaceholder')"
                       />
-                      <p class="text-xs text-muted-foreground">{{ $t('settings.ttsOpenaiInstructionsHint') }}</p>
+                      <p class="measure text-help text-muted-foreground">{{ $t('settings.ttsOpenaiInstructionsHint') }}</p>
                     </div>
                   </template>
 
@@ -1759,7 +1761,7 @@
                         :placeholder="$t('settings.deepgramApiKeyPlaceholder')"
                         autocomplete="off"
                       />
-                      <p class="text-xs text-muted-foreground">{{ $t('settings.deepgramApiKeyHint') }}</p>
+                      <p class="measure text-help text-muted-foreground">{{ $t('settings.deepgramApiKeyHint') }}</p>
                     </div>
 
                     <div class="flex flex-col gap-2">
@@ -1791,8 +1793,8 @@
                           <AppIcon name="refresh" class="h-4 w-4" :class="{ 'animate-spin': deepgramModelsLoading }" />
                         </Button>
                       </div>
-                      <p v-if="deepgramModelsError" class="text-xs text-destructive">{{ deepgramModelsError }}</p>
-                      <p v-else class="text-xs text-muted-foreground">{{ $t('settings.ttsDeepgramModelHint') }}</p>
+                      <p v-if="deepgramModelsError" class="measure text-help text-destructive">{{ deepgramModelsError }}</p>
+                      <p v-else class="measure text-help text-muted-foreground">{{ $t('settings.ttsDeepgramModelHint') }}</p>
                     </div>
 
                   </template>
@@ -1837,7 +1839,7 @@
                           </SelectContent>
                         </Select>
                       </div>
-                      <p class="text-xs text-muted-foreground">{{ $t('settings.ttsMistralVoiceHint') }}</p>
+                      <p class="measure text-help text-muted-foreground">{{ $t('settings.ttsMistralVoiceHint') }}</p>
                     </div>
                   </template>
 
@@ -1845,7 +1847,7 @@
                   <template v-if="form.tts.provider === 'gemini'">
                     <div>
                       <h3 class="text-base font-semibold tracking-tight text-foreground">Google Gemini TTS</h3>
-                      <p class="mt-1 text-xs text-muted-foreground">{{ $t('settings.ttsGeminiIntro') }}</p>
+                      <p class="mt-1 measure text-help text-muted-foreground">{{ $t('settings.ttsGeminiIntro') }}</p>
                     </div>
 
                     <!-- Model -->
@@ -1861,7 +1863,7 @@
                           </SelectItem>
                         </SelectContent>
                       </Select>
-                      <p class="text-xs text-muted-foreground">{{ $t('settings.ttsGeminiModelHint') }}</p>
+                      <p class="measure text-help text-muted-foreground">{{ $t('settings.ttsGeminiModelHint') }}</p>
                     </div>
 
                     <!-- Voice -->
@@ -1877,7 +1879,7 @@
                           </SelectItem>
                         </SelectContent>
                       </Select>
-                      <p class="text-xs text-muted-foreground">{{ $t('settings.ttsGeminiVoiceHint') }}</p>
+                      <p class="measure text-help text-muted-foreground">{{ $t('settings.ttsGeminiVoiceHint') }}</p>
                     </div>
 
                     <!-- Style hint -->
@@ -1889,7 +1891,7 @@
                         :placeholder="$t('settings.ttsGeminiStylePlaceholder')"
                         maxlength="500"
                       />
-                      <p class="text-xs text-muted-foreground">{{ $t('settings.ttsGeminiStyleHint') }}</p>
+                      <p class="measure text-help text-muted-foreground">{{ $t('settings.ttsGeminiStyleHint') }}</p>
                     </div>
                   </template>
 
@@ -1927,8 +1929,8 @@
                         {{ ttsPreviewPlaying ? $t('settings.ttsPreviewStop') : ttsPreviewBlocked ? $t('settings.ttsPreviewPlayNow') : $t('settings.ttsPreviewPlay') }}
                       </Button>
                     </div>
-                    <p v-if="ttsPreviewError" class="text-xs text-destructive" role="alert">{{ ttsPreviewError }}</p>
-                    <p v-else class="text-xs text-muted-foreground">{{ $t('settings.ttsPreviewHint') }}</p>
+                    <p v-if="ttsPreviewError" class="measure text-help text-destructive" role="alert">{{ ttsPreviewError }}</p>
+                    <p v-else class="measure text-help text-muted-foreground">{{ $t('settings.ttsPreviewHint') }}</p>
                   </div>
 
                   <!--
@@ -1951,7 +1953,7 @@
                         </SelectItem>
                       </SelectContent>
                     </Select>
-                    <p class="text-xs text-muted-foreground">
+                    <p class="measure text-help text-muted-foreground">
                       {{ form.tts.provider === 'gemini' ? $t('settings.ttsResponseFormatGeminiHint') : $t('settings.ttsResponseFormatHint') }}
                     </p>
                   </div>
@@ -1984,7 +1986,7 @@
                 <h2 class="text-lg font-semibold tracking-tight text-foreground">
                   {{ $t('settings.sttTitle') }}
                 </h2>
-                <p class="mt-1 text-sm text-muted-foreground">
+                <p class="measure mt-1 text-sm text-muted-foreground">
                   {{ $t('settings.sttSubtitle') }}
                 </p>
               </div>
@@ -1992,11 +1994,11 @@
               <div class="flex flex-col gap-8">
                 <!-- Enable toggle -->
                 <div class="flex items-center justify-between rounded-lg border border-border px-4 py-3">
-                  <div class="flex flex-col gap-0.5 pr-4">
+                  <div class="flex flex-col gap-1 pr-4">
                     <Label for="stt-enabled" class="cursor-pointer">
                       {{ $t('settings.sttEnabled') }}
                     </Label>
-                    <p class="text-xs text-muted-foreground">
+                    <p class="measure text-help text-muted-foreground">
                       {{ $t('settings.sttEnabledHint') }}
                     </p>
                   </div>
@@ -2023,7 +2025,7 @@
                         </template>
                       </SelectContent>
                     </Select>
-                    <p class="text-xs text-muted-foreground">{{ $t('settings.sttProviderHint') }}</p>
+                    <p class="measure text-help text-muted-foreground">{{ $t('settings.sttProviderHint') }}</p>
                   </div>
 
                   <!-- Whisper URL field (only visible when provider is whisper-url) -->
@@ -2035,7 +2037,7 @@
                       type="url"
                       :placeholder="$t('settings.sttWhisperUrlPlaceholder')"
                     />
-                    <p class="text-xs text-muted-foreground">{{ $t('settings.sttWhisperUrlHint') }}</p>
+                    <p class="measure text-help text-muted-foreground">{{ $t('settings.sttWhisperUrlHint') }}</p>
                   </div>
 
                   <!-- OpenAI model field (only visible when provider is openai) -->
@@ -2051,7 +2053,7 @@
                         <SelectItem value="gpt-4o-mini-transcribe">gpt-4o-mini-transcribe</SelectItem>
                       </SelectContent>
                     </Select>
-                    <p class="text-xs text-muted-foreground">{{ $t('settings.sttOpenaiModelHint') }}</p>
+                    <p class="measure text-help text-muted-foreground">{{ $t('settings.sttOpenaiModelHint') }}</p>
                   </div>
 
                   <!-- Ollama model field (only visible when provider is ollama) -->
@@ -2063,7 +2065,7 @@
                       type="text"
                       :placeholder="$t('settings.sttOllamaModelPlaceholder')"
                     />
-                    <p class="text-xs text-muted-foreground">{{ $t('settings.sttOllamaModelHint') }}</p>
+                    <p class="measure text-help text-muted-foreground">{{ $t('settings.sttOllamaModelHint') }}</p>
                   </div>
 
                   <!-- Deepgram fields (only visible when provider is deepgram) -->
@@ -2078,7 +2080,7 @@
                         :placeholder="$t('settings.deepgramApiKeyPlaceholder')"
                         autocomplete="off"
                       />
-                      <p class="text-xs text-muted-foreground">{{ $t('settings.deepgramApiKeyHint') }}</p>
+                      <p class="measure text-help text-muted-foreground">{{ $t('settings.deepgramApiKeyHint') }}</p>
                     </div>
                     <div class="flex flex-col gap-2">
                       <Label for="stt-deepgram-model">{{ $t('settings.sttDeepgramModel') }}</Label>
@@ -2109,8 +2111,8 @@
                           <AppIcon name="refresh" class="h-4 w-4" :class="{ 'animate-spin': deepgramModelsLoading }" />
                         </Button>
                       </div>
-                      <p v-if="deepgramModelsError" class="text-xs text-destructive">{{ deepgramModelsError }}</p>
-                      <p v-else class="text-xs text-muted-foreground">{{ $t('settings.sttDeepgramModelHint') }}</p>
+                      <p v-if="deepgramModelsError" class="measure text-help text-destructive">{{ deepgramModelsError }}</p>
+                      <p v-else class="measure text-help text-muted-foreground">{{ $t('settings.sttDeepgramModelHint') }}</p>
                     </div>
                     <div class="flex flex-col gap-2">
                       <Label for="stt-deepgram-language">{{ $t('settings.sttDeepgramLanguage') }}</Label>
@@ -2120,17 +2122,17 @@
                         type="text"
                         :placeholder="$t('settings.sttDeepgramLanguagePlaceholder')"
                       />
-                      <p class="text-xs text-muted-foreground">{{ $t('settings.sttDeepgramLanguageHint') }}</p>
+                      <p class="measure text-help text-muted-foreground">{{ $t('settings.sttDeepgramLanguageHint') }}</p>
                     </div>
                   </template>
 
                   <!-- Rewrite toggle -->
                   <div class="flex items-center justify-between rounded-lg border border-border px-4 py-3">
-                    <div class="flex flex-col gap-0.5 pr-4">
+                    <div class="flex flex-col gap-1 pr-4">
                       <Label for="stt-rewrite-enabled" class="cursor-pointer">
                         {{ $t('settings.sttRewriteEnabled') }}
                       </Label>
-                      <p class="text-xs text-muted-foreground">
+                      <p class="measure text-help text-muted-foreground">
                         {{ $t('settings.sttRewriteEnabledHint') }}
                       </p>
                     </div>
@@ -2158,7 +2160,7 @@
                         </SelectItem>
                       </SelectContent>
                     </Select>
-                    <p class="text-xs text-muted-foreground">{{ $t('settings.sttRewriteProviderHint') }}</p>
+                    <p class="measure text-help text-muted-foreground">{{ $t('settings.sttRewriteProviderHint') }}</p>
                   </div>
                 </template>
               </div>
@@ -2170,7 +2172,7 @@
                 <h2 class="text-lg font-semibold tracking-tight text-foreground">
                   {{ $t('settings.secretsTitle') }}
                 </h2>
-                <p class="mt-1 text-sm text-muted-foreground">
+                <p class="measure mt-1 text-sm text-muted-foreground">
                   {{ $t('settings.secretsSubtitle') }}
                 </p>
               </div>
@@ -2251,7 +2253,7 @@
                       </div>
                     </div>
                     <!-- Inline update field — shown on edit click -->
-                    <div v-if="secretEditOpen.has(secret.key)" class="mt-3 flex flex-col gap-1.5">
+                    <div v-if="secretEditOpen.has(secret.key)" class="mt-3 flex flex-col gap-2">
                       <Label :for="`secret-edit-${secret.key}`">{{ $t('settings.secretsNewValue') }}</Label>
                       <div class="flex items-center gap-2">
                         <Input
@@ -2269,7 +2271,7 @@
                         >
                           <span
                             v-if="secretsSaving"
-                            class="h-3.5 w-3.5 animate-spin rounded-full border-2 border-primary-foreground/30 border-t-primary-foreground"
+                            class="h-3.5 w-3.5 animate-spin rounded-full border-2 border-transparent border-t-current"
                             aria-hidden="true"
                           />
                           {{ $t('common.save') }}
@@ -2288,7 +2290,7 @@
 
                 <!-- Empty state -->
                 <div v-else class="flex flex-col items-center gap-2 rounded-lg border border-dashed border-border px-4 py-8 text-center">
-                  <AppIcon name="key" size="lg" class="text-muted-foreground/40" />
+                  <AppIcon name="key" size="lg" class="text-muted-foreground" />
                   <p class="text-sm text-muted-foreground">{{ $t('settings.secretsEmpty') }}</p>
                 </div>
 
@@ -2311,7 +2313,7 @@
                       class="font-mono"
                       @input="newSecretError = validateNewSecretKey(newSecretKey)"
                     />
-                    <p v-if="newSecretError" class="text-xs text-destructive">{{ newSecretError }}</p>
+                    <p v-if="newSecretError" class="measure text-help text-destructive">{{ newSecretError }}</p>
                   </div>
 
                   <div class="flex flex-col gap-2">
@@ -2331,7 +2333,7 @@
                   <Button :disabled="secretsSaving" @click="handleSaveSecrets">
                     <span
                       v-if="secretsSaving"
-                      class="h-4 w-4 animate-spin rounded-full border-2 border-primary-foreground/30 border-t-primary-foreground"
+                      class="h-4 w-4 animate-spin rounded-full border-2 border-transparent border-t-current"
                       aria-hidden="true"
                     />
                     {{ $t('settings.secretsSave') }}
@@ -2358,7 +2360,7 @@
                 <h2 class="text-lg font-semibold tracking-tight text-foreground">
                   {{ $t('settings.tabs.email') }}
                 </h2>
-                <p class="mt-1 text-sm text-muted-foreground">
+                <p class="measure mt-1 text-sm text-muted-foreground">
                   {{ $t('settings.tabs.emailDescription') }}
                 </p>
               </div>
@@ -2370,7 +2372,7 @@
             <div v-else-if="activeSection === 'models'" class="flex flex-col gap-6">
               <NuxtLink
                 to="/providers"
-                class="flex min-h-11 items-center justify-between gap-3 rounded-xl border border-border bg-card px-4 py-3 text-sm transition-colors hover:bg-accent/50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                class="flex min-h-11 items-center justify-between gap-3 rounded-xl border border-border bg-card px-4 py-3 text-sm transition-colors hover:bg-accent focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
               >
                 <span class="min-w-0">
                   <span class="block font-medium text-foreground">{{ $t('settings.sections.providersLink') }}</span>
@@ -2403,6 +2405,7 @@ import SettingsAppearance from './SettingsAppearance.vue'
 import SettingsOverview from './SettingsOverview.vue'
 import SettingsSectionNav from './SettingsSectionNav.vue'
 import SettingsVoiceReplies from './SettingsVoiceReplies.vue'
+import SettingsSpeechCache from './SettingsSpeechCache.vue'
 import { findSection, isRoutableSection, showsFormSave } from '../settingsSections'
 import { formSnapshot, isFormDirty } from '../settingsDirty'
 import { useTtsCatalogApi, type TtsCatalogResponse } from '~/api/tts'

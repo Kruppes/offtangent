@@ -5,7 +5,7 @@
   <div class="flex min-w-0 items-center gap-2" :data-player-status="view.status" data-audio-player>
     <button
       type="button"
-      class="inline-flex h-11 w-11 shrink-0 items-center justify-center rounded-full bg-primary text-primary-foreground transition-colors hover:bg-primary/90 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary disabled:opacity-60"
+      class="inline-flex h-11 w-11 shrink-0 items-center justify-center rounded-full bg-primary text-primary-foreground transition-colors hover:bg-primary-hover focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary disabled:text-muted-foreground disabled:[&_svg]:text-border disabled:bg-muted"
       :aria-label="view.status === 'playing' ? $t('w4b.player.pause', { label }) : $t('w4b.player.play', { label })"
       :disabled="disabled"
       data-player-toggle
