@@ -444,9 +444,12 @@ export const PROVIDER_TYPE_PRESETS: Record<ProviderType, ProviderTypePreset> = {
 }
 
 /**
- * Anthropic models newer than the pinned pi-ai release. Shared by both
- * Anthropic provider types (api key and Claude subscription): the metadata
- * belongs to the model, not to the authentication.
+ * Anthropic models newer than pi-ai 0.87.1. Shared by both Anthropic provider
+ * types (api key and Claude subscription): the metadata belongs to the model,
+ * not to the authentication. Since the 1.0.0 pin the pi-ai catalog has Sonnet
+ * 5.5 too, so the subscription type resolves it from the catalog in
+ * buildModel() with this entry's thinking map + compat layered on top; the
+ * api-key type builds on the generic path and reads this override alone.
  */
 const ANTHROPIC_MODEL_OVERRIDES: ProviderModelConfig[] = [
   // Introductory pricing ($2 in / $10 out per MTok) runs through Aug 31, 2026;
@@ -465,10 +468,11 @@ const ANTHROPIC_MODEL_OVERRIDES: ProviderModelConfig[] = [
 ]
 
 /**
- * GPT-6.1 Sol (released 2026-09-29) is newer than the pinned pi-ai release
- * (0.87.1). Metadata mirrors the generated catalog of pi-ai 0.99.2. Remove
- * both entries once the pi-ai pin contains `gpt-6.1-sol` (the provider-config
- * test "is still missing from the pinned pi-ai catalog" fails at that point).
+ * GPT-6.1 Sol (released 2026-09-29) was newer than pi-ai 0.87.1. Since the
+ * 1.0.0 pin the generated catalog has it as well; the provider-config test
+ * "is in the pinned pi-ai catalog and the local override matches its metadata"
+ * guards against drift. The `openai` entry is still needed: that api-key preset
+ * builds on the generic path, which reads this override, not the pi-ai catalog.
  *
  * Differences to GPT-6 Sol: half the cache read price, and no reasoning-off
  * mode (`off: null`; GPT-6 Sol maps `off` to `none`).
@@ -2240,6 +2244,22 @@ export function buildModel(provider: ProviderConfig, modelId?: string): Model<Ap
         const resolvedAuth = lastResolvedModelAuth.get(provider.id)
         if (resolvedAuth?.baseUrl) {
           piModel = { ...piModel, baseUrl: resolvedAuth.baseUrl }
+        }
+
+        // A local override that pins the wire contract (thinking map / compat
+        // flags) wins over the catalog entry, as the override table promises.
+        // pi-ai 1.0.0 lists Claude Sonnet 5.5 as a managed-effort model
+        // (`supportsMidConvoEffort`), which always sends adaptive thinking at
+        // effort "high" — even for thinking=off. Our override keeps `off` free
+        // of any thinking field, which the task policy relies on for its
+        // off/minimal cells. Only overrides that set these fields apply here.
+        const wireOverride = findOverrideModel(provider.providerType, id)
+        if (wireOverride?.thinkingLevelMap || wireOverride?.compat) {
+          piModel = {
+            ...piModel,
+            ...(wireOverride.thinkingLevelMap && { thinkingLevelMap: wireOverride.thinkingLevelMap }),
+            ...(wireOverride.compat && { compat: wireOverride.compat as Model<Api>['compat'] }),
+          }
         }
 
         // For Anthropic OAuth, inject the Claude Code CLI user-agent header

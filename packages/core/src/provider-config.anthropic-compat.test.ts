@@ -1,10 +1,12 @@
 /**
- * Anthropic models that the pinned pi-ai release does not know yet take the
- * generic build path in `buildModel()`, so every wire quirk of the model has to
- * come from our own catalog. Claude Sonnet 5.5 is the current case: it rejects
- * `thinking: { type: "disabled" }` and rejects the `temperature` field, and the
- * catalog entry has to be found for the api-key (`anthropic`) as well as the
- * subscription (`anthropic-oauth`) provider type.
+ * Claude Sonnet 5.5 rejects `thinking: { type: "disabled" }` and rejects the
+ * `temperature` field. The api-key (`anthropic`) provider type takes the
+ * generic build path in `buildModel()`, which does not consult the pi-ai
+ * catalog, so every wire quirk has to come from our own override. Since pi-ai
+ * 0.99.0 the pinned catalog carries Sonnet 5.5 itself, and the subscription
+ * (`anthropic-oauth`) provider type resolves the model from that catalog entry
+ * (same path as Claude Opus 5.5) with our wire override (thinking map + compat)
+ * layered on top, so both provider types must stay correct.
  */
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import fs from 'node:fs'
@@ -72,14 +74,30 @@ describe('buildModel for Claude Sonnet 5.5', () => {
     })
   }
 
-  it('lets a per-provider models[] entry win over the catalog entry', () => {
+  it('lets a per-provider models[] entry win over the local override on the api-key path', () => {
     const model = buildModel(anthropicProvider({
-      providerType: 'anthropic-oauth',
+      providerType: 'anthropic',
       models: [{ id: SONNET_55, name: 'Pinned Sonnet', cost: { input: 1, output: 2 } }],
     }), SONNET_55)
     expect(model.name).toBe('Pinned Sonnet')
     expect(model.cost.input).toBe(1)
     expect(model.compat).toBeUndefined()
+  })
+
+  it('resolves the subscription model from the pi-ai catalog with our wire override on top', () => {
+    // OAuth presets take the catalog path in buildModel(); since pi-ai 0.99.0
+    // the catalog has Sonnet 5.5, so a per-provider models[] entry no longer
+    // applies there, exactly as for every other catalog model (Opus 5.5).
+    const model = buildModel(anthropicProvider({
+      providerType: 'anthropic-oauth',
+      models: [{ id: SONNET_55, name: 'Pinned Sonnet', cost: { input: 1, output: 2 } }],
+    }), SONNET_55)
+    expect(model.name).toBe('Claude Sonnet 5.5')
+    expect(model.cost).toMatchObject({ input: 2, output: 10, cacheRead: 0.20, cacheWrite: 2.50 })
+    // The catalog marks Sonnet 5.5 as managed-effort (adaptive thinking at
+    // effort "high" even for off); the override keeps it off that path.
+    expect(model.compat).toEqual({ forceAdaptiveThinking: true, supportsTemperature: false, supportsStrictTools: true })
+    expect(model.headers?.['user-agent']).toMatch(/^claude-cli\//)
   })
 })
 
@@ -171,9 +189,14 @@ describe('Sonnet 5.5 request body', () => {
     expect(body).not.toHaveProperty('temperature')
   })
 
-  it('omits thinking entirely when the caller asks for no reasoning', async () => {
+  it('omits thinking entirely when the caller asks for no reasoning (api-key override path)', async () => {
     // `thinkingLevelMap.off === null` is what keeps pi-ai from sending
     // `thinking: { type: "disabled" }`, which this model rejects with a 400.
+    const body = await captureRequestBody({}, SONNET_55, anthropicProvider({ providerType: 'anthropic' }))
+    expect(body.thinking).toBeUndefined()
+  })
+
+  it('omits thinking entirely when the caller asks for no reasoning (subscription catalog path)', async () => {
     const body = await captureRequestBody({})
     expect(body.thinking).toBeUndefined()
   })

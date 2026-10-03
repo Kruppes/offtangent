@@ -1810,8 +1810,9 @@ describe('OpenCode Zen/Go catalog presets (sourced from pi-ai)', () => {
   it('getAvailableModels resolves the OpenCode Go catalog from pi-ai', () => {
     const ids = getAvailableModels('opencode-go').map(m => m.id)
     expect(ids.length).toBeGreaterThan(0)
-    expect(ids).toContain('glm-5.1')
-    expect(ids).toContain('kimi-k2.6')
+    // pi-ai 1.0.0 dropped glm-5.1 / kimi-k2.6 from the OpenCode Go catalog.
+    expect(ids).toContain('glm-5.3')
+    expect(ids).toContain('kimi-k3')
   })
 
   it('getAvailableModels resolves the OpenCode Zen catalog from pi-ai', () => {
@@ -1823,8 +1824,8 @@ describe('OpenCode Zen/Go catalog presets (sourced from pi-ai)', () => {
   })
 
   it('buildModel uses real per-token costs for OpenCode Go (not the old zeroed override)', () => {
-    const model = buildModel(makeProvider('opencode-go', 'glm-5.1'))
-    expect(model.id).toBe('glm-5.1')
+    const model = buildModel(makeProvider('opencode-go', 'glm-5.3'))
+    expect(model.id).toBe('glm-5.3')
     expect(model.api).toBe('openai-completions')
     expect(model.baseUrl).toBe('https://opencode.ai/zen/go/v1')
     expect(model.cost.input).toBeGreaterThan(0)
@@ -1951,8 +1952,10 @@ describe('syncNewCatalogModels', () => {
     expect(loadProviders().providers[0].knownModels).toContain(newModel)
   })
 
-  it('enables GPT-6.1 Sol on a ChatGPT (Codex) provider that knows the pinned pi-ai catalog', () => {
-    const pinned = getBuiltinModels('openai-codex').map(m => m.id)
+  it('enables GPT-6.1 Sol on a ChatGPT (Codex) provider that knows the pre-1.0 pi-ai catalog', () => {
+    // pi-ai 1.0.0 ships GPT-6.1 Sol in its own catalog; a provider saved under
+    // the 0.87.1 pin knows every catalog id except that one.
+    const pinned = getBuiltinModels('openai-codex').map(m => m.id).filter(id => id !== 'gpt-6.1-sol')
     setup([{
       id: 'codex-1', name: 'ChatGPT', type: 'openai-codex-responses', providerType: 'openai-codex',
       provider: 'openai-codex', baseUrl: '', apiKey: '', authMethod: 'oauth',
@@ -2057,9 +2060,10 @@ describe('OAuth recovery after an authentication failure', () => {
 })
 
 /**
- * GPT-6.1 Sol shipped after the pinned pi-ai release (0.87.1). It is carried as
- * a local override for both OpenAI provider types until the pin includes it;
- * the metadata mirrors pi-ai 0.99.2's generated catalog entry.
+ * GPT-6.1 Sol shipped after pi-ai 0.87.1 and was carried as a local override
+ * for both OpenAI provider types. Since the 1.0.0 pin the generated catalog has
+ * it too. The override stays for now: the `openai` api-key preset builds models
+ * on the generic path, which reads only the override, not the pi-ai catalog.
  */
 describe('GPT-6.1 Sol override (openai + openai-codex)', () => {
   const codexProvider = {
@@ -2084,9 +2088,21 @@ describe('GPT-6.1 Sol override (openai + openai-codex)', () => {
     enabledModels: ['gpt-6.1-sol'],
   }
 
-  it('is still missing from the pinned pi-ai catalog (drop the override once this fails)', () => {
-    expect(getBuiltinModels('openai').some(m => m.id === 'gpt-6.1-sol')).toBe(false)
-    expect(getBuiltinModels('openai-codex').some(m => m.id === 'gpt-6.1-sol')).toBe(false)
+  it('is in the pinned pi-ai catalog and the local override matches its metadata', () => {
+    for (const providerType of ['openai', 'openai-codex'] as const) {
+      const catalog = getBuiltinModels(providerType).find(m => m.id === 'gpt-6.1-sol')
+      expect(catalog).toBeDefined()
+      const override = PROVIDER_TYPE_MODEL_OVERRIDES[providerType]?.find(m => m.id === 'gpt-6.1-sol')
+      expect(override).toBeDefined()
+      expect(override).toMatchObject({
+        name: catalog!.name,
+        contextWindow: catalog!.contextWindow,
+        maxTokens: catalog!.maxTokens,
+        reasoning: catalog!.reasoning,
+        cost: catalog!.cost,
+        thinkingLevelMap: catalog!.thinkingLevelMap,
+      })
+    }
   })
 
   it.each(['openai', 'openai-codex'] as const)('appears in the %s model list next to GPT-6 Sol', (type) => {
