@@ -42,7 +42,7 @@
       </div>
 
       <div class="hidden flex-col gap-2 md:flex lg:flex-row lg:items-center">
-        <div class="flex flex-1 flex-wrap items-center gap-2">
+        <div class="flex flex-1 flex-wrap items-end gap-2">
           <TaskFilterFields
             v-model:status="filters.status"
             v-model:trigger-type="filters.triggerType"

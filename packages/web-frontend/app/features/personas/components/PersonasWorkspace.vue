@@ -233,7 +233,6 @@
                       v-model="colorPicker"
                       type="color"
                       class="h-11 w-14 shrink-0 cursor-pointer rounded-md border border-input bg-background p-1"
-                      :aria-label="$t('personas.fieldColor')"
                     >
                     <Input
                       v-model="form.color"

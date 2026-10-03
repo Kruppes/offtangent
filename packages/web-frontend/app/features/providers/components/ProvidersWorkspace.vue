@@ -104,7 +104,7 @@
                         {{ dataPolicyBadgeLabel(provider) }}
                       </span>
                       <div class="flex flex-wrap items-center gap-2">
-                        <Label :for="`data-region-${provider.id}`" class="sr-only">
+                        <Label :for="`data-region-${provider.id}`" class="text-xs text-muted-foreground">
                           {{ $t('providers.dataPolicy.region') }}
                         </Label>
                         <select
@@ -113,7 +113,6 @@
                                  focus:outline-none focus:ring-2 focus:ring-ring disabled:bg-muted disabled:text-muted-foreground"
                           :value="provider.dataPolicy?.region ?? ''"
                           :disabled="savingDataPolicy === provider.id"
-                          :aria-label="$t('providers.dataPolicy.region')"
                           @change="saveDataPolicy(provider, 'region', ($event.target as HTMLSelectElement).value)"
                         >
                           <option value="">{{ $t('providers.dataPolicy.derived') }}</option>
@@ -121,7 +120,7 @@
                             {{ $t(`providers.dataPolicy.regions.${region}`) }}
                           </option>
                         </select>
-                        <Label :for="`data-training-${provider.id}`" class="sr-only">
+                        <Label :for="`data-training-${provider.id}`" class="text-xs text-muted-foreground">
                           {{ $t('providers.dataPolicy.training') }}
                         </Label>
                         <select
@@ -130,7 +129,6 @@
                                  focus:outline-none focus:ring-2 focus:ring-ring disabled:bg-muted disabled:text-muted-foreground"
                           :value="provider.dataPolicy?.training ?? ''"
                           :disabled="savingDataPolicy === provider.id"
-                          :aria-label="$t('providers.dataPolicy.training')"
                           @change="saveDataPolicy(provider, 'training', ($event.target as HTMLSelectElement).value)"
                         >
                           <option value="">{{ $t('providers.dataPolicy.derived') }}</option>

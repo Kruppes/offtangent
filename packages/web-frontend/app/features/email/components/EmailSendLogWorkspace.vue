@@ -15,21 +15,28 @@
     </Alert>
 
     <div class="shrink-0 space-y-3 rounded-xl border border-border bg-card p-3">
-      <div class="grid gap-2 sm:grid-cols-2 lg:grid-cols-5">
-        <Input
-          v-model="filters.search"
-          :placeholder="$t('email.sentLog.filters.search')"
-          @keyup.enter="fetchEntries"
-        />
-        <Input
-          v-model="filters.recipient"
-          :placeholder="$t('email.sentLog.filters.recipient')"
-          @keyup.enter="fetchEntries"
-        />
+      <div class="grid items-end gap-2 sm:grid-cols-2 lg:grid-cols-5">
+        <LabeledField v-slot="{ id }" :label="$t('email.sentLog.filters.searchLabel')">
+          <Input
+            :id="id"
+            v-model="filters.search"
+            :placeholder="$t('email.sentLog.filters.search')"
+            @keyup.enter="fetchEntries"
+          />
+        </LabeledField>
+        <LabeledField v-slot="{ id }" :label="$t('email.sentLog.filters.recipientLabel')">
+          <Input
+            :id="id"
+            v-model="filters.recipient"
+            :placeholder="$t('email.sentLog.filters.recipient')"
+            @keyup.enter="fetchEntries"
+          />
+        </LabeledField>
+        <LabeledField v-slot="{ id }" :label="$t('email.sentLog.filters.account')">
         <select
+          :id="id"
           v-model="filters.accountId"
           class="h-9 rounded-md border border-input bg-background px-3 text-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring max-md:h-11"
-          :aria-label="$t('email.sentLog.filters.account')"
           @change="fetchEntries"
         >
           <option value="">{{ $t('email.sentLog.filters.allAccounts') }}</option>
@@ -37,8 +44,13 @@
             {{ account.name }}
           </option>
         </select>
-        <Input v-model="filters.dateFrom" type="date" :aria-label="$t('email.sentLog.filters.dateFrom')" @change="fetchEntries" />
-        <Input v-model="filters.dateTo" type="date" :aria-label="$t('email.sentLog.filters.dateTo')" @change="fetchEntries" />
+        </LabeledField>
+        <LabeledField v-slot="{ id }" :label="$t('email.sentLog.filters.dateFrom')">
+          <Input :id="id" v-model="filters.dateFrom" type="date" @change="fetchEntries" />
+        </LabeledField>
+        <LabeledField v-slot="{ id }" :label="$t('email.sentLog.filters.dateTo')">
+          <Input :id="id" v-model="filters.dateTo" type="date" @change="fetchEntries" />
+        </LabeledField>
       </div>
 
       <div class="flex flex-wrap items-center gap-2">

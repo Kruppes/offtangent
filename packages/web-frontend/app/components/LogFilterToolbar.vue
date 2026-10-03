@@ -19,17 +19,20 @@ const emit = defineEmits<{
 
 <template>
   <div class="flex-shrink-0 border-b border-border px-5 py-4">
-    <div class="flex flex-wrap gap-2">
-      <Input
-        v-model="searchQuery"
-        type="text"
-        :placeholder="t('logs.searchPlaceholder')"
-        class="min-w-[180px] flex-1 sm:flex-none"
-        @input="emit('search')"
-      />
+    <div class="flex flex-wrap items-end gap-2">
+      <LabeledField v-slot="{ id }" :label="t('logs.searchLabel')" class="min-w-[180px] flex-1 sm:flex-none">
+        <Input
+          :id="id"
+          v-model="searchQuery"
+          type="text"
+          :placeholder="t('logs.searchPlaceholder')"
+          @input="emit('search')"
+        />
+      </LabeledField>
 
+      <LabeledField v-slot="{ id }" :label="t('aria.filterBy.source')" class="w-[150px]">
       <Select v-model="selectedSessionType" @update:model-value="emit('apply')">
-        <SelectTrigger :aria-label="t('aria.filterBy.source')" class="w-[150px]">
+        <SelectTrigger :id="id">
           <SelectValue />
         </SelectTrigger>
         <SelectContent>
@@ -38,9 +41,11 @@ const emit = defineEmits<{
           <SelectItem value="task">{{ t('logs.sourceTasks') }}</SelectItem>
         </SelectContent>
       </Select>
+      </LabeledField>
 
+      <LabeledField v-slot="{ id }" :label="t('aria.filterBy.tool')" class="w-[150px]">
       <Select v-model="selectedToolName" @update:model-value="emit('apply')">
-        <SelectTrigger :aria-label="t('aria.filterBy.tool')" class="w-[150px]">
+        <SelectTrigger :id="id">
           <SelectValue />
         </SelectTrigger>
         <SelectContent>
@@ -48,6 +53,7 @@ const emit = defineEmits<{
           <SelectItem v-for="name in toolNames" :key="name" :value="name">{{ name }}</SelectItem>
         </SelectContent>
       </Select>
+      </LabeledField>
 
       <DateRangePicker
         v-model:date-from="dateFrom"

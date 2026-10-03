@@ -1,14 +1,16 @@
 <template>
-  <Input
-    v-model="search"
-    type="search"
-    class="w-full md:w-[220px]"
-    :placeholder="$t('cronjobs.filters.search')"
-    :aria-label="$t('cronjobs.filters.search')"
-  />
+  <LabeledField v-slot="{ id }" :label="$t('cronjobs.filters.searchLabel')" class="w-full md:w-[220px]">
+    <Input
+      :id="id"
+      v-model="search"
+      type="search"
+      :placeholder="$t('cronjobs.filters.search')"
+    />
+  </LabeledField>
 
+  <LabeledField v-slot="{ id }" :label="$t('aria.filterBy.state')" class="w-full md:w-[140px]">
   <Select v-model="enabled">
-    <SelectTrigger :aria-label="$t('aria.filterBy.state')" class="w-full md:w-[140px]">
+    <SelectTrigger :id="id">
       <SelectValue />
     </SelectTrigger>
     <SelectContent>
@@ -17,9 +19,11 @@
       <SelectItem value="disabled">{{ $t('cronjobs.filters.disabled') }}</SelectItem>
     </SelectContent>
   </Select>
+  </LabeledField>
 
+  <LabeledField v-slot="{ id }" :label="$t('aria.filterBy.action')" class="w-full md:w-[140px]">
   <Select v-model="actionType">
-    <SelectTrigger :aria-label="$t('aria.filterBy.action')" class="w-full md:w-[140px]">
+    <SelectTrigger :id="id">
       <SelectValue />
     </SelectTrigger>
     <SelectContent>
@@ -28,9 +32,11 @@
       <SelectItem value="injection">{{ $t('cronjobs.actionTypeInjection') }}</SelectItem>
     </SelectContent>
   </Select>
+  </LabeledField>
 
+  <LabeledField v-slot="{ id }" :label="$t('aria.filterBy.provider')" class="w-full md:w-[220px]">
   <Select v-model="provider">
-    <SelectTrigger :aria-label="$t('aria.filterBy.provider')" class="w-full md:w-[220px]">
+    <SelectTrigger :id="id">
       <SelectValue />
     </SelectTrigger>
     <SelectContent>
@@ -43,9 +49,11 @@
       </SelectItem>
     </SelectContent>
   </Select>
+  </LabeledField>
 
+  <LabeledField v-slot="{ id }" :label="$t('aria.filterBy.lastRun')" class="w-full md:w-[160px]">
   <Select v-model="lastRunStatus">
-    <SelectTrigger :aria-label="$t('aria.filterBy.lastRun')" class="w-full md:w-[160px]">
+    <SelectTrigger :id="id">
       <SelectValue />
     </SelectTrigger>
     <SelectContent>
@@ -56,9 +64,11 @@
       <SelectItem :value="CRONJOB_NEVER_RAN_FILTER">{{ $t('cronjobs.filters.neverRan') }}</SelectItem>
     </SelectContent>
   </Select>
+  </LabeledField>
 
+  <LabeledField v-slot="{ id }" :label="$t('aria.filterBy.schedule')" class="w-full md:w-[160px]">
   <Select v-model="scheduleType">
-    <SelectTrigger :aria-label="$t('aria.filterBy.schedule')" class="w-full md:w-[160px]">
+    <SelectTrigger :id="id">
       <SelectValue />
     </SelectTrigger>
     <SelectContent>
@@ -67,6 +77,7 @@
       <SelectItem value="fixedDate">{{ $t('cronjobs.filters.fixedDate') }}</SelectItem>
     </SelectContent>
   </Select>
+  </LabeledField>
 </template>
 
 <script setup lang="ts">

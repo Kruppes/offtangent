@@ -21,8 +21,9 @@ const searching = computed(() => query.value.trim().length > 0)
     <h2 class="mb-4 text-lg font-semibold tracking-tight text-foreground md:sr-only">
       {{ $t('settings.overview.title') }}
     </h2>
-    <form role="search" class="relative mb-6" @submit.prevent>
-      <label for="settings-search" class="sr-only">{{ $t('settings.overview.searchLabel') }}</label>
+    <form role="search" class="mb-6" @submit.prevent>
+      <label for="settings-search" class="mb-1 block text-xs font-medium text-muted-foreground">{{ $t('settings.overview.searchLabel') }}</label>
+      <div class="relative">
       <AppIcon name="search" size="sm" class="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground" />
       <input
         id="settings-search"
@@ -34,6 +35,7 @@ const searching = computed(() => query.value.trim().length > 0)
         class="min-h-11 w-full rounded-md border border-input bg-background py-2 pl-9 pr-3 text-base text-foreground placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring md:text-sm"
         @keydown.esc="query = ''"
       >
+      </div>
     </form>
 
     <!-- Search results -->

@@ -478,7 +478,8 @@
     "preset_yesterday": "Gestern",
     "preset_last7": "Letzte 7 Tage",
     "preset_last30": "Letzte 30 Tage",
-    "unchangedLines": "{count} unveränderte Zeilen"
+    "unchangedLines": "{count} unveränderte Zeilen",
+    "searchLabel": "Suche"
   },
   "memory": {
     "kicker": "Persistenter Kontext",
@@ -541,7 +542,8 @@
     "closeFile": "Datei schließen",
     "deleteFile": "Datei löschen",
     "deleteConfirmTitle": "Datei löschen?",
-    "deleteConfirmDescription": "\"{name}\" löschen? Dies kann nicht rückgängig gemacht werden."
+    "deleteConfirmDescription": "\"{name}\" löschen? Dies kann nicht rückgängig gemacht werden.",
+    "searchLabel": "Dateien durchsuchen"
   },
   "settings": {
     "kicker": "Laufzeit-Konfiguration",
@@ -1536,7 +1538,9 @@
         "allAccounts": "Alle Konten",
         "dateFrom": "Von Datum",
         "dateTo": "Bis Datum",
-        "reset": "Filter zurücksetzen"
+        "reset": "Filter zurücksetzen",
+        "searchLabel": "Betreff oder Text",
+        "recipientLabel": "Empfänger"
       },
       "count": "{count} Einträge",
       "empty": "Der Agent hat noch keinen Sendeversuch unternommen.",
@@ -1590,7 +1594,8 @@
       "neverRan": "Nie gelaufen",
       "allSchedules": "Alle Zeitpläne",
       "recurring": "Wiederkehrend",
-      "fixedDate": "Festes Datum"
+      "fixedDate": "Festes Datum",
+      "searchLabel": "Suche"
     },
     "defaultProvider": "Standard",
     "actionTypeTask": "Task",

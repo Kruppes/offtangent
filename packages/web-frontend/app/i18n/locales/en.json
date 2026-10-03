@@ -478,7 +478,8 @@
     "preset_yesterday": "Yesterday",
     "preset_last7": "Last 7 days",
     "preset_last30": "Last 30 days",
-    "unchangedLines": "{count} unchanged lines"
+    "unchangedLines": "{count} unchanged lines",
+    "searchLabel": "Search"
   },
   "memory": {
     "kicker": "Persistent context",
@@ -541,7 +542,8 @@
     "closeFile": "Close file",
     "deleteFile": "Delete file",
     "deleteConfirmTitle": "Delete file?",
-    "deleteConfirmDescription": "Delete \"{name}\"? This cannot be undone."
+    "deleteConfirmDescription": "Delete \"{name}\"? This cannot be undone.",
+    "searchLabel": "Search files"
   },
   "settings": {
     "kicker": "Runtime configuration",
@@ -1536,7 +1538,9 @@
         "allAccounts": "All accounts",
         "dateFrom": "From date",
         "dateTo": "To date",
-        "reset": "Reset filters"
+        "reset": "Reset filters",
+        "searchLabel": "Subject or body",
+        "recipientLabel": "Recipient"
       },
       "count": "{count} entries",
       "empty": "The agent has not attempted to send any mail yet.",
@@ -1590,7 +1594,8 @@
       "neverRan": "Never ran",
       "allSchedules": "All schedules",
       "recurring": "Recurring",
-      "fixedDate": "Fixed date"
+      "fixedDate": "Fixed date",
+      "searchLabel": "Search"
     },
     "defaultProvider": "Default",
     "actionTypeTask": "Task",

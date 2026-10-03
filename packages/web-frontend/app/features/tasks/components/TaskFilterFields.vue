@@ -1,6 +1,7 @@
 <template>
+  <LabeledField v-slot="{ id }" :label="$t('aria.filterBy.status')" class="w-full md:w-[160px]">
   <Select v-model="status" @update:model-value="$emit('change')">
-    <SelectTrigger :aria-label="$t('aria.filterBy.status')" class="w-full md:w-[160px]">
+    <SelectTrigger :id="id">
       <SelectValue />
     </SelectTrigger>
     <SelectContent>
@@ -11,9 +12,11 @@
       <SelectItem value="failed">{{ $t('tasks.status.failed') }}</SelectItem>
     </SelectContent>
   </Select>
+  </LabeledField>
 
+  <LabeledField v-slot="{ id }" :label="$t('aria.filterBy.trigger')" class="w-full md:w-[160px]">
   <Select v-model="triggerType" @update:model-value="$emit('change')">
-    <SelectTrigger :aria-label="$t('aria.filterBy.trigger')" class="w-full md:w-[160px]">
+    <SelectTrigger :id="id">
       <SelectValue />
     </SelectTrigger>
     <SelectContent>
@@ -25,9 +28,11 @@
       <SelectItem value="consolidation">{{ $t('tasks.trigger.consolidation') }}</SelectItem>
     </SelectContent>
   </Select>
+  </LabeledField>
 
+  <LabeledField v-slot="{ id }" :label="$t('aria.filterBy.provider')" class="w-full md:w-[240px]">
   <Select v-model="providerFilter" @update:model-value="$emit('change')">
-    <SelectTrigger :aria-label="$t('aria.filterBy.provider')" class="w-full md:w-[240px]">
+    <SelectTrigger :id="id">
       <SelectValue />
     </SelectTrigger>
     <SelectContent>
@@ -44,32 +49,37 @@
       </SelectItem>
     </SelectContent>
   </Select>
+  </LabeledField>
 
   <div class="flex items-center gap-2">
-    <span class="w-10 text-xs text-muted-foreground md:w-auto">{{ $t('tasks.filters.fromDate') }}</span>
+    <Label :for="fromDateId" class="w-10 text-xs font-medium text-muted-foreground md:w-auto">{{ $t('tasks.filters.fromDate') }}</Label>
     <Input
+      :id="fromDateId"
       v-model="createdFrom"
       type="date"
       class="flex-1 md:w-[145px] md:flex-none"
-      :aria-label="$t('tasks.filters.fromDate')"
       @change="$emit('change')"
     />
   </div>
 
   <div class="flex items-center gap-2">
-    <span class="w-10 text-xs text-muted-foreground md:w-auto">{{ $t('tasks.filters.toDate') }}</span>
+    <Label :for="toDateId" class="w-10 text-xs font-medium text-muted-foreground md:w-auto">{{ $t('tasks.filters.toDate') }}</Label>
     <Input
+      :id="toDateId"
       v-model="createdTo"
       type="date"
       class="flex-1 md:w-[145px] md:flex-none"
-      :aria-label="$t('tasks.filters.toDate')"
       @change="$emit('change')"
     />
   </div>
 </template>
 
 <script setup lang="ts">
+import { useId } from 'vue'
 import { TASK_DEFAULT_PROVIDER_FILTER } from '~/features/tasks/composables/useTasksList'
+
+const fromDateId = useId()
+const toDateId = useId()
 
 defineProps<{
   hasDefaultProviderOption: boolean

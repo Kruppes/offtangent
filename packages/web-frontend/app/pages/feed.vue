@@ -62,11 +62,13 @@ const chipClass = (selected: boolean) => [
           <label class="flex min-h-[44px] items-center gap-2 rounded-lg border px-3 text-sm">
             <input v-model="unreadOnly" type="checkbox" class="h-5 w-5 accent-primary">{{ $t('feed.unreadOnly') }}
           </label>
-          <label class="sr-only" for="feed-kind">{{ $t('feed.kindFilter') }}</label>
+          <label class="flex min-w-0 max-w-full items-center gap-2 text-sm" for="feed-kind">
+            <span class="shrink-0 text-xs font-medium text-muted-foreground">{{ $t('feed.kindFilter') }}</span>
           <select id="feed-kind" v-model="kind" class="min-h-[44px] min-w-0 max-w-full rounded-lg border border-input bg-background px-3 text-sm">
             <option value="">{{ $t('feed.allKinds') }}</option>
             <option v-for="entry in kinds" :key="entry" :value="entry">{{ $t(`feed.kinds.${entry}`) }}</option>
           </select>
+          </label>
           <Button variant="outline" class="min-h-[44px]" :disabled="busy || loading || unreadCount === 0" @click="markRead()">{{ $t('feed.markAllRead') }}</Button>
           <Button variant="ghost" class="min-h-[44px]" :disabled="busy || loading" @click="load">{{ $t('feed.refresh') }}</Button>
         </div>

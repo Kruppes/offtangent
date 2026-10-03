@@ -57,7 +57,7 @@
       </div>
 
       <div class="hidden flex-col gap-2 md:flex lg:flex-row lg:items-center">
-        <div class="flex flex-1 flex-wrap items-center gap-2">
+        <div class="flex flex-1 flex-wrap items-end gap-2">
           <CronjobFilterFields
             v-model:search="filters.search"
             v-model:enabled="filters.enabled"

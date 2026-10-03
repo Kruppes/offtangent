@@ -28,8 +28,9 @@
           @change="loadStats"
         />
 
+        <LabeledField v-slot="{ id }" :label="$t('aria.filterBy.provider')" class="w-[160px]">
         <Select v-model="filters.provider" @update:model-value="onProviderChange">
-          <SelectTrigger :aria-label="$t('aria.filterBy.provider')" class="w-[160px]">
+          <SelectTrigger :id="id">
             <SelectValue />
           </SelectTrigger>
           <SelectContent>
@@ -37,9 +38,11 @@
             <SelectItem v-for="p in availableProviders" :key="p" :value="p">{{ p }}</SelectItem>
           </SelectContent>
         </Select>
+        </LabeledField>
 
+        <LabeledField v-slot="{ id }" :label="$t('aria.filterBy.model')" class="w-[200px]">
         <Select v-model="filters.model" @update:model-value="loadStats">
-          <SelectTrigger :aria-label="$t('aria.filterBy.model')" class="w-[200px]">
+          <SelectTrigger :id="id">
             <SelectValue />
           </SelectTrigger>
           <SelectContent>
@@ -47,6 +50,7 @@
             <SelectItem v-for="m in availableModels" :key="m" :value="m">{{ m }}</SelectItem>
           </SelectContent>
         </Select>
+        </LabeledField>
       </div>
     </div>
 

@@ -180,7 +180,7 @@ const chipClass = 'inline-flex min-h-11 items-center gap-2 rounded-full border p
     <div class="shrink-0" :class="compact ? 'border-b px-3 pb-2 pt-3' : 'px-3 pt-2 md:px-6'">
       <div :class="compact ? '' : 'mx-auto w-full max-w-4xl'">
         <div role="search">
-          <label for="strand-search" class="sr-only">{{ $t('strandsW3.search') }}</label>
+          <label for="strand-search" class="mb-1 block text-xs font-medium text-muted-foreground">{{ $t('strandsW3.search') }}</label>
           <div class="relative flex items-center">
             <AppIcon name="search" class="pointer-events-none absolute left-3 text-muted-foreground" />
             <input id="strand-search" ref="searchInput" :value="searchText" data-testid="strand-search" type="search" autocomplete="off" enterkeyhint="search" :maxlength="SEARCH_MAX_LENGTH"

@@ -34,12 +34,13 @@
           <div class="flex min-h-0 flex-1 gap-4 overflow-hidden">
             <!-- Sidebar: file tree -->
             <aside class="flex w-64 shrink-0 flex-col overflow-hidden rounded-xl border border-border">
+              <label for="memory-search" class="block px-3 pt-2 text-xs font-medium text-muted-foreground">{{ $t('memory.searchLabel') }}</label>
               <div class="flex items-center gap-2 border-b border-border px-3 py-2">
                 <input
+                  id="memory-search"
                   v-model="searchQuery"
                   type="text"
                   :placeholder="$t('memory.searchPlaceholder')"
-                  :aria-label="$t('memory.searchPlaceholder')"
                   class="flex-1 min-w-0 rounded-sm bg-transparent text-sm outline-none placeholder:text-muted-foreground focus-visible:ring-2 focus-visible:ring-ring max-md:min-h-11"
                 >
                 <Button

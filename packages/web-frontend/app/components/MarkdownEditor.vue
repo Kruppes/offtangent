@@ -1,4 +1,5 @@
 <script setup lang="ts">
+const editorId = useId()
 const props = defineProps<{
   modelValue: string
   saving?: boolean
@@ -25,11 +26,12 @@ const content = computed({
       <!-- File path bar -->
       <div v-if="filePath" class="flex shrink-0 items-center gap-2 border-b border-border px-4 py-2">
         <AppIcon name="file" class="h-3.5 w-3.5 text-muted-foreground" />
-        <span class="font-mono text-xs text-muted-foreground">{{ filePath }}</span>
+        <label :for="editorId" class="font-mono text-xs text-muted-foreground">{{ filePath }}</label>
       </div>
 
       <!-- Editor -->
       <textarea
+        :id="editorId"
         v-model="content"
         :placeholder="t('memory.editorPlaceholder')"
         spellcheck="false"
