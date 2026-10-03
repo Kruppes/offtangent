@@ -127,9 +127,8 @@ npm run baseline:parity
 
 ## 7) CI Integration
 
-Workflow: `.github/workflows/ci-guardrails.yml`
-
-The workflow runs on `pull_request` (against `main`) and `push` to `main` and executes:
+The repository ships no hosted CI workflow for these checks (the public
+mirror is a snapshot without CI). Run them locally before merging to `main`:
 
 1. `npm run lint`
 2. `npm run baseline:unit`
