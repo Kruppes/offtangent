@@ -866,7 +866,11 @@ export function mapHistoryRows(rows: ChatHistoryRow[]): ChatMessage[] {
 
 /** Rows per history page when loading a thread (backend caps `limit` at 100). */
 const HISTORY_PAGE_LIMIT = 100
-/** Safety stop so a huge thread cannot spin the loader forever. */
+/**
+ * Safety stop so a huge thread cannot spin the loader forever. Pages are read
+ * newest first, so a strand longer than this window loses its oldest rows,
+ * never its newest.
+ */
 const HISTORY_MAX_PAGES = 10
 
 // Module-level singletons so multiple useChat() calls share the same WebSocket
@@ -1567,28 +1571,31 @@ export function useChat() {
   }
 
   /**
-   * Load the transcript of one thread, oldest first. Uses the cursor mode of
-   * `GET /api/chat/history` (`since_id`), which returns ascending pages, so a
-   * long thread is fetched page by page instead of truncated to the newest 50.
+   * Load the transcript of one thread. Reads the page mode of
+   * `GET /api/chat/history` (newest first) for up to `HISTORY_MAX_PAGES`
+   * pages, so the newest rows are always on screen: an ascending cursor walk
+   * from the start stopped at the safety cap and hid the end of every strand
+   * longer than the window. The rows are shown oldest first, by id.
    */
   async function loadThreadHistory(threadSessionId: string) {
     const { apiFetch } = useApi()
     const revision = transcriptRevision.value
-    const rows: ChatHistoryRow[] = []
-    let sinceId = 0
+    const byId = new Map<number, ChatHistoryRow>()
 
-    for (let page = 0; page < HISTORY_MAX_PAGES; page++) {
+    for (let page = 1; page <= HISTORY_MAX_PAGES; page++) {
       const query = new URLSearchParams({
         session_id: threadSessionId,
-        since_id: String(sinceId),
+        page: String(page),
         limit: String(HISTORY_PAGE_LIMIT),
       })
       const data = await apiFetch<{ messages?: ChatHistoryRow[] }>(`/api/chat/history?${query.toString()}`)
       const batch = data.messages ?? []
-      rows.push(...batch)
+      // A row written while paging shifts the offsets by one, so the next page
+      // can repeat a row: keep each id once.
+      for (const row of batch) if (!byId.has(row.id)) byId.set(row.id, row)
       if (batch.length < HISTORY_PAGE_LIMIT) break
-      sinceId = batch[batch.length - 1]!.id
     }
+    const rows = [...byId.values()].sort((a, b) => a.id - b.id)
 
     if (boundSessionId.value === threadSessionId && transcriptRevision.value === revision) {
       const observed = new Map(messages.value.filter(m => m.toolData?.completedAt).map(m => [m.toolData!.toolCallId, m]))
