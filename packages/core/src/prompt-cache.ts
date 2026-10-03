@@ -19,8 +19,10 @@
  * block in two via pi-ai's `onPayload` hook so the stable prefix gets its own
  * `cache_control`.
  *
- * Everything here is a no-op for non-Anthropic providers (Ollama & friends):
- * the marker is removed for every provider, and nothing else is touched.
+ * Everything here is a no-op for providers other than Anthropic and the OpenAI
+ * Responses APIs (Ollama & friends): the marker is removed for every provider,
+ * and nothing else is touched. OpenAI Responses / Codex models only receive
+ * the session id as cache routing key (see `isOpenAIResponsesApi`).
  */
 
 import { loadConfig } from './config.js'
@@ -53,7 +55,9 @@ export interface PromptCacheSettings {
   /**
    * Whether to pass the strand/task session id to the provider for cache
    * routing (`options.sessionId`). Only providers that declare session
-   * affinity act on it; for api.anthropic.com it is inert.
+   * affinity act on it; for api.anthropic.com it is inert, for OpenAI
+   * Responses / ChatGPT Codex it is the `prompt_cache_key` and the
+   * `session-id` header the backend keys its cache on.
    */
   sessionAffinity: boolean
 }
@@ -185,7 +189,19 @@ export function applySystemPromptCacheBreakpoint(
   return { ...(payload as Record<string, unknown>), system: [...head, prefixBlock, tailBlock] }
 }
 
-/** Whether a model speaks the Anthropic Messages API (the only cached path). */
+/** Whether a model speaks the Anthropic Messages API (the breakpoint path). */
 export function isAnthropicMessagesApi(api: unknown): boolean {
   return api === 'anthropic-messages'
+}
+
+/**
+ * Whether a model speaks an OpenAI Responses API (`openai-responses` or the
+ * ChatGPT Codex backend `openai-codex-responses`). pi-ai routes their prompt
+ * cache by `options.sessionId`: it becomes `prompt_cache_key`, the
+ * `session-id` / `session_id` affinity header and, for Codex WebSockets, the
+ * connection identity. Without it the Codex backend sees a fresh random
+ * session per request and only the static system prefix hits the cache.
+ */
+export function isOpenAIResponsesApi(api: unknown): boolean {
+  return api === 'openai-responses' || api === 'openai-codex-responses'
 }

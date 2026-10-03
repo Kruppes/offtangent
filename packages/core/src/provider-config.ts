@@ -18,6 +18,7 @@ import { loadHeuristics } from './heuristics.js'
 import {
   applySystemPromptCacheBreakpoint,
   isAnthropicMessagesApi,
+  isOpenAIResponsesApi,
   loadPromptCacheSettings,
   splitSystemPromptAtCacheMarker,
 } from './prompt-cache.js'
@@ -748,8 +749,17 @@ export interface StreamCacheOptions {
 /**
  * Merge the prompt-cache options into a `streamSimple` options object.
  *
- * No-op for every model that does not speak the Anthropic Messages API, so a
- * local Ollama keeps receiving exactly the request it received before.
+ * - Anthropic Messages API: `cacheRetention`, `sessionId` and the second
+ *   system-prompt breakpoint.
+ * - OpenAI Responses / ChatGPT Codex: only `sessionId` (pi-ai turns it into
+ *   `prompt_cache_key` + the `session-id` affinity header). `cacheRetention`
+ *   is deliberately left unset: on `openai-responses` a `'long'` value adds
+ *   `prompt_cache_retention: "24h"`, which not every Responses endpoint
+ *   accepts, and on Codex it only matters as the `'none'` kill switch, which
+ *   we honour by not sending the session id at all.
+ * - Everything else: no-op, so a local Ollama keeps receiving exactly the
+ *   request it received before.
+ *
  * Exported for tests.
  */
 export function applyPromptCacheOptions<T extends object | undefined>(
@@ -762,13 +772,22 @@ export function applyPromptCacheOptions<T extends object | undefined>(
     settings?: PromptCacheSettings
   },
 ): T {
-  if (!isAnthropicMessagesApi(model?.api)) return opts
+  const anthropic = isAnthropicMessagesApi(model?.api)
+  if (!anthropic && !isOpenAIResponsesApi(model?.api)) return opts
 
   const settings = input.settings ?? loadPromptCacheSettings()
   let out = opts as (object | undefined)
   const changed = () => {
     if (out === opts) out = { ...(opts ?? {}) }
     return out as Record<string, unknown>
+  }
+
+  if (!anthropic) {
+    if (settings.sessionAffinity && settings.retention !== 'none' && input.sessionId
+      && (out as { sessionId?: unknown } | undefined)?.sessionId === undefined) {
+      changed().sessionId = input.sessionId
+    }
+    return out as T
   }
 
   if ((out as { cacheRetention?: unknown } | undefined)?.cacheRetention === undefined) {
