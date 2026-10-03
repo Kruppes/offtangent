@@ -48,7 +48,11 @@ describe('a11y contracts (W6a)', () => {
     ]) {
       const triggers = src(path).match(/<SelectTrigger\b[^>]*>/g) ?? []
       expect(triggers.length, path).toBeGreaterThan(0)
-      for (const trigger of triggers) expect(trigger, path).toMatch(/:aria-label="[\w$]*\('aria\.filterBy\.\w+'\)"/)
+      // W11: the name is a visible label tied by id (LabeledField), not an
+      // invisible aria-label.
+      for (const trigger of triggers) expect(trigger, path).toMatch(/:id="id"/)
+      const labels = src(path).match(/<LabeledField v-slot="\{ id \}" :label="[\w$]*\('aria\.filterBy\.\w+'\)"/g) ?? []
+      expect(labels.length, path).toBe(triggers.length)
     }
   })
 
