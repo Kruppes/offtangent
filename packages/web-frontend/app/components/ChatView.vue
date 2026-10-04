@@ -52,7 +52,7 @@
       </Button>
     </div>
 
-    <ChatMessageList v-else :rows="transcriptRows" :state="contentState" @retry="reloadHistory" />
+    <ChatMessageList v-else :rows="transcriptRows" :state="contentState" :older-state="boundToThread ? olderHistory : 'end'" :sync-error="historySyncError" @retry="reloadHistory" @load-older="loadOlderHistory" @retry-sync="retryHistorySync" />
 
     <Transition enter-active-class="transition duration-200 ease-out" enter-from-class="translate-y-2 opacity-0" enter-to-class="translate-y-0 opacity-100" leave-active-class="transition duration-150 ease-in" leave-from-class="translate-y-0 opacity-100" leave-to-class="translate-y-2 opacity-0">
       <button v-if="!isNearBottom" type="button" :aria-label="$t('chat.scrollToBottom')" :title="$t('chat.scrollToBottom')" class="absolute bottom-28 right-6 z-10 flex h-11 w-11 items-center justify-center rounded-full border border-border bg-background text-muted-foreground shadow-overlay focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary" @click="jumpToBottom">
@@ -130,6 +130,10 @@ const {
   connectionStatus,
   isStreaming,
   loadingHistory,
+  olderHistory,
+  historySyncError,
+  loadOlderHistory,
+  retryHistorySync,
   queuePosition,
   sessionError,
   boundSessionId,

@@ -681,26 +681,29 @@ afterEach(() => {
 })
 
 describe('useChat thread binding', () => {
-  it('pages the thread transcript newest first and shows it ascending', async () => {
-    // Page mode answers newest first: page 1 holds ids 101..2, page 2 id 1.
+  it('reads the thread transcript backwards by id and shows it ascending', async () => {
+    // `before_id=latest` answers the newest 100 rows by id, descending; the
+    // next page continues before the oldest id it got.
     const firstPage = Array.from({ length: 100 }, (_, i) => i === 0
       ? historyRow(101, 'assistant', 'last')
       : historyRow(101 - i, 'user', `m${101 - i}`))
     apiResponder = (path) => {
-      if (path.includes('page=1&')) return { messages: firstPage }
-      if (path.includes('page=2&')) return { messages: [historyRow(1, 'user', 'm1')] }
+      if (path.includes('before_id=latest')) return { messages: firstPage, pagination: { hasMore: true } }
+      if (path.includes('before_id=2&')) return { messages: [historyRow(1, 'user', 'm1')], pagination: { hasMore: false } }
       return { messages: [] }
     }
 
     const chat = useChat()
     await chat.openThread('sess-a', 'coder')
+    await vi.waitFor(() => expect(chat.olderHistory.value).toBe('end'))
 
     expect(apiCalls).toHaveLength(2)
     expect(apiCalls[0]!.path).toContain('session_id=sess-a')
-    expect(apiCalls[0]!.path).toContain('page=1&')
+    expect(apiCalls[0]!.path).toContain('before_id=latest')
     expect(apiCalls[0]!.path).toContain('limit=100')
     expect(apiCalls[0]!.path).not.toContain('since_id')
-    expect(apiCalls[1]!.path).toContain('page=2&')
+    expect(apiCalls[0]!.path).not.toContain('page=')
+    expect(apiCalls[1]!.path).toContain('before_id=2&')
     expect(chat.messages.value).toHaveLength(101)
     expect(chat.messages.value[0]!.content).toBe('m1')
     expect(chat.messages.value[100]!.content).toBe('last')
@@ -1053,8 +1056,8 @@ describe('useChat thread binding', () => {
 
 /*
  * Long strands: a fake `GET /api/chat/history` with the backend's real
- * contract — cursor mode (`since_id`: ascending by id, at most `limit` rows)
- * and page mode (newest first by timestamp, then id, `page`/`limit` offset) —
+ * contract — cursor mode (`since_id`: ascending by id, at most `limit` rows),
+ * backwards cursor (`before_id`: descending by id, `hasMore`) and page mode (newest first by timestamp, then id, `page`/`limit` offset) —
  * so the tests check what the user sees, not which mode the client picks.
  */
 function fakeHistoryServer(store: ChatHistoryRow[]) {
@@ -1068,6 +1071,12 @@ function fakeHistoryServer(store: ChatHistoryRow[]) {
     if (since !== null) {
       const after = rows.filter(row => row.id > Number(since)).sort((a, b) => a.id - b.id)
       return { messages: after.slice(0, limit), pagination: { page: 1, limit, total: after.length } }
+    }
+    const before = url.searchParams.get('before_id')
+    if (before !== null) {
+      const older = rows.filter(row => before === 'latest' || row.id < Number(before)).sort((a, b) => b.id - a.id)
+      const batch = older.slice(0, limit)
+      return { messages: batch, pagination: { page: 1, limit, total: older.length, hasMore: older.length > batch.length } }
     }
     const page = Math.max(1, Number(url.searchParams.get('page')) || 1)
     const newestFirst = [...rows].sort((a, b) => b.timestamp.localeCompare(a.timestamp) || b.id - a.id)
@@ -1122,18 +1131,165 @@ describe('useChat long strand history', () => {
     await vi.waitFor(() => expect(chat.messages.value.at(-1)?.content).toBe('sess-a-1475'))
   })
 
-  it('surfaces a failed page instead of leaving the strand loading', async () => {
+  it('surfaces a failed first page instead of leaving the strand loading', async () => {
+    apiResponder = () => { throw new Error('network down') }
+    const chat = useChat()
+    await expect(chat.openThread('sess-a', 'coder')).rejects.toThrow('network down')
+    expect(chat.loadingHistory.value).toBe(false)
+  })
+
+  it('renders the newest page at once and fills the initial window in the background', async () => {
     const store = syntheticRows('sess-a', 1, 1500)
+    const server = fakeHistoryServer(store)
+    let releaseOlder!: () => void
+    const olderGate = new Promise<void>(resolve => { releaseOlder = resolve })
+    apiResponder = async (path) => {
+      if (!path.includes('before_id=latest')) await olderGate
+      return server(path)
+    }
+    const chat = useChat()
+    await chat.openThread('sess-a', 'coder')
+
+    // Page 1 is on screen while page 2 is still on its way.
+    expect(chat.loadingHistory.value).toBe(false)
+    expect(chat.messages.value).toHaveLength(100)
+    expect(chat.messages.value.at(-1)?.content).toBe('sess-a-1500')
+    expect(chat.olderHistory.value).toBe('loading')
+
+    releaseOlder()
+    await vi.waitFor(() => expect(chat.olderHistory.value).toBe('idle'))
+    // Initial window: three pages, the older ones prepended in id order.
+    expect(chat.messages.value).toHaveLength(300)
+    expect(chat.messages.value[0]?.content).toBe('sess-a-1201')
+    expect(chat.messages.value.at(-1)?.content).toBe('sess-a-1500')
+  })
+
+  it('loads older messages on demand until the start of the strand', async () => {
+    const store = syntheticRows('sess-a', 1, 450)
+    apiResponder = fakeHistoryServer(store)
+    const chat = useChat()
+    await chat.openThread('sess-a', 'coder')
+    await vi.waitFor(() => expect(chat.olderHistory.value).toBe('idle'))
+    expect(chat.messages.value[0]?.content).toBe('sess-a-151')
+
+    await chat.loadOlderHistory()
+    expect(chat.messages.value[0]?.content).toBe('sess-a-51')
+    expect(chat.olderHistory.value).toBe('idle')
+    await chat.loadOlderHistory()
+    expect(chat.messages.value[0]?.content).toBe('sess-a-1')
+    expect(chat.messages.value).toHaveLength(450)
+    expect(chat.olderHistory.value).toBe('end')
+    const ids = chat.messages.value.map(m => m.id!)
+    expect(ids).toEqual([...ids].sort((a, b) => a - b))
+    expect(new Set(ids).size).toBe(ids.length)
+  })
+
+  it('pages by id, so rows deleted or written while paging neither repeat nor vanish', async () => {
+    const store = syntheticRows('sess-a', 1, 250)
     const server = fakeHistoryServer(store)
     let calls = 0
     apiResponder = (path) => {
       calls++
-      if (calls === 2) throw new Error('network down')
+      // Between page 1 and 2: a new row lands, an already shown row is deleted.
+      if (calls === 2) {
+        store.push(...syntheticRows('sess-a', 251, 1))
+        store.splice(store.findIndex(r => r.id === 200), 1)
+      }
       return server(path)
     }
     const chat = useChat()
-    await expect(chat.openThread('sess-a', 'coder')).rejects.toThrow('network down')
-    expect(chat.loadingHistory.value).toBe(false)
+    await chat.openThread('sess-a', 'coder')
+    await vi.waitFor(() => expect(chat.olderHistory.value).toBe('end'))
+    const ids = chat.messages.value.map(m => m.id!)
+    expect(ids).toEqual(Array.from({ length: 250 }, (_, i) => i + 1))
+  })
+
+  it('shows a failed background page as a retryable state at the top, not as a broken strand', async () => {
+    const store = syntheticRows('sess-a', 1, 1500)
+    const server = fakeHistoryServer(store)
+    let failOlder = true
+    apiResponder = (path) => {
+      if (failOlder && !path.includes('before_id=latest')) throw new Error('network down')
+      return server(path)
+    }
+    const chat = useChat()
+    await chat.openThread('sess-a', 'coder')
+    await vi.waitFor(() => expect(chat.olderHistory.value).toBe('error'))
+    expect(chat.messages.value).toHaveLength(100)
+
+    failOlder = false
+    await chat.loadOlderHistory()
+    expect(chat.olderHistory.value).toBe('idle')
+    expect(chat.messages.value).toHaveLength(200)
+  })
+
+  it('makes a failed catch-up after done visible and retryable instead of swallowing it', async () => {
+    const store = syntheticRows('sess-a', 1, 50)
+    const server = fakeHistoryServer(store)
+    let down = false
+    apiResponder = (path) => {
+      if (down) throw new Error('network down')
+      return server(path)
+    }
+    const chat = useChat()
+    await chat.openThread('sess-a', 'coder')
+    chat.connect()
+
+    store.push(...syntheticRows('sess-a', 51, 2))
+    down = true
+    receive({ type: 'text', text: 'answer', sessionId: 'sess-a' })
+    receive({ type: 'done', sessionId: 'sess-a' })
+    await vi.waitFor(() => expect(chat.historySyncError.value).toBe(true))
+    // The transcript stays usable: nothing was wiped.
+    expect(chat.messages.value.at(-1)?.content).toBe('answer')
+
+    down = false
+    await chat.retryHistorySync()
+    expect(chat.historySyncError.value).toBe(false)
+    expect(chat.messages.value.at(-1)?.content).toBe('sess-a-52')
+    expect(chat.messages.value).toHaveLength(52)
+  })
+
+  it('keeps the loaded older rows when the catch-up after done only reads the newest page', async () => {
+    const store = syntheticRows('sess-a', 1, 450)
+    apiResponder = fakeHistoryServer(store)
+    const chat = useChat()
+    await chat.openThread('sess-a', 'coder')
+    await vi.waitFor(() => expect(chat.olderHistory.value).toBe('idle'))
+    await chat.loadOlderHistory()
+    await chat.loadOlderHistory()
+    expect(chat.messages.value).toHaveLength(450)
+    chat.connect()
+
+    store.push(...syntheticRows('sess-a', 451, 2))
+    receive({ type: 'text', text: 'answer', sessionId: 'sess-a' })
+    receive({ type: 'done', sessionId: 'sess-a' })
+    await vi.waitFor(() => expect(chat.messages.value.at(-1)?.content).toBe('sess-a-452'))
+    expect(chat.messages.value).toHaveLength(452)
+    expect(chat.messages.value[0]?.content).toBe('sess-a-1')
+    expect(chat.olderHistory.value).toBe('end')
+  })
+
+  it('does not drop the history when a transcript frame arrives while the first page loads', async () => {
+    const store = syntheticRows('sess-a', 1, 50)
+    const server = fakeHistoryServer(store)
+    let releaseFirst!: () => void
+    const firstGate = new Promise<void>(resolve => { releaseFirst = resolve })
+    apiResponder = async (path) => {
+      if (path.includes('before_id=latest')) await firstGate
+      return server(path)
+    }
+    const chat = useChat()
+    chat.connect()
+    const opening = chat.openThread('sess-a', 'coder')
+    // A running turn of this strand streams while its history is in flight.
+    receive({ type: 'text', text: 'streaming', sessionId: 'sess-a' })
+    releaseFirst()
+    await opening
+
+    expect(chat.messages.value).toHaveLength(51)
+    expect(chat.messages.value[0]?.content).toBe('sess-a-1')
+    expect(chat.messages.value.at(-1)?.content).toBe('streaming')
   })
 })
 

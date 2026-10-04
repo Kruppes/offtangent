@@ -199,6 +199,8 @@ interface FakeSocket { readyState: number; sent: string[]; onopen?: () => void; 
 let sockets: FakeSocket[] = []
 let apiCalls: Array<{ path: string; options?: { method?: string; body?: unknown } }> = []
 let history: Array<Record<string, unknown>> = []
+/** Path-dependent history answers (backwards cursor); `null` = `history` for every page. */
+let historyResponder: ((path: string) => unknown) | null = null
 let apiResponder: (path: string, options?: { method?: string; body?: unknown }) => unknown = () => ({})
 let states = new Map<string, Ref<unknown>>()
 
@@ -260,7 +262,7 @@ function stubRuntime() {
   vi.stubGlobal('useApi', () => ({
     apiFetch: async (path: string, options?: { method?: string; body?: unknown }) => {
       apiCalls.push({ path, options })
-      if (path.startsWith('/api/chat/history')) return { messages: history }
+      if (path.startsWith('/api/chat/history')) return historyResponder ? historyResponder(path) : { messages: history }
       return apiResponder(path, options)
     },
     getAuthHeaders: () => ({}),
@@ -339,6 +341,7 @@ beforeEach(() => {
   sockets = []
   apiCalls = []
   history = []
+  historyResponder = null
   states = new Map()
   storage.clear()
   apiResponder = path => path === '/api/personas/client' ? { personas: [{ id: 'helper', displayName: 'Helper', color: '#336699' }] } : {}
@@ -905,6 +908,59 @@ describe('ChatView: scrolling and message actions', () => {
     receive({ type: 'text', text: ' and more' })
     await flush()
     expect(box.scrollTop).toBe(2600)
+  })
+
+  it('loads older messages from the top of a long strand and keeps the reader in place', async () => {
+    // Strand of 301 rows: the newest page arrives first, the initial window
+    // (3 pages) fills in the background, the last row only via the button.
+    const rows = Array.from({ length: 301 }, (_, i) => row(i + 1, i % 2 ? 'assistant' : 'user', `m${i + 1}`))
+    let failNext = false
+    historyResponder = (path) => {
+      const before = new URL(path, 'http://x').searchParams.get('before_id')
+      if (failNext) { failNext = false; throw new Error('network down') }
+      const older = rows.filter(r => before === 'latest' || (r.id as number) < Number(before)).reverse()
+      const batch = older.slice(0, 100)
+      return { messages: batch, pagination: { hasMore: older.length > batch.length } }
+    }
+    const { root } = await mountChat()
+    expect(bubbles(root)).toHaveLength(300)
+    const button = () => buttonWithText(root, 'chat.olderLoad')
+    expect(button()).toBeDefined()
+
+    // The reader sits in the middle; the prepend keeps the distance to the bottom.
+    const box = messagesContainer(root)
+    // The fake DOM grows with the rendered bubbles: 20 px each.
+    Object.defineProperty(box, 'scrollHeight', { configurable: true, get: () => bubbles(root).length * 20 })
+    box.clientHeight = 500; box.scrollTop = 1000
+    ;(box.props.onScroll as () => void)()
+    failNext = true
+    click(button())
+    await flush()
+    expect(textOf(root)).toContain('chat.olderError')
+    click(buttonWithText(root, 'common.refresh'))
+    await flush()
+    expect(bubbles(root)).toHaveLength(301)
+    expect(box.scrollTop).toBe(1020)
+    expect(button()).toBeUndefined()
+    expect(textOf(root)).not.toContain('chat.olderError')
+  })
+
+  it('shows a failed catch-up after a turn as a non-blocking reload notice', async () => {
+    history = [row(1, 'user', 'q'), row(2, 'assistant', 'a')]
+    const { root } = await mountChat()
+    historyResponder = () => { throw new Error('network down') }
+    receive({ type: 'text', text: 'answer' })
+    receive({ type: 'done' })
+    await flush()
+    expect(textOf(root)).toContain('chat.historySyncError')
+    expect(textOf(root)).toContain('answer')
+    expect(byTag(root, 'textarea')).toHaveLength(1)
+
+    historyResponder = null
+    history = [row(1, 'user', 'q'), row(2, 'assistant', 'a'), row(3, 'assistant', 'answer')]
+    click(all(root).find(n => n.props['data-history-sync'] === 'error')?.children.find(n => n.tag === 'button'))
+    await flush()
+    expect(textOf(root)).not.toContain('chat.historySyncError')
   })
 
   it('reads an assistant answer aloud from its action row (POST /api/speech/audio with the message id)', async () => {

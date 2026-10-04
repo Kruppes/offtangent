@@ -214,7 +214,11 @@
         "attached": "Recording is sent with the message"
       }
     },
-    "attachFiles": "Attach files"
+    "attachFiles": "Attach files",
+    "olderLoad": "Load older messages",
+    "olderLoading": "Loading older messages …",
+    "olderError": "Older messages could not be loaded.",
+    "historySyncError": "The history could not be synced, files or answers may be missing."
   },
   "canvas": {
     "open": "Open canvas",

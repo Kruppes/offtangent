@@ -214,7 +214,11 @@
         "attached": "Die Aufnahme wird mit der Nachricht gesendet"
       }
     },
-    "attachFiles": "Dateien anhängen"
+    "attachFiles": "Dateien anhängen",
+    "olderLoad": "Ältere Nachrichten laden",
+    "olderLoading": "Ältere Nachrichten werden geladen …",
+    "olderError": "Ältere Nachrichten konnten nicht geladen werden.",
+    "historySyncError": "Der Verlauf konnte nicht abgeglichen werden, Dateien oder Antworten fehlen eventuell."
   },
   "canvas": {
     "open": "Canvas öffnen",

@@ -867,11 +867,66 @@ export function mapHistoryRows(rows: ChatHistoryRow[]): ChatMessage[] {
 /** Rows per history page when loading a thread (backend caps `limit` at 100). */
 const HISTORY_PAGE_LIMIT = 100
 /**
- * Safety stop so a huge thread cannot spin the loader forever. Pages are read
- * newest first, so a strand longer than this window loses its oldest rows,
- * never its newest.
+ * Pages of the initial window of a strand: the newest page is shown as soon as
+ * it arrives, the other pages are prepended in the background. 300 rows are
+ * about a hundred visible turns (a strand averages one text row per two tool
+ * or system rows), several screens of scroll-back, while the first paint only
+ * waits for 100. Everything older is loaded on demand ("Load older messages").
  */
-const HISTORY_MAX_PAGES = 10
+const HISTORY_INITIAL_PAGES = 3
+/**
+ * Safety stop for the catch-up after a turn: it reads the newest pages until
+ * they overlap what is on screen. A gap larger than this replaces the
+ * transcript with the newest rows and leaves the rest to "Load older".
+ */
+const HISTORY_SYNC_MAX_PAGES = 10
+/** Retries of a catch-up that was overtaken by a transcript frame. */
+const HISTORY_SYNC_MAX_ATTEMPTS = 3
+
+/** State of the older end of a strand transcript. */
+export type OlderHistoryState = 'idle' | 'loading' | 'error' | 'end'
+
+interface HistoryPage {
+  messages?: ChatHistoryRow[]
+  pagination?: { hasMore?: boolean }
+}
+
+/** Lowest persisted id in a transcript, `null` when nothing persisted is shown. */
+export function oldestMessageId(list: ChatMessage[]): number | null {
+  let min: number | null = null
+  for (const m of list) if (typeof m.id === 'number' && (min === null || m.id < min)) min = m.id
+  return min
+}
+
+/**
+ * Put a page of older rows in front of a transcript. Only rows older than the
+ * oldest one shown are taken, so a page that overlaps (rows written or deleted
+ * in between) never repeats a row.
+ */
+export function prependOlderRows(list: ChatMessage[], rows: ChatHistoryRow[]): ChatMessage[] {
+  const oldest = oldestMessageId(list)
+  const older = rows.filter(row => oldest === null || row.id < oldest)
+  return older.length ? [...mapHistoryRows(older), ...list] : list
+}
+
+/**
+ * Merge the newest persisted rows into a transcript: every shown message older
+ * than the oldest fetched row stays as it is (the pages loaded before), the
+ * fetched range replaces the rest — including the live copy of a finished turn.
+ * `overlaps` is false when the fetched pages did not reach back to what was
+ * shown; then the shown rows are dropped, so the transcript never has a gap.
+ */
+export function mergeNewestRows(list: ChatMessage[], rows: ChatHistoryRow[], overlaps: boolean): ChatMessage[] {
+  if (rows.length === 0) return list.filter(m => typeof m.id === 'number')
+  const from = Math.min(...rows.map(r => r.id))
+  const kept = overlaps ? list.filter(m => typeof m.id === 'number' && m.id < from) : []
+  const observed = new Map(list.filter(m => m.toolData?.completedAt).map(m => [m.toolData!.toolCallId, m]))
+  const fresh = mapHistoryRows(rows).map(message => {
+    const live = message.toolData ? observed.get(message.toolData.toolCallId) : undefined
+    return live ? { ...message, timestamp: live.timestamp, toolData: { ...message.toolData!, completedAt: live.toolData!.completedAt } } : message
+  })
+  return [...kept, ...fresh]
+}
 
 // Module-level singletons so multiple useChat() calls share the same WebSocket
 let ws: WebSocket | null = null
@@ -927,6 +982,12 @@ export function useChat() {
   const sessionId = useState<string | null>('chat_session_id', () => null)
   const isStreaming = useState<boolean>('chat_streaming', () => false)
   const loadingHistory = useState<boolean>('chat_loading_history', () => false)
+  /** Older end of the bound strand: more to load (idle), loading, failed, or its start is shown. */
+  const olderHistory = useState<OlderHistoryState>('chat_older_history', () => 'end')
+  /** The catch-up after a turn failed: the transcript may miss persisted rows. */
+  const historySyncError = useState<boolean>('chat_history_sync_error', () => false)
+  /** Bumped by every `openThread`, so a load of a strand left meanwhile is dropped. */
+  const threadLoadToken = useState<number>('chat_thread_load_token', () => 0)
   /**
    * The thread this chat view is bound to. `null` = legacy mode: the backend
    * picks the session and we just follow whatever it sends, exactly as before
@@ -1401,7 +1462,7 @@ export function useChat() {
           replayFinishedTurn = true
           break
         }
-        if (boundSessionId.value) void loadThreadHistory(boundSessionId.value).catch(() => {})
+        if (boundSessionId.value) void syncThreadHistory(boundSessionId.value)
         break
 
       case 'error': {
@@ -1515,7 +1576,7 @@ export function useChat() {
         const finished = replayFinishedTurn
         replayingTurn = false
         replayFinishedTurn = false
-        if (finished && boundSessionId.value) void loadThreadHistory(boundSessionId.value).catch(() => {})
+        if (finished && boundSessionId.value) void syncThreadHistory(boundSessionId.value)
         break
       }
 
@@ -1570,40 +1631,127 @@ export function useChat() {
     }
   }
 
+  /** One page of a strand, newest first by id: `before` is a row id or `latest`. */
+  async function fetchHistoryPage(threadSessionId: string, before: number | 'latest'): Promise<{ rows: ChatHistoryRow[]; hasMore: boolean }> {
+    const { apiFetch } = useApi()
+    const query = new URLSearchParams({
+      session_id: threadSessionId,
+      before_id: String(before),
+      limit: String(HISTORY_PAGE_LIMIT),
+    })
+    const data = await apiFetch<HistoryPage>(`/api/chat/history?${query.toString()}`)
+    const rows = data.messages ?? []
+    return { rows, hasMore: data.pagination?.hasMore ?? rows.length >= HISTORY_PAGE_LIMIT }
+  }
+
   /**
-   * Load the transcript of one thread. Reads the page mode of
-   * `GET /api/chat/history` (newest first) for up to `HISTORY_MAX_PAGES`
-   * pages, so the newest rows are always on screen: an ascending cursor walk
-   * from the start stopped at the safety cap and hid the end of every strand
-   * longer than the window. The rows are shown oldest first, by id.
+   * Load the transcript of one thread: the newest page (by id, the backwards
+   * cursor `before_id`) is shown as soon as it arrives; the rest of the
+   * initial window is prepended in the background (`fillInitialWindow`).
+   *
+   * A transcript frame of this strand that lands while the page is in flight
+   * (a running turn streaming, an own send) is kept after the loaded rows
+   * instead of discarding the load: the strand would otherwise show only that
+   * frame. The `done` of the turn reconciles both with the stored rows.
    */
   async function loadThreadHistory(threadSessionId: string) {
-    const { apiFetch } = useApi()
-    const revision = transcriptRevision.value
-    const byId = new Map<number, ChatHistoryRow>()
+    const token = threadLoadToken.value
+    olderHistory.value = 'end'
+    const { rows, hasMore } = await fetchHistoryPage(threadSessionId, 'latest')
+    if (boundSessionId.value !== threadSessionId || threadLoadToken.value !== token) return
 
-    for (let page = 1; page <= HISTORY_MAX_PAGES; page++) {
-      const query = new URLSearchParams({
-        session_id: threadSessionId,
-        page: String(page),
-        limit: String(HISTORY_PAGE_LIMIT),
-      })
-      const data = await apiFetch<{ messages?: ChatHistoryRow[] }>(`/api/chat/history?${query.toString()}`)
-      const batch = data.messages ?? []
-      // A row written while paging shifts the offsets by one, so the next page
-      // can repeat a row: keep each id once.
-      for (const row of batch) if (!byId.has(row.id)) byId.set(row.id, row)
-      if (batch.length < HISTORY_PAGE_LIMIT) break
-    }
-    const rows = [...byId.values()].sort((a, b) => a.id - b.id)
+    const fetchedIds = new Set(rows.map(r => r.id))
+    const live = messages.value.filter(m => typeof m.id !== 'number' || !fetchedIds.has(m.id))
+    messages.value = [...mapHistoryRows(rows), ...live]
+    olderHistory.value = hasMore ? 'idle' : 'end'
+    if (hasMore) void fillInitialWindow(threadSessionId, token)
+  }
 
-    if (boundSessionId.value === threadSessionId && transcriptRevision.value === revision) {
-      const observed = new Map(messages.value.filter(m => m.toolData?.completedAt).map(m => [m.toolData!.toolCallId, m]))
-      messages.value = mapHistoryRows(rows).map(message => {
-        const live = message.toolData ? observed.get(message.toolData.toolCallId) : undefined
-        return live ? { ...message, timestamp: live.timestamp, toolData: { ...message.toolData!, completedAt: live.toolData!.completedAt } } : message
-      })
+  /** Prepend the remaining pages of the initial window, one at a time. */
+  async function fillInitialWindow(threadSessionId: string, token: number) {
+    await loadOlderPages(threadSessionId, token, HISTORY_INITIAL_PAGES - 1)
+  }
+
+  /**
+   * Up to `pages` pages before the oldest shown row, prepended one by one. The
+   * state stays `loading` across all of them; failures end up as `error`.
+   */
+  async function loadOlderPages(threadSessionId: string, token: number, pages: number) {
+    olderHistory.value = 'loading'
+    let hasMore = true
+    try {
+      for (let page = 0; page < pages && hasMore; page++) {
+        const oldest = oldestMessageId(messages.value)
+        if (oldest === null) { hasMore = false; break }
+        const result = await fetchHistoryPage(threadSessionId, oldest)
+        if (boundSessionId.value !== threadSessionId || threadLoadToken.value !== token) return
+        messages.value = prependOlderRows(messages.value, result.rows)
+        hasMore = result.hasMore
+      }
+      olderHistory.value = hasMore ? 'idle' : 'end'
+    } catch (err) {
+      if (boundSessionId.value !== threadSessionId || threadLoadToken.value !== token) return
+      console.error('[chat] loading older messages failed:', err)
+      olderHistory.value = 'error'
     }
+  }
+
+  /** "Load older messages": the next page towards the start of the bound strand. */
+  async function loadOlderHistory() {
+    const sid = boundSessionId.value
+    if (!sid || olderHistory.value === 'loading' || olderHistory.value === 'end') return
+    await loadOlderPages(sid, threadLoadToken.value, 1)
+  }
+
+  /**
+   * Catch-up after a turn: read the newest pages until they overlap what is
+   * shown and merge them (`mergeNewestRows`), so persisted ids, artifacts and
+   * interaction state replace the live copy. A transcript frame that lands
+   * meanwhile restarts the catch-up (up to `HISTORY_SYNC_MAX_ATTEMPTS`); when
+   * a new turn is already streaming, its own `done` runs the next one. A
+   * failure is shown (`historySyncError`) with a way to retry, never dropped.
+   */
+  async function syncThreadHistory(threadSessionId: string): Promise<void> {
+    const token = threadLoadToken.value
+    for (let attempt = 1; attempt <= HISTORY_SYNC_MAX_ATTEMPTS; attempt++) {
+      const revision = transcriptRevision.value
+      const known = new Set(messages.value.flatMap(m => typeof m.id === 'number' ? [m.id] : []))
+      const newestKnown = known.size ? Math.max(...known) : null
+      const rows: ChatHistoryRow[] = []
+      let overlaps = newestKnown === null
+      let reachedStart = false
+      try {
+        let before: number | 'latest' = 'latest'
+        for (let page = 1; page <= HISTORY_SYNC_MAX_PAGES; page++) {
+          const result = await fetchHistoryPage(threadSessionId, before)
+          rows.push(...result.rows)
+          if (!result.hasMore || result.rows.length === 0) { reachedStart = true; break }
+          before = Math.min(...result.rows.map(r => r.id))
+          if (newestKnown !== null && before <= newestKnown) { overlaps = true; break }
+        }
+      } catch (err) {
+        if (boundSessionId.value !== threadSessionId || threadLoadToken.value !== token) return
+        console.error('[chat] history catch-up failed:', err)
+        historySyncError.value = true
+        return
+      }
+      if (boundSessionId.value !== threadSessionId || threadLoadToken.value !== token) return
+      if (transcriptRevision.value !== revision) {
+        if (isStreaming.value) return
+        continue
+      }
+      messages.value = mergeNewestRows(messages.value, rows, overlaps || reachedStart)
+      if (!overlaps && !reachedStart) olderHistory.value = 'idle'
+      else if (reachedStart) olderHistory.value = 'end'
+      historySyncError.value = false
+      return
+    }
+    historySyncError.value = true
+  }
+
+  /** "Reload" on a failed catch-up. */
+  async function retryHistorySync() {
+    if (boundSessionId.value) await syncThreadHistory(boundSessionId.value)
   }
 
   /**
@@ -1628,6 +1776,8 @@ export function useChat() {
    */
   async function openThread(threadSessionId: string, agentId?: string | null) {
     transcriptRevision.value++
+    threadLoadToken.value++
+    historySyncError.value = false
     replayingTurn = false
     replayFinishedTurn = false
     boundSessionId.value = threadSessionId
@@ -1660,6 +1810,9 @@ export function useChat() {
     queuePosition.value = null
     sessionError.value = null
     messages.value = []
+    olderHistory.value = 'end'
+    historySyncError.value = false
+    threadLoadToken.value++
   }
 
   /**
@@ -1883,6 +2036,8 @@ export function useChat() {
     sessionId,
     isStreaming,
     loadingHistory,
+    olderHistory,
+    historySyncError,
     boundSessionId,
     boundAgentId,
     queuePosition,
@@ -1904,5 +2059,7 @@ export function useChat() {
     openThread,
     leaveThread,
     loadRecentHistory,
+    loadOlderHistory,
+    retryHistorySync,
   }
 }
