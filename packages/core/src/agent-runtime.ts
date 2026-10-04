@@ -7,7 +7,7 @@ import type { Api, AssistantMessage, Message, ImageContent, Model, SystemMessage
 import { Type } from '@earendil-works/pi-ai'
 import type { Database } from './database.js'
 import { logTokenUsage, logToolCall } from './token-logger.js'
-import { applyEcoRequestView } from './eco-mode-store.js'
+import { applyEcoRequestView, EcoRequestGate, readStrandEcoMode } from './eco-mode-store.js'
 import { isEcoRefusalText } from './eco-policy.js'
 import { estimateCost, getApiKeyForProvider, buildModel, buildStreamFn, loadProvidersDecrypted, parseProviderModelId, getProviderDefaultModel, resolvePromptProfileOptions } from './provider-config.js'
 import type { ProviderConfig } from './provider-config.js'
@@ -759,6 +759,8 @@ class PiAgentRuntime implements AgentRuntimeBoundary, AgentRuntimePiAgentAccess 
    * abort is process-wide and hits foreign strands.
    */
   private currentSessionId: string | null = null
+  /** Eco request-limit handoff of THIS runtime's agent (pre-send view → stream call of the same request). */
+  private readonly ecoGate = new EcoRequestGate()
 
   constructor(options: AgentRuntimeOptions) {
     this.model = options.model
@@ -837,7 +839,13 @@ class PiAgentRuntime implements AgentRuntimeBoundary, AgentRuntimePiAgentAccess 
         // Prompt-cache routing: the strand id is stable for the whole
         // conversation, so providers that key their cache per session keep
         // hitting the same replica/entry across turns.
-        { getSessionId: () => this.currentSessionId ?? undefined },
+        {
+          getSessionId: () => this.currentSessionId ?? undefined,
+          // Eco (B1): the limits the pre-send view budgeted are applied to
+          // the same request (options.maxTokens + effective window).
+          ecoGate: this.ecoGate,
+          readEcoMode: sessionId => readStrandEcoMode(this.db, sessionId),
+        },
       ),
       // Ebene B (last net before send): enforce the tool_use/tool_result
       // boundary invariant on EVERY LLM call, right before pi-ai converts the
@@ -892,6 +900,7 @@ class PiAgentRuntime implements AgentRuntimeBoundary, AgentRuntimePiAgentAccess 
       model: this.model,
       systemPrompt: this.agent.state.systemPrompt,
       tools: this.agent.state.tools,
+      gate: this.ecoGate,
     })
   }
 

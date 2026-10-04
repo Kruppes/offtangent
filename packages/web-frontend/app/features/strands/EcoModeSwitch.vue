@@ -61,6 +61,7 @@ onMounted(() => { void load() })
         <template v-if="status.enabled">
           <span v-if="budgetLabel">{{ budgetLabel }}</span>
           <span v-if="status.contextFallback"> · {{ t('eco.fallback') }}</span>
+          <span v-if="status.observedContextLimitTokens" data-testid="eco-observed"> · {{ t('eco.observed', { limit: status.observedContextLimitTokens }) }}</span>
           <span v-if="saved !== null"> · {{ t('eco.saved', { percent: saved }) }}</span>
           <span v-else> · {{ t('eco.noData') }}</span>
           <span v-if="status.last?.degraded" class="font-medium text-foreground" data-testid="eco-degraded"> · {{ t('eco.degraded') }}</span>

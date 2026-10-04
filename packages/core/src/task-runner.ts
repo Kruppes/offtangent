@@ -1,4 +1,4 @@
-import { applyEcoRequestView, inheritEcoMode } from './eco-mode-store.js'
+import { applyEcoRequestView, EcoRequestGate, inheritEcoMode, readStrandEcoMode } from './eco-mode-store.js'
 import { Agent as PiAgent } from '@earendil-works/pi-agent-core'
 import type { AgentEvent, AgentMessage, AgentTool } from '@earendil-works/pi-agent-core'
 import type { AssistantMessage, Message, Model, Api } from '@earendil-works/pi-ai'
@@ -890,6 +890,7 @@ export class TaskRunner {
       // extraction, verifier and schema correction are unaffected.
       const history = this.createHistoryCompactor(taskId)
 
+      const ecoGate = new EcoRequestGate()
       const agent = new PiAgent({
         initialState: {
           systemPrompt,
@@ -900,7 +901,13 @@ export class TaskRunner {
         // The task session id is stable for the whole run — hand it to the
         // provider so a per-session prompt cache keeps hitting across the
         // hundreds of tool-loop calls a task makes.
-        streamFn: buildStreamFn(provider, undefined, { getSessionId: () => sessionId }),
+        // Eco (B1): the limits the pre-send view budgeted are applied to the
+        // same request (options.maxTokens + effective window).
+        streamFn: buildStreamFn(provider, undefined, {
+          getSessionId: () => sessionId,
+          ecoGate,
+          readEcoMode: sid => readStrandEcoMode(this.db, sid),
+        }),
         // Fail open: a bug in the compaction must never kill a running task,
         // it may only cost tokens.
         transformContext: async (messages) => {
@@ -922,6 +929,7 @@ export class TaskRunner {
             model,
             systemPrompt: agent.state.systemPrompt,
             tools: agent.state.tools,
+            gate: ecoGate,
           })
           // Privacy (plan 2026-09-26, step 4): last net before the request
           // leaves the process. Fail open — redaction must never kill a task.

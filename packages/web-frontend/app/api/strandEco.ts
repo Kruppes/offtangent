@@ -18,6 +18,8 @@ export interface EcoViewMetric {
 }
 export interface StrandEcoStatus {
   enabled: boolean
+  /** Runner limit seen in an overflow; the budget above is already sized against it. */
+  observedContextLimitTokens: number | null
   inputBudgetTokens: number | null
   outputReserveTokens: number | null
   contextFallback: boolean
@@ -35,6 +37,7 @@ export function mapEcoStatus(raw: unknown): StrandEcoStatus | null {
   const last = value.last && typeof value.last === 'object' ? value.last as Record<string, unknown> : null
   return {
     enabled: value.enabled,
+    observedContextLimitTokens: num(value.observedContextLimitTokens),
     inputBudgetTokens: num(value.inputBudgetTokens),
     outputReserveTokens: num(value.outputReserveTokens),
     contextFallback: value.contextFallback === true,

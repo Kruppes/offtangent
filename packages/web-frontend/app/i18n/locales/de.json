@@ -2735,6 +2735,7 @@
     "hint": "Spart Kontext für lokale Modelle; ab der nächsten Anfrage.",
     "budget": "Eingabebudget {tokens} (geschätzt)",
     "fallback": "Kontextfenster unbekannt, konservativ",
+    "observed": "Runner-Limit {limit} Tokens (statt deklariertem Fenster)",
     "saved": "zuletzt ca. {percent} % kleiner",
     "noData": "noch keine Eco-Anfrage",
     "degraded": "letzte Anfrage abgelehnt, nicht gesendet (Grund im Chat)"

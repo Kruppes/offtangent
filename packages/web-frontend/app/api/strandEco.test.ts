@@ -5,7 +5,7 @@ afterEach(() => vi.unstubAllGlobals())
 
 describe('strand eco contract', () => {
   it('reads the status from the context report and writes a strict boolean PATCH', async () => {
-    const eco = { enabled: true, inputBudgetTokens: 28000, outputReserveTokens: 4096, contextFallback: false, last: null }
+    const eco = { enabled: true, observedContextLimitTokens: null, inputBudgetTokens: 28000, outputReserveTokens: 4096, contextFallback: false, last: null }
     const apiFetch = vi.fn().mockResolvedValue({ eco })
     vi.stubGlobal('useApi', () => ({ apiFetch }))
     const api = useStrandEcoApi()
@@ -20,7 +20,8 @@ describe('strand eco contract', () => {
   it('treats a missing or malformed eco block as unavailable, not as off', () => {
     expect(mapEcoStatus(undefined)).toBeNull()
     expect(mapEcoStatus({ enabled: 'yes' })).toBeNull()
-    expect(mapEcoStatus({ enabled: false })).toMatchObject({ enabled: false, inputBudgetTokens: null, last: null })
+    expect(mapEcoStatus({ enabled: false })).toMatchObject({ enabled: false, observedContextLimitTokens: null, inputBudgetTokens: null, last: null })
+    expect(mapEcoStatus({ enabled: true, observedContextLimitTokens: 40960 })).toMatchObject({ observedContextLimitTokens: 40960 })
   })
 
   it('derives the saved share only from estimates it has', () => {

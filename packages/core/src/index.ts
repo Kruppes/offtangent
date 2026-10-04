@@ -1692,5 +1692,5 @@ export type {
 export * from './connectors/index.js'
 export { resolveEcoBudget, buildEcoView, renderEcoToolView, estimateEcoFixedTokens } from './eco-policy.js'
 export type { EcoBudget, EcoViewResult } from './eco-policy.js'
-export { isStrandEcoEnabled, setStrandEcoEnabled, lastEcoViewForStrand, ECO_METRIC_TOOL_NAME } from './eco-mode-store.js'
+export { isStrandEcoEnabled, setStrandEcoEnabled, lastEcoViewForStrand, observedEcoContextLimit, ECO_METRIC_TOOL_NAME } from './eco-mode-store.js'
 export type { EcoViewMetric } from './eco-mode-store.js'

@@ -29,6 +29,7 @@ import {
   listTags,
   lastCompactionForStrand,
   lastEcoViewForStrand,
+  observedEcoContextLimit,
   isStrandEcoEnabled,
   setStrandEcoEnabled,
   resolveEcoBudget,
@@ -162,6 +163,8 @@ export interface StrandContextReport {
 
 export interface StrandEcoStatus {
   enabled: boolean
+  /** Runner limit observed in an overflow (lowers the budget below the declared window), null when none. */
+  observedContextLimitTokens: number | null
   inputBudgetTokens: number | null
   outputReserveTokens: number | null
   /** True when the model declares no context window and a conservative fallback is used. */
@@ -489,9 +492,13 @@ export function createStrandsService(options: StrandsServiceOptions) {
   }
 
   function ecoStatusOf(strandId: string, model: { contextWindow: number | null; maxTokens: number | null } | null): StrandEcoStatus {
-    const budget = model ? resolveEcoBudget(model) : null
+    // Same inputs as the request budget (B1): a runner limit observed in an
+    // overflow lowers the shown budget exactly like it lowers the request.
+    const observed = observedEcoContextLimit(strandId) ?? null
+    const budget = model ? resolveEcoBudget({ ...model, observedContextLimit: observed }) : null
     return {
       enabled: isStrandEcoEnabled(db, strandId),
+      observedContextLimitTokens: observed,
       inputBudgetTokens: budget?.inputBudget ?? null,
       outputReserveTokens: budget?.outputReserve ?? null,
       contextFallback: budget?.contextFallback ?? false,

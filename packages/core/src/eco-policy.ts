@@ -22,9 +22,12 @@
  *   OpenAI-compatible runners count reasoning/thinking inside that same
  *   completion budget and the Anthropic path caps base+thinking at
  *   model.maxTokens, so model.maxTokens bounds answer AND thinking. pi-ai
- *   additionally clamps the sent limit to (window - prompt estimate - 4096),
- *   so the reserve is min(maxTokens, window/2) — a limit the request really
- *   gets (see resolveEcoBudget).
+ *   additionally clamps the sent limit to (window - prompt estimate - 4096).
+ *   The reserve is min(maxTokens, window/2) and Eco SETS it as the request's
+ *   options.maxTokens, with the effective window (incl. an observed runner
+ *   limit) as the model window the SDK clamps against (B1, review ac775c50:
+ *   applyEcoStreamLimits in eco-mode-store.ts, wired in buildStreamFn). The
+ *   SDK clamps can only lower that value, so wire <= reserve.
  *   (Incident 2026-10-04: the runner reported a PROMPT of 41501 tokens
  *   against n_ctx 40960 — the prompt alone overflowed, output not counted.)
  * - safetyMargin: max(1024, 10 % of the window) because the estimate below is
@@ -129,8 +132,9 @@ export function resolveEcoBudget(model: EcoBudgetInput): EcoBudget {
   // (simple-options.ts clampMaxTokensToContext, used by every streamSimple
   // API incl. openai-completions). So a declared maxTokens >= the window is
   // never actually requested in full: the request limit shrinks to the room
-  // the prompt leaves. Reserving min(declared, window/2) therefore matches a
-  // limit the request really gets, not an invented one.
+  // the prompt leaves. In Eco the reserve min(declared, window/2) is then
+  // SENT as options.maxTokens (applyEcoStreamLimits), so the budget and the
+  // wire value are the same number, never a larger SDK-derived one.
   const declaredReserve = positiveInt(model.maxTokens)
   const outputReserve = Math.min(declaredReserve ?? ECO_FALLBACK_OUTPUT_RESERVE, Math.floor(contextWindow / 2))
   const safetyMargin = Math.max(1024, Math.ceil(contextWindow * 0.1))
@@ -205,15 +209,25 @@ const OVERFLOW_TEXT = /(context (?:length|size|window)|maximum context|prompt is
  */
 export function parseContextOverflow(message: string | null | undefined): ContextOverflow | null {
   if (!message || !OVERFLOW_TEXT.test(message)) return null
-  const bare = /(\d{3,8})\s*>\s*(\d{3,8})/.exec(message)
-  if (bare) return { requested: Number(bare[1]), limit: Number(bare[2]) }
+  // OpenAI / vLLM state the runner maximum explicitly; that sentence wins over
+  // any arithmetic in the same message. vLLM e.g. "This model's maximum
+  // context length is 65536 tokens and your request has 24632 input tokens
+  // (43148 > 65536 - 24632)" or "… However, you requested 45000 tokens
+  // (41000 in the messages, 4000 in the completion)". The LIMIT is only ever
+  // the stated maximum, never a requested total.
+  const stated = /maximum context length (?:is|of) (\d{3,8})(?: tokens)?|maximum context length \((\d{3,8})(?: tokens)?\)/i.exec(message)
+  if (stated) {
+    const limit = Number(stated[1] ?? stated[2])
+    const req = /resulted in (\d{3,8})|requested (\d{3,8})|request has (\d{3,8}) input tokens|input length \((\d{3,8})\)/i.exec(message)
+    return { requested: req ? Number(req[1] ?? req[2] ?? req[3] ?? req[4]) : null, limit }
+  }
   const llama = /\((\d{3,8}) tokens\)[^()]*context size \((\d{3,8}) tokens\)/i.exec(message)
   if (llama) return { requested: Number(llama[1]), limit: Number(llama[2]) }
-  const openai = /maximum context length is (\d{3,8})/i.exec(message)
-  if (openai) {
-    const req = /resulted in (\d{3,8})|requested (\d{3,8})/i.exec(message)
-    return { requested: req ? Number(req[1] ?? req[2]) : null, limit: Number(openai[1]) }
-  }
+  // Bare "41501 > 40960" only when it is the whole comparison (not the left
+  // side of "a > b - c", where b would not be a context limit of its own;
+  // the \b stops the digits from backtracking into a shorter bogus number).
+  const bare = /\b(\d{3,8})\s*>\s*(\d{3,8})\b(?!\s*[-+])/.exec(message)
+  if (bare) return { requested: Number(bare[1]), limit: Number(bare[2]) }
   return { requested: null, limit: null }
 }
 

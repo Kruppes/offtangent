@@ -2735,6 +2735,7 @@
     "hint": "Saves context for local models; from the next request.",
     "budget": "Input budget {tokens} (estimate)",
     "fallback": "context window unknown, conservative",
+    "observed": "runner limit {limit} tokens (below the declared window)",
     "saved": "last request about {percent} % smaller",
     "noData": "no eco request yet",
     "degraded": "last request refused, not sent (reason in chat)"

@@ -213,7 +213,7 @@ describe('strand mutation workflows', () => {
 })
 
 describe('eco mode switch', () => {
-  const eco = (enabled: boolean, last: unknown = null) => ({ eco: { enabled, inputBudgetTokens: 28000, outputReserveTokens: 4096, contextFallback: false, last } })
+  const eco = (enabled: boolean, last: unknown = null) => ({ eco: { enabled, observedContextLimitTokens: null, inputBudgetTokens: 28000, outputReserveTokens: 4096, contextFallback: false, last } })
   it('loads off by default, switches on with a strict PATCH and shows estimates', async () => {
     const api = setup()
     api.mockResolvedValueOnce(eco(false))

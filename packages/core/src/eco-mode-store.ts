@@ -86,8 +86,17 @@ export const ecoTelemetry = {
        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     ).run(m.sessionId, m.contextWindow, m.outputReserve, m.inputBudget, m.observedLimit, m.tokensBefore,
       m.tokensAfter, m.compacted, m.dropped, m.unrecallable, m.refusalReason ? 1 : 0, m.refusalReason)
+    // Bounded per-session retention: only the newest rows are ever read
+    // (lastEcoViewForStrand), so older ones are pruned on write.
+    db.prepare(
+      `DELETE FROM eco_metrics WHERE session_id = ? AND id <= (
+         SELECT id FROM eco_metrics WHERE session_id = ? ORDER BY id DESC LIMIT 1 OFFSET ?)`,
+    ).run(m.sessionId, m.sessionId, ECO_METRICS_KEEP_PER_SESSION)
   },
 }
+
+/** Rows kept per session in eco_metrics (bounded retention). */
+export const ECO_METRICS_KEEP_PER_SESSION = 50
 
 /** Telemetry is isolated: a failing metrics write never changes the policy outcome. */
 function recordEcoMetric(db: Database, m: EcoMetricRow): void {
@@ -176,6 +185,40 @@ export function findToolResultRowId(db: Database, sessionId: string, toolCallId:
   }
 }
 
+/**
+ * The per-request limits Eco budgeted for, handed from the pre-send view
+ * (transformContext) to the stream function of the SAME request (B1, review
+ * ac775c50): the request must carry exactly the output limit the budget
+ * reserved, and the SDK must clamp against the same effective window.
+ */
+export interface EcoRequestLimits {
+  sessionId: string
+  /** Effective window: min(declared, observed runner limit). */
+  contextWindow: number
+  /** Output limit the request carries (answer + reasoning share it). */
+  outputReserve: number
+}
+
+export type EcoRequestDecision = { mode: 'off' } | { mode: 'eco'; limits: EcoRequestLimits }
+
+/**
+ * One-slot handoff owned by ONE agent instance (never module-global): the
+ * pre-send hook stages the decision of the request it just built, the
+ * stream function of that very request takes it (and so clears it). A
+ * request never sees the decision of an earlier one: the slot is cleared
+ * at the start of every staging and on every take.
+ */
+export class EcoRequestGate {
+  private pending: EcoRequestDecision | undefined
+  clear(): void { this.pending = undefined }
+  stage(decision: EcoRequestDecision): void { this.pending = decision }
+  take(): EcoRequestDecision | undefined {
+    const d = this.pending
+    this.pending = undefined
+    return d
+  }
+}
+
 export interface EcoRequestContext {
   db: Database
   sessionId: string | null | undefined
@@ -191,6 +234,8 @@ export interface EcoRequestContext {
   model: { contextWindow?: number | null; maxTokens?: number | null }
   systemPrompt: string | undefined
   tools: readonly unknown[] | undefined
+  /** Receives the limits of this request for the stream function (see EcoRequestGate). */
+  gate?: EcoRequestGate
 }
 
 /**
@@ -205,10 +250,17 @@ export interface EcoRequestContext {
  * and can never change that outcome.
  */
 export function applyEcoRequestView(ctx: EcoRequestContext): AgentMessage[] {
-  const { db, sessionId, messages } = ctx
-  if (!sessionId) return messages
+  const { db, sessionId, messages, gate } = ctx
+  gate?.clear()
+  if (!sessionId) {
+    gate?.stage({ mode: 'off' })
+    return messages
+  }
   const mode = readStrandEcoMode(db, sessionId)
-  if (mode === 'off') return messages
+  if (mode === 'off') {
+    gate?.stage({ mode: 'off' })
+    return messages
+  }
   if (mode === 'unknown') throw new EcoBudgetError('eco_state_unreadable')
 
   let budget: ReturnType<typeof resolveEcoBudget>
@@ -250,6 +302,7 @@ export function applyEcoRequestView(ctx: EcoRequestContext): AgentMessage[] {
     })
   }
   if (view.refusal) throw new EcoBudgetError(view.refusal, view.tokensAfter, budget.inputBudget)
+  gate?.stage({ mode: 'eco', limits: { sessionId, contextWindow: budget.contextWindow, outputReserve: budget.outputReserve } })
   return view.messages
 }
 
@@ -272,4 +325,53 @@ export function inheritEcoMode(db: Database, parentSessionId: string | null | un
   }
   // Not silent: the task cannot run with the inherited mode, so it fails.
   throw new EcoBudgetError('eco_state_unreadable')
+}
+
+function isPositiveInt(v: unknown): v is number {
+  return typeof v === 'number' && Number.isInteger(v) && v > 0
+}
+
+/**
+ * Applies the Eco decision of THIS request to the stream call (B1, review
+ * ac775c50). Off → model and options are returned as the same objects, so the
+ * normal path (cloud and local) stays byte-identical and gets no shadow cap.
+ * Eco → `options.maxTokens` = the budgeted reserve (never raised above an
+ * explicit smaller caller cap) and the SDK sees the effective window and the
+ * reserve as the model limits. Every later SDK step can then only LOWER the
+ * wire value: clampMaxTokensToContext is min(maxTokens, window − est − 4096),
+ * adjustMaxTokensForThinking is min(base + thinking, model.maxTokens) and the
+ * openai-completions thinking budget is clamped into max_tokens — so answer
+ * and reasoning share the one reserve.
+ *
+ * FAIL CLOSED: no staged decision while the switch is not definitely off, a
+ * decision for another session, or unreadable limits → EcoBudgetError, the
+ * request is not sent.
+ */
+export function applyEcoStreamLimits<M extends { contextWindow?: number; maxTokens?: number }, O extends { maxTokens?: number } | undefined>(
+  decision: EcoRequestDecision | undefined,
+  sessionId: string | undefined,
+  readMode: (sessionId: string | undefined) => 'on' | 'off' | 'unknown',
+  model: M,
+  options: O,
+): { model: M; options: O } {
+  if (decision === undefined) {
+    if (readMode(sessionId) === 'off') return { model, options }
+    console.error(`[eco] no staged request limits for session ${sessionId}; refusing the request`)
+    throw new EcoBudgetError('eco_internal_error')
+  }
+  if (decision.mode === 'off') return { model, options }
+  const { limits } = decision
+  if (limits.sessionId !== sessionId || !isPositiveInt(limits.contextWindow) || !isPositiveInt(limits.outputReserve)
+    || limits.outputReserve > limits.contextWindow) {
+    console.error(`[eco] unusable request limits for session ${sessionId}:`, limits)
+    throw new EcoBudgetError('eco_internal_error')
+  }
+  const declaredWindow = isPositiveInt(model.contextWindow) ? model.contextWindow : null
+  const contextWindow = declaredWindow === null ? limits.contextWindow : Math.min(declaredWindow, limits.contextWindow)
+  const callerCap = options?.maxTokens
+  const maxTokens = isPositiveInt(callerCap) ? Math.min(callerCap, limits.outputReserve) : limits.outputReserve
+  return {
+    model: { ...model, contextWindow, maxTokens },
+    options: { ...(options ?? {}), maxTokens } as O,
+  }
 }

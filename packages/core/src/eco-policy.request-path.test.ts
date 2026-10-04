@@ -18,7 +18,8 @@ import type { Database } from './database.js'
 import type { AgentTool } from '@earendil-works/pi-agent-core'
 import { Type } from '@earendil-works/pi-ai'
 import { createRecallMessageTool } from './recall-message-tool.js'
-import { setStrandEcoEnabled, lastEcoViewForStrand, resetObservedEcoLimits } from './eco-mode-store.js'
+import { setStrandEcoEnabled, lastEcoViewForStrand, resetObservedEcoLimits, observedEcoContextLimit } from './eco-mode-store.js'
+import { resolveEcoBudget } from './eco-policy.js'
 
 interface WireMessage { role: string; content: unknown; tool_call_id?: string; tool_calls?: Array<{ id: string; function: { name: string } }> }
 interface Received { url: string; body: { max_tokens?: number; max_completion_tokens?: number; messages: WireMessage[]; [key: string]: unknown } }
@@ -244,7 +245,7 @@ describe('eco mode over the real HTTP request path', () => {
     expect(errorsOf(chunks) + textOf(chunks)).toMatch(/Systemprompt/)
   }, 30_000)
 
-  it('reasoning model with maxTokens = window: the wire limit is pi-ai\'s context clamp (never above model.maxTokens), no separate reasoning budget on top', async () => {
+  it('reasoning model with maxTokens = window: the wire limit is the Eco reserve min(maxTokens, window/2), no separate reasoning budget on top', async () => {
     const { db, runtime } = boot({ reasoning: true, contextWindow: 40960, maxTokens: 40960 })
     setStrandEcoEnabled(db, 's-eco', true)
     const chunks = await collect(runtime.streamPrompt('synthetic short question', 's-eco'))
@@ -253,11 +254,123 @@ describe('eco mode over the real HTTP request path', () => {
     const body = received[0]!.body
     const sentMax = body.max_tokens ?? body.max_completion_tokens
     expect(typeof sentMax).toBe('number')
-    // clampMaxTokensToContext: min(model.maxTokens, window - estimate(chars/4) - 4096).
-    expect(sentMax!).toBeLessThan(40960 - 4096)
-    expect(sentMax!).toBeGreaterThan(0)
+    // B1: Eco sends its reserve as options.maxTokens; the SDK clamp may only lower it.
+    expect(sentMax!).toBe(resolveEcoBudget({ contextWindow: 40960, maxTokens: 40960 }).outputReserve)
     // Reasoning shares that one completion limit: no extra budget field.
     expect(body).not.toHaveProperty('thinking_token_budget')
     expect(body).not.toHaveProperty('max_thinking_tokens')
   }, 30_000)
 })
+
+/** vLLM-style 400 overflow answer (synthetic wording, OpenAI error envelope). */
+function vllmOverflow(res: http.ServerResponse, limit: number, requested: number) {
+  res.writeHead(400, { 'content-type': 'application/json' })
+  res.end(JSON.stringify({ object: 'error', type: 'BadRequestError', code: 400,
+    message: `This model's maximum context length is ${limit} tokens. However, you requested ${requested} tokens (${requested - 4000} in the messages, 4000 in the completion). Please reduce the length of the messages or completion.` }))
+}
+
+/** Synthetic text at ~3 chars per token (dense: digits, paths, short words). */
+function dense(chars: number): string {
+  return 'id 4711 /a/b c9 x=1;\n'.repeat(Math.ceil(chars / 21)).slice(0, chars)
+}
+
+const wireMax = (r: Received) => r.body.max_tokens ?? r.body.max_completion_tokens
+const wireInputTokens = (r: Received) => Math.ceil(JSON.stringify({ messages: r.body.messages, tools: r.body.tools ?? [] }).length / 3)
+
+describe('eco B1: the request carries exactly the budgeted output limit (review ac775c50)', () => {
+  for (const W of [65536, 262144]) {
+    it(`W = M = ${W}, dense synthetic input: wire max_tokens <= eco reserve and input + wire + safety <= window`, async () => {
+      const { db, runtime } = boot({ contextWindow: W, maxTokens: W, reasoning: true })
+      setStrandEcoEnabled(db, 's-eco', true)
+      const budget = resolveEcoBudget({ contextWindow: W, maxTokens: W })
+      const chunks = await collect(runtime.streamPrompt(dense(Math.floor((budget.inputBudget - 9000) * 3 * 0.8)), 's-eco'))
+      expect(errorsOf(chunks)).toBe('')
+      expect(received).toHaveLength(1)
+      const wire = wireMax(received[0]!)!
+      // Before the fix the SDK sent min(M, W - chars/4 - 4096), e.g. 43148 at W = 65536.
+      expect(wire).toBeLessThanOrEqual(budget.outputReserve)
+      expect(wire).toBe(budget.outputReserve)
+      expect(wireInputTokens(received[0]!) + wire + budget.safetyMargin).toBeLessThanOrEqual(W)
+    }, 60_000)
+  }
+
+  it('observed runner limit 40960 under a declared 131072: the next request is budgeted AND sent against 40960', async () => {
+    const { db, runtime } = boot({ contextWindow: 131072, maxTokens: 131072, reasoning: true })
+    setStrandEcoEnabled(db, 's-eco', true)
+    script.push(res => vllmOverflow(res, 40960, 45000))
+    const first = await collect(runtime.streamPrompt('synthetic first question', 's-eco'))
+    expect(errorsOf(first)).toMatch(/maximum context length/)
+    expect(received).toHaveLength(1)
+    expect(wireMax(received[0]!)).toBe(resolveEcoBudget({ contextWindow: 131072, maxTokens: 131072 }).outputReserve)
+
+    const budget = resolveEcoBudget({ contextWindow: 131072, maxTokens: 131072, observedContextLimit: 40960 })
+    expect(budget.contextWindow).toBe(40960)
+    const second = await collect(runtime.streamPrompt(dense(Math.floor((budget.inputBudget - 9000) * 3 * 0.8)), 's-eco'))
+    expect(errorsOf(second)).toBe('')
+    expect(observedEcoContextLimit('s-eco')).toBe(40960) // the stated maximum, not the requested 45000
+    expect(received).toHaveLength(2)
+    const wire = wireMax(received[1]!)!
+    // Before the fix: input budgeted for 40960 but max_tokens ≈ 131072 - chars/4 - 4096 (121210 in the repro).
+    expect(wire).toBeLessThanOrEqual(budget.outputReserve)
+    expect(wireInputTokens(received[1]!) + wire + budget.safetyMargin).toBeLessThanOrEqual(40960)
+  }, 60_000)
+
+  it('toggle between turns and across sessions on ONE runtime: eco requests carry the reserve, normal requests stay byte-identical to a never-eco runtime', async () => {
+    const W = 65536
+    const prompt = dense(15_000)
+    const db0 = (d: Database) => d.prepare("INSERT INTO sessions (id, agent_id) VALUES ('s-normal', 'main')").run()
+    // Baseline: a runtime that never saw Eco runs the same sequence of requests.
+    const base = boot({ contextWindow: W, maxTokens: W })
+    db0(base.db)
+    await collect(base.runtime.streamPrompt(prompt, 's-eco'))
+    await collect(base.runtime.streamPrompt(prompt, 's-normal'))
+    await collect(base.runtime.streamPrompt('synthetic follow-up', 's-eco'))
+    const baseline = received.map(r => JSON.stringify(r.body))
+    received = []
+
+    const { db, runtime } = boot({ contextWindow: W, maxTokens: W })
+    db0(db)
+    const reserve = resolveEcoBudget({ contextWindow: W, maxTokens: W }).outputReserve
+
+    setStrandEcoEnabled(db, 's-eco', true)
+    await collect(runtime.streamPrompt(prompt, 's-eco'))
+    expect(wireMax(received[0]!)).toBe(reserve)
+    expect(JSON.parse(baseline[0]!).max_completion_tokens ?? JSON.parse(baseline[0]!).max_tokens).toBeGreaterThan(reserve)
+
+    // Other session on the same runtime, Eco off: no stale eco limit leaks in,
+    // the request is byte-identical to the never-eco runtime's.
+    await collect(runtime.streamPrompt(prompt, 's-normal'))
+    expect(JSON.stringify(received[1]!.body)).toBe(baseline[1])
+
+    // Toggle the eco strand off between turns: the next request is normal again.
+    setStrandEcoEnabled(db, 's-eco', false)
+    await collect(runtime.streamPrompt('synthetic follow-up', 's-eco'))
+    expect(JSON.stringify(received[2]!.body)).toBe(baseline[2])
+
+    // And back on: reserve again.
+    setStrandEcoEnabled(db, 's-eco', true)
+    const third = await collect(runtime.streamPrompt('synthetic third', 's-eco'))
+    expect(errorsOf(third)).toBe('')
+    expect(wireMax(received[3]!)).toBe(reserve)
+  }, 60_000)
+
+  it('tool loop at W = M = 65536: every request carries the reserve and no tool runs twice', async () => {
+    const W = 65536
+    let executions = 0
+    const tool = syntheticDumpTool()
+    const counted: AgentTool = { ...tool, execute: async (...args: Parameters<AgentTool['execute']>) => { executions++; return tool.execute(...args) } }
+    const { db, runtime } = boot({ contextWindow: W, maxTokens: W, tools: [counted] })
+    setStrandEcoEnabled(db, 's-eco', true)
+    const reserve = resolveEcoBudget({ contextWindow: W, maxTokens: W }).outputReserve
+    script.push(res => sseToolCalls(res, 'synthetic_dump', ['call_a', 'call_b']))
+    const chunks = await collect(runtime.streamPrompt('synthetic: dump twice', 's-eco'), db)
+    expect(errorsOf(chunks)).toBe('')
+    expect(executions).toBe(2)
+    expect(received).toHaveLength(2)
+    for (const r of received) {
+      expect(wireMax(r)).toBe(reserve)
+      expect(wireInputTokens(r) + wireMax(r)! + resolveEcoBudget({ contextWindow: W, maxTokens: W }).safetyMargin).toBeLessThanOrEqual(W)
+    }
+  }, 60_000)
+})
+
