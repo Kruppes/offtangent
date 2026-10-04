@@ -6,12 +6,17 @@ import { describe, expect, it } from 'vitest'
 // under 44 px per viewport, overlaps of neighbouring hit boxes) is measured by
 // the full-route browser audit; this guard keeps the CSS contract in place.
 const css = readFileSync(new URL('../assets/css/tailwind.css', import.meta.url), 'utf8')
-const start = css.indexOf('@media (pointer: coarse) {')
+const start = css.indexOf('@media (any-pointer: coarse) {')
 const block = start < 0 ? '' : css.slice(start, css.indexOf('\n  }\n}', start))
 
 describe('touch target contract', () => {
   it('scopes the hit boxes to coarse pointers, not to a width', () => {
     expect(start).toBeGreaterThan(0)
+  })
+  it('uses any-pointer, so a touch laptop with a mouse attached still gets the hit boxes (W12)', () => {
+    // `pointer` only reports the primary input; `any-pointer` reports every one.
+    expect(css).not.toMatch(/\(pointer: coarse\)/)
+    expect(css).not.toMatch(/(^|[\s'"])pointer-coarse:/m)
   })
   it('extends controls with a centred, invisible pseudo element of at least 44 px', () => {
     expect(block).toMatch(/::after \{[^}]*content: '';[^}]*position: absolute;[^}]*width: max\(100%, 44px\);[^}]*height: max\(100%, 44px\);[^}]*transform: translate\(-50%, -50%\);/s)

@@ -714,7 +714,7 @@
     .code-block-copy-button {
       @apply inline-flex h-6 w-6 shrink-0 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-muted hover:text-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring;
     }
-    @media (max-width: 767px), (pointer: coarse) {
+    @media (max-width: 767px), (any-pointer: coarse) {
       .code-block-copy-button { @apply -my-2 h-11 w-11; }
     }
     .code-block-copy-button svg {
@@ -930,7 +930,7 @@ html[data-strand-transition="close"]::view-transition-old(strand-conversation) {
 /* ─── W11: touch targets on touch-primary devices ───
    Phones (< 768 px) already get 44 px controls through the max-md: sizes.
    A touch-primary device can also be wide (tablet, touch laptop), so the hit
-   area follows the input method, not the width: under (pointer: coarse) every
+   area follows the input method, not the width: under (any-pointer: coarse) every
    control gets an invisible, centred hit box of at least 44 x 44 px. The box
    is a pseudo element, so the look stays the same; the mouse desktop is not
    touched at all. Elements that already use ::after (switch hit area,
@@ -938,7 +938,7 @@ html[data-strand-transition="close"]::view-transition-old(strand-conversation) {
    their own position) are left alone. Inline links inside running text are
    exempt (WCAG 2.5.8 inline exception); only block or flex links count. */
 @layer base {
-  @media (pointer: coarse) {
+  @media (any-pointer: coarse) {
     :is(button, [role='button'], [role='tab'], [role='menuitem'], [role='option'], [role='switch'], [role='checkbox'], [role='radio'], summary, a[href][class*='flex'], a[href][class*='block']):not([class*='after:']):not(.absolute, .fixed, .sticky, .sr-only) {
       position: relative;
     }

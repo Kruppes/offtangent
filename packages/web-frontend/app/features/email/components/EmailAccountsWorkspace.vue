@@ -1,7 +1,7 @@
 <template>
   <div class="flex min-h-0 flex-1 flex-col overflow-auto">
     <div class="flex min-h-0 flex-1 flex-col overflow-y-auto">
-      <div class="mb-4 flex justify-end pointer-coarse:pt-0.5">
+      <div class="mb-4 flex justify-end any-pointer-coarse:pt-1">
         <Button @click="openCreate">
           <AppIcon name="add" class="mr-1 h-4 w-4" />
           {{ $t('email.addAccount') }}

@@ -249,7 +249,7 @@ describe('dock separator', () => {
     expect(sep.props['aria-controls']).toBe('dock')
     // 24 px hit area, 44 px on coarse pointers, visible focus ring.
     expect(String(sep.props.class)).toContain('w-6')
-    expect(String(sep.props.class)).toContain('pointer-coarse:w-11')
+    expect(String(sep.props.class)).toContain('any-pointer-coarse:w-11')
     expect(String(sep.props.class)).toContain('focus-visible:ring-2')
   })
 
