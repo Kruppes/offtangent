@@ -67,6 +67,21 @@ describe('selected state, second carrier', () => {
       expect(source, file).toContain('selected-marker selected-marker-inset')
     }
   })
+  it('the sidebar toggle is an expander whose icon carries the state', () => {
+    const layout = read('../layouts/default.vue')
+    const start = layout.indexOf('data-testid="sidebar-toggle"')
+    const toggle = layout.slice(start, layout.indexOf('</button>', start))
+    expect(toggle).toContain(':aria-expanded="labelled"')
+    expect(toggle).toContain('aria-controls="shell-sidebar"')
+    expect(toggle).not.toContain('aria-pressed')
+    expect(toggle).toContain('<SidebarStateIcon :open="labelled"')
+    expect(layout).toMatch(/<aside[^>]*id="shell-sidebar"/)
+    // same silhouette in both states, the open one fills the side area in currentColor
+    const icon = read('../components/shell/SidebarStateIcon.vue')
+    expect(icon).toMatch(/v-if="open"[^>]*fill="currentColor"/)
+    expect(icon).toContain('stroke="currentColor"')
+    expect(icon).not.toMatch(/#[0-9a-f]{3,8}\b|hsl\(|rgba?\(/i)
+  })
   it('keeps no background-painted markers in the components', () => {
     for (const [file] of SITES) expect(read(file), file).not.toMatch(/before:bg-primary/)
   })

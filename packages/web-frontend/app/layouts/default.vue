@@ -40,6 +40,7 @@
            Mobile: the labelled drawer as before. -->
       <aside
         v-show="sidebarOpen || effectiveMode !== 'hidden'"
+        id="shell-sidebar"
         ref="sidebarEl"
         data-testid="shell-sidebar"
         :role="sidebarOpen ? 'dialog' : undefined"
@@ -151,18 +152,20 @@
           <AppIcon name="menu" size="xl" />
         </button>
 
-        <!-- Desktop sidebar toggle: labelled <-> icons; brings a hidden sidebar back. -->
+        <!-- Desktop sidebar toggle: labelled <-> icons; brings a hidden sidebar back.
+             An expander (aria-expanded), the icon fills the side area while labelled. -->
         <Tooltip>
           <TooltipTrigger as-child>
             <button
               type="button"
               data-testid="sidebar-toggle"
               class="-ml-3 hidden h-11 w-11 items-center justify-center rounded-md text-muted-foreground hover:bg-accent hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring md:inline-flex"
-              :aria-label="sidebarToggleLabel"
-              :aria-pressed="labelled"
+              :aria-label="$t('shell.sidebar')"
+              :aria-expanded="labelled"
+              aria-controls="shell-sidebar"
               @click="toggleSidebarCompact"
             >
-              <AppIcon :name="labelled ? 'panelLeftClose' : 'panelLeftOpen'" />
+              <SidebarStateIcon :open="labelled" />
             </button>
           </TooltipTrigger>
           <TooltipContent side="bottom">{{ sidebarToggleLabel }} (Ctrl+B)</TooltipContent>
@@ -274,6 +277,7 @@ function skipToContent() {
   target?.focus({ preventScroll: true })
 }
 import AppVersionLabel from '~/components/shell/AppVersionLabel.vue'
+import SidebarStateIcon from '~/components/shell/SidebarStateIcon.vue'
 import { useMediaQuery } from '@vueuse/core'
 import { useEmailApi } from '~/api/email'
 import { useShellLayout } from '~/composables/useShellLayout'
