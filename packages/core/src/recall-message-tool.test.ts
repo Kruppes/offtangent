@@ -87,7 +87,7 @@ describe('recall_message tool', () => {
     const info = db.prepare('INSERT INTO chat_messages (session_id, user_id, role, content, metadata, agent_id) VALUES (?, ?, ?, ?, ?, ?)').run(
       's1', 1, 'tool', 'Tool: shell', JSON.stringify({ toolName: 'shell', toolCallId: 'cap1', toolArgs: {}, toolResult: result }), 'main')
     const tool = createRecallMessageTool({ db })
-    const out = text(await tool.execute('c1', { message_id: Number(info.lastInsertRowid), part: 'result' }))
+    const out = text(await tool.execute('c1', { message_id: Number(info.lastInsertRowid) }))
     expect(out).toContain('tool-capped before storage')
     expect(out).toContain('not the raw output')
     // The stored text is far smaller than the 60k raw output.
@@ -97,7 +97,21 @@ describe('recall_message tool', () => {
 
   it('an uncapped tool row carries no cap note', async () => {
     const tool = createRecallMessageTool({ db })
-    const out = text(await tool.execute('c1', { message_id: 11, part: 'result' }))
+    const out = text(await tool.execute('c1', { message_id: 11 }))
     expect(out).not.toContain('tool-capped')
+  })
+})
+
+describe('recall_message schema is frozen (cache prefix, Eco cache gate N1)', () => {
+  it('description and parameters are byte-identical to the legacy contract', () => {
+    const tool = createRecallMessageTool({ db: {} as Database })
+    expect(tool.description).toBe(
+      'Reload the full, verbatim content of one earlier message by its id. Use this when the context shows a ' +
+      'shortened line like "[msg:123] assistant, 5400 chars: ..." and you need the original text or the full tool ' +
+      'result. Long messages are paged: pass `offset` to continue.',
+    )
+    expect(JSON.stringify(tool.parameters)).toBe(
+      '{"type":"object","required":["message_id"],"properties":{"message_id":{"type":"number","description":"The numeric id from the \\"[msg:<id>]\\" digest line."},"offset":{"type":"number","description":"Character offset to continue a long message from (default 0)."}}}',
+    )
   })
 })

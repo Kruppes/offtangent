@@ -198,7 +198,7 @@ describe('TaskRunner history compaction', () => {
     expect(text).toContain('Tool: shell')
   })
 
-  it('eco: a task session with Eco on gets the shared Eco stage on every request (budgeted, row-referenced views)', async () => {
+  it('eco: a task session with Eco on gets the shared Eco admission on every request: a fitting request passes byte-identical, a non-fitting PERSISTED one is refused, never compacted', async () => {
     db.prepare("INSERT INTO sessions (id, agent_id, type, eco_mode) VALUES ('task-eco-1', 'main', 'task', 1)").run()
     const task = store.create({ name: 'Eco Task', prompt: 'Do work', triggerType: 'agent', sessionId: 'task-eco-1' })
     // Tiny declared window so the Eco budget (not the chars/4 compactor) is the binding limit.
@@ -216,22 +216,23 @@ describe('TaskRunner history compaction', () => {
 
     const transcript: AgentMessage[] = [user('Begin.')]
     for (let i = 0; i < 3; i++) transcript.push(assistant(`step ${i}`, `e${i}`), toolResult(`e${i}`, `OUT-${i} ${'y'.repeat(3000)} exit code ${i}`))
-    // Same row shape the runner writes on tool_execution_end: only persisted
-    // results may be shortened (recall reference = chat_messages.id).
+    // Same row shape the runner writes on tool_execution_end. Persistence no
+    // longer unlocks any shortening: Eco never rewrites sent history (cache gate).
     for (let i = 0; i < 3; i++) {
       db.prepare("INSERT INTO chat_messages (session_id, user_id, role, content, metadata, agent_id) VALUES ('task-eco-1', NULL, 'tool', 'Tool: shell', ?, 'main')")
         .run(JSON.stringify({ toolName: 'shell', toolCallId: `e${i}`, toolArgs: {}, toolResult: `OUT-${i} ${'y'.repeat(3000)} exit code ${i}`, toolIsError: false }))
     }
     const before = JSON.stringify(transcript)
-    const view = await captured.transformContext!(transcript)
+    await expect(captured.transformContext!(transcript)).rejects.toMatchObject({ code: 'ECO_BUDGET_REFUSED' })
     expect(JSON.stringify(transcript)).toBe(before)
-    const all = view.map(textOf).join('\n')
-    expect(all).toContain('[eco view')
-    expect(all).toContain('OUT-2 ') // current batch head exact
-    const metric = db.prepare('SELECT input_budget AS b, refusal_reason AS r FROM eco_metrics WHERE session_id = ?').get('task-eco-1') as { b: number; r: string | null } | undefined
+    const metric = db.prepare('SELECT input_budget AS b, refusal_reason AS r, compacted AS c FROM eco_metrics WHERE session_id = ?').get('task-eco-1') as { b: number; r: string | null; c: number } | undefined
     expect(metric).toBeDefined()
     expect(metric!.b).toBeGreaterThan(0)
-    expect(metric!.r).toBeNull()
+    expect(metric!.r).toBeTruthy()
+    expect(metric!.c).toBe(0)
+    // A request that fits is handed through as the very same array (same serialized prefix as normal mode).
+    const small: AgentMessage[] = [user('Begin.'), assistant('step 0', 'f0'), toolResult('f0', 'OUT small exit code 0')]
+    expect(JSON.stringify(await captured.transformContext!(small))).toBe(JSON.stringify(small))
     expect(db.prepare("SELECT COUNT(*) AS n FROM tool_calls WHERE tool_name = 'eco_context'").get()).toEqual({ n: 0 })
   })
 
@@ -251,7 +252,7 @@ describe('TaskRunner history compaction', () => {
     await new Promise(resolve => setTimeout(resolve, 100))
     const transcript: AgentMessage[] = [user('Begin.')]
     for (let i = 0; i < 3; i++) transcript.push(assistant(`step ${i}`, `n${i}`), toolResult(`n${i}`, `OUT-${i} ${'y'.repeat(3000)} exit code ${i}`))
-    await expect(captured.transformContext!(transcript)).rejects.toMatchObject({ name: 'EcoBudgetError' })
+    await expect(captured.transformContext!(transcript)).rejects.toMatchObject({ code: 'ECO_BUDGET_REFUSED' })
   })
 
   it('eco: normal task sessions (default) never get the Eco stage', async () => {

@@ -93,22 +93,38 @@ describe('eco runtime wiring', () => {
     expect(lastEcoViewForStrand(db, 's-eco')).toBeNull()
   })
 
-  it('eco mode budgets every request of a tool loop over PERSISTED results and logs a numeric metric', async () => {
+  it('cache gate: eco admits a fitting tool loop with the IDENTICAL message array, refuses the first request that no longer fits, never compacts', async () => {
     const { db } = boot()
     setStrandEcoEnabled(db, 's-eco', true)
-    for (const n of [6, 8, 10]) {
+    const inputBudget = resolveEcoBudget({ contextWindow: 16000, maxTokens: 1024 }).inputBudget
+    let admitted = 0
+    let refused = 0
+    for (const n of [1, 2, 3, 6, 8]) {
       const msgs = loop(n) as Array<{ role: string; toolCallId?: string; content: Array<{ text?: string }> }>
       for (const m of msgs) if (m.role === 'toolResult') persistToolRow(db, 's-eco', m.toolCallId!, m.content[0].text!)
       const before = JSON.stringify(msgs)
-      const out = await captured.transformContext!(msgs) as Array<{ role: string; content: Array<{ text?: string }> }>
-      expect(JSON.stringify(msgs)).toBe(before) // transcript untouched: no tool re-runs
-      expect(JSON.stringify(out).length).toBeLessThan(before.length)
+      try {
+        const out = await captured.transformContext!(msgs)
+        // Byte-identical to normal mode: Eco hands the upstream array through.
+        expect(JSON.stringify(out)).toBe(before)
+        admitted++
+      } catch (err) {
+        expect(err).toBeInstanceOf(EcoBudgetError)
+        refused++
+        const metric = lastEcoViewForStrand(db, 's-eco')!
+        expect(metric.refused).toBe(true)
+        expect(metric.estimatedTokensAfter).toBe(metric.estimatedTokensBefore) // nothing was cut
+        expect(metric.estimatedTokensAfter!).toBeGreaterThan(inputBudget)
+      }
+      expect(JSON.stringify(msgs)).toBe(before) // transcript untouched
     }
-    const metric = lastEcoViewForStrand(db, 's-eco')
-    expect(metric).not.toBeNull()
-    expect(metric!.refused).toBe(false)
-    expect(metric!.inputBudgetTokens).toBe(resolveEcoBudget({ contextWindow: 16000, maxTokens: 1024 }).inputBudget)
-    expect(metric!.estimatedTokensAfter!).toBeLessThan(metric!.estimatedTokensBefore!)
+    // Honest count: the narrower admission refuses work the normal path would send.
+    expect(admitted).toBeGreaterThan(0)
+    expect(refused).toBeGreaterThan(0)
+    const metric = lastEcoViewForStrand(db, 's-eco')!
+    expect(metric.compactedResults).toBe(0)
+    expect(metric.droppedMessages).toBe(0)
+    expect(metric.inputBudgetTokens).toBe(inputBudget)
     // Metrics live in their own table: tool stats are not polluted.
     expect((db.prepare("SELECT COUNT(*) AS n FROM tool_calls").get() as { n: number }).n).toBe(0)
   })
@@ -123,14 +139,14 @@ describe('eco runtime wiring', () => {
     expect(metric.refusalReason).toBeTruthy()
   })
 
-  it('switching eco off restores the normal view on the next request (rollback)', async () => {
+  it('switching eco on and off never changes the request messages (rollback is a no-op on the wire)', async () => {
     const { db } = boot()
+    const msgs = loop(2)
+    const normal = JSON.stringify(await captured.transformContext!(msgs))
     setStrandEcoEnabled(db, 's-eco', true)
-    const msgs = loop(4) as Array<{ role: string; toolCallId?: string; content: Array<{ text?: string }> }>
-    for (const m of msgs) if (m.role === 'toolResult') persistToolRow(db, 's-eco', m.toolCallId!, m.content[0].text!)
-    expect(JSON.stringify(await captured.transformContext!(msgs))).not.toBe(JSON.stringify(msgs))
+    expect(JSON.stringify(await captured.transformContext!(msgs))).toBe(normal)
     setStrandEcoEnabled(db, 's-eco', false)
-    expect(JSON.stringify(await captured.transformContext!(msgs))).toBe(JSON.stringify(msgs))
+    expect(JSON.stringify(await captured.transformContext!(msgs))).toBe(normal)
   })
 })
 
@@ -143,30 +159,22 @@ function persistToolRow(db: ReturnType<typeof initDatabase>, sessionId: string, 
 }
 
 describe('eco end-to-end through the runtime: DB switch -> request view -> recall tool -> metric', () => {
-  it('older results become exact views that reference their stored row; recall_message pages the raw result back', async () => {
-    const { db, runtime } = boot()
+  it('serialized prefix: every eco request of a growing loop extends the previous one exactly like normal mode (no rewrite, no ledger, no checkpoint)', async () => {
+    const { db } = boot()
+    const seqOff: string[] = []
+    const seqOn: string[] = []
+    for (const n of [0, 1, 2]) seqOff.push(JSON.stringify(await captured.transformContext!(loop(n))))
     setStrandEcoEnabled(db, 's-eco', true)
-    const msgs = loop(4) as Array<{ role: string; toolCallId?: string; content: Array<{ text?: string }> }>
-    const rowIds = new Map<string, number>()
-    for (const m of msgs) if (m.role === 'toolResult') rowIds.set(m.toolCallId!, persistToolRow(db, 's-eco', m.toolCallId!, m.content[0].text!))
-    const out = await captured.transformContext!(msgs) as typeof msgs
-    // Older results are lossy views (or ledger entries) that point at their
-    // stored row; the current batch stays exact.
-    const all = JSON.stringify(out)
-    expect(all.includes(`message_id=${rowIds.get('c0')}`) || all.includes(`recall=${rowIds.get('c0')}`)).toBe(true)
-    expect(all).toContain('LOSSY')
-    const c3 = out.find(m => m.role === 'toolResult' && m.toolCallId === 'c3')!
-    expect(c3.content[0].text).toBe(msgs.find(m => m.toolCallId === 'c3')!.content[0].text)
-
-    // The model follows the reference with the REAL tool registered on the runtime.
-    const tools = (runtime as unknown as { agent: { state: { tools: AgentTool[] } } }).agent.state.tools
+    for (const n of [0, 1, 2]) seqOn.push(JSON.stringify(await captured.transformContext!(loop(n))))
+    expect(seqOn).toEqual(seqOff)
+    for (let i = 1; i < seqOn.length; i++) {
+      // Request i starts with request i-1 minus its closing bracket: an append-only prefix.
+      expect(seqOn[i].startsWith(seqOn[i - 1].slice(0, -1))).toBe(true)
+    }
+    // recall_message keeps the legacy schema (no Eco "part"/"max_chars" params).
+    const tools = (boot().runtime as unknown as { agent: { state: { tools: AgentTool[] } } }).agent.state.tools
     const recall = tools.find(t => t.name === 'recall_message')!
-    expect(recall).toBeDefined()
-    const page1 = await recall.execute('r1', { message_id: rowIds.get('c0')!, part: 'result' }) as { content: Array<{ text: string }>; details: { remaining: number } }
-    // part="result" returns the stored result text verbatim (after the header line).
-    expect(page1.content[0].text.split('\n').slice(1).join('\n')).toBe(msgs.find(m => m.toolCallId === 'c0')!.content[0].text)
-    const metric = lastEcoViewForStrand(db, 's-eco')
-    expect(metric!.compactedResults).toBeGreaterThan(0)
+    expect(Object.keys((recall.parameters as { properties: Record<string, unknown> }).properties)).toEqual(['message_id', 'offset'])
   })
 
   it('recall is scoped: another user cannot read the referenced row, invalid ids are rejected', async () => {
@@ -188,25 +196,35 @@ describe('eco end-to-end through the runtime: DB switch -> request view -> recal
     expect(p2.details.offset).toBe(p1.details.returned)
   })
 
-  it('overflow recovery: the runner-reported limit sizes the next request; transcript and tools untouched', async () => {
+  it('overflow evidence is scoped to the model that produced it (MAJOR-1): it lowers that model\'s budget, a model switch starts clean', async () => {
     const { db } = boot()
     setStrandEcoEnabled(db, 's-eco', true)
-    const base = loop(3) as Array<{ role: string; toolCallId?: string; content: Array<{ text?: string }> }>
-    for (const m of base) if (m.role === 'toolResult') persistToolRow(db, 's-eco', m.toolCallId!, m.content[0].text!)
-    const msgs = [
-      ...base,
-      { role: 'assistant', content: [], stopReason: 'error', errorMessage: 'request (13100 tokens) exceeds the available context size (12000 tokens)', timestamp: 1 },
-    ]
+    const base = loop(1)
+    const overflow = (model: string) => ({ role: 'assistant', content: [], stopReason: 'error', provider: 'ollama', model, api: 'openai-completions', errorMessage: 'request (13100 tokens) exceeds the available context size (12000 tokens)', timestamp: 1 })
+    const self = { provider: 'ollama', id: 'local-test', baseUrl: 'http://127.0.0.1:1/v1' }
+
+    // Another model's overflow: no evidence for the current runner → admitted, unchanged.
+    const foreign = [...base, overflow('other-model')]
+    expect(JSON.stringify(await captured.transformContext!(foreign))).toBe(JSON.stringify(foreign))
+    expect(observedEcoContextLimit('s-eco', self)).toBeUndefined()
+
+    // Own overflow: the budget shrinks to the reported 12000; the same-size
+    // request is now refused (never compacted), with the 12000-based budget.
+    const msgs = [...base, overflow('local-test')]
     const before = JSON.stringify(msgs)
-    const out = await captured.transformContext!(msgs)
+    const err = await captured.transformContext!(msgs).then(() => null, (e: unknown) => e)
+    expect(err).toBeInstanceOf(EcoBudgetError)
+    expect((err as EcoBudgetError).inputBudget).toBe(resolveEcoBudget({ contextWindow: 12000, maxTokens: 1024 }).inputBudget)
     expect(JSON.stringify(msgs)).toBe(before)
-    expect(observedEcoContextLimit('s-eco')).toBe(12000)
-    const metric = lastEcoViewForStrand(db, 's-eco')!
-    expect(metric.inputBudgetTokens).toBe(resolveEcoBudget({ contextWindow: 12000, maxTokens: 1024 }).inputBudget)
-    expect(JSON.stringify(out).length).toBeLessThan(before.length)
+    expect(lastEcoViewForStrand(db, 's-eco')!.compactedResults).toBe(0)
+    expect(observedEcoContextLimit('s-eco', self)).toBe(12000)
+    expect(observedEcoContextLimit('s-eco', { id: 'local-test' })).toBe(12000)
+    expect(observedEcoContextLimit('s-eco', { ...self, baseUrl: 'http://127.0.0.1:2/v1' })).toBeUndefined() // other runner
+    expect(observedEcoContextLimit('s-eco', { id: 'other-model' })).toBeUndefined()
+    expect(observedEcoContextLimit('s-eco')).toBeUndefined() // no model, no evidence
     // Off again: normal path, byte-identical, the evidence does not leak into normal mode.
     setStrandEcoEnabled(db, 's-eco', false)
-    expect(JSON.stringify(await captured.transformContext!(msgs))).toBe(JSON.stringify(msgs))
+    expect(JSON.stringify(await captured.transformContext!(msgs))).toBe(before)
   })
 
   it('tasks inherit Eco from the spawning strand as an explicit persisted copy', () => {

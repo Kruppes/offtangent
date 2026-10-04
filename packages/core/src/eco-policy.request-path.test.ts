@@ -17,7 +17,6 @@ import { initDatabase } from './database.js'
 import type { Database } from './database.js'
 import type { AgentTool } from '@earendil-works/pi-agent-core'
 import { Type } from '@earendil-works/pi-ai'
-import { createRecallMessageTool } from './recall-message-tool.js'
 import { setStrandEcoEnabled, lastEcoViewForStrand, resetObservedEcoLimits, observedEcoContextLimit } from './eco-mode-store.js'
 import { resolveEcoBudget } from './eco-policy.js'
 
@@ -181,46 +180,55 @@ describe('eco mode over the real HTTP request path', () => {
     expect(JSON.stringify(received[0]!.body.messages)).toContain('synthetic-line 0123456789')
     expect(textOf(chunks)).toContain('synthetic ok')
   }, 30_000)
-  it('tool loop: eco OFF sends raw results; eco ON compacts the older persisted results on the wire with intact call/result mapping and a working recall reference', async () => {
-    const { db, runtime } = boot({ tools: [syntheticDumpTool()] })
-    // Turn 1 in normal mode: two parallel 25k-char results go out raw.
+  it('cache gate, tool loop: eco ON sends exactly the messages a never-eco runtime sends (only the output limit differs); a non-fitting turn is refused, not compacted, not retried', async () => {
+    const W = 65536
+    // Baseline: never-eco runtime, tool loop with two parallel 25k-char results, then a follow-up turn.
+    const base = boot({ tools: [syntheticDumpTool()], contextWindow: W, maxTokens: W })
     script = [res => sseToolCalls(res, 'synthetic_dump', ['call_a', 'call_b'])]
-    const turn1 = await collect(runtime.streamPrompt('synthetic: dump twice', 's-eco'), db)
-    expect(errorsOf(turn1)).toBe('')
-    expect(received).toHaveLength(2)
-    const raw = received[1]!.body.messages
-    expect(raw.filter(m => m.role === 'tool').map(m => m.tool_call_id)).toEqual(['call_a', 'call_b'])
-    expect(JSON.stringify(raw)).toContain(MIDDLE_MARK)
+    await collect(base.runtime.streamPrompt('synthetic: dump twice', 's-eco'), base.db)
+    await collect(base.runtime.streamPrompt('synthetic: summarize', 's-eco'), base.db)
+    const baseline = received.map(r => r.body)
+    expect(baseline).toHaveLength(3)
+    received = []
 
-    // Turn 2 with eco ON: the same transcript no longer fits the budget.
+    const { db, runtime } = boot({ tools: [syntheticDumpTool()], contextWindow: W, maxTokens: W })
     setStrandEcoEnabled(db, 's-eco', true)
-    const turn2 = await collect(runtime.streamPrompt('synthetic: summarize', 's-eco'), db)
-    expect(errorsOf(turn2)).toBe('')
-    expect(textOf(turn2)).toContain('synthetic ok')
+    script = [res => sseToolCalls(res, 'synthetic_dump', ['call_a', 'call_b'])]
+    const t1 = await collect(runtime.streamPrompt('synthetic: dump twice', 's-eco'), db)
+    const t2 = await collect(runtime.streamPrompt('synthetic: summarize', 's-eco'), db)
+    expect(errorsOf(t1) + errorsOf(t2)).toBe('')
     expect(received).toHaveLength(3)
-    const sent = received[2]!.body
-    expect(sent.max_tokens ?? sent.max_completion_tokens).toBe(1024)
-    const wire = JSON.stringify(sent.messages)
-    expect(wire).toContain('synthetic: summarize')
-    // Every tool_call id still has its tool result (or the whole pair was
-    // dropped into the ledger): never an orphan in either direction.
-    const callIds = sent.messages.flatMap(m => (m.tool_calls ?? []).map(c => c.id))
-    const resultIds = sent.messages.filter(m => m.role === 'tool').map(m => m.tool_call_id)
-    expect(resultIds.sort()).toEqual(callIds.sort())
-    // The raw middle is gone from the wire, a recall reference is present.
-    expect(wire).not.toContain(MIDDLE_MARK)
-    const ref = /message_id=(\d+)/.exec(wire)
-    expect(ref).not.toBeNull()
-    expect(wire).not.toMatch(/transcript (is )?kept|full result kept/i)
-    const view = lastEcoViewForStrand(db, 's-eco')
-    expect(view?.refused).toBe(false)
+    const reserve = resolveEcoBudget({ contextWindow: W, maxTokens: W }).outputReserve
+    for (let i = 0; i < 3; i++) {
+      const { max_tokens: _a, max_completion_tokens: _b, ...ecoRest } = received[i]!.body as Record<string, unknown>
+      const { max_tokens: _c, max_completion_tokens: _d, ...baseRest } = baseline[i] as Record<string, unknown>
+      // tools, system and history serialize byte-identically to normal mode.
+      expect(JSON.stringify(ecoRest)).toBe(JSON.stringify(baseRest))
+      expect(wireMax(received[i]!)).toBe(reserve)
+    }
+    expect(JSON.stringify(received[2]!.body.messages)).toContain(MIDDLE_MARK) // nothing was cut
+    // Append-only: each request's messages start with the previous request's messages.
+    for (let i = 1; i < 3; i++) {
+      const prev = JSON.stringify(received[i - 1]!.body.messages).slice(0, -1)
+      expect(JSON.stringify(received[i]!.body.messages).startsWith(prev)).toBe(true)
+    }
+    expect(lastEcoViewForStrand(db, 's-eco')).toBeNull() // admitted unchanged: no refusal, no compaction row
 
-    // The reference resolves to the stored original — the exact text the tool
-    // returned (no tool cap applied here, so it contains the middle).
-    const recall = createRecallMessageTool({ db, getCurrentAgentId: () => 'main' })
-    const out = await recall.execute('r1', { message_id: Number(ref![1]), part: 'result', max_chars: 16000 }) as { content: Array<{ text: string }> }
-    expect(out.content[0]!.text).toContain(MIDDLE_MARK)
-  }, 30_000)
+    // Same transcript under a 16k window: the turn no longer fits → refused, nothing sent, no retry.
+    received = []
+    const small = boot({ tools: [syntheticDumpTool()] })
+    script = [res => sseToolCalls(res, 'synthetic_dump', ['call_a', 'call_b'])]
+    await collect(small.runtime.streamPrompt('synthetic: dump twice', 's-eco'), small.db)
+    expect(received).toHaveLength(2)
+    setStrandEcoEnabled(small.db, 's-eco', true)
+    const refused = await collect(small.runtime.streamPrompt('synthetic: summarize', 's-eco'), small.db)
+    expect(received).toHaveLength(2)
+    expect(errorsOf(refused) + textOf(refused)).toMatch(/Eco-Modus hat die Anfrage NICHT gesendet/)
+    expect(errorsOf(refused) + textOf(refused)).toMatch(/Prompt-Cache/)
+    const metric = lastEcoViewForStrand(small.db, 's-eco')!
+    expect(metric.refused).toBe(true)
+    expect(metric.compactedResults).toBe(0)
+  }, 60_000)
 
   it('tool loop without a stored original: eco refuses instead of cutting, and the refused request is NOT sent', async () => {
     const { db, runtime } = boot({ tools: [syntheticDumpTool()] })
@@ -307,7 +315,7 @@ describe('eco B1: the request carries exactly the budgeted output limit (review 
     expect(budget.contextWindow).toBe(40960)
     const second = await collect(runtime.streamPrompt(dense(Math.floor((budget.inputBudget - 9000) * 3 * 0.8)), 's-eco'))
     expect(errorsOf(second)).toBe('')
-    expect(observedEcoContextLimit('s-eco')).toBe(40960) // the stated maximum, not the requested 45000
+    expect(observedEcoContextLimit('s-eco', { id: 'local-test' })).toBe(40960) // the stated maximum, not the requested 45000
     expect(received).toHaveLength(2)
     const wire = wireMax(received[1]!)!
     // Before the fix: input budgeted for 40960 but max_tokens ≈ 131072 - chars/4 - 4096 (121210 in the repro).

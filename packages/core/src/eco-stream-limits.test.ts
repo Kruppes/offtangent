@@ -50,6 +50,27 @@ describe('applyEcoStreamLimits', () => {
   const m = model(65536, 65536)
   const limits = { sessionId: 's1', contextWindow: 65536, outputReserve: 26214 }
 
+  it('cache gate: active reasoning → model and options returned unchanged (thinking budget fields stay as in normal mode) when the uncapped output fits', () => {
+    const rm = { ...model(65536, 8192), reasoning: true }
+    const opts = { reasoning: 'medium', sessionId: 's1' }
+    const r = applyEcoStreamLimits({ mode: 'eco', limits: { ...limits, inputTokens: 20000, safetyMargin: 2048 } }, 's1', on, rm, opts)
+    expect(r.model).toBe(rm)
+    expect(r.options).toBe(opts)
+  })
+
+  it('cache gate: active reasoning whose uncapped output does not fit → visible refusal, never a lowered (cache-changing) cap', () => {
+    const rm = { ...model(65536, 65536), reasoning: true }
+    expect(() => applyEcoStreamLimits({ mode: 'eco', limits: { ...limits, inputTokens: 20000, safetyMargin: 2048 } }, 's1', on, rm, { reasoning: 'high' }))
+      .toThrow(expect.objectContaining({ reason: 'reasoning_output_uncapped' }))
+  })
+
+  it('reasoning off (or a non-reasoning model): the Eco reserve is applied as before', () => {
+    const r = applyEcoStreamLimits({ mode: 'eco', limits }, 's1', on, { ...m, reasoning: true }, { reasoning: undefined } as { maxTokens?: number; reasoning?: string })
+    expect(r.options!.maxTokens).toBe(26214)
+    const r2 = applyEcoStreamLimits({ mode: 'eco', limits }, 's1', on, { ...m, reasoning: false }, { reasoning: 'high' } as { maxTokens?: number; reasoning?: string })
+    expect(r2.options!.maxTokens).toBe(26214)
+  })
+
   it('off decision: the same objects come back (normal path byte-identical, no shadow cap)', () => {
     const opts = { maxTokens: undefined, sessionId: 's1' }
     const r = applyEcoStreamLimits({ mode: 'off' }, 's1', on, m, opts)

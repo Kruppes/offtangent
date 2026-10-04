@@ -491,11 +491,12 @@ export function createStrandsService(options: StrandsServiceOptions) {
     }
   }
 
-  function ecoStatusOf(strandId: string, model: { contextWindow: number | null; maxTokens: number | null } | null): StrandEcoStatus {
+  function ecoStatusOf(strandId: string, model: { modelId: string; contextWindow: number | null; maxTokens: number | null } | null): StrandEcoStatus {
     // Same inputs as the request budget (B1): a runner limit observed in an
     // overflow lowers the shown budget exactly like it lowers the request.
-    const observed = observedEcoContextLimit(strandId) ?? null
-    const budget = model ? resolveEcoBudget({ ...model, observedContextLimit: observed }) : null
+    // MAJOR-1: only evidence of the strand's CURRENT model counts.
+    const observed = (model ? observedEcoContextLimit(strandId, { id: model.modelId }) : undefined) ?? null
+    const budget = model ? resolveEcoBudget({ contextWindow: model.contextWindow, maxTokens: model.maxTokens, observedContextLimit: observed }) : null
     return {
       enabled: isStrandEcoEnabled(db, strandId),
       observedContextLimitTokens: observed,
@@ -521,7 +522,7 @@ export function createStrandsService(options: StrandsServiceOptions) {
     const meta = effective ? modelMetadataFor(effective.providerId, effective.modelId) : null
     return {
       strandId,
-      eco: ecoStatusOf(strandId, meta ? { contextWindow: meta.contextWindow ?? null, maxTokens: meta.maxTokens ?? null } : null),
+      eco: ecoStatusOf(strandId, effective && meta ? { modelId: effective.modelId, contextWindow: meta.contextWindow ?? null, maxTokens: meta.maxTokens ?? null } : null),
     }
   }
 
@@ -798,7 +799,7 @@ export function createStrandsService(options: StrandsServiceOptions) {
         ? { ...effective, displayName: meta?.displayName ?? null, providerName: meta?.providerName ?? null }
         : null,
       recalled: listRecalledMessages(db, userId, strandId),
-      eco: ecoStatusOf(strandId, effective ? { contextWindow, maxTokens: outputCap } : null),
+      eco: ecoStatusOf(strandId, effective ? { modelId: effective.modelId, contextWindow, maxTokens: outputCap } : null),
       generatedAt: new Date().toISOString(),
     }
   }

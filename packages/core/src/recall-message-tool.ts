@@ -44,18 +44,15 @@ export function createRecallMessageTool(options: RecallMessageToolOptions): Agen
     description:
       'Reload the full, verbatim content of one earlier message by its id. Use this when the context shows a ' +
       'shortened line like "[msg:123] assistant, 5400 chars: ..." and you need the original text or the full tool ' +
-      'result. Long messages are paged: pass `offset` to continue. For a tool message, part="result" returns only the ' +
-      'stored result text (exactly as stored, without the arguments); `max_chars` asks for a smaller page. A tool that ' +
-      'capped its own output stored only the capped text; the header then says tool-capped.',
+      'result. Long messages are paged: pass `offset` to continue.',
     parameters: Type.Object({
       message_id: Type.Number({ description: 'The numeric id from the "[msg:<id>]" digest line.' }),
       offset: Type.Optional(Type.Number({ description: 'Character offset to continue a long message from (default 0).' })),
-      part: Type.Optional(Type.String({ description: 'Tool messages only: "result" for just the stored result text. Default: the whole message.' })),
-      max_chars: Type.Optional(Type.Number({ description: `Page size in characters, 500 to ${maxChars} (default ${maxChars}).` })),
     }),
     execute: async (_toolCallId, params) => {
-      const { message_id, offset: rawOffset, part, max_chars: rawMax } = params as { message_id: number; offset?: number; part?: string; max_chars?: number }
-      const pageChars = typeof rawMax === 'number' && Number.isFinite(rawMax) ? Math.min(maxChars, Math.max(500, Math.floor(rawMax))) : maxChars
+      // Schema frozen (legacy contract): the tool description and parameters
+      // are part of every request's cached prefix, so they never change here.
+      const { message_id, offset: rawOffset } = params as { message_id: number; offset?: number }
       const id = Number(message_id)
       if (!Number.isInteger(id) || id <= 0) {
         return { content: [{ type: 'text' as const, text: 'Error: message_id must be a positive integer.' }], details: { error: true } }
@@ -97,21 +94,19 @@ export function createRecallMessageTool(options: RecallMessageToolOptions): Agen
             toolCapNote = `, tool-capped before storage${typeof details.totalChars === 'number' ? ` (tool output was ${details.totalChars} chars)` : ''}: stored text is the capped output, not the raw output` +
               (typeof details.fullOutputPath === 'string' ? `; full output file: ${details.fullOutputPath}` : '')
           }
-          body = part === 'result'
-            ? resultText
-            : `Tool: ${meta.toolName ?? 'unknown'}\nArgs: ${meta.toolArgs == null ? '' : JSON.stringify(meta.toolArgs)}\nResult:\n${resultText}`
+          body = `Tool: ${meta.toolName ?? 'unknown'}\nArgs: ${meta.toolArgs == null ? '' : JSON.stringify(meta.toolArgs)}\nResult:\n${resultText}`
         } catch {
           // keep raw content
         }
       }
 
       const offset = Math.max(0, Math.floor(rawOffset ?? 0))
-      const slice = body.slice(offset, offset + pageChars)
+      const slice = body.slice(offset, offset + maxChars)
       const remaining = Math.max(0, body.length - offset - slice.length)
       const header = `${RECALLED_MARKER} message ${row.id} (${row.role}, ${row.timestamp}, ${body.length} chars` +
-        (part === 'result' && row.role === 'tool' ? ', stored result only' : '') + toolCapNote +
+        toolCapNote +
         (offset > 0 ? `, from ${offset}` : '') + `)`
-      const footer = remaining > 0 ? `\n\n[${remaining} more chars, call again with offset=${offset + slice.length}${part === 'result' ? ' and part="result"' : ''}]` : ''
+      const footer = remaining > 0 ? `\n\n[${remaining} more chars, call again with offset=${offset + slice.length}]` : ''
 
       return {
         content: [{ type: 'text' as const, text: `${header}\n${slice}${footer}` }],

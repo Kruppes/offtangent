@@ -139,11 +139,14 @@ describe('isolation: telemetry, read errors, interleaved sessions', () => {
   it('a throwing metrics write does not change the outcome', () => {
     const db = db2()
     setStrandEcoEnabled(db, 'a', true)
-    const ms = loop('a', 6); persist(db, 'a', ms)
+    const ms = loop('a', 2); persist(db, 'a', ms)
     const ok = applyEcoRequestView({ db, sessionId: 'a', messages: ms, model, systemPrompt: 's', tools: [] })
     vi.spyOn(ecoTelemetry, 'record').mockImplementation(() => { throw new Error('disk full (synthetic)') })
     vi.spyOn(console, 'error').mockImplementation(() => {})
     expect(all(applyEcoRequestView({ db, sessionId: 'a', messages: ms, model, systemPrompt: 's', tools: [] }))).toBe(all(ok))
+    expect(ok).toBe(ms) // admission only: the very same array
+    // A refusal stays a refusal when its metric cannot be written.
+    expect(() => applyEcoRequestView({ db, sessionId: 'a', messages: loop('a', 6), model, systemPrompt: 's', tools: [] })).toThrow(EcoBudgetError)
   })
 
   it('an unreadable eco switch refuses instead of silently disabling Eco', () => {
@@ -154,21 +157,26 @@ describe('isolation: telemetry, read errors, interleaved sessions', () => {
       .toThrow(expect.objectContaining({ reason: 'eco_state_unreadable' }))
   })
 
-  it('interleaved sessions: state, refs and observed limits never cross', () => {
+  it('interleaved sessions: state and observed limits never cross; no session is ever rewritten', () => {
     const db = db2()
     setStrandEcoEnabled(db, 'a', true)
-    const a = loop('a', 6); const b = loop('b', 6)
+    const a = loop('a', 1); const b = loop('b', 1)
     persist(db, 'a', a)
-    // b's results are not persisted under b: refs of a must not be used for b.
     expect(findToolResultRowId(db, 'b', 'a0')).toBeUndefined()
-    const overflowA = [...a, { role: 'assistant', content: [], stopReason: 'error', errorMessage: 'request (41501 tokens) exceeds the available context size (12000 tokens)', timestamp: 1 } as unknown as AgentMessage]
-    const viewA = applyEcoRequestView({ db, sessionId: 'a', messages: overflowA, model, systemPrompt: 's', tools: [] })
-    expect(all(viewA)).toContain('LOSSY')
+    const m = { ...model, provider: 'synthetic', id: 'm-1', baseUrl: 'http://127.0.0.1:9/v1' }
+    const overflowA = [...a, { role: 'assistant', content: [], stopReason: 'error', provider: 'synthetic', model: 'm-1', errorMessage: 'request (41501 tokens) exceeds the available context size (12000 tokens)', timestamp: 1 } as unknown as AgentMessage]
+    // a: evidence lowers a's budget, the messages pass through untouched.
+    expect(applyEcoRequestView({ db, sessionId: 'a', messages: overflowA, model: m, systemPrompt: 's', tools: [] })).toBe(overflowA)
+    expect(() => applyEcoRequestView({ db, sessionId: 'a', messages: [...loop('a', 4), overflowA[overflowA.length - 1]!], model: m, systemPrompt: 's', tools: [] }))
+      .toThrow(expect.objectContaining({ inputBudget: resolveEcoBudget({ contextWindow: 12000, maxTokens: 2048 }).inputBudget }))
     // b is off: byte-identical (normal mode unchanged), even interleaved with a.
-    expect(applyEcoRequestView({ db, sessionId: 'b', messages: b, model, systemPrompt: 's', tools: [] })).toBe(b)
+    expect(applyEcoRequestView({ db, sessionId: 'b', messages: b, model: m, systemPrompt: 's', tools: [] })).toBe(b)
     setStrandEcoEnabled(db, 'b', true)
-    expect(() => applyEcoRequestView({ db, sessionId: 'b', messages: b, model, systemPrompt: 's', tools: [] })).toThrow(EcoBudgetError)
-    expect(lastEcoViewForStrand(db, 'a')!.refused).toBe(false)
+    expect(applyEcoRequestView({ db, sessionId: 'b', messages: b, model: m, systemPrompt: 's', tools: [] })).toBe(b)
+    // a's observed limit never reached b: b is budgeted against the declared 16384.
+    expect(() => applyEcoRequestView({ db, sessionId: 'b', messages: loop('b', 6), model: m, systemPrompt: 's', tools: [] }))
+      .toThrow(expect.objectContaining({ inputBudget: resolveEcoBudget({ contextWindow: 16384, maxTokens: 2048 }).inputBudget }))
+    expect(lastEcoViewForStrand(db, 'a')!.refused).toBe(true)
     expect(lastEcoViewForStrand(db, 'b')!.refused).toBe(true)
   })
 })

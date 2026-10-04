@@ -149,6 +149,7 @@ export type EcoRefusalReason =
   | 'current_tool_arguments_too_large'
   | 'current_tool_results_too_large'
   | 'history_not_reducible'
+  | 'reasoning_output_uncapped'
   | 'eco_state_unreadable'
   | 'eco_internal_error'
 
@@ -160,8 +161,9 @@ const REFUSAL_HINT: Record<EcoRefusalReason, string> = {
   fixed_context_too_large: 'Systemprompt und Werkzeug-Schemas allein überschreiten das Eingabebudget dieses Modells. Abhilfe: ein Modell mit größerem Kontextfenster oder kleinerem maxTokens wählen oder Eco für diesen Strand ausschalten.',
   current_user_message_too_large: 'Die aktuelle Nachricht ist allein zu groß für das Budget. Abhilfe: Text kürzen oder als Datei hochladen und gezielt lesen lassen, Eco für diesen Strand ausschalten oder ein Modell mit größerem Fenster wählen.',
   current_tool_arguments_too_large: 'Die Werkzeug-Argumente dieses Zuges sind zu groß für das Budget. Abhilfe: Aufgabe in kleinere Schritte teilen oder ein Modell mit größerem Fenster wählen.',
-  current_tool_results_too_large: 'Die Werkzeug-Ergebnisse dieses Zuges passen nicht und sind (noch) nicht gespeichert, dürfen also nicht gekürzt werden. Abhilfe: Anfrage wiederholen, gezielter lesen lassen oder Eco ausschalten.',
-  history_not_reducible: 'Der bisherige Verlauf passt nicht und enthält Teile ohne gespeicherte Kopie, die Eco nicht verlustfrei kürzen darf. Abhilfe: neuen Strand beginnen, Eco ausschalten oder ein Modell mit größerem Fenster wählen.',
+  current_tool_results_too_large: 'Die Werkzeug-Ergebnisse dieses Zuges passen nicht ins Budget; Eco kürzt nichts, um den Prompt-Cache nicht zu brechen. Abhilfe: kürzeren Auftrag geben, gezielter lesen lassen oder ein Modell mit größerem Fenster wählen.',
+  history_not_reducible: 'Der bisherige Verlauf passt nicht ins Budget. Eco kürzt oder verdichtet keinen bereits gesendeten Verlauf (das würde den Prompt-Cache brechen). Abhilfe: neuen Strand beginnen, kürzeren Auftrag geben oder ein Modell mit größerem Fenster wählen.',
+  reasoning_output_uncapped: 'Mit aktivem Thinking darf Eco das Ausgabelimit nicht senken (es verändert das Thinking-Budget im Request und damit den Prompt-Cache), und das ungesenkte Limit passt nicht ins Fenster. Abhilfe: Thinking ausschalten, kürzeren Auftrag geben oder ein Modell mit größerem Fenster wählen.',
   eco_state_unreadable: 'Der Eco-Schalter dieses Strands konnte nicht gelesen werden. Abhilfe: erneut versuchen; bleibt der Fehler, Datenbank prüfen.',
   eco_internal_error: 'Interner Fehler in der Eco-Aufbereitung. Abhilfe: erneut versuchen oder Eco für diesen Strand ausschalten.',
 }
@@ -237,10 +239,16 @@ export function parseContextOverflow(message: string | null | undefined): Contex
  * read; the retry is the next request through the same budgeted view, so no
  * tool runs again.
  */
-export function findLastContextOverflow(messages: readonly AgentMessage[]): ContextOverflow | null {
+export function findLastContextOverflow(
+  messages: readonly AgentMessage[],
+  model?: { provider?: string | null; id?: string | null } | null,
+): ContextOverflow | null {
   for (let i = messages.length - 1; i >= 0; i--) {
-    const m = messages[i] as { role?: string; stopReason?: string; errorMessage?: string }
+    const m = messages[i] as { role?: string; stopReason?: string; errorMessage?: string; provider?: string; model?: string }
     if (m.role !== 'assistant' || m.stopReason !== 'error') continue
+    // MAJOR-1: with a model given, only that model's own overflow counts; an
+    // unattributed error is no evidence about the current runner.
+    if (model?.id && (m.model !== model.id || (model.provider && m.provider !== model.provider))) continue
     const hit = parseContextOverflow(m.errorMessage)
     if (hit) return hit
   }
@@ -574,7 +582,7 @@ export function buildEcoView(input: EcoViewInput): EcoViewResult {
   if (tokensAfter <= budget.inputBudget) {
     return { messages: sanitized, changed: true, tokensAfter, degraded: false, refusal: null, ...stats }
   }
-  return { messages: original.slice(), changed: false, tokensAfter, degraded: true, refusal: classifyRefusal(sanitized, fixedTokens, budget.inputBudget), ...stats }
+  return { messages: original.slice(), changed: false, tokensAfter, degraded: true, refusal: classifyEcoRefusal(sanitized, fixedTokens, budget.inputBudget), ...stats }
 }
 
 function assistantHasText(m: AgentMessage): boolean {
@@ -584,7 +592,7 @@ function assistantHasText(m: AgentMessage): boolean {
 }
 
 /** Why a view could not be made to fit: the irreducible current turn first. */
-function classifyRefusal(messages: readonly AgentMessage[], baseFixedTokens: number, inputBudget: number): EcoRefusalReason {
+export function classifyEcoRefusal(messages: readonly AgentMessage[], baseFixedTokens: number, inputBudget: number): EcoRefusalReason {
   const userAt = lastUserIndex(messages)
   // A system prompt that travels as a 'system' message is fixed context too
   // (Eco never shortens it); counting it as history would blame the

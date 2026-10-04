@@ -8,8 +8,10 @@
  */
 
 import type { AgentMessage } from '@earendil-works/pi-agent-core'
+import { createHash } from 'node:crypto'
 import type { Database } from './database.js'
-import { buildEcoView, EcoBudgetError, estimateEcoFixedTokens, findLastContextOverflow, resolveEcoBudget } from './eco-policy.js'
+import { classifyEcoRefusal, EcoBudgetError, estimateEcoFixedTokens, estimateEcoMessageTokens, findLastContextOverflow, resolveEcoBudget } from './eco-policy.js'
+import type { EcoRefusalReason } from './eco-policy.js'
 
 /**
  * Tri-state read of the switch. 'unknown' = the read itself failed (DB busy,
@@ -134,23 +136,64 @@ export function lastEcoViewForStrand(db: Database, sessionId: string): EcoViewMe
 }
 
 /**
- * Runtime limits a runner reported in an overflow error, per strand/task
- * session. In memory on purpose: it is evidence about the CURRENTLY loaded
- * runner, which can change with a restart, and it only ever lowers the
- * budget. Bounded so a long-lived process cannot grow it without limit.
+ * Runtime limits a runner reported in an overflow error. In memory on
+ * purpose: it is evidence about the CURRENTLY loaded runner, which can change
+ * with a restart. MAJOR-1 (review 1100eb8e): the evidence is scoped to the
+ * model that produced it — key = session + model identity (provider, model id
+ * and a hash of the base URL as runner signature; the URL itself is never
+ * stored or logged). A model switch therefore starts from the declared window
+ * again; switching back re-derives the small model's limit from its own
+ * overflow in the transcript. Per key it only ever lowers. Bounded.
  */
-const observedLimits = new Map<string, number>()
-const MAX_OBSERVED = 500
-
-export function observedEcoContextLimit(sessionId: string): number | undefined {
-  return observedLimits.get(sessionId)
+export interface EcoModelIdentity {
+  provider?: string | null
+  id?: string | null
+  baseUrl?: string | null
 }
 
-function noteObservedLimit(sessionId: string, limit: number): void {
-  const prev = observedLimits.get(sessionId)
-  if (prev !== undefined && prev <= limit) return
-  observedLimits.delete(sessionId)
-  observedLimits.set(sessionId, limit)
+interface ObservedEntry { sessionId: string; modelId: string; limit: number }
+const observedLimits = new Map<string, ObservedEntry>()
+const MAX_OBSERVED = 500
+
+function runnerSignature(baseUrl: string | null | undefined): string {
+  if (!baseUrl) return '-'
+  return createHash('sha256').update(baseUrl).digest('hex').slice(0, 16)
+}
+
+/** Stable identity key; null when the model has no id (then no evidence is kept). */
+export function ecoModelKey(model: EcoModelIdentity | null | undefined): string | null {
+  if (!model?.id) return null
+  return `${model.provider ?? '-'}\u0000${model.id}\u0000${runnerSignature(model.baseUrl)}`
+}
+
+/**
+ * Observed runner limit of `sessionId` for one model. With a full identity
+ * (from the request path) the exact key is used; with only a model id (the
+ * status API knows provider config id + model id, not the pi-ai identity) the
+ * smallest limit recorded for that model id in this session is returned.
+ * Without a model: undefined (never another model's evidence).
+ */
+export function observedEcoContextLimit(sessionId: string, model?: EcoModelIdentity | null): number | undefined {
+  if (!model?.id) return undefined
+  if (model.provider !== undefined || model.baseUrl !== undefined) {
+    const key = ecoModelKey(model)
+    return key ? observedLimits.get(`${sessionId}\u0000${key}`)?.limit : undefined
+  }
+  let min: number | undefined
+  for (const e of observedLimits.values()) {
+    if (e.sessionId === sessionId && e.modelId === model.id && (min === undefined || e.limit < min)) min = e.limit
+  }
+  return min
+}
+
+function noteObservedLimit(sessionId: string, model: EcoModelIdentity, limit: number): void {
+  const key = ecoModelKey(model)
+  if (!key || !model.id) return
+  const k = `${sessionId}\u0000${key}`
+  const prev = observedLimits.get(k)
+  if (prev !== undefined && prev.limit <= limit) return
+  observedLimits.delete(k)
+  observedLimits.set(k, { sessionId, modelId: model.id, limit })
   while (observedLimits.size > MAX_OBSERVED) {
     const oldest = observedLimits.keys().next().value
     if (oldest === undefined) break
@@ -195,8 +238,12 @@ export interface EcoRequestLimits {
   sessionId: string
   /** Effective window: min(declared, observed runner limit). */
   contextWindow: number
-  /** Output limit the request carries (answer + reasoning share it). */
+  /** Output limit the request carries when no reasoning is active. */
   outputReserve: number
+  /** Admission estimate of this request's input (chars/3), for the reasoning check. */
+  inputTokens?: number
+  /** Safety margin of the budget (same number the admission used). */
+  safetyMargin?: number
 }
 
 export type EcoRequestDecision = { mode: 'off' } | { mode: 'eco'; limits: EcoRequestLimits }
@@ -231,7 +278,7 @@ export interface EcoRequestContext {
    * `options.maxTokens ?? model.maxTokens`); the output reserve is taken from
    * it, never from an invented cap.
    */
-  model: { contextWindow?: number | null; maxTokens?: number | null }
+  model: { contextWindow?: number | null; maxTokens?: number | null; provider?: string | null; id?: string | null; baseUrl?: string | null }
   systemPrompt: string | undefined
   tools: readonly unknown[] | undefined
   /** Receives the limits of this request for the stream function (see EcoRequestGate). */
@@ -263,47 +310,60 @@ export function applyEcoRequestView(ctx: EcoRequestContext): AgentMessage[] {
   }
   if (mode === 'unknown') throw new EcoBudgetError('eco_state_unreadable')
 
+  // CACHE GATE: Eco is ADMISSION ONLY. The
+  // messages that leave this function are the very array that came in — the
+  // output of the shared upstream trimming the normal path also gets. Eco
+  // never rewrites, shortens, drops or prepends anything, so tools, system
+  // prompt and history serialize exactly as in normal mode. A request that
+  // does not fit is refused (EcoBudgetError), never compacted or retried.
   let budget: ReturnType<typeof resolveEcoBudget>
-  let view: ReturnType<typeof buildEcoView>
+  let tokens: number
+  let fixedTokens: number
   let observed: number | undefined
   try {
-    // Overflow recovery: a runner that rejected an earlier request told us its
-    // real limit; the next request (this one) is sized against it.
-    const overflow = findLastContextOverflow(ctx.transcript ?? messages)
-    if (overflow?.limit) noteObservedLimit(sessionId, overflow.limit)
-    observed = observedLimits.get(sessionId)
+    // Overflow evidence of THIS model only (MAJOR-1): an error another model
+    // produced says nothing about the current runner.
+    const overflow = findLastContextOverflow(ctx.transcript ?? messages, ctx.model)
+    if (overflow?.limit) noteObservedLimit(sessionId, ctx.model, overflow.limit)
+    observed = observedEcoContextLimit(sessionId, { provider: ctx.model.provider ?? null, id: ctx.model.id ?? null, baseUrl: ctx.model.baseUrl ?? null })
     budget = resolveEcoBudget({ contextWindow: ctx.model.contextWindow, maxTokens: ctx.model.maxTokens, observedContextLimit: observed })
     const hasSystemMessage = messages.some(m => (m as { role?: string }).role === 'system')
-    const fixedTokens = estimateEcoFixedTokens(hasSystemMessage ? undefined : ctx.systemPrompt, ctx.tools)
-    view = buildEcoView({
-      messages,
-      budget,
-      fixedTokens,
-      resolveRecallId: callId => findToolResultRowId(db, sessionId, callId),
-    })
+    fixedTokens = estimateEcoFixedTokens(hasSystemMessage ? undefined : ctx.systemPrompt, ctx.tools)
+    tokens = fixedTokens
+    for (const m of messages) tokens += estimateEcoMessageTokens(m)
   } catch (err) {
-    console.error('[eco] request view failed, refusing the request:', err)
+    console.error('[eco] admission failed, refusing the request:', err)
     throw new EcoBudgetError('eco_internal_error')
   }
 
-  if (view.changed || view.refusal) {
+  if (tokens > budget.inputBudget) {
+    let reason: EcoRefusalReason
+    try {
+      reason = budget.inputBudget <= 0 ? 'no_input_budget' : classifyEcoRefusal(messages, fixedTokens, budget.inputBudget)
+    } catch {
+      reason = 'history_not_reducible'
+    }
     recordEcoMetric(db, {
       sessionId,
       contextWindow: budget.contextWindow,
       outputReserve: budget.outputReserve,
       inputBudget: budget.inputBudget,
       observedLimit: observed ?? null,
-      tokensBefore: view.tokensBefore,
-      tokensAfter: view.tokensAfter,
-      compacted: view.compacted,
-      dropped: view.dropped,
-      unrecallable: view.unrecallable,
-      refusalReason: view.refusal,
+      tokensBefore: tokens,
+      tokensAfter: tokens,
+      compacted: 0,
+      dropped: 0,
+      unrecallable: 0,
+      refusalReason: reason,
     })
+    throw new EcoBudgetError(reason, tokens, budget.inputBudget)
   }
-  if (view.refusal) throw new EcoBudgetError(view.refusal, view.tokensAfter, budget.inputBudget)
-  gate?.stage({ mode: 'eco', limits: { sessionId, contextWindow: budget.contextWindow, outputReserve: budget.outputReserve } })
-  return view.messages
+  // Admitted unchanged: no metric row (as before, only refusals are recorded).
+  gate?.stage({
+    mode: 'eco',
+    limits: { sessionId, contextWindow: budget.contextWindow, outputReserve: budget.outputReserve, inputTokens: tokens, safetyMargin: budget.safetyMargin },
+  })
+  return messages
 }
 
 /**
@@ -347,7 +407,7 @@ function isPositiveInt(v: unknown): v is number {
  * decision for another session, or unreadable limits → EcoBudgetError, the
  * request is not sent.
  */
-export function applyEcoStreamLimits<M extends { contextWindow?: number; maxTokens?: number }, O extends { maxTokens?: number } | undefined>(
+export function applyEcoStreamLimits<M extends { contextWindow?: number; maxTokens?: number }, O extends { maxTokens?: number; reasoning?: unknown } | undefined>(
   decision: EcoRequestDecision | undefined,
   sessionId: string | undefined,
   readMode: (sessionId: string | undefined) => 'on' | 'off' | 'unknown',
@@ -368,6 +428,29 @@ export function applyEcoStreamLimits<M extends { contextWindow?: number; maxToke
   }
   const declaredWindow = isPositiveInt(model.contextWindow) ? model.contextWindow : null
   const contextWindow = declaredWindow === null ? limits.contextWindow : Math.min(declaredWindow, limits.contextWindow)
+  // CACHE GATE (thinking): with active reasoning the SDK derives the
+  // serialized thinking budget from the output ceiling (anthropic/bedrock:
+  // adjustMaxTokensForThinking clamps against model.maxTokens;
+  // openai-completions: thinking_token_budget / chat_template_kwargs are
+  // clamped to max_tokens − 1024). Lowering the ceiling could change those
+  // request fields versus normal mode and so invalidate the message cache
+  // (or, via template kwargs, the rendered prompt prefix of a local runner).
+  // So Eco leaves a reasoning request byte-identical to normal and only
+  // ADMITS it when the uncapped worst-case output still fits the effective
+  // window; otherwise it refuses visibly. No silent degradation either way.
+  const reasoning = options?.reasoning
+  const reasoningActive = typeof reasoning === 'string' && reasoning !== 'off' && (model as { reasoning?: unknown }).reasoning === true
+  if (reasoningActive) {
+    const callerCap = options?.maxTokens
+    const modelMax = isPositiveInt(model.maxTokens) ? model.maxTokens : null
+    const worstOutput = Math.max(16, (isPositiveInt(callerCap) ? callerCap : 0), modelMax ?? limits.contextWindow)
+    const input = isPositiveInt(limits.inputTokens) ? limits.inputTokens : limits.contextWindow
+    const margin = isPositiveInt(limits.safetyMargin) ? limits.safetyMargin : 0
+    if (input + worstOutput + margin > contextWindow) {
+      throw new EcoBudgetError('reasoning_output_uncapped', input, Math.max(0, contextWindow - worstOutput - margin))
+    }
+    return { model, options }
+  }
   const callerCap = options?.maxTokens
   const maxTokens = isPositiveInt(callerCap) ? Math.min(callerCap, limits.outputReserve) : limits.outputReserve
   return {
