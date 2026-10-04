@@ -99,7 +99,9 @@ function entryClass(isActive: boolean) {
     'relative flex min-h-11 items-center rounded-lg text-sm font-medium focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring',
     props.compact ? 'w-11 justify-center' : 'gap-3 px-3 py-2',
     isActive
-      ? 'bg-selected-container text-on-selected-container selected-marker selected-marker-outside'
+      // Compact rail: 44 px entries in a 55 px rail leave no gap outside, so the
+      // marker sits inside the entry there.
+      ? ['bg-selected-container text-on-selected-container selected-marker', props.compact ? '' : 'selected-marker-outside']
       : 'text-sidebar-foreground hover:bg-accent',
   ]
 }
@@ -156,7 +158,7 @@ function navigateFromSheet() {
     </Teleport>
   </nav>
   <nav v-else :aria-label="$t('nav.primary')" data-testid="nav-desktop" :data-compact="compact ? 'true' : undefined"
-    class="flex flex-1 flex-col gap-1 overflow-y-auto overflow-x-hidden py-4" :class="compact ? 'items-center px-2' : 'p-2'">
+    class="flex flex-1 flex-col gap-1 overflow-y-auto overflow-x-hidden py-4" :class="compact ? 'items-center px-1' : 'p-2'">
     <div class="hidden space-y-1 md:block">
       <template v-for="item in primary" :key="item.path">
         <Tooltip v-if="compact">

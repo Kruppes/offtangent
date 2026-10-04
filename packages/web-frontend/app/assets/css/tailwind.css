@@ -987,9 +987,10 @@ html[data-strand-transition="close"]::view-transition-old(strand-conversation) {
     &::before { border-color: Highlight; }
   }
 }
-/* Desktop sidebar: the marker hangs 6 px left of the entry, in the rail gap. */
+/* Desktop sidebar: the marker hangs 8 px left of the entry (on the 4 px grid), in
+   the 8 px rail padding; the 2 px focus ring around the entry keeps 3 px clear of it. */
 @utility selected-marker-outside {
-  &::before { left: -6px; }
+  &::before { left: -8px; }
 }
 /* Bottom bar: the marker runs along the top edge. */
 @utility selected-marker-top {
