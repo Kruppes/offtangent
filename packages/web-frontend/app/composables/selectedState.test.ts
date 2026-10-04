@@ -21,6 +21,7 @@ const SITES: Array<[file: string, carrier: RegExp]> = [
   ['../components/chat/ChatActionCard.vue', /pickerResolvedCommand" name="check"/],
   ['../components/ChatInteractionBlock.vue', /name="check"[\s\S]*multiOwnAnswer \? 'check'/],
   ['../pages/feed.vue', /persona === key" name="check"/],
+  ['../features/settings/components/SettingsSectionNav.vue', /selected-marker/],
 ]
 
 function block(name: string) {
@@ -37,12 +38,15 @@ describe('selected state, second carrier', () => {
     }
   })
   it('draws the marker as a border, not as a background or shadow', () => {
-    for (const name of ['selected-marker', 'selected-marker-top']) {
+    for (const name of ['selected-marker', 'selected-marker-top', 'selected-marker-bottom']) {
       const rule = block(name)
-      expect(rule, name).toMatch(/border-(left|top): 3px solid hsl\(var\(--primary\)\)/)
+      expect(rule, name).toMatch(/border-(left|top|bottom): 3px solid hsl\(var\(--primary\)\)/)
       expect(rule, name).not.toMatch(/background|box-shadow/)
       expect(rule, name).toMatch(/@media \(forced-colors: active\)[\s\S]*border-color: Highlight/)
     }
+  })
+  it('marks the active tab with a border marker, not only with a lighter surface', () => {
+    expect(read('../components/ui/TabsTrigger.vue')).toContain('data-[state=active]:selected-marker-bottom')
   })
   it('keeps no background-painted markers in the components', () => {
     for (const [file] of SITES) expect(read(file), file).not.toMatch(/before:bg-primary/)

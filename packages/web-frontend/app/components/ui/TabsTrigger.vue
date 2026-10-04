@@ -75,7 +75,7 @@ function onClick(event: MouseEvent) {
       'inline-flex items-center justify-center gap-2 whitespace-nowrap rounded-md px-3 py-2 max-md:min-h-11 text-sm font-medium ring-offset-background transition-all',
       'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2',
       'aria-disabled:cursor-not-allowed aria-disabled:text-muted-foreground',
-      'data-[state=active]:bg-background data-[state=active]:text-foreground',
+      'data-[state=active]:bg-background data-[state=active]:text-foreground data-[state=active]:selected-marker-bottom',
       props.class
     )"
     @mousedown.capture="block"

@@ -36,7 +36,7 @@ const groups = groupSections()
             :class="[
               'flex min-h-11 items-center gap-2 rounded-md px-3 text-sm transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring',
               active === section.id
-                ? 'bg-accent font-medium text-accent-foreground'
+                ? 'selected-marker bg-selected-container font-medium text-on-selected-container'
                 : 'text-muted-foreground hover:bg-accent hover:text-accent-foreground',
             ]"
           >

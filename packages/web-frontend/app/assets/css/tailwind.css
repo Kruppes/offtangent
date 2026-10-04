@@ -992,6 +992,24 @@ html[data-strand-transition="close"]::view-transition-old(strand-conversation) {
 @utility selected-marker-outside {
   &::before { left: -8px; }
 }
+/* Tabs: the active tab is a lighter surface on the muted track (a colour step
+   only), so it also carries a marker along its bottom edge, inset to the label. */
+@utility selected-marker-bottom {
+  position: relative;
+  &::before {
+    content: '';
+    position: absolute;
+    bottom: 0;
+    left: 12px;
+    right: 12px;
+    border-bottom: 3px solid hsl(var(--primary));
+    border-radius: 9999px;
+    pointer-events: none;
+  }
+  @media (forced-colors: active) {
+    &::before { border-color: Highlight; }
+  }
+}
 /* Bottom bar: the marker runs along the top edge. */
 @utility selected-marker-top {
   position: relative;
