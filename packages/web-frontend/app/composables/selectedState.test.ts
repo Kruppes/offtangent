@@ -48,6 +48,14 @@ describe('selected state, second carrier', () => {
   it('marks the active tab with a border marker, not only with a lighter surface', () => {
     expect(read('../components/ui/TabsTrigger.vue')).toContain('data-[state=active]:selected-marker-bottom')
   })
+  it('keeps the marker clear of an inset focus ring', () => {
+    expect(block('selected-marker-inset')).toMatch(/left: 4px/)
+    for (const file of ['../features/memory/components/MemoryFileTreeItem.vue', '../features/strands/StrandList.vue']) {
+      const source = read(file)
+      expect(source, file).toContain('focus-visible:ring-inset')
+      expect(source, file).toContain('selected-marker selected-marker-inset')
+    }
+  })
   it('keeps no background-painted markers in the components', () => {
     for (const [file] of SITES) expect(read(file), file).not.toMatch(/before:bg-primary/)
   })

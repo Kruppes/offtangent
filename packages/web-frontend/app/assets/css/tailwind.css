@@ -992,6 +992,11 @@ html[data-strand-transition="close"]::view-transition-old(strand-conversation) {
 @utility selected-marker-outside {
   &::before { left: -8px; }
 }
+/* Rows whose focus ring is drawn inset (2 px inside the edge): the marker moves
+   4 px in, so ring and marker keep 2 px between them. */
+@utility selected-marker-inset {
+  &::before { left: 4px; }
+}
 /* Tabs: the active tab is a lighter surface on the muted track (a colour step
    only), so it also carries a marker along its bottom edge, inset to the label. */
 @utility selected-marker-bottom {
