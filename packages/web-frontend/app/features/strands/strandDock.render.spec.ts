@@ -247,9 +247,9 @@ describe('dock separator', () => {
     expect(sep.props['aria-valuemin']).toBe(280)
     expect(sep.props['aria-valuemax']).toBe(560)
     expect(sep.props['aria-controls']).toBe('dock')
-    // 24 px hit area, 44 px on coarse pointers, visible focus ring.
-    expect(String(sep.props.class)).toContain('w-6')
-    expect(String(sep.props.class)).toContain('any-pointer-coarse:w-11')
+    // 24 px hit area centred on the line, 48 px (>= 44, on the 4 px grid) on coarse pointers, visible focus ring.
+    expect(String(sep.props.class)).toContain('-left-3 w-6')
+    expect(String(sep.props.class)).toContain('any-pointer-coarse:-left-6 any-pointer-coarse:w-12')
     expect(String(sep.props.class)).toContain('focus-visible:ring-2')
   })
 

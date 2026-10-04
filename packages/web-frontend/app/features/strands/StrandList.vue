@@ -213,7 +213,7 @@ const chipClass = 'inline-flex min-h-11 items-center gap-2 rounded-full border p
                 <option value="">{{ $t('strandsW4d.allProjects') }}</option>
                 <option v-for="p in projects" :key="p.id" :value="p.id">{{ p.name }}</option>
               </select>
-              <AppIcon name="chevronDown" size="sm" class="pointer-events-none absolute right-3 top-1/2 -translate-y-1/2" />
+              <span class="pointer-events-none absolute inset-y-0 right-3 flex items-center" aria-hidden="true"><AppIcon name="chevronDown" size="sm" /></span>
             </label>
             <label class="inline-flex min-w-0">
               <span class="sr-only">{{ $t('strandsW3.tag') }}</span>

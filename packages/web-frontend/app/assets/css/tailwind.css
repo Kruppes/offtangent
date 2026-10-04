@@ -534,7 +534,7 @@
 /* Small reading text (help texts, board text): 14 px on 1.5, never 12 px. */
 @utility text-help {
   font-size: var(--text-sm);
-  line-height: 1.5;
+  line-height: round(up, 1.5em, 4px); /* 24 px: 1.5 rounded up to the 4 px grid */
 }
 
 /* ─── Custom scrollbar utility ─── */
@@ -602,7 +602,7 @@
     /* Paragraphs */
     p {
       margin: 0 0 1rem;
-      line-height: 1.5; /* design review 03.10.: reading text 1.4-1.6 */
+      line-height: round(up, 1.5em, 4px); /* reading text >= 1.5, on the 4 px grid: 24 at 14 and 16 */
     }
 
     /* Reading measure: running text stops at 31em (= 31rem at the 16 px
@@ -642,7 +642,7 @@
     }
     h3 {
       font-size: 1.125em;        /* 18 */
-      line-height: 1.4444;       /* 26 */
+      line-height: round(up, 1.4444em, 4px); /* 28 */
       margin: 1.3333em 0 0.4444em; /* 24 / 8 */
     }
     h4 {
@@ -671,7 +671,7 @@
     }
     li {
       margin: 0;
-      line-height: 1.5;
+      line-height: round(up, 1.5em, 4px);
     }
     li + li {
       margin-top: 0.25rem;
@@ -710,6 +710,7 @@
     .code-block-language {
       @apply truncate font-mono font-medium uppercase tracking-wide text-muted-foreground;
       font-size: max(var(--text-2xs), 0.6875em);
+      line-height: 16px;
     }
     .code-block-copy-button {
       @apply inline-flex h-6 w-6 shrink-0 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-muted hover:text-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring;
@@ -724,7 +725,7 @@
       @apply mb-4 mt-0 max-w-full overflow-x-auto rounded-lg border border-border bg-background p-3 font-mono oa-scrollbar;
       font-size: max(12px, 0.875em);
       font-size: max(12px, round(down, 0.875em, 2px)); /* 14 at the reading base, 12 in small contexts, never 13 */
-      line-height: 1.54;
+      line-height: round(up, 1.54em, 4px); /* 24 at 14, 20 at 12 */
       white-space: pre;
     }
     .code-block-wrapper pre {
@@ -742,7 +743,7 @@
     /* Blockquotes */
     blockquote {
       margin: 0 0 1rem;
-      padding-left: 1rem;
+      padding-left: calc(1rem - 3px); /* 3 px bar + 13 px = 16 px to the text (4 px grid) */
       border-left: 3px solid hsl(var(--outline));
       color: hsl(var(--muted-foreground));
     }
@@ -807,16 +808,19 @@
       margin: 0 0 1rem;
     }
     th, td {
-      padding: 0.5rem 0.75rem;   /* 8 / 12 */
+      /* 8 / 12; the 1 px rule counts into the space, so padding + border stays on the 4 px grid */
+      padding: 0.5rem 0.75rem calc(0.5rem - 1px);
       text-align: left;
       vertical-align: top;
       border-bottom: 1px solid hsl(var(--border));
     }
     th + th, td + td {
       border-left: 1px solid hsl(var(--border));
+      padding-left: calc(0.75rem - 1px);
     }
     tbody tr:last-child td {
       border-bottom: 0;
+      padding-bottom: 0.5rem;
     }
     th {
       font-weight: 600;
@@ -1004,3 +1008,61 @@ html[data-strand-transition="close"]::view-transition-old(strand-conversation) {
     &::before { border-color: Highlight; }
   }
 }
+
+/* ─── W12: padding + border on the 4 px grid ───
+   A bordered box measures padding + border from its edge to the content, so
+   `border p-4` used to land on 17 px. Every border utility records its width
+   per side in a non-inherited custom property, and the padding utilities
+   subtract it: `border p-4` is 15 + 1 = 16 px, `border-b py-3` is 12 px on
+   top and 11 + 1 on the bottom. Boxes without a border are unchanged
+   (the properties default to 0 px), the content never moves when a border
+   appears on a state change, and the padding never goes below zero. */
+@property --bw-t { syntax: "<length>"; inherits: false; initial-value: 0px; }
+@property --bw-r { syntax: "<length>"; inherits: false; initial-value: 0px; }
+@property --bw-b { syntax: "<length>"; inherits: false; initial-value: 0px; }
+@property --bw-l { syntax: "<length>"; inherits: false; initial-value: 0px; }
+
+@utility border { --bw-t: 1px; --bw-r: 1px; --bw-b: 1px; --bw-l: 1px; }
+@utility border-* {
+  --bw-t: calc(--value(integer) * 1px); --bw-r: calc(--value(integer) * 1px);
+  --bw-b: calc(--value(integer) * 1px); --bw-l: calc(--value(integer) * 1px);
+  --bw-t: --value([length]); --bw-r: --value([length]); --bw-b: --value([length]); --bw-l: --value([length]);
+}
+@utility border-none { --bw-t: 0px; --bw-r: 0px; --bw-b: 0px; --bw-l: 0px; }
+@utility border-x { --bw-l: 1px; --bw-r: 1px; }
+@utility border-x-* { --bw-l: calc(--value(integer) * 1px); --bw-r: calc(--value(integer) * 1px); --bw-l: --value([length]); --bw-r: --value([length]); }
+@utility border-y { --bw-t: 1px; --bw-b: 1px; }
+@utility border-y-* { --bw-t: calc(--value(integer) * 1px); --bw-b: calc(--value(integer) * 1px); --bw-t: --value([length]); --bw-b: --value([length]); }
+@utility border-t { --bw-t: 1px; }
+@utility border-t-* { --bw-t: calc(--value(integer) * 1px); --bw-t: --value([length]); }
+@utility border-r { --bw-r: 1px; }
+@utility border-r-* { --bw-r: calc(--value(integer) * 1px); --bw-r: --value([length]); }
+@utility border-e { --bw-r: 1px; }
+@utility border-e-* { --bw-r: calc(--value(integer) * 1px); --bw-r: --value([length]); }
+@utility border-b { --bw-b: 1px; }
+@utility border-b-* { --bw-b: calc(--value(integer) * 1px); --bw-b: --value([length]); }
+@utility border-l { --bw-l: 1px; }
+@utility border-l-* { --bw-l: calc(--value(integer) * 1px); --bw-l: --value([length]); }
+@utility border-s { --bw-l: 1px; }
+@utility border-s-* { --bw-l: calc(--value(integer) * 1px); --bw-l: --value([length]); }
+
+@utility p-* {
+  padding-top: max(0px, calc(var(--spacing) * --value(number) - var(--bw-t)));
+  padding-right: max(0px, calc(var(--spacing) * --value(number) - var(--bw-r)));
+  padding-bottom: max(0px, calc(var(--spacing) * --value(number) - var(--bw-b)));
+  padding-left: max(0px, calc(var(--spacing) * --value(number) - var(--bw-l)));
+}
+@utility px-* {
+  padding-right: max(0px, calc(var(--spacing) * --value(number) - var(--bw-r)));
+  padding-left: max(0px, calc(var(--spacing) * --value(number) - var(--bw-l)));
+}
+@utility py-* {
+  padding-top: max(0px, calc(var(--spacing) * --value(number) - var(--bw-t)));
+  padding-bottom: max(0px, calc(var(--spacing) * --value(number) - var(--bw-b)));
+}
+@utility pt-* { padding-top: max(0px, calc(var(--spacing) * --value(number) - var(--bw-t))); }
+@utility pr-* { padding-right: max(0px, calc(var(--spacing) * --value(number) - var(--bw-r))); }
+@utility pe-* { padding-right: max(0px, calc(var(--spacing) * --value(number) - var(--bw-r))); }
+@utility pb-* { padding-bottom: max(0px, calc(var(--spacing) * --value(number) - var(--bw-b))); }
+@utility pl-* { padding-left: max(0px, calc(var(--spacing) * --value(number) - var(--bw-l))); }
+@utility ps-* { padding-left: max(0px, calc(var(--spacing) * --value(number) - var(--bw-l))); }

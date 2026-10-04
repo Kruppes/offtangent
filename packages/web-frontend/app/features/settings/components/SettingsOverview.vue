@@ -24,7 +24,7 @@ const searching = computed(() => query.value.trim().length > 0)
     <form role="search" class="mb-6" @submit.prevent>
       <label for="settings-search" class="mb-1 block text-xs font-medium text-muted-foreground">{{ $t('settings.overview.searchLabel') }}</label>
       <div class="relative">
-      <AppIcon name="search" size="sm" class="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground" />
+      <span class="pointer-events-none absolute inset-y-0 left-3 flex items-center text-muted-foreground" aria-hidden="true"><AppIcon name="search" size="sm" /></span>
       <input
         id="settings-search"
         v-model="query"

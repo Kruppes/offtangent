@@ -70,8 +70,8 @@ function onKeydown(event: KeyboardEvent) {
     :data-testid="`dock-separator-${orientation}`"
     class="group/sep absolute z-10 flex touch-none select-none items-center justify-center outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring"
     :class="orientation === 'vertical'
-      ? 'inset-y-0 -left-1.5 w-6 cursor-col-resize any-pointer-coarse:-left-3 any-pointer-coarse:w-11'
-      : 'inset-x-0 -top-3 h-6 cursor-row-resize any-pointer-coarse:-top-5.5 any-pointer-coarse:h-11'"
+      ? 'inset-y-0 -left-3 w-6 cursor-col-resize any-pointer-coarse:-left-6 any-pointer-coarse:w-12'
+      : 'inset-x-0 -top-3 h-6 cursor-row-resize any-pointer-coarse:-top-6 any-pointer-coarse:h-12'"
     @pointerdown="onPointerDown"
     @pointermove="onPointerMove"
     @pointerup="onPointerEnd"

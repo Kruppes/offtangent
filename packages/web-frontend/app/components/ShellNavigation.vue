@@ -123,7 +123,7 @@ function navigateFromSheet() {
       :aria-expanded="sheetOpen" aria-controls="system-sheet" aria-haspopup="dialog" @click="sheetOpen ? closeSheet() : openSheet()">
       <AppIcon name="more" />
       <span class="w-full truncate px-1 text-center">{{ $t('nav.more') }}</span>
-      <span v-if="unsorted.label.value" class="absolute right-3 top-1.5 h-2 w-2 rounded-full bg-primary" aria-hidden="true" />
+      <span v-if="unsorted.label.value" class="absolute right-3 top-2 h-2 w-2 rounded-full bg-primary" aria-hidden="true" />
     </button>
     <Teleport to="body">
       <div v-if="sheetOpen" class="fixed inset-0 z-50 md:hidden">
@@ -164,7 +164,7 @@ function navigateFromSheet() {
             <NuxtLink :to="item.path" :aria-current="active(path, item.path) ? 'page' : undefined" :aria-label="$t(`nav.${item.label}`)"
               :class="entryClass(active(path, item.path))" @click="emit('navigate')">
               <AppIcon :name="item.icon" />
-              <span v-if="item.path === '/feed' && unreadCount > 0" class="absolute right-1.5 top-1.5 h-2 w-2 rounded-full bg-primary" role="status"><span class="sr-only">{{ $t('feed.unreadCount', { count: unreadCount }) }}</span></span>
+              <span v-if="item.path === '/feed' && unreadCount > 0" class="absolute right-2 top-2 h-2 w-2 rounded-full bg-primary" role="status"><span class="sr-only">{{ $t('feed.unreadCount', { count: unreadCount }) }}</span></span>
             </NuxtLink>
           </TooltipTrigger>
           <TooltipContent side="right">{{ $t(`nav.${item.label}`) }}</TooltipContent>
@@ -181,7 +181,7 @@ function navigateFromSheet() {
             <NuxtLink :to="item.path" :aria-current="active(path, item.path) ? 'page' : undefined" :aria-label="$t(item.labelKey)" :data-testid="`nav-capture-${item.path.slice(1)}`"
               :class="entryClass(active(path, item.path))" @click="emit('navigate')">
               <AppIcon :name="item.icon" />
-              <span v-if="item.counter && unsorted.label.value" class="absolute right-1.5 top-1.5 h-2 w-2 rounded-full bg-primary" role="status"><span class="sr-only">{{ $t('unsorted.navCount', { count: unsorted.label.value }) }}</span></span>
+              <span v-if="item.counter && unsorted.label.value" class="absolute right-2 top-2 h-2 w-2 rounded-full bg-primary" role="status"><span class="sr-only">{{ $t('unsorted.navCount', { count: unsorted.label.value }) }}</span></span>
             </NuxtLink>
           </TooltipTrigger>
           <TooltipContent side="right">{{ $t(item.labelKey) }}</TooltipContent>
