@@ -850,6 +850,17 @@ export function initDatabase(dbPath?: string): Database {
       ON chat_messages(user_id, client_message_id) WHERE client_message_id IS NOT NULL;
   `)
 
+  // Strand history: GET /api/chat/history reads `user_id = ? AND session_id = ?`
+  // with an id cursor. Without statistics the planner otherwise takes the
+  // single-column user index and walks every row of the user per page and per
+  // COUNT. `id` is the rowid (implicit in every index) and named here only so
+  // the intent is visible. Additive and idempotent; the first start pays one
+  // index build (about 0.3 s for 200k synthetic rows, 430 MB table, warm cache).
+  db.exec(`
+    CREATE INDEX IF NOT EXISTS idx_chat_messages_user_session_id
+      ON chat_messages(user_id, session_id, id);
+  `)
+
   // Migration (PRD #11 Task 2): Legacy prefix-based session IDs -> UUIDs + type backfill
   // + orphan recovery. Idempotent: only acts on rows whose session_id is not already
   // in UUID form. Wrapped in a single transaction for atomicity.
