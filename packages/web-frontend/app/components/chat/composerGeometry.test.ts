@@ -71,3 +71,32 @@ describe('composer geometry (W6c)', () => {
     expect(row).toMatch(/items-end/)
   })
 })
+
+// W12: the message field has a visible label above the box (not a floating
+// label, not the placeholder): label step 12/16 in secondary text, tied to
+// the textarea by id, 4 px above the box, so the input area stays on the
+// 4-px grid (16 + 4 + 44).
+describe('composer label (W12)', () => {
+  const label = openTag(composer, /data-composer-label/)
+  it('is a label tied to the textarea by id', () => {
+    expect(label).toMatch(/^<Label :for="inputId"/)
+    expect(openTag(composer, /<textarea/)).toMatch(/:id="inputId"/)
+    expect(src('./ChatComposer.vue')).toMatch(/\$t\('chat\.messageLabel'\)/)
+  })
+  it('uses the label role of the type scale in secondary text', () => {
+    const cls = classOf(label).split(/\s+/)
+    expect(cls).toEqual(expect.arrayContaining(['text-xs', 'leading-4', 'text-muted-foreground']))
+    expect(cls.some(c => /^(absolute|fixed|sr-only|peer-placeholder)/.test(c))).toBe(false)
+  })
+  it('sits directly above the box with a 4 px gap', () => {
+    const at = composer.indexOf('data-composer-label')
+    expect(composer.indexOf('data-composer-box')).toBeGreaterThan(at)
+    const wrapper = composer.slice(composer.lastIndexOf('<div', at), composer.indexOf('>', composer.lastIndexOf('<div', at)) + 1)
+    expect(classOf(wrapper).split(/\s+/)).toEqual(expect.arrayContaining(['flex', 'flex-col', 'gap-1']))
+  })
+  it('names the field in both languages', () => {
+    const de = JSON.parse(src('../../i18n/locales/de.json')), en = JSON.parse(src('../../i18n/locales/en.json'))
+    expect(de.chat.messageLabel).toBe('Nachricht')
+    expect(en.chat.messageLabel).toBe('Message')
+  })
+})

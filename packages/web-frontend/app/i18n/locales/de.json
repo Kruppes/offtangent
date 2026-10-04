@@ -96,6 +96,7 @@
   },
   "chat": {
     "placeholder": "Nachricht eingeben...",
+    "messageLabel": "Nachricht",
     "send": "Senden",
     "newSession": "Neue Sitzung",
     "stop": "Stopp",
@@ -1630,6 +1631,8 @@
       "skillOverrides": "Skill-Überschreibungen",
       "skillOverridesHelp": "Aktivieren oder deaktivieren Sie installierte Skills für diesen Cronjob. Deaktivierte Skills werden vom Task-Agenten ausgeschlossen. Neu installierte Skills sind standardmäßig aktiviert.",
       "noSkills": "Keine Skills verfügbar.",
+      "staleRemoved": "entfernt",
+      "staleClear": "Austragen",
       "attachedSkills": "Angehängte Skills",
       "attachedSkillsHelp": "Skills, deren SKILL.md beim Auslösen dieses Cronjobs direkt in den Task-Prompt eingefügt wird. Nützlich für Skills, die der Cronjob immer benötigt (z.B. nitter, wiki). Funktioniert sowohl für installierte Skills als auch für Agent-Skills.",
       "noAttachableSkills": "Keine anhängbaren Skills verfügbar.",

@@ -1,4 +1,4 @@
-import { readFileSync } from 'node:fs'
+import { readdirSync, readFileSync } from 'node:fs'
 import { describe, expect, it } from 'vitest'
 
 // Disabled controls must look different from their active state through
@@ -69,4 +69,36 @@ describe('form controls disabled state', () => {
       expect(src).not.toMatch(/line-through/)
     })
   }
+})
+
+// W12: a strike-through never tells a state anywhere in the product (it reads
+// as "deleted" and is hard to read). Removed entries are secondary text plus
+// an icon plus the word "removed" plus an action to clear them.
+describe('no strike-through as a state sign', () => {
+  const root = new URL('../../', import.meta.url)
+  const walk = (dir: URL): URL[] => readdirSync(dir, { withFileTypes: true }).flatMap((d) => {
+    if (d.name === 'node_modules' || d.name.startsWith('.')) return []
+    const url = new URL(d.name + (d.isDirectory() ? '/' : ''), dir)
+    return d.isDirectory() ? walk(url) : /\.(vue|css)$/.test(d.name) ? [url] : []
+  })
+  const files = walk(root)
+  it('finds the product sources', () => {
+    expect(files.length).toBeGreaterThan(50)
+  })
+  it('no template or stylesheet strikes text through', () => {
+    const hits = files.filter(f => /line-through|<(s|del|strike)>/.test(readFileSync(f, 'utf8'))).map(f => f.pathname.slice(root.pathname.length))
+    expect(hits).toEqual([])
+  })
+  it('the cronjob dialog marks removed overrides with icon, word and a clear action', () => {
+    const src = readFileSync(new URL('components/CronjobFormDialog.vue', root), 'utf8')
+    const rows = src.split('data-stale-override').slice(1)
+    expect(rows).toHaveLength(2)
+    for (const row of rows) {
+      const body = row.slice(0, row.indexOf('</div>'))
+      expect(body).toMatch(/text-muted-foreground/)
+      expect(body).toMatch(/<AppIcon name="archive"/)
+      expect(body).toMatch(/\$t\('cronjobs\.form\.staleRemoved'\)/)
+      expect(body).toMatch(/<Button[^>]*@click="toggle(Tool|Skill)\((tool|skill), true\)"/)
+    }
+  })
 })

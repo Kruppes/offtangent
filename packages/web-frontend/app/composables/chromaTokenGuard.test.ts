@@ -122,7 +122,7 @@ function palette(selector: string) {
 
 describe.each([
   ['dark', DARK, { 'primary-subtle': '#04332C', 'primary-subtle-hover': '#043F36', 'primary-hover': '#60C6B2', 'telegram-subtle': '#052F45' }],
-  ['light', LIGHT, { 'primary-subtle': '#C1F2ED', 'primary-subtle-hover': '#ADE8E3', 'primary-hover': '#28504D', 'telegram-subtle': '#C8E8FE' }],
+  ['light', LIGHT, { 'primary-subtle': '#C1F2ED', 'primary-subtle-hover': '#ACE6E2', 'primary-hover': '#28504D', 'telegram-subtle': '#C8E8FE' }],
 ])('%s opaque tint tokens', (_theme, selector, expected) => {
   const p = palette(selector)
   it('round-trips the HSL triplets to the documented hex values', () => {
@@ -166,7 +166,7 @@ describe.each([
 // grey), text on it at 4.5:1 and the 3 px primary marker at 3:1 (non-text).
 describe.each([
   ['dark', DARK, { 'selected-container': '#04332C', 'selected-container-hover': '#043F36', 'on-selected-container': '#E6E8E8' }],
-  ['light', LIGHT, { 'selected-container': '#C1F2ED', 'selected-container-hover': '#ADE8E3', 'on-selected-container': '#191C1C' }],
+  ['light', LIGHT, { 'selected-container': '#C1F2ED', 'selected-container-hover': '#ACE6E2', 'on-selected-container': '#191C1C' }],
 ])('%s selected-container token', (_theme, selector, expected) => {
   const p = palette(selector)
   it('resolves to the documented hex values', () => {
@@ -187,5 +187,24 @@ describe.each([
     expect(p.deltaE('selected-container', 'n2')).toBeGreaterThanOrEqual(0.04)
     expect(p.deltaE('selected-container', 'n1')).toBeGreaterThanOrEqual(0.05)
     expect(p.deltaE('selected-container', 'selected-container-hover')).toBeGreaterThanOrEqual(0.03)
+  })
+})
+
+// W12: the hover step of the selected surface is one step, the same size in
+// both designs (OKLCH lightness, at least 0.03), and the focus ring (primary)
+// keeps 3:1 on the selected surface and on its hover.
+describe('selected-container hover step', () => {
+  const dark = palette(DARK), light = palette(LIGHT)
+  const step = (p: ReturnType<typeof palette>) => Math.abs(p.oklab('selected-container-hover')[0] - p.oklab('selected-container')[0])
+  it('changes lightness by at least 0.03 in both designs', () => {
+    expect(step(dark)).toBeGreaterThanOrEqual(0.03)
+    expect(step(light)).toBeGreaterThanOrEqual(0.03)
+  })
+  it('is the same step in dark and light', () => {
+    expect(Math.abs(step(dark) - step(light))).toBeLessThan(0.001)
+  })
+  it.each([['dark', dark], ['light', light]] as const)('keeps the %s focus ring at 3:1 on the selected surface and its hover', (_t, p) => {
+    expect(p.contrast('ring', 'selected-container')).toBeGreaterThanOrEqual(3)
+    expect(p.contrast('ring', 'selected-container-hover')).toBeGreaterThanOrEqual(3)
   })
 })

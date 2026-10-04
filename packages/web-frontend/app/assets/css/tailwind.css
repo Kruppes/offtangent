@@ -210,7 +210,7 @@
   color-scheme: dark;
   --primary: 168.785 42.9719% 51.1765%; /* #4DB8A4 */
   --primary-subtle: 171.0638 85.4545% 10.7843%; /* #04332C = oklch(0.29 0.05 179): selected/active surface, chips, badges */
-  --primary-subtle-hover: 170.8475 88.0597% 13.1373%; /* #043F36 = oklch(0.33 0.058 179): hover on primary-subtle, search marks */
+  --primary-subtle-hover: 170.8475 88.0597% 13.1373%; /* #043F36 = oklch(0.33 0.058 179): hover on primary-subtle, search marks; hover step dL +0.04 */
   --selected-container: var(--primary-subtle); /* #04332C: active nav item + selected elements */
   --selected-container-hover: var(--primary-subtle-hover); /* #043F36 */
   --on-selected-container: var(--on-background); /* N5 #E6E8E8 on #04332C = 11.3:1 */
@@ -324,9 +324,9 @@
   color-scheme: light;
   --primary: 175.6098 28.2759% 28.4314%; /* #345D5A */
   --primary-subtle: 173.8776 65.3333% 85.2941%; /* #C1F2ED = oklch(0.925 0.05 190) */
-  --primary-subtle-hover: 174.9153 56.1905% 79.4118%; /* #ADE8E3 = oklch(0.89 0.06 190) */
+  --primary-subtle-hover: 175.8621 53.7037% 78.8235%; /* #ACE6E2 = oklch(0.885 0.06 190): hover step dL -0.04, same size as dark */
   --selected-container: var(--primary-subtle); /* #C1F2ED: active nav item + selected elements */
-  --selected-container-hover: var(--primary-subtle-hover); /* #ADE8E3 */
+  --selected-container-hover: var(--primary-subtle-hover); /* #ACE6E2 */
   --on-selected-container: var(--on-background); /* N5 #191C1C on #C1F2ED = 14.0:1 */
   --primary-hover: 175.5 33.3333% 23.5294%; /* #28504D = oklch(0.4 0.045 190) */
   --on-primary: var(--n0); /* on-colour = ground step, keeps the ramp at six neutrals */

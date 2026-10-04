@@ -96,6 +96,7 @@
   },
   "chat": {
     "placeholder": "Type a message...",
+    "messageLabel": "Message",
     "send": "Send",
     "newSession": "New Session",
     "stop": "Stop",
@@ -1630,6 +1631,8 @@
       "skillOverrides": "Skill Overrides",
       "skillOverridesHelp": "Toggle installed skills on or off for this cronjob. Disabled skills will be excluded from the task agent. Newly installed skills are enabled by default.",
       "noSkills": "No skills available.",
+      "staleRemoved": "removed",
+      "staleClear": "Clear",
       "attachedSkills": "Attached Skills",
       "attachedSkillsHelp": "Skills whose SKILL.md will be injected directly into the task prompt when this cronjob fires. Useful for skills the cronjob always needs (e.g. nitter, wiki). Works for both installed skills and agent skills.",
       "noAttachableSkills": "No skills available to attach.",

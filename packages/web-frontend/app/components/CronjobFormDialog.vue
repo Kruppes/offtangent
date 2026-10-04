@@ -131,18 +131,24 @@
                   <!--
                     Stale disabled entries: tools that were disabled when this cronjob was
                     saved but no longer exist. Keep them visible so the user can clean them
-                    up instead of silently carrying dead overrides forward.
+                    up instead of silently carrying dead overrides forward. The state is
+                    told by secondary text, an icon and the word "removed", never by a
+                    strike-through; the button clears the override.
                   -->
                   <div
                     v-for="tool in staleDisabledTools"
                     :key="`stale-${tool}`"
-                    class="flex items-center justify-between py-1 text-muted-foreground"
+                    data-stale-override
+                    class="flex items-center justify-between gap-2 py-1 text-muted-foreground"
                   >
-                    <span class="text-sm font-mono line-through">{{ tool }}</span>
-                    <Switch
-                      :checked="false"
-                      @update:checked="(val: boolean) => toggleTool(tool, val)"
-                    />
+                    <span class="flex min-w-0 items-center gap-2 text-sm">
+                      <AppIcon name="archive" class="h-4 w-4 shrink-0" aria-hidden="true" />
+                      <span class="min-w-0 break-all font-mono">{{ tool }}</span>
+                      <span class="shrink-0">{{ $t('cronjobs.form.staleRemoved') }}</span>
+                    </span>
+                    <Button type="button" variant="outline" size="sm" @click="toggleTool(tool, true)">
+                      {{ $t('cronjobs.form.staleClear') }}
+                    </Button>
                   </div>
                 </div>
                 <p v-else class="text-xs text-muted-foreground italic">
@@ -179,13 +185,17 @@
                   <div
                     v-for="skill in staleDisabledSkills"
                     :key="`stale-skill-${skill}`"
-                    class="flex items-center justify-between py-1 text-muted-foreground"
+                    data-stale-override
+                    class="flex items-center justify-between gap-2 py-1 text-muted-foreground"
                   >
-                    <span class="text-sm line-through">{{ skill }}</span>
-                    <Switch
-                      :checked="false"
-                      @update:checked="(val: boolean) => toggleSkill(skill, val)"
-                    />
+                    <span class="flex min-w-0 items-center gap-2 text-sm">
+                      <AppIcon name="archive" class="h-4 w-4 shrink-0" aria-hidden="true" />
+                      <span class="min-w-0 break-all">{{ skill }}</span>
+                      <span class="shrink-0">{{ $t('cronjobs.form.staleRemoved') }}</span>
+                    </span>
+                    <Button type="button" variant="outline" size="sm" @click="toggleSkill(skill, true)">
+                      {{ $t('cronjobs.form.staleClear') }}
+                    </Button>
                   </div>
                 </div>
                 <p v-else class="text-xs text-muted-foreground italic">
