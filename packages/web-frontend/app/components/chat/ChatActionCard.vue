@@ -50,6 +50,7 @@
           :disabled="!!msg.pickerResolvedCommand"
           @click="handlePickerSelect(msg, opt.command)"
         >
+          <AppIcon v-if="opt.command === msg.pickerResolvedCommand" name="check" size="sm" class="shrink-0 text-primary" aria-hidden="true" />
           <span class="min-w-0 flex-1 truncate font-medium">{{ opt.label }}</span>
           <span
             v-if="opt.description"

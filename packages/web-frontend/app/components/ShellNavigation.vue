@@ -99,7 +99,7 @@ function entryClass(isActive: boolean) {
     'relative flex min-h-11 items-center rounded-lg text-sm font-medium focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring',
     props.compact ? 'w-11 justify-center' : 'gap-3 px-3 py-2',
     isActive
-      ? 'bg-selected-container text-on-selected-container before:absolute before:inset-y-2 before:-left-1.5 before:w-[3px] before:rounded-full before:bg-primary'
+      ? 'bg-selected-container text-on-selected-container selected-marker selected-marker-outside'
       : 'text-sidebar-foreground hover:bg-accent',
   ]
 }
@@ -113,13 +113,13 @@ function navigateFromSheet() {
   <nav v-if="mobile" :aria-label="$t('nav.primary')" class="grid shrink-0 grid-cols-5 border-t border-border bg-background pb-[env(safe-area-inset-bottom)] md:hidden">
     <NuxtLink v-for="item in primary" :key="item.path" :to="item.path" :aria-current="active(path, item.path) ? 'page' : undefined"
       class="relative flex min-h-14 min-w-0 flex-col items-center justify-center gap-1 text-2xs font-medium"
-      :class="active(path, item.path) ? 'bg-selected-container text-on-selected-container before:absolute before:inset-x-4 before:top-0 before:h-[3px] before:rounded-full before:bg-primary' : 'text-muted-foreground'" @click="emit('navigate')">
+      :class="active(path, item.path) ? 'bg-selected-container text-on-selected-container selected-marker-top' : 'text-muted-foreground'" @click="emit('navigate')">
       <AppIcon :name="item.icon" />
       <span class="w-full truncate px-1 text-center">{{ $t(`nav.${item.label}`) }}</span>
       <span v-if="item.path === '/feed' && unreadCount > 0" class="h-2 w-2 shrink-0 rounded-full bg-primary" role="status"><span class="sr-only">{{ $t('feed.unreadCount', { count: unreadCount }) }}</span></span>
     </NuxtLink>
     <button ref="moreButton" type="button" data-testid="nav-more" class="relative flex min-h-14 min-w-0 flex-col items-center justify-center gap-1 text-2xs font-medium"
-      :class="inSystem || inCapture || sheetOpen ? 'bg-selected-container text-on-selected-container before:absolute before:inset-x-4 before:top-0 before:h-[3px] before:rounded-full before:bg-primary' : 'text-muted-foreground'"
+      :class="inSystem || inCapture || sheetOpen ? 'bg-selected-container text-on-selected-container selected-marker-top' : 'text-muted-foreground'"
       :aria-expanded="sheetOpen" aria-controls="system-sheet" aria-haspopup="dialog" @click="sheetOpen ? closeSheet() : openSheet()">
       <AppIcon name="more" />
       <span class="w-full truncate px-1 text-center">{{ $t('nav.more') }}</span>
@@ -139,7 +139,7 @@ function navigateFromSheet() {
           <div class="mb-2 grid grid-cols-1 gap-1 border-b border-border pb-2 min-[360px]:grid-cols-2" data-testid="nav-sheet-capture">
             <NuxtLink v-for="item in captureItems" :key="item.path" :to="item.path" :aria-current="active(path, item.path) ? 'page' : undefined"
               class="relative flex min-h-12 min-w-0 items-center gap-3 rounded-lg px-3 text-sm font-medium"
-              :class="active(path, item.path) ? 'bg-selected-container text-on-selected-container before:absolute before:inset-y-2 before:left-0 before:w-[3px] before:rounded-full before:bg-primary' : 'text-foreground hover:bg-accent'" @click="navigateFromSheet">
+              :class="active(path, item.path) ? 'bg-selected-container text-on-selected-container selected-marker' : 'text-foreground hover:bg-accent'" @click="navigateFromSheet">
               <AppIcon :name="item.icon" /><span class="min-w-0 flex-1 truncate">{{ $t(item.labelKey) }}</span>
               <span v-if="item.counter && unsorted.label.value" class="shrink-0 rounded-full bg-primary px-2 text-xs font-semibold text-primary-foreground">{{ unsorted.label.value }}<span class="sr-only"> {{ $t('unsorted.navCount', { count: unsorted.label.value }) }}</span></span>
             </NuxtLink>
@@ -147,7 +147,7 @@ function navigateFromSheet() {
           <div class="grid grid-cols-1 gap-1 min-[360px]:grid-cols-2">
             <NuxtLink v-for="item in systemItems" :key="item.path" :to="item.path" :aria-current="active(path, item.path) ? 'page' : undefined"
               class="relative flex min-h-12 min-w-0 items-center gap-3 rounded-lg px-3 text-sm font-medium"
-              :class="active(path, item.path) ? 'bg-selected-container text-on-selected-container before:absolute before:inset-y-2 before:left-0 before:w-[3px] before:rounded-full before:bg-primary' : 'text-foreground hover:bg-accent'" @click="navigateFromSheet">
+              :class="active(path, item.path) ? 'bg-selected-container text-on-selected-container selected-marker' : 'text-foreground hover:bg-accent'" @click="navigateFromSheet">
               <AppIcon :name="item.icon" /><span class="truncate">{{ $t(`nav.${item.label}`) }}</span>
             </NuxtLink>
           </div>

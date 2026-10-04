@@ -53,7 +53,7 @@ function onSubmit() {
                   : 'border-border text-foreground hover:bg-accent'"
                 @click="agentId = persona"
               >
-                <AppIcon name="bot" class="h-4 w-4" />
+                <AppIcon :name="persona === agentId ? 'check' : 'bot'" class="h-4 w-4" />
                 <span class="truncate">{{ persona }}</span>
               </button>
             </div>

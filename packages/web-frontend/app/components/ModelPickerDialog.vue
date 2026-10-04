@@ -45,11 +45,12 @@ function quotaLine(model: SelectableModel) {
           <button
             type="button"
             class="flex min-h-11 w-full items-center rounded-lg border px-3 text-left text-sm outline-none hover:bg-muted focus-visible:ring-2 focus-visible:ring-ring"
-            :class="!pinned ? 'border-primary bg-selected-container' : 'border-border'"
+            :class="!pinned ? 'border-primary bg-selected-container font-medium text-on-selected-container' : 'border-border'"
             :disabled="saving"
             @click="emit('select', null)"
           >
-            {{ $t('threads.useDefaultModel') }}
+            <span class="min-w-0 flex-1">{{ $t('threads.useDefaultModel') }}</span>
+            <AppIcon v-if="!pinned" name="check" size="sm" class="shrink-0 text-primary" aria-hidden="true" />
           </button>
           <section v-for="([provider, entries]) in grouped" :key="provider">
             <h3 class="mb-2 text-xs font-semibold uppercase tracking-label text-muted-foreground">{{ provider }}</h3>

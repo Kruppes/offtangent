@@ -122,7 +122,7 @@ describe('Offtangent shell navigation', () => {
       const link = html.match(/<a href="\/boards"[^>]*>/)![0]
       expect(link).toContain('aria-current="page"')
       expect(link).toContain('bg-selected-container')
-      expect(link).toContain('before:bg-primary')
+      expect(link).toContain('selected-marker')
     }
   })
   it('calls boards Boards in both languages, never Integrations', async () => {

@@ -257,7 +257,7 @@ function retry() {
               :aria-selected="index === cursor"
               :data-entry="entry.id"
               class="relative flex min-h-11 cursor-pointer items-center gap-3 rounded-lg px-3 text-sm"
-              :class="index === cursor ? 'bg-selected-container text-on-selected-container before:absolute before:inset-y-2 before:left-0 before:w-[3px] before:rounded-full before:bg-primary' : 'text-foreground'"
+              :class="index === cursor ? 'bg-selected-container text-on-selected-container selected-marker' : 'text-foreground'"
               @click="runEntry(entry as Entry)"
               @mousemove="cursor = index"
             >

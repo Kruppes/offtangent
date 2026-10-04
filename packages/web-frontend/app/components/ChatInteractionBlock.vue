@@ -101,7 +101,7 @@
           :class="multiOwnAnswer ? 'bg-selected-container hover:bg-selected-container-hover' : 'hover:bg-muted'"
           @click="multiOwnAnswer ? clearMultiOwnAnswer() : openOwnAnswer()"
         >
-          <AppIcon name="edit" class="mt-1 size-4 shrink-0 text-muted-foreground" />
+          <AppIcon :name="multiOwnAnswer ? 'check' : 'edit'" class="mt-1 size-4 shrink-0" :class="multiOwnAnswer ? 'text-primary' : 'text-muted-foreground'" />
           <span class="text-sm leading-5 text-foreground">{{ multiOwnAnswer || $t('chat.interaction.ownAnswer') }}</span>
         </button>
         <!-- 36 px button in a 44 px row: 4 px of air on every side, and the

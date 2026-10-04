@@ -265,7 +265,7 @@ const chipClass = 'inline-flex min-h-11 items-center gap-2 rounded-full border p
           <template v-if="compact">
             <article v-for="strand in group.rows" :key="strand.id" data-testid="strand-row" :data-strand-id="strand.id" :data-active="strand.id === activeId ? 'true' : undefined"
               class="relative flex min-w-0 items-start rounded-lg" :style="morphStyle(strand.id)"
-              :class="strand.id === activeId ? 'bg-selected-container text-on-selected-container before:absolute before:inset-y-2 before:left-0 before:w-[3px] before:rounded-full before:bg-primary' : 'hover:bg-accent'">
+              :class="strand.id === activeId ? 'bg-selected-container text-on-selected-container selected-marker' : 'hover:bg-accent'">
               <NuxtLink :to="linkTo(strand)" data-testid="strand-row-link" :aria-current="strand.id === activeId ? 'page' : undefined"
                 class="flex min-h-11 min-w-0 flex-1 flex-col gap-1 rounded-lg py-2 pl-3 pr-1 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring"
                 :class="strand.id === activeId ? 'text-on-selected-container' : 'text-foreground'">

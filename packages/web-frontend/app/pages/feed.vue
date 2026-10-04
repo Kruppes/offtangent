@@ -73,8 +73,9 @@ const chipClass = (selected: boolean) => [
           <Button variant="ghost" class="min-h-[44px]" :disabled="busy || loading" @click="load">{{ $t('feed.refresh') }}</Button>
         </div>
         <div v-if="personaChips.length" role="group" :aria-label="$t('feed.personaFilter')" class="flex flex-wrap gap-2" data-testid="feed-personas">
-          <button type="button" :class="chipClass(persona === null)" :aria-pressed="persona === null ? 'true' : 'false'" @click="persona = null">{{ $t('feed.allPersonas') }}</button>
+          <button type="button" :class="chipClass(persona === null)" :aria-pressed="persona === null ? 'true' : 'false'" @click="persona = null"><AppIcon v-if="persona === null" name="check" size="sm" class="shrink-0" aria-hidden="true" />{{ $t('feed.allPersonas') }}</button>
           <button v-for="key in personaChips" :key="key || 'default'" type="button" :class="chipClass(persona === key)" :aria-pressed="persona === key ? 'true' : 'false'" @click="persona = persona === key ? null : key">
+            <AppIcon v-if="persona === key" name="check" size="sm" class="shrink-0" aria-hidden="true" />
             <span class="grid h-5 w-5 shrink-0 place-items-center rounded-full bg-secondary text-2xs font-semibold text-secondary-foreground" aria-hidden="true">{{ personaLabel(key).slice(0, 1).toUpperCase() }}</span>
             <span class="truncate">{{ personaLabel(key) }}</span>
           </button>

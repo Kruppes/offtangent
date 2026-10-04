@@ -959,3 +959,48 @@ html[data-strand-transition="close"]::view-transition-old(strand-conversation) {
     }
   }
 }
+
+/* ─── W12: second carrier of the selected state ───
+   The selected surface alone is a colour step (< 3:1 against the ground), so
+   every selected list row also carries a 3 px marker. It is drawn as a border,
+   not as a background or shadow: in forced-colors mode (Windows contrast
+   themes) backgrounds and shadows are replaced, borders stay and take the
+   Highlight colour. The marker sits inside the row; the focus ring is drawn
+   outside or inset by 2 px, so the two never overlap. */
+@utility selected-marker {
+  position: relative;
+  &::before {
+    content: '';
+    position: absolute;
+    top: 8px;
+    bottom: 8px;
+    left: 0;
+    border-left: 3px solid hsl(var(--primary));
+    border-radius: 9999px;
+    pointer-events: none;
+  }
+  @media (forced-colors: active) {
+    &::before { border-color: Highlight; }
+  }
+}
+/* Desktop sidebar: the marker hangs 6 px left of the entry, in the rail gap. */
+@utility selected-marker-outside {
+  &::before { left: -6px; }
+}
+/* Bottom bar: the marker runs along the top edge. */
+@utility selected-marker-top {
+  position: relative;
+  &::before {
+    content: '';
+    position: absolute;
+    top: 0;
+    left: 16px;
+    right: 16px;
+    border-top: 3px solid hsl(var(--primary));
+    border-radius: 9999px;
+    pointer-events: none;
+  }
+  @media (forced-colors: active) {
+    &::before { border-color: Highlight; }
+  }
+}
