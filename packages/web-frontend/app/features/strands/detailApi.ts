@@ -9,7 +9,15 @@ export interface StrandLineageDetail {
   forkedFromMessageId?: number | null
   childStrands?: Array<{ id: string; title: string | null; forkedAt: string | null; forkedFromMessageId: number | null }>
 }
-export type StrandDetail = Thread & StrandModelDetail & StrandLineageDetail
+/**
+ * Visible conversation messages (user and assistant rows with text), counted
+ * by the server from the transcript. Distinct from `messageCount`, the session
+ * counter the memory jobs use. Optional: older servers omit it.
+ */
+export interface StrandCountDetail {
+  conversationMessageCount?: number
+}
+export type StrandDetail = Thread & StrandModelDetail & StrandLineageDetail & StrandCountDetail
 export function strandErrorKey(error: unknown): string {
   if (error instanceof ApiError) {
     if (error.body?.code === 'strand_busy') return 'strandDetail.busy'

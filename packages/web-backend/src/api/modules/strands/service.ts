@@ -371,6 +371,13 @@ export function createStrandsService(options: StrandsServiceOptions) {
     return row?.title ?? null
   }
 
+  function countConversationMessages(strandId: string): number {
+    return (db.prepare(
+      `SELECT COUNT(*) AS count FROM chat_messages
+       WHERE session_id = ? AND role IN ('user', 'assistant') AND TRIM(content) <> ''`,
+    ).get(strandId) as { count: number }).count
+  }
+
   function getStrand(userId: number, strandId: string) {
     const strand = withReadState(userId, [requireStrand(userId, strandId)])[0]
     const row = db.prepare('SELECT model_provider_id, model_id FROM sessions WHERE id = ?').get(strandId) as {
@@ -379,6 +386,14 @@ export function createStrandsService(options: StrandsServiceOptions) {
     }
     return {
       ...strand,
+      /**
+       * Messages a reader sees in the transcript: user and assistant rows with
+       * text, counted from chat_messages. `messageCount` is the session
+       * counter (bumped per turn of the cached slot only, read by the memory
+       * jobs and resurface) and keeps its meaning; on long-lived strands it
+       * drifts far from what the transcript shows.
+       */
+      conversationMessageCount: countConversationMessages(strandId),
       pinnedModel: row.model_provider_id && row.model_id
         ? { providerId: row.model_provider_id, modelId: row.model_id }
         : null,

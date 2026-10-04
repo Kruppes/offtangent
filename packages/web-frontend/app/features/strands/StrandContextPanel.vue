@@ -42,7 +42,7 @@ function when(value: string | null | undefined) {
         <h4 id="ctx-strand" class="mb-2 text-xs font-semibold uppercase tracking-label text-muted-foreground">{{ $t('shell.contextStrand') }}</h4>
         <p v-if="!strand" class="text-sm text-muted-foreground" role="status">{{ $t('common.loading') }}</p>
         <dl v-else class="grid grid-cols-[auto_1fr] gap-x-3 gap-y-1 text-sm">
-          <dt class="text-muted-foreground">{{ $t('shell.contextMessages') }}</dt><dd>{{ strand.messageCount }}</dd>
+          <dt class="text-muted-foreground">{{ $t('shell.contextMessages') }}</dt><dd>{{ strand.conversationMessageCount ?? strand.messageCount }}</dd>
           <dt class="text-muted-foreground">{{ $t('shell.contextStarted') }}</dt><dd>{{ when(strand.startedAt) }}</dd>
           <dt class="text-muted-foreground">{{ $t('shell.contextLastActivity') }}</dt><dd>{{ when(strand.lastActivity) }}</dd>
         </dl>

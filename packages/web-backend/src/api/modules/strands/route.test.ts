@@ -319,6 +319,29 @@ describe('resurface', () => {
   })
 })
 
+describe('strand detail message count', () => {
+  it('counts the visible conversation messages (user and assistant with text) next to the session counter', async () => {
+    const strand = sessionManager.createThread('1', 'main', 'Counter strand')
+    const insert = db.prepare('INSERT INTO chat_messages (session_id, user_id, role, content, agent_id) VALUES (?, 1, ?, ?, \'main\')')
+    insert.run(strand.id, 'user', 'synthetic question')
+    insert.run(strand.id, 'assistant', '') // tool-call-only step, no text
+    insert.run(strand.id, 'tool', 'synthetic tool output')
+    insert.run(strand.id, 'assistant', '   ') // whitespace only
+    insert.run(strand.id, 'assistant', 'synthetic answer')
+    insert.run(strand.id, 'system', 'synthetic notice')
+    insert.run(strand.id, 'user', 'synthetic follow-up')
+    // The session counter is maintained elsewhere (turns of the cached slot)
+    // and may disagree; it must stay untouched.
+    db.prepare('UPDATE sessions SET message_count = 0 WHERE id = ?').run(strand.id)
+
+    const res = await api('GET', `/api/strands/${strand.id}`)
+    expect(res.status).toBe(200)
+    const detail = res.body.strand as Thread & { conversationMessageCount?: number }
+    expect(detail.conversationMessageCount).toBe(3)
+    expect(detail.messageCount).toBe(0)
+  })
+})
+
 describe('archive and un-archive (SPEC 7.5b)', () => {
   it('hides the strand, clears pin and now slot, keeps every row, and undo puts it back', async () => {
     const strand = sessionManager.createThread('1', 'main', 'Smoke test 3')

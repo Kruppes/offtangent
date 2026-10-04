@@ -94,6 +94,19 @@ async function renderDock(props: Record<string, unknown> = {}) {
   return renderToString(app)
 }
 
+describe('strand context panel', () => {
+  it('shows the server-counted conversation messages, not the session counter', async () => {
+    const strand = { id: 'strand-1', agentId: 'main', title: 'Synthetic', pinned: false, archived: false, startedAt: '2026-01-01T00:00:00Z', lastActivity: '2026-01-02T00:00:00Z', endedAt: null, messageCount: 0, conversationMessageCount: 7, lastMessage: null, active: false, tags: [], links: { parents: 0, children: 0 } }
+    const html = await renderDock({ strand })
+    expect(html).toMatch(/shell\.contextMessages<\/dt><dd>7<\/dd>/)
+  })
+  it('falls back to the session counter when an older server omits the field', async () => {
+    const strand = { id: 'strand-1', agentId: 'main', title: 'Synthetic', pinned: false, archived: false, startedAt: '2026-01-01T00:00:00Z', lastActivity: '2026-01-02T00:00:00Z', endedAt: null, messageCount: 4, lastMessage: null, active: false, tags: [], links: { parents: 0, children: 0 } }
+    const html = await renderDock({ strand })
+    expect(html).toMatch(/shell\.contextMessages<\/dt><dd>4<\/dd>/)
+  })
+})
+
 describe('strand dock sections', () => {
   it('shows Activity above Context, both open, with a height separator between them', async () => {
     state().value = { ...DEFAULT_DOCK_STATE }
