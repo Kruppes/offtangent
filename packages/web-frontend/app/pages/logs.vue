@@ -53,7 +53,7 @@
     <!-- Empty state -->
     <div
       v-else-if="!loading && logs.length === 0"
-      class="flex flex-1 flex-col items-center justify-center gap-3 py-20 text-muted-foreground"
+      class="flex min-h-0 flex-1 flex-col items-center justify-center-safe gap-3 overflow-y-auto py-20 text-muted-foreground"
     >
       <AppIcon name="logs" size="xl" />
       <p class="text-sm">{{ $t('logs.noEntries') }}</p>
