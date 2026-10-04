@@ -1433,6 +1433,7 @@
       "dismissed": "{count} entry hidden | {count} entries hidden",
       "undo": "Undo",
       "dismissError": "Hiding failed. Please try again.",
+      "dismissConflict": "This task is running again and cannot be hidden yet.",
       "showHidden": "Show hidden ({count})",
       "hideHidden": "Collapse hidden",
       "restore": "Show again",
@@ -2630,6 +2631,13 @@
     }
   },
   "home": {
+    "activity": {
+      "title": "Recent tasks",
+      "allTasks": "All tasks",
+      "loading": "Loading tasks…",
+      "error": "Recent tasks could not be loaded.",
+      "empty": "No recent tasks in your strands."
+    },
     "unsortedHint": "{count} captures wait for a decision. Open Unsorted",
     "parts": {
       "label": "Split into {count} parts",

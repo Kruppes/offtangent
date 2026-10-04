@@ -99,7 +99,7 @@
              strand). One fixed 44 px slot: "hide all" and the undo line take
              turns, so hiding never shifts the list. -->
         <div
-          v-if="ack.dismissable.value.length > 0 || ack.lastDismissed.value || ack.error.value || ack.hidden.value.length > 0"
+          v-if="ack.dismissable.value.length > 0 || ack.lastDismissed.value || ack.error.value || ack.conflict.value || ack.hidden.value.length > 0"
           class="flex min-h-11 flex-wrap items-center gap-x-2 px-3 pt-2 md:px-5"
           data-testid="tasks-ack-toolbar"
         >
@@ -423,7 +423,7 @@ const {
 } = useTasksList()
 
 // ── W7: acknowledge finished tasks (strand contract, grouped per strand) ──
-const ack = useTaskDismissals(tasks, useStrandTasksApi())
+const ack = useTaskDismissals(tasks, useStrandTasksApi(), { onConflict: () => { void loadTasks(pagination.value.page) } })
 const visibleTasks = computed(() => ack.visible(sortedTasks.value))
 const undoButton = ref<HTMLButtonElement | null>(null)
 const listRegion = ref<HTMLElement | null>(null)
@@ -435,6 +435,7 @@ function withAck(task: Task): Task {
 
 const ackStatus = computed(() => {
   if (ack.error.value) return t('tasks.ack.dismissError')
+  if (ack.conflict.value) return t('tasks.ack.dismissConflict')
   if (ack.lastDismissed.value) return t('tasks.ack.dismissed', { count: ack.lastDismissed.value.length })
   return ''
 })

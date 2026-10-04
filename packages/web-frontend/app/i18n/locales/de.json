@@ -1433,6 +1433,7 @@
       "dismissed": "{count} Eintrag ausgeblendet | {count} Einträge ausgeblendet",
       "undo": "Rückgängig",
       "dismissError": "Ausblenden fehlgeschlagen. Bitte erneut versuchen.",
+      "dismissConflict": "Diese Aufgabe läuft wieder und kann noch nicht ausgeblendet werden.",
       "showHidden": "Ausgeblendete anzeigen ({count})",
       "hideHidden": "Ausgeblendete verbergen",
       "restore": "Wieder anzeigen",
@@ -2630,6 +2631,13 @@
     }
   },
   "home": {
+    "activity": {
+      "title": "Letzte Aufgaben",
+      "allTasks": "Alle Aufgaben",
+      "loading": "Aufgaben werden geladen…",
+      "error": "Die letzten Aufgaben konnten nicht geladen werden.",
+      "empty": "Keine aktuellen Aufgaben in deinen Strands."
+    },
     "unsortedHint": "{count} Captures warten auf eine Entscheidung. Unsortiert öffnen",
     "parts": {
       "label": "In {count} Teile aufgeteilt",

@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from 'vitest'
 import { nextTick, ref } from 'vue'
 import type { Task } from '~/api/tasks'
+import { ApiError } from '~/composables/useApi'
 import { DISMISS_CHUNK, groupByStrand, isTaskDismissable, useTaskDismissals } from './useTaskDismissals'
 
 function task(id: string, patch: Partial<Task> = {}): Task {
@@ -88,6 +89,20 @@ describe('useTaskDismissals', () => {
     expect(ack.error.value).toBe(true)
     expect(ack.visible(tasks.value).map(t => t.id)).toEqual(['a1'])
     expect(ack.lastDismissed.value).toEqual([{ id: 'b1', strandId: 'strand-b' }])
+  })
+
+  it('treats a 409 (task live again) as a conflict, hides nothing and asks the caller to reload', async () => {
+    const tasks = ref([task('a1')])
+    const fake = api()
+    fake.dismissActivity.mockRejectedValue(new ApiError('task is live', 409))
+    const onConflict = vi.fn()
+    const ack = useTaskDismissals(tasks, fake, { onConflict })
+    expect(await ack.dismiss(tasks.value)).toBe(false)
+    expect(ack.conflict.value).toBe(true)
+    expect(ack.error.value).toBe(false)
+    expect(onConflict).toHaveBeenCalledTimes(1)
+    expect(ack.visible(tasks.value)).toHaveLength(1)
+    expect(ack.lastDismissed.value).toBeNull()
   })
 
   it('reports an error and hides nothing when every request fails', async () => {

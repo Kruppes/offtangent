@@ -18,7 +18,13 @@ export interface TestNode {
   children: TestNode[]
   parent: TestNode | null
 }
-const node = (tag: string, text = ''): TestNode => ({ tag, text, props: {}, children: [], parent: null })
+/** Last node a component called `.focus()` on (template refs resolve to test nodes). */
+export let focusedNode: TestNode | null = null
+const node = (tag: string, text = ''): TestNode => {
+  const created: TestNode = { tag, text, props: {}, children: [], parent: null }
+  Object.defineProperty(created, 'focus', { value: () => { focusedNode = created }, enumerable: false })
+  return created
+}
 const renderer = createRenderer<TestNode, TestNode>({
   createElement: tag => node(tag),
   createText: text => node('#text', text),
@@ -42,7 +48,8 @@ const renderer = createRenderer<TestNode, TestNode>({
 
 const mounted: App[] = []
 /** `$t` returns the key plus `:count`/`:n` so assertions can see interpolated numbers. */
-export function mountNode(component: Component, props: Record<string, unknown> = {}): TestNode {
+/** `components` registers extra global stubs (e.g. a scoped-slot wrapper the component under test resolves by name). */
+export function mountNode(component: Component, props: Record<string, unknown> = {}, components: Record<string, Component> = {}): TestNode {
   const root = node('root')
   const app = renderer.createApp(component, props)
   app.config.globalProperties.$t = ((key: string, params?: Record<string, unknown>) => key + (params && 'count' in params ? `:${String(params.count)}` : '')) as never
@@ -50,11 +57,12 @@ export function mountNode(component: Component, props: Record<string, unknown> =
     app.component(name, defineComponent({ inheritAttrs: false, setup: (_, { slots, attrs }) => () => h(tag, attrs, slots.default?.()) }))
   }
   app.component('NuxtLink', defineComponent({ props: ['to'], setup: (p, { slots }) => () => h('a', { href: p.to }, slots.default?.()) }))
+  for (const [name, stub] of Object.entries(components)) app.component(name, stub)
   app.mount(root)
   mounted.push(app)
   return root
 }
-export function unmountAll() { mounted.splice(0).forEach(app => app.unmount()) }
+export function unmountAll() { mounted.splice(0).forEach(app => app.unmount()); focusedNode = null }
 export function all(root: TestNode): TestNode[] { return [root, ...root.children.flatMap(all)] }
 export function text(root: TestNode) { return all(root).map(n => n.text).join(' ') }
 export function byTestId(root: TestNode, id: string) { return all(root).filter(n => n.props['data-testid'] === id) }
@@ -67,7 +75,7 @@ export function button(root: TestNode, label: string) {
   if (!found) throw new Error(`no button "${label}" in: ${text(root)}`)
   return found
 }
-export async function click(target: TestNode) { (target.props.onClick as (e?: unknown) => void)({ preventDefault() {} }); await flush() }
+export async function click(target: TestNode) { (target.props.onClick as (e?: unknown) => void)({ preventDefault() {}, stopPropagation() {} }); await flush() }
 export async function submit(form: TestNode) { (form.props.onSubmit as (e: unknown) => void)({ preventDefault() {} }); await flush() }
 export async function input(field: TestNode, value: string) { (field.props['onUpdate:modelValue'] as (v: string) => void)(value); await flush() }
 

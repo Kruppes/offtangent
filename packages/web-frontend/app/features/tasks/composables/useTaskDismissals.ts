@@ -1,6 +1,7 @@
 import { computed, ref, watch, type Ref } from 'vue'
 import type { Task } from '~/api/tasks'
 import type { StrandTasksApi } from '~/api/strandTasks'
+import { ApiError } from '~/composables/useApi'
 
 /**
  * W7: acknowledge finished tasks in the global task list, through the same
@@ -44,11 +45,21 @@ export function groupByStrand(targets: TaskDismissalTarget[]): Array<{ strandId:
   return out
 }
 
-export function useTaskDismissals(tasks: Ref<Task[]>, api: DismissApi) {
+export interface TaskDismissalOptions {
+  /**
+   * The server answered 409 (a task went live again between two polls):
+   * the caller reloads its list so the row shows the live state.
+   */
+  onConflict?: () => void
+}
+
+export function useTaskDismissals(tasks: Ref<Task[]>, api: DismissApi, options: TaskDismissalOptions = {}) {
   /** Local overlay until the next list poll brings the server state. */
   const overlay = ref<Record<string, string | null>>({})
   const busy = ref(false)
   const error = ref(false)
+  /** Last dismiss hit a running or paused task (409); nothing of that group was hidden. */
+  const conflict = ref(false)
   const lastDismissed = ref<TaskDismissalTarget[] | null>(null)
   const showHidden = ref(false)
 
@@ -80,6 +91,7 @@ export function useTaskDismissals(tasks: Ref<Task[]>, api: DismissApi) {
     if (targets.length === 0 || busy.value) return false
     busy.value = true
     error.value = false
+    conflict.value = false
     const done: TaskDismissalTarget[] = []
     try {
       for (const group of groupByStrand(targets)) {
@@ -87,13 +99,15 @@ export function useTaskDismissals(tasks: Ref<Task[]>, api: DismissApi) {
           const res = await api.dismissActivity(group.strandId, group.ids)
           for (const id of group.ids) overlay.value = { ...overlay.value, [id]: res.dismissedAt }
           done.push(...group.ids.map(id => ({ id, strandId: group.strandId })))
-        } catch {
-          error.value = true
+        } catch (err) {
+          if (err instanceof ApiError && err.status === 409) conflict.value = true
+          else error.value = true
         }
       }
     } finally {
       busy.value = false
     }
+    if (conflict.value) options.onConflict?.()
     lastDismissed.value = done.length > 0 ? done : null
     return done.length > 0
   }
@@ -102,6 +116,7 @@ export function useTaskDismissals(tasks: Ref<Task[]>, api: DismissApi) {
     if (list.length === 0 || busy.value) return false
     busy.value = true
     error.value = false
+    conflict.value = false
     let ok = true
     try {
       for (const group of groupByStrand(list)) {
@@ -140,5 +155,5 @@ export function useTaskDismissals(tasks: Ref<Task[]>, api: DismissApi) {
     overlay.value = next
   })
 
-  return { busy, error, lastDismissed, showHidden, hidden, dismissable, dismissedAtOf, visible, dismiss, restoreTask, undo }
+  return { busy, error, conflict, lastDismissed, showHidden, hidden, dismissable, dismissedAtOf, visible, dismiss, restoreTask, undo }
 }
