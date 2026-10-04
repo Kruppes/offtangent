@@ -204,7 +204,7 @@ export function renderEcoToolView(msg: ToolResultLike, headChars: number, tailCh
   const out = [header, '--- head (exact) ---', head]
   if (keyLines.length > 0) out.push('--- key lines from the omitted middle (exact) ---', ...keyLines)
   if (tail) out.push(`--- tail (exact, ${middleEnd - middleStart} chars omitted before) ---`, tail)
-  out.push('[eco: the full result is unchanged in the transcript and database; repeat the call or re-read the source if you need more]')
+  out.push('[eco: shortened view only; the full result is kept unchanged in the transcript and database. Do not re-run a tool that changes state just to see more; re-read a source read-only if needed]')
   return out.join('\n')
 }
 
