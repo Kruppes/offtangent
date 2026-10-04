@@ -143,6 +143,7 @@
 </template>
 
 <script setup lang="ts">
+import { useId } from 'vue'
 import type { LoadableSkill } from '~/composables/useSkillAutocomplete'
 import { useChatView } from '~/composables/chat/chatViewContext'
 import { pasteIntent } from '~/composables/chat/useFileDrop'
