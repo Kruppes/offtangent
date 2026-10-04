@@ -264,7 +264,7 @@
  * input with an explicit show toggle and `autocomplete="off"`, so a browser
  * neither stores nor offers the value.
  */
-import { computed, nextTick, onMounted, ref } from 'vue'
+import { nextTick, onMounted, ref } from 'vue'
 import { useI18n } from 'vue-i18n'
 import {
   SECRET_HANDLE_KINDS,

@@ -97,7 +97,7 @@
             </div>
           </div>
           <label class="flex items-center gap-2 text-sm">
-            <input v-model="form.sameCredentials" type="checkbox" class="h-4 w-4">
+            <input v-model="form.sameCredentials" type="checkbox" class="h-4 w-4" />
             {{ $t('email.form.sameCredentials') }}
           </label>
           <div v-if="!form.sameCredentials" class="grid grid-cols-1 gap-3 sm:grid-cols-2">
@@ -139,11 +139,11 @@
           <p class="measure text-help text-muted-foreground">{{ $t('email.form.foldersHelp') }}</p>
           <div class="space-y-2">
             <label class="flex items-center gap-2 text-sm">
-              <input v-model="form.folderMode" type="radio" value="all" class="h-4 w-4">
+              <input v-model="form.folderMode" type="radio" value="all" class="h-4 w-4" />
               {{ $t('email.form.folderModeAll') }}
             </label>
             <label class="flex items-center gap-2 text-sm">
-              <input v-model="form.folderMode" type="radio" value="selected" class="h-4 w-4">
+              <input v-model="form.folderMode" type="radio" value="selected" class="h-4 w-4" />
               {{ $t('email.form.folderModeSelected') }}
             </label>
           </div>
@@ -164,7 +164,7 @@
                   class="h-4 w-4"
                   :checked="form.allowedFolders.includes(folder)"
                   @change="toggleFolder(folder)"
-                >
+                />
                 <span class="truncate">{{ folder }}</span>
               </label>
             </div>

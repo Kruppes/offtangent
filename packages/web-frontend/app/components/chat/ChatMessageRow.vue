@@ -1,7 +1,7 @@
 <template>
   <div
-    class="group/msg"
     :id="typeof msg.id === 'number' && msg.role !== 'divider' ? `msg-${msg.id}` : undefined"
+    class="group/msg"
     :data-message-id="typeof msg.id === 'number' ? msg.id : undefined"
     :tabindex="typeof msg.id === 'number' ? -1 : undefined"
     :class="[

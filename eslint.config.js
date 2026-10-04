@@ -1,5 +1,7 @@
 import js from '@eslint/js'
 import tseslint from 'typescript-eslint'
+import pluginVue from 'eslint-plugin-vue'
+import vueParser from 'vue-eslint-parser'
 
 const ignorePatterns = [
   '**/dist/**',
@@ -27,6 +29,43 @@ export default tseslint.config(
   ...tseslint.configs.recommended,
   {
     ignores: ignorePatterns,
+  },
+  // Vue single-file components of the web frontend: template and
+  // `<script setup lang="ts">` both go through the linter.
+  ...pluginVue.configs['flat/recommended'].map(config => ({
+    ...config,
+    files: ['packages/web-frontend/**/*.vue'],
+  })),
+  {
+    files: ['packages/web-frontend/**/*.vue'],
+    languageOptions: {
+      parser: vueParser,
+      parserOptions: {
+        parser: tseslint.parser,
+        extraFileExtensions: ['.vue'],
+        sourceType: 'module',
+      },
+    },
+    rules: {
+      // Nuxt auto-imports (ref, computed, useI18n, components) are not visible
+      // to the linter; undefined names are caught by `nuxt typecheck` instead,
+      // as typescript-eslint recommends for TypeScript sources.
+      'no-undef': 'off',
+      // The code base writes void elements self-closed (`<img />`).
+      'vue/html-self-closing': ['warn', { html: { void: 'always', normal: 'always', component: 'always' }, svg: 'always', math: 'always' }],
+      // The single-word primitives of the component library (shadcn-vue style)
+      // are the only exceptions; any other new component needs a multi-word name.
+      'vue/multi-word-component-names': ['error', {
+        ignores: ['Alert', 'Badge', 'Button', 'Card', 'Dialog', 'Input', 'Label', 'Popover', 'Select', 'Separator', 'Skeleton', 'Switch', 'Table', 'Tabs', 'Tooltip'],
+      }],
+    },
+  },
+  {
+    // Nuxt file-based routes and layouts are named by their file path.
+    files: ['packages/web-frontend/app/pages/**/*.vue', 'packages/web-frontend/app/layouts/**/*.vue'],
+    rules: {
+      'vue/multi-word-component-names': 'off',
+    },
   },
   {
     rules: {

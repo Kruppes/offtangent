@@ -34,7 +34,7 @@ const searching = computed(() => query.value.trim().length > 0)
         :placeholder="$t('settings.overview.searchPlaceholder')"
         class="min-h-11 w-full rounded-md border border-input bg-background py-2 pl-9 pr-3 text-base text-foreground placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring md:text-sm"
         @keydown.esc="query = ''"
-      >
+      />
       </div>
     </form>
 

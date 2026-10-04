@@ -42,7 +42,7 @@
                   type="text"
                   :placeholder="$t('memory.searchPlaceholder')"
                   class="flex-1 min-w-0 rounded-sm bg-transparent text-sm outline-none placeholder:text-muted-foreground focus-visible:ring-2 focus-visible:ring-ring max-md:min-h-11"
-                >
+                />
                 <Button
                   variant="ghost"
                   size="icon"
@@ -93,7 +93,7 @@
                   class="flex-1 rounded-md border border-border bg-background px-3 py-2 text-sm outline-none ring-offset-background focus:ring-2 focus:ring-ring"
                   @keydown.enter="confirmNewFile"
                   @keydown.escape="cancelNewFile"
-                >
+                />
                 <Button size="sm" :disabled="!newFilePath.trim()" @click="confirmNewFile">
                   {{ $t('memory.createFile') }}
                 </Button>

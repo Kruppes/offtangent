@@ -233,7 +233,7 @@
                       v-model="colorPicker"
                       type="color"
                       class="h-11 w-14 shrink-0 cursor-pointer rounded-md border border-input bg-background p-1"
-                    >
+                    />
                     <Input
                       v-model="form.color"
                       class="min-h-11 font-mono"
@@ -372,7 +372,7 @@
                 v-model="createForm.color"
                 type="color"
                 class="h-11 w-full cursor-pointer rounded-md border border-input bg-background p-1"
-              >
+              />
             </div>
           </div>
 

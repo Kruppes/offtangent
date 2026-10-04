@@ -77,7 +77,7 @@
                       :alt="entry.username"
                       class="h-9 w-9 shrink-0 rounded-full object-cover"
                       @error="($event.target as HTMLImageElement).style.display = 'none'; ($event.target as HTMLImageElement).nextElementSibling?.classList.remove('hidden')"
-                    >
+                    />
                     <span
                       :class="[
                         'flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-primary-subtle text-sm font-bold text-primary',

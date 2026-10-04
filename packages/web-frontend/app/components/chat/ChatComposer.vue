@@ -87,7 +87,7 @@
             <!-- File attachment button (right inside box) -->
             <!-- The file input stays in the Tab order (sr-only, not display:none); the label shows its focus. -->
             <label data-composer-control="attach" class="flex h-11 w-11 shrink-0 cursor-pointer items-center justify-center rounded-lg text-muted-foreground transition-colors hover:bg-muted hover:text-foreground focus-within:ring-2 focus-within:ring-ring">
-              <input class="sr-only" type="file" multiple data-testid="composer-attach" :aria-label="$t('chat.attachFiles')" @change="handleFileSelection">
+              <input class="sr-only" type="file" multiple data-testid="composer-attach" :aria-label="$t('chat.attachFiles')" @change="handleFileSelection" />
               <AppIcon name="paperclip" class="h-4 w-4" />
             </label>
           </div>

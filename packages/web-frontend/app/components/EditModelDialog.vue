@@ -134,7 +134,6 @@ const emit = defineEmits<{
 }>()
 
 const { updateProviderModel } = useProviders()
-const { t } = useI18n()
 
 const form = reactive({
   description: '',

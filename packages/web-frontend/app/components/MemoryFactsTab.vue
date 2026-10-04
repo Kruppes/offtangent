@@ -37,7 +37,7 @@
               type="text"
               :placeholder="$t('memory.factsSearchPlaceholder')"
               class="w-full rounded-md border border-border bg-background px-3 py-2 text-sm outline-none ring-offset-background transition focus:ring-2 focus:ring-ring sm:max-w-md"
-            >
+            />
 
             <Select v-if="showUserFilter" v-model="selectedUserId" @update:model-value="handleUserFilterChange">
               <SelectTrigger class="w-full sm:w-[220px]">
@@ -96,7 +96,7 @@
                     @blur="handleEditBlur"
                     @keydown.enter.prevent="saveEditingFact"
                     @keydown.esc.prevent="handleEditEscape"
-                  >
+                  />
                   <button
                     v-else
                     type="button"

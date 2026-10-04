@@ -60,7 +60,7 @@ const chipClass = (selected: boolean) => [
         <h1 class="px-1 text-xl font-bold tracking-tight md:hidden">{{ $t('feed.title') }}</h1>
         <div class="flex flex-wrap items-center gap-2">
           <label class="flex min-h-[44px] items-center gap-2 rounded-lg border px-3 text-sm">
-            <input v-model="unreadOnly" type="checkbox" class="h-5 w-5 accent-primary">{{ $t('feed.unreadOnly') }}
+            <input v-model="unreadOnly" type="checkbox" class="h-5 w-5 accent-primary" />{{ $t('feed.unreadOnly') }}
           </label>
           <label class="flex min-w-0 max-w-full items-center gap-2 text-sm" for="feed-kind">
             <span class="shrink-0 text-xs font-medium text-muted-foreground">{{ $t('feed.kindFilter') }}</span>

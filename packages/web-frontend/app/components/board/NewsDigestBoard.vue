@@ -482,7 +482,7 @@ const listHidden = computed(() => selected.value !== null)
                   <span aria-hidden="true" class="mt-[8px] h-[8px] w-[8px] shrink-0 rounded-full" :class="source.firsthand ? 'nd-dot-1' : 'nd-dot-2'" />
                   <span class="min-w-0 flex-1">
                     <span class="nd-body nd-t1 nd-de block" lang="de">{{ source.name }}</span>
-                    <span class="nd-meta nd-t2 nd-tnum nd-wrap nd-id block"><template v-for="(part, p) in sourceMetaParts(source)" :key="`part-${p}`"><template v-if="p > 0">{{ metaSeparator }}</template><template v-for="(segment, s) in part" :key="`seg-${s}`"><template v-for="(run, r) in segment" :key="`run-${r}`"><span v-if="run.nobr" class="nd-nobr">{{ run.text }}</span><template v-else>{{ run.text }}</template></template><wbr v-if="s < part.length - 1"></template></template></span>
+                    <span class="nd-meta nd-t2 nd-tnum nd-wrap nd-id block"><template v-for="(part, p) in sourceMetaParts(source)" :key="`part-${p}`"><template v-if="p > 0">{{ metaSeparator }}</template><template v-for="(segment, s) in part" :key="`seg-${s}`"><template v-for="(run, r) in segment" :key="`run-${r}`"><span v-if="run.nobr" class="nd-nobr">{{ run.text }}</span><template v-else>{{ run.text }}</template></template><wbr v-if="s < part.length - 1" /></template></template></span>
                   </span>
                   <AppIcon v-if="source.url" name="externalLink" size="sm" class="nd-t2 mt-[4px] shrink-0" />
                 </component>

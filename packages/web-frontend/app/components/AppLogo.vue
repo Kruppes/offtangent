@@ -1,5 +1,5 @@
 <template>
-  <Logo :size="sizes[size]" />
+  <LogoMark :size="sizes[size]" />
 </template>
 
 <script setup lang="ts">

@@ -22,9 +22,9 @@ defineEmits<{ undo: []; apply: [body: ApplyCaptureInput]; dismiss: [] }>()
     <p class="text-sm text-muted-foreground">{{ result.decision.rationale.slice(0, 240) }}{{ result.decision.rationale.length > 240 ? '…' : '' }}</p>
     <div class="flex flex-wrap gap-2">
       <NuxtLink v-if="result.capture.strandId" :to="`/strands/${encodeURIComponent(result.capture.strandId)}`" class="focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 inline-flex min-h-11 items-center rounded-md border px-3">{{ $t('capture.openStrand') }}</NuxtLink>
-      <Button variant="outline" v-if="['applied', 'confirmed'].includes(result.decision.state) || result.capture.status === 'dismissed'" class="min-h-11 min-w-11 rounded-md border px-3" :disabled="busy" @click="$emit('undo')">{{ $t(result.capture.status === 'dismissed' ? 'capture.restore' : 'capture.undo') }}</Button>
-      <Button variant="outline" v-if="['unsorted', 'needs_review', 'failed'].includes(result.capture.status)" class="min-h-11 rounded-md bg-primary px-3 text-primary-foreground" :disabled="busy" @click="$emit('apply', { decisionId: result.decision.id })">{{ $t('capture.apply') }}</Button>
-      <Button variant="outline" v-if="['unsorted', 'failed'].includes(result.capture.status)" class="min-h-11 rounded-md border px-3" :disabled="busy" @click="$emit('dismiss')">{{ $t('capture.discard') }}</Button>
+      <Button v-if="['applied', 'confirmed'].includes(result.decision.state) || result.capture.status === 'dismissed'" variant="outline" class="min-h-11 min-w-11 rounded-md border px-3" :disabled="busy" @click="$emit('undo')">{{ $t(result.capture.status === 'dismissed' ? 'capture.restore' : 'capture.undo') }}</Button>
+      <Button v-if="['unsorted', 'needs_review', 'failed'].includes(result.capture.status)" variant="outline" class="min-h-11 rounded-md bg-primary px-3 text-primary-foreground" :disabled="busy" @click="$emit('apply', { decisionId: result.decision.id })">{{ $t('capture.apply') }}</Button>
+      <Button v-if="['unsorted', 'failed'].includes(result.capture.status)" variant="outline" class="min-h-11 rounded-md border px-3" :disabled="busy" @click="$emit('dismiss')">{{ $t('capture.discard') }}</Button>
     </div>
     <details v-if="result.decision.alternatives.length" :open="result.decision.confidence < .7">
       <summary class="focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 min-h-11 cursor-pointer py-3">{{ $t('capture.alternatives') }}</summary>

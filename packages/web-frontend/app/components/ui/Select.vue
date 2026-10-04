@@ -15,11 +15,11 @@ const mappedProps = computed(() => ({
   defaultValue: props.defaultValue === '' ? EMPTY_SENTINEL : props.defaultValue,
 }))
 
-const wrappedEmit = ((name: string, ...args: any[]) => {
+const wrappedEmit = ((name: string, ...args: unknown[]) => {
   if (name === 'update:modelValue') {
     emits('update:modelValue', args[0] === EMPTY_SENTINEL ? '' : args[0])
   } else {
-    (emits as any)(name, ...args)
+    (emits as (event: string, ...payload: unknown[]) => void)(name, ...args)
   }
 }) as typeof emits
 

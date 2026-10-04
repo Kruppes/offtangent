@@ -91,7 +91,7 @@ function submitRename() {
           :aria-label="$t('threads.renameThread')"
           @keydown.enter.prevent="submitRename"
           @keydown.esc.prevent="emit('cancelRename')"
-        >
+        />
         <button
           type="button"
           class="flex h-11 w-11 shrink-0 items-center justify-center rounded-md text-primary hover:bg-primary-subtle"

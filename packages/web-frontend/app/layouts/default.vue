@@ -45,11 +45,11 @@
         data-testid="shell-sidebar"
         :role="sidebarOpen ? 'dialog' : undefined"
         :aria-modal="sidebarOpen ? 'true' : undefined"
-        @keydown.tab="trapDrawerFocus"
         :data-mode="sidebarOpen ? 'drawer' : effectiveMode"
         class="flex shrink-0 flex-col border-r border-sidebar-border bg-sidebar"
         :class="sidebarOpen ? 'fixed inset-y-0 left-0 z-50 w-64 shadow-overlay' : compact ? 'static w-14' : 'static w-64'"
         :aria-label="$t('shell.sidebar')"
+        @keydown.tab="trapDrawerFocus"
       >
         <!-- Sidebar header -->
         <div class="flex items-center gap-3 border-b border-sidebar-border py-4" :class="compact ? 'justify-center px-1' : 'px-5'">
@@ -82,7 +82,7 @@
                   :alt="user?.username"
                   class="h-9 w-9 shrink-0 rounded-full object-cover"
                   @error="onAvatarError"
-                >
+                />
                 <span
                   v-else
                   class="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-muted text-sm font-semibold text-foreground"

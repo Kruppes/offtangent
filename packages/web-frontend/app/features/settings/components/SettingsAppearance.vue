@@ -50,7 +50,7 @@ const shownLabel = computed(() => t(`settings.appearance.modes.${resolvedMode.va
             :data-theme-option="option.value"
             class="h-4 w-4 accent-[hsl(var(--primary))]"
             @change="setMode(option.value)"
-          >
+          />
           <AppIcon :name="option.icon" size="sm" class="text-muted-foreground" />
           <span>{{ $t(`settings.appearance.modes.${option.value}`) }}</span>
         </label>

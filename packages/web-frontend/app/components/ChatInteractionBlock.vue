@@ -114,13 +114,13 @@
             ref="ownAnswerInput"
             type="text"
             :value="ownAnswerText"
-            @input="ownAnswerText = ($event.target as HTMLInputElement).value"
             :aria-labelledby="questionId"
             :placeholder="$t('chat.interaction.ownAnswerPlaceholder')"
             class="h-11 w-full min-w-0 bg-transparent px-4 text-sm focus:outline-none"
+            @input="ownAnswerText = ($event.target as HTMLInputElement).value"
             @keydown.enter.prevent="confirmOwnAnswer"
             @keydown.esc.prevent="cancelOwnAnswer"
-          >
+          />
           <button
             type="button"
             class="inline-flex h-9 shrink-0 items-center gap-2 rounded bg-primary px-3 text-sm font-medium text-primary-foreground disabled:text-muted-foreground disabled:[&_svg]:text-border disabled:bg-muted"

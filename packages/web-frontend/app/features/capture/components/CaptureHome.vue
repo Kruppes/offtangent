@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, nextTick, onMounted, ref } from 'vue'
 import { takeComposerHandoff } from '~/composables/useComposerHandoff'
-import { useCapturesApi, type CaptureResult, type CaptureInput, type ApplyCaptureInput, type UploadDescriptor, type ClientPersona, newestDecision, initialCapturePersona, captureClientKey } from '~/api/captures'
+import { useCapturesApi, type CaptureResult, type CaptureInput, type ApplyCaptureInput, type UploadDescriptor, type ClientPersona, initialCapturePersona, captureClientKey } from '~/api/captures'
 import { useNowApi, type NowSet, type NowStrand } from '~/api/now'
 import { useModelsApi, type SelectableModel } from '~/api/models'
 import { useResurfaceApi, type ResurfaceItem } from '~/api/resurface'
@@ -320,7 +320,7 @@ onMounted(() => {
           <label class="w-full min-w-0 sm:w-auto sm:flex-1">{{ $t('capture.target') }}<select v-model="target" class="focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 block min-h-11 w-full rounded-md border border-input bg-background px-2" :disabled="busy"><option value="">{{ $t('capture.chooseStrand') }}</option><option v-for="s in available" :key="s.id" :value="s.id">{{ s.title || $t('capture.untitled') }}</option></select></label>
           <label class="w-full min-w-0 sm:w-auto sm:flex-1">{{ $t('capture.replace') }}<select v-model="replaceId" class="focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 block min-h-11 w-full rounded-md border border-input bg-background px-2" :disabled="busy"><option value="">{{ $t('capture.add') }}</option><option v-for="s in now.strands" :key="s.id" :value="s.id">{{ s.title || $t('capture.untitled') }}</option></select></label>
           <Button variant="outline" class="min-h-11 self-end rounded-md border px-3" :disabled="busy || !target || (!replaceId && now.strands.length >= now.max) || now.strands.length > now.max" @click="addNow">{{ $t('capture.updateNow') }}</Button>
-          <Button variant="outline" v-if="now.strands.length" class="min-h-11 self-end rounded-md border px-3" :disabled="busy" @click="changeNow([])">{{ $t('capture.clearNow') }}</Button>
+          <Button v-if="now.strands.length" variant="outline" class="min-h-11 self-end rounded-md border px-3" :disabled="busy" @click="changeNow([])">{{ $t('capture.clearNow') }}</Button>
         </div>
         <p v-if="now && !nowAuto && now.strands.length >= now.max" class="measure text-sm text-muted-foreground">{{ $t('capture.nowFull') }}</p>
       </section>

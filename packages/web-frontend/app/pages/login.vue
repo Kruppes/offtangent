@@ -12,9 +12,9 @@
           <div class="flex flex-col gap-2">
             <Label for="username">{{ $t('auth.username') }}</Label>
             <Input
-              class="min-h-11"
               id="username"
               v-model="username"
+              class="min-h-11"
               type="text"
               :placeholder="$t('auth.username')"
               autocomplete="username"
@@ -27,9 +27,9 @@
           <div class="flex flex-col gap-2">
             <Label for="password">{{ $t('auth.password') }}</Label>
             <Input
-              class="min-h-11"
               id="password"
               v-model="password"
+              class="min-h-11"
               type="password"
               :placeholder="$t('auth.password')"
               autocomplete="current-password"

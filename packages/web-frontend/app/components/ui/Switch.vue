@@ -24,11 +24,11 @@ const modelValue = computed({
 
 <template>
   <SwitchRoot
+    :id="props.id"
     v-model="modelValue"
     :disabled="props.disabled"
     :name="props.name"
     :required="props.required"
-    :id="props.id"
     :as="props.as"
     :as-child="props.asChild"
     :class="cn(

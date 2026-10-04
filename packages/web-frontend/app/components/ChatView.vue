@@ -74,7 +74,6 @@
 
 <script setup lang="ts">
 import { groupTranscript, transcriptState } from './content/transcript'
-import type { ChatMessage } from '~/composables/useChat'
 import { setSecretChipTooltip } from '~/utils/secretHandles'
 import StrandCanvas from './StrandCanvas.vue'
 import { useStrandCanvas } from '~/composables/useStrandCanvas'

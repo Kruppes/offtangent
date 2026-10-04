@@ -186,7 +186,7 @@ const chipClass = 'inline-flex min-h-11 items-center gap-2 rounded-full border p
             <input id="strand-search" ref="searchInput" :value="searchText" data-testid="strand-search" type="search" autocomplete="off" enterkeyhint="search" :maxlength="SEARCH_MAX_LENGTH"
               class="w-full min-w-0 rounded-md border border-input bg-background pl-9 pr-12 placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring [&::-webkit-search-cancel-button]:hidden"
               :class="compact ? 'min-h-11 text-sm' : 'min-h-12 text-base'"
-              :placeholder="compact ? $t('strandsW3.searchPlaceholder') : $t('strandsW4d.searchPlaceholder')" :aria-describedby="'strand-search-hint'" @input="searchText = ($event.target as HTMLInputElement).value" @keydown="onSearchKeydown">
+              :placeholder="compact ? $t('strandsW3.searchPlaceholder') : $t('strandsW4d.searchPlaceholder')" :aria-describedby="'strand-search-hint'" @input="searchText = ($event.target as HTMLInputElement).value" @keydown="onSearchKeydown" />
             <button v-if="searchText" type="button" data-testid="strand-search-clear" class="absolute right-0 inline-flex h-11 w-11 items-center justify-center rounded-md text-muted-foreground hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring" :aria-label="$t('strandsW3.searchClear')" @click="clearSearch">
               <AppIcon name="close" />
             </button>
@@ -218,7 +218,7 @@ const chipClass = 'inline-flex min-h-11 items-center gap-2 rounded-full border p
             <label class="inline-flex min-w-0">
               <span class="sr-only">{{ $t('strandsW3.tag') }}</span>
               <input data-testid="tag-filter" :class="[chipClass, 'w-28 min-w-0 bg-background placeholder:text-muted-foreground', state.tag ? 'border-primary' : 'border-input']" :placeholder="$t('strandsW4d.tagPlaceholder')"
-                :value="filters.tag" @change="setFilter('tag', ($event.target as HTMLInputElement).value.trim())">
+                :value="filters.tag" @change="setFilter('tag', ($event.target as HTMLInputElement).value.trim())" />
             </label>
             <button v-if="activeFilterCount" type="button" data-testid="strand-filters-clear" class="inline-flex min-h-11 items-center rounded-md px-2 text-sm text-primary underline-offset-4 hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring" @click="resetFilters">
               {{ $t('strandsW4d.clearFilters') }}
@@ -241,7 +241,7 @@ const chipClass = 'inline-flex min-h-11 items-center gap-2 rounded-full border p
         <div v-if="metadataError" role="alert" class="rounded-md border p-3">{{ $t('strandsW3.projectsError') }} <Button variant="outline" class="min-h-11 min-w-11" @click="loadProjects">{{ $t('common.retry') }}</Button></div>
         <section v-if="selected" class="rounded-xl border bg-card p-3" :aria-label="$t('strandsW3.manage')">
           <div class="flex items-center justify-between gap-2"><h2 class="min-w-0 break-words font-semibold">{{ selected.title || $t('strandsW3.untitled') }}</h2><Button variant="ghost" class="min-h-11 min-w-11" @click="selected = null">{{ $t('common.close') }}</Button></div>
-          <StrandActions :key="selected.id" :strand-id="selected.id" v-model:archived="selected.archived" @changed="changed" @deleted="selected = null; changed()" />
+          <StrandActions :key="selected.id" v-model:archived="selected.archived" :strand-id="selected.id" @changed="changed" @deleted="selected = null; changed()" />
         </section>
         <p v-if="loading" role="status" aria-busy="true" :class="rows.length ? 'text-sm text-muted-foreground' : 'sr-only'">{{ loadingAll ? $t('strandsW4d.loadingAll') : $t('common.loading') }}</p>
         <div v-if="loading && !rows.length" data-testid="strand-skeleton" class="flex flex-col gap-1" aria-hidden="true">

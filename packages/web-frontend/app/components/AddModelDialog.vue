@@ -53,7 +53,7 @@
                 :disabled="isAlreadyEnabled(model.id)"
                 class="h-4 w-4 rounded border-border text-primary focus:ring-primary"
                 @change="toggleSelected(model.id)"
-              >
+              />
               <span class="flex min-w-0 flex-1 flex-col">
                 <span class="truncate">{{ model.name }}</span>
                 <span class="font-mono text-2xs text-muted-foreground truncate">{{ model.id }}</span>
@@ -144,7 +144,6 @@ const emit = defineEmits<{
 
 const { fetchModels, fetchLiveModels, updateProvider, presets } = useProviders()
 const providersApi = useProvidersApi()
-const { t } = useI18n()
 
 const search = ref('')
 const catalog = ref<AvailableModel[]>([])

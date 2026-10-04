@@ -79,7 +79,7 @@ async function remove() {
       <h3 class="font-semibold">{{ t('strandDetail.deletePreview') }}</h3>
       <p class="text-sm">{{ counts }}</p>
       <p class="text-sm text-muted-foreground">{{ t('strandDetail.keepFacts') }}</p>
-      <label class="flex min-h-11 cursor-pointer items-center gap-3 text-sm"><input v-model="deleteFacts" type="checkbox" :disabled="pending" class="h-5 w-5 accent-destructive">{{ t('strandDetail.deleteFacts') }}</label>
+      <label class="flex min-h-11 cursor-pointer items-center gap-3 text-sm"><input v-model="deleteFacts" type="checkbox" :disabled="pending" class="h-5 w-5 accent-destructive" />{{ t('strandDetail.deleteFacts') }}</label>
       <div class="flex flex-wrap gap-2">
         <Button class="min-h-11" variant="outline" :disabled="pending" @click="preview = null">{{ t('common.cancel') }}</Button>
         <Button class="min-h-11" variant="destructive" :disabled="pending || disabled" @click="confirming = true">{{ t('strandDetail.delete') }}</Button>

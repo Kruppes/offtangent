@@ -32,7 +32,7 @@
 </template>
 
 <script setup lang="ts">
-const props = defineProps<{
+defineProps<{
   data: unknown
   isError?: boolean
 }>()

@@ -87,7 +87,7 @@ function cancel() {
           :aria-label="$t('threads.renameThread')"
           @keydown.enter.prevent="submit"
           @keydown.esc.prevent="cancel"
-        >
+        />
         <button
           type="button"
           class="flex h-11 w-11 shrink-0 items-center justify-center rounded-md text-primary hover:bg-primary-subtle"

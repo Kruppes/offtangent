@@ -164,7 +164,7 @@
                 :checked="form.enabledModels.includes(model.name)"
                 class="h-4 w-4 rounded border-border text-primary focus:ring-primary"
                 @change="toggleOllamaModel(model.name)"
-              >
+              />
               <div class="flex-1 min-w-0">
                 <span class="font-mono text-xs truncate block">{{ model.name }}</span>
                 <span class="text-2xs text-muted-foreground">
@@ -260,13 +260,13 @@
             <Input
               id="provider-health-check-timeout"
               :model-value="form.healthCheckTimeoutMs ?? undefined"
-              @update:model-value="form.healthCheckTimeoutMs = $event === '' ? null : Number($event)"
               type="number"
               min="1"
               step="1"
               :placeholder="healthCheckTimeoutPlaceholder"
               :disabled="oauthInProgress"
               class="flex-1"
+              @update:model-value="form.healthCheckTimeoutMs = $event === '' ? null : Number($event)"
             />
             <span class="text-xs text-muted-foreground">ms</span>
           </div>

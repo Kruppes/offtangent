@@ -240,7 +240,7 @@ function retry() {
             maxlength="200"
             class="min-h-11 min-w-0 flex-1 bg-transparent text-base text-foreground placeholder:text-muted-foreground focus:outline-none"
             @keydown="onKeydown"
-          >
+          />
           <button type="button" class="inline-flex h-11 shrink-0 items-center rounded-md px-2 text-xs hover:bg-accent focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring" :aria-label="t('common.close')" @click="close">
             <kbd class="rounded-md border border-border bg-muted px-2 font-mono text-xs">Esc</kbd>
           </button>
