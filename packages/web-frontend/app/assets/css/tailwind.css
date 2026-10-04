@@ -1090,3 +1090,21 @@ html[data-strand-transition="close"]::view-transition-old(strand-conversation) {
 @utility pb-* { padding-bottom: max(0px, calc(var(--spacing) * --value(number) - var(--bw-b))); }
 @utility pl-* { padding-left: max(0px, calc(var(--spacing) * --value(number) - var(--bw-l))); }
 @utility ps-* { padding-left: max(0px, calc(var(--spacing) * --value(number) - var(--bw-l))); }
+
+/* Reason note of a locked tab (ui/TabsTrigger.vue): the note is the next
+   sibling of its tab. It stays in the accessibility tree as the tab's
+   description and is visually hidden unless it was opened by tap or Enter
+   (data-open) or its tab has keyboard focus; Escape hides it again
+   (data-dismissed). Unlayered, so it wins over the box utilities on the note. */
+.tab-lock-reason:not([data-open]):not(:focus-visible + .tab-lock-reason),
+.tab-lock-reason[data-dismissed] {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+  border-width: 0;
+}
