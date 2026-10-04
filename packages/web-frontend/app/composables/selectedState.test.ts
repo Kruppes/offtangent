@@ -24,6 +24,14 @@ const SITES: Array<[file: string, carrier: RegExp]> = [
   ['../features/settings/components/SettingsSectionNav.vue', /selected-marker/],
 ]
 
+/** Pressed toggles that switch a view: in forced-colors mode the filled or tinted
+ * surface is replaced, so the pressed one also carries the bottom border marker. */
+const PRESSED: Array<[file: string, carrier: RegExp]> = [
+  ['../features/strands/StrandList.vue', /state\.sort === sort \? 'selected-marker-bottom/],
+  ['../features/projects/ProjectsView.vue', /:aria-pressed="!archived"[^>]*!archived \? 'selected-marker-bottom'[\s\S]*:aria-pressed="archived"[^>]*archived \? 'selected-marker-bottom'/],
+  ['../pages/strands/[id].vue', /contextOpen \? 'selected-marker-bottom/],
+]
+
 function block(name: string) {
   const start = css.indexOf(`@utility ${name} {`)
   return start < 0 ? '' : css.slice(start, css.indexOf('\n}\n', start))
@@ -36,6 +44,9 @@ describe('selected state, second carrier', () => {
       expect(source, file).toContain('bg-selected-container')
       expect(source, file).toMatch(carrier)
     }
+  })
+  it('marks pressed view toggles with a border marker', () => {
+    for (const [file, carrier] of PRESSED) expect(read(file), file).toMatch(carrier)
   })
   it('draws the marker as a border, not as a background or shadow', () => {
     for (const name of ['selected-marker', 'selected-marker-top', 'selected-marker-bottom']) {

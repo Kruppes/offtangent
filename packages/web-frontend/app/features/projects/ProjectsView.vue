@@ -45,8 +45,8 @@ onMounted(load)
         <template v-else>
           <div v-if="!projectId" class="flex flex-wrap items-center justify-between gap-3">
             <div role="group" :aria-label="$t('projectsW3.filter')" class="flex gap-2">
-              <Button :variant="!archived ? 'default' : 'outline'" :aria-pressed="!archived" class="min-h-[44px]" @click="archived = false">{{ $t('projectsW3.active') }}</Button>
-              <Button :variant="archived ? 'default' : 'outline'" :aria-pressed="archived" class="min-h-[44px]" @click="archived = true">{{ $t('projectsW3.archived') }}</Button>
+              <Button :variant="!archived ? 'default' : 'outline'" :aria-pressed="!archived" class="min-h-[44px]" :class="!archived ? 'selected-marker-bottom' : ''" @click="archived = false">{{ $t('projectsW3.active') }}</Button>
+              <Button :variant="archived ? 'default' : 'outline'" :aria-pressed="archived" class="min-h-[44px]" :class="archived ? 'selected-marker-bottom' : ''" @click="archived = true">{{ $t('projectsW3.archived') }}</Button>
             </div>
             <Button class="min-h-[44px]" @click="openForm()">{{ $t('projectsW3.create') }}</Button>
           </div>

@@ -130,7 +130,7 @@ const ringLabel = computed(() => {
           <StrandRunningHint :hint="hint" @open="openActivity" />
           <button ref="contextToggleRef" type="button" data-testid="context-toggle"
             class="inline-flex h-11 w-11 shrink-0 items-center justify-center rounded-lg text-muted-foreground hover:bg-accent hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
-            :class="contextOpen ? 'bg-accent text-foreground' : ''"
+            :class="contextOpen ? 'selected-marker-bottom bg-accent text-foreground' : ''"
             :aria-label="headerGauge ? `${$t('shell.contextToggle')} · ${ringLabel}` : $t('shell.contextToggle')" :aria-pressed="contextOpen" :aria-controls="contextOpen ? 'strand-context-column' : undefined" @click="toggleContext">
             <ContextRing v-if="headerGauge" :ratio="headerGauge.ratio" :label="ringLabel" :size="26" aria-hidden="true" />
             <AppIcon v-else name="panelRight" />

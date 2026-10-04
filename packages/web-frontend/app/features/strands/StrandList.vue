@@ -229,7 +229,7 @@ const chipClass = 'inline-flex min-h-11 items-center gap-2 rounded-full border p
             <div class="inline-flex min-w-0 rounded-md border border-border">
               <button v-for="sort in STRAND_SORTS" :key="sort" type="button" :data-testid="`strand-sort-${sort}`" :aria-pressed="state.sort === sort"
                 class="min-h-11 rounded-md px-3 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
-                :class="state.sort === sort ? 'bg-selected-container font-semibold text-on-selected-container' : 'text-muted-foreground hover:text-foreground'"
+                :class="state.sort === sort ? 'selected-marker-bottom bg-selected-container font-semibold text-on-selected-container' : 'text-muted-foreground hover:text-foreground'"
                 @click="setSort(sort)">{{ $t(`strandsW4d.sortBy.${sort}`) }}</button>
             </div>
           </div>
