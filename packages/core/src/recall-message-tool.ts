@@ -45,7 +45,8 @@ export function createRecallMessageTool(options: RecallMessageToolOptions): Agen
       'Reload the full, verbatim content of one earlier message by its id. Use this when the context shows a ' +
       'shortened line like "[msg:123] assistant, 5400 chars: ..." and you need the original text or the full tool ' +
       'result. Long messages are paged: pass `offset` to continue. For a tool message, part="result" returns only the ' +
-      'stored result text (exactly as stored, without the arguments); `max_chars` asks for a smaller page.',
+      'stored result text (exactly as stored, without the arguments); `max_chars` asks for a smaller page. A tool that ' +
+      'capped its own output stored only the capped text; the header then says tool-capped.',
     parameters: Type.Object({
       message_id: Type.Number({ description: 'The numeric id from the "[msg:<id>]" digest line.' }),
       offset: Type.Optional(Type.Number({ description: 'Character offset to continue a long message from (default 0).' })),
@@ -83,11 +84,19 @@ export function createRecallMessageTool(options: RecallMessageToolOptions): Agen
       }
 
       let body = row.content
+      // Tool caps run inside the tool, BEFORE the result is stored: the stored
+      // text is then the capped output, never the raw one. Say so.
+      let toolCapNote = ''
       if (row.role === 'tool' && row.metadata) {
         try {
           const meta = JSON.parse(row.metadata) as { toolName?: string; toolResult?: unknown; toolArgs?: unknown }
           const result = meta.toolResult
           const resultText = typeof result === 'string' ? result : result == null ? '' : JSON.stringify(result, null, 2)
+          const details = result && typeof result === 'object' ? (result as { details?: { truncated?: unknown; totalChars?: unknown; fullOutputPath?: unknown } }).details : undefined
+          if (details && details.truncated === true) {
+            toolCapNote = `, tool-capped before storage${typeof details.totalChars === 'number' ? ` (tool output was ${details.totalChars} chars)` : ''}: stored text is the capped output, not the raw output` +
+              (typeof details.fullOutputPath === 'string' ? `; full output file: ${details.fullOutputPath}` : '')
+          }
           body = part === 'result'
             ? resultText
             : `Tool: ${meta.toolName ?? 'unknown'}\nArgs: ${meta.toolArgs == null ? '' : JSON.stringify(meta.toolArgs)}\nResult:\n${resultText}`
@@ -100,7 +109,7 @@ export function createRecallMessageTool(options: RecallMessageToolOptions): Agen
       const slice = body.slice(offset, offset + pageChars)
       const remaining = Math.max(0, body.length - offset - slice.length)
       const header = `${RECALLED_MARKER} message ${row.id} (${row.role}, ${row.timestamp}, ${body.length} chars` +
-        (part === 'result' && row.role === 'tool' ? ', stored result only' : '') +
+        (part === 'result' && row.role === 'tool' ? ', stored result only' : '') + toolCapNote +
         (offset > 0 ? `, from ${offset}` : '') + `)`
       const footer = remaining > 0 ? `\n\n[${remaining} more chars, call again with offset=${offset + slice.length}${part === 'result' ? ' and part="result"' : ''}]` : ''
 

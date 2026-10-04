@@ -6,7 +6,8 @@
  * strand whose owner switched Eco on. It runs before EVERY LLM request —
  * including each iteration of a tool loop — and returns the VIEW that goes to
  * the provider. The agent transcript is never mutated, so no tool runs twice
- * and the raw results stay in the transcript and the database.
+ * and the stored tool results (as the tool returned them, possibly already
+ * capped by the tool itself) stay in the transcript and the database.
  *
  * Budget, honestly computed:
  *
@@ -341,7 +342,8 @@ export function renderEcoToolView(msg: ToolResultLike, headChars: number, tailCh
   if (keyLines.length > 0) out.push('--- key lines from the omitted middle (exact) ---', ...keyLines)
   if (tail) out.push(`--- tail (exact, ${middleEnd - middleStart} chars omitted before) ---`, tail)
   // Reload path: recall_message is scoped to the caller's user and persona
-  // and pages with `offset`, so the raw result stays reachable without a
+  // and pages with `offset`, so the STORED result (as the tool returned it,
+  // possibly tool-capped) stays reachable without a
   // second execution of a tool that may have side effects.
   // Callers only render a view when a recall reference exists (safety
   // contract above); without one there is no view at all.
@@ -568,8 +570,13 @@ function assistantHasText(m: AgentMessage): boolean {
 }
 
 /** Why a view could not be made to fit: the irreducible current turn first. */
-function classifyRefusal(messages: readonly AgentMessage[], fixedTokens: number, inputBudget: number): EcoRefusalReason {
+function classifyRefusal(messages: readonly AgentMessage[], baseFixedTokens: number, inputBudget: number): EcoRefusalReason {
   const userAt = lastUserIndex(messages)
+  // A system prompt that travels as a 'system' message is fixed context too
+  // (Eco never shortens it); counting it as history would blame the
+  // transcript for a refusal the system prompt + tool schemas caused.
+  let fixedTokens = baseFixedTokens
+  for (const m of messages) if ((m as { role?: string }).role === 'system') fixedTokens += estimateEcoMessageTokens(m)
   if (fixedTokens >= inputBudget * 0.9) return 'fixed_context_too_large'
   if (userAt >= 0 && fixedTokens + estimateEcoMessageTokens(messages[userAt]) > inputBudget) return 'current_user_message_too_large'
   let args = 0

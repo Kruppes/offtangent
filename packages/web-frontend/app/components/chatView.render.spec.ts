@@ -953,7 +953,9 @@ describe('ChatView: scrolling and message actions', () => {
     receive({ type: 'done' })
     await flush()
     expect(textOf(root)).toContain('chat.historySyncError')
-    expect(textOf(root)).toContain('answer')
+    // The assistant body is markdown rendered via v-html, never a text node:
+    // the streamed answer must still be on screen in its prose block.
+    expect(assistantProse(root).some(n => String(n.props.innerHTML).includes('answer'))).toBe(true)
     expect(byTag(root, 'textarea')).toHaveLength(1)
 
     historyResponder = null

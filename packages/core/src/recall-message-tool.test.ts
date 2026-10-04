@@ -3,6 +3,7 @@ import { createRecallMessageTool } from './recall-message-tool.js'
 import { initDatabase } from './database.js'
 import type { Database } from './database.js'
 import type { AgentTool } from '@earendil-works/pi-agent-core'
+import { createYoloTools } from './agent-runtime.js'
 
 function text(result: Awaited<ReturnType<AgentTool['execute']>>): string {
   const content = (result as { content: { type: string; text?: string }[] }).content
@@ -75,5 +76,28 @@ describe('recall_message tool', () => {
     const tool = createRecallMessageTool({ db })
     const r = await tool.execute('c1', { message_id: -1 })
     expect(details(r).error).toBe(true)
+  })
+  it('tool cap runs inside the tool BEFORE storage: recall labels the stored text as tool-capped, never as raw', async () => {
+    // Real shell tool, synthetic output above the default caps.
+    const shell = createYoloTools().find(t => t.name === 'shell')!
+    const result = await shell.execute('cap1', { command: "python3 -c \"print('SYNTHETIC-HEAD'); print('x'*60000); print('SYNTHETIC-TAIL')\"" })
+    const resDetails = (result as { details?: { truncated?: boolean } }).details
+    expect(resDetails?.truncated).toBe(true)
+    // Persist exactly what the runtime persists for tool rows (event.result).
+    const info = db.prepare('INSERT INTO chat_messages (session_id, user_id, role, content, metadata, agent_id) VALUES (?, ?, ?, ?, ?, ?)').run(
+      's1', 1, 'tool', 'Tool: shell', JSON.stringify({ toolName: 'shell', toolCallId: 'cap1', toolArgs: {}, toolResult: result }), 'main')
+    const tool = createRecallMessageTool({ db })
+    const out = text(await tool.execute('c1', { message_id: Number(info.lastInsertRowid), part: 'result' }))
+    expect(out).toContain('tool-capped before storage')
+    expect(out).toContain('not the raw output')
+    // The stored text is far smaller than the 60k raw output.
+    const stored = JSON.stringify((result as { content: unknown }).content)
+    expect(stored.length).toBeLessThan(60000)
+  }, 30_000)
+
+  it('an uncapped tool row carries no cap note', async () => {
+    const tool = createRecallMessageTool({ db })
+    const out = text(await tool.execute('c1', { message_id: 11, part: 'result' }))
+    expect(out).not.toContain('tool-capped')
   })
 })
