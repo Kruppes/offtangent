@@ -57,7 +57,8 @@ describe('form controls disabled state', () => {
     ['Switch.vue', /disabled:data-\[state=checked\]:bg-muted disabled:data-\[state=unchecked\]:bg-muted/],
     ['DropdownMenuItem.vue', /data-\[disabled\]:text-muted-foreground data-\[disabled\]:\[&_svg\]:text-border/],
     ['SelectItem.vue', /data-\[disabled\]:text-muted-foreground data-\[disabled\]:\[&_svg\]:text-border/],
-    ['TabsTrigger.vue', /disabled:cursor-not-allowed disabled:text-muted-foreground/],
+    // W12: a locked tab is aria-disabled (stays focusable), so the look hangs on that state.
+    ['TabsTrigger.vue', /aria-disabled:cursor-not-allowed aria-disabled:text-muted-foreground/],
     ['Label.vue', /peer-disabled:text-muted-foreground/],
   ]
   for (const [file, re] of cases) {
