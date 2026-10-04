@@ -35,7 +35,7 @@ const content = computed({
         v-model="content"
         :placeholder="t('memory.editorPlaceholder')"
         spellcheck="false"
-        class="w-full flex-1 min-h-0 resize-none p-4 font-mono text-sm text-foreground placeholder:text-muted-foreground leading-relaxed focus:outline-none transition-colors overflow-y-auto"
+        class="w-full flex-1 min-h-0 resize-none p-4 font-mono text-sm text-foreground placeholder:text-muted-foreground leading-6 focus:outline-none transition-colors overflow-y-auto"
         :class="filePath ? 'bg-transparent focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring' : 'rounded-xl border border-border bg-card focus:ring-2 focus:ring-ring focus:ring-offset-2 focus:ring-offset-background'"
       />
     </div>

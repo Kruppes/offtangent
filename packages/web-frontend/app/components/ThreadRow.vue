@@ -117,7 +117,7 @@ function submitRename() {
           <span class="shrink-0 text-2xs text-muted-foreground">{{ relativeTime }}</span>
         </div>
 
-        <p v-if="excerpt" class="mt-1 line-clamp-2 text-xs leading-relaxed text-muted-foreground">
+        <p v-if="excerpt" class="mt-1 line-clamp-2 text-xs leading-5 text-muted-foreground">
           {{ excerpt }}
         </p>
         <p v-else class="mt-1 text-xs italic text-muted-foreground">{{ $t('threads.noMessagesYet') }}</p>

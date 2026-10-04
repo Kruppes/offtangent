@@ -31,7 +31,7 @@
       />
       <circle v-if="geometry.band === 'full'" :cx="c" :cy="c" :r="r + stroke" fill="none" class="stroke-ring-full" :stroke-width="large ? 1.5 : 1" stroke-dasharray="2 2" data-ring-full-mark />
     </svg>
-    <span v-if="large" class="absolute inset-0 flex flex-col items-center justify-center text-center leading-tight">
+    <span v-if="large" class="absolute inset-0 flex flex-col items-center justify-center text-center leading-5">
       <span class="text-lg font-semibold tabular-nums">{{ percent === null ? '–' : `${percent} %` }}</span>
       <span v-if="geometry.band === 'caution' || geometry.band === 'full'" class="text-2xs font-semibold uppercase tracking-label" :class="geometry.band === 'full' ? 'text-destructive' : 'text-foreground'">{{ geometry.band === 'full' ? '!!' : '!' }}</span>
     </span>

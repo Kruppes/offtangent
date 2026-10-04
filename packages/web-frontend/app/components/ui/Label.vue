@@ -20,7 +20,7 @@ const delegatedProps = computed(() => {
   <Label
     v-bind="delegatedProps"
     :class="cn(
-      'text-sm font-medium leading-tight peer-disabled:cursor-not-allowed peer-disabled:text-muted-foreground',
+      'text-sm font-medium leading-5 peer-disabled:cursor-not-allowed peer-disabled:text-muted-foreground',
       props.class
     )"
   >

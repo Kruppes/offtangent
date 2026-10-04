@@ -119,7 +119,7 @@
                   <!-- Stuck at "sending": the outcome is unknown, never "not sent". -->
                   <p
                     v-if="isStaleSending(entry)"
-                    class="mt-1 text-2xs leading-snug text-destructive"
+                    class="mt-1 text-2xs leading-5 text-destructive"
                     data-testid="stale-sending-warning"
                   >
                     {{ $t('email.sentLog.staleSending') }}

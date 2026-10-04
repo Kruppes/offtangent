@@ -94,7 +94,7 @@ const isSkillLoad = computed(() => {
         <h4 class="mb-2 text-xs font-semibold uppercase tracking-label text-muted-foreground">
           {{ t('logs.input') }}
         </h4>
-        <div class="oa-scrollbar max-h-[200px] overflow-y-auto rounded-md border border-border bg-muted p-3 text-xs leading-snug">
+        <div class="oa-scrollbar max-h-[200px] overflow-y-auto rounded-md border border-border bg-muted p-3 text-xs leading-5">
           <ToolDataDisplay :data="parseLogData(entry.input)" />
         </div>
       </div>
@@ -107,7 +107,7 @@ const isSkillLoad = computed(() => {
         <!-- Memory diffs: edge-to-edge inside a single border container -->
         <div
           v-if="memoryEditsInfo || memoryFileDiff"
-          class="oa-scrollbar max-h-[420px] overflow-y-auto overflow-x-hidden rounded-md border border-border bg-muted text-xs leading-snug"
+          class="oa-scrollbar max-h-[420px] overflow-y-auto overflow-x-hidden rounded-md border border-border bg-muted text-xs leading-5"
         >
           <template v-if="memoryEditsInfo">
             <MemoryEditsDiff
@@ -126,7 +126,7 @@ const isSkillLoad = computed(() => {
         <!-- Standard output -->
         <div
           v-else
-          class="oa-scrollbar max-h-[300px] overflow-y-auto rounded-md border border-border bg-muted p-3 text-xs leading-snug"
+          class="oa-scrollbar max-h-[300px] overflow-y-auto rounded-md border border-border bg-muted p-3 text-xs leading-5"
         >
           <template v-if="isSkillLoad">
             <pre class="whitespace-pre-wrap break-all text-foreground">{{ extractSkillContent(entry.output) ?? '' }}</pre>

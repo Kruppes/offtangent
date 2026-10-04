@@ -25,7 +25,7 @@ const isEmpty = computed(() => !props.summary && (!pretty.value || pretty.value 
         :aria-expanded="open" aria-controls="board-raw-json" @click="open = !open">
         <AppIcon :name="open ? 'chevronDown' : 'chevronRight'" />{{ $t('boards.rawData') }}
       </button>
-      <pre v-show="open" id="board-raw-json" class="max-h-96 overflow-auto px-4 pb-4 font-mono text-xs leading-relaxed">{{ pretty }}</pre>
+      <pre v-show="open" id="board-raw-json" class="max-h-96 overflow-auto px-4 pb-4 font-mono text-xs leading-5">{{ pretty }}</pre>
     </section>
   </div>
 </template>

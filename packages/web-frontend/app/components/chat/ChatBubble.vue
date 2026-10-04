@@ -26,7 +26,7 @@
       class="mb-1 text-xs font-semibold text-muted-foreground"
       data-speaker-label
     >{{ personaLabel }}</p>
-    <div v-if="!interactionCard(msg) || hasBubbleBody(msg)" class="min-w-0 max-w-full rounded-2xl px-4 py-2 text-sm leading-relaxed" :class="{
+    <div v-if="!interactionCard(msg) || hasBubbleBody(msg)" class="min-w-0 max-w-full rounded-2xl px-4 py-2 text-sm leading-6" :class="{
       'rounded-br-sm bg-card text-foreground': msg.role === 'user' && msg.source !== 'telegram',
       'rounded-br-sm bg-telegram-subtle text-foreground': msg.role === 'user' && msg.source === 'telegram',
       'rounded-bl-sm border border-border bg-muted text-foreground': msg.role === 'assistant' && !msg.telegramDelivered && !interactionCard(msg),

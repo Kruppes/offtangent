@@ -10,7 +10,7 @@
       class="w-full overflow-hidden rounded-lg border border-border bg-background"
       role="status"
     >
-      <p class="px-4 pb-2 pt-3 text-sm font-medium leading-snug text-foreground">{{ block.question }}</p>
+      <p class="px-4 pb-2 pt-3 text-sm font-medium leading-5 text-foreground">{{ block.question }}</p>
       <p class="border-t border-border px-4 py-2 text-xs text-muted-foreground">{{ staleReason }}</p>
     </div>
 
@@ -22,7 +22,7 @@
       role="status"
       :aria-label="`${block.question} — ${closedAriaLabel}`"
     >
-      <p class="px-4 pb-2 pt-3 text-sm font-medium leading-snug text-foreground">{{ block.question }}</p>
+      <p class="px-4 pb-2 pt-3 text-sm font-medium leading-5 text-foreground">{{ block.question }}</p>
       <div class="divide-y divide-border border-t border-border">
         <div
           v-for="row in closedRows"
@@ -48,7 +48,7 @@
       :aria-busy="pending ? 'true' : 'false'"
     >
       <div class="border-b border-border px-4 pb-2 pt-3">
-        <p :id="questionId" class="text-sm font-medium leading-snug text-foreground">{{ block.question }}</p>
+        <p :id="questionId" class="text-sm font-medium leading-5 text-foreground">{{ block.question }}</p>
         <p v-if="isMulti" class="mt-1 text-xs text-muted-foreground">{{ $t('chat.interaction.multiHint') }}</p>
       </div>
 

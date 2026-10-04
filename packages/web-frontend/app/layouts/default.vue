@@ -90,7 +90,7 @@
                 </span>
                 <!-- Name + role -->
                 <div v-if="!compact" class="flex min-w-0 flex-1 flex-col">
-                  <span class="truncate text-sm font-medium text-sidebar-foreground leading-tight">{{ user?.username }}</span>
+                  <span class="truncate text-sm font-medium text-sidebar-foreground leading-5">{{ user?.username }}</span>
                   <span class="text-2xs uppercase tracking-label text-muted-foreground">
                     {{ isAdmin ? $t('roles.admin') : $t('roles.user') }}
                   </span>

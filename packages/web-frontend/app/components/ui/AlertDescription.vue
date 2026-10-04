@@ -9,7 +9,7 @@ const props = defineProps<{
 
 <template>
   <div
-    :class="cn('text-sm [&_p]:leading-relaxed', props.class)"
+    :class="cn('text-sm [&_p]:leading-6', props.class)"
     v-bind="$attrs"
   >
     <slot />

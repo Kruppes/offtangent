@@ -19,7 +19,7 @@
           v-if="expandedSummaries.has(String(msg.id ?? index))"
           class="rounded-b-lg border border-t-0 border-border bg-card px-4 py-3"
         >
-          <p class="text-xs leading-relaxed text-muted-foreground">
+          <p class="text-xs leading-5 text-muted-foreground">
             {{ msg.content }}
           </p>
         </div>
