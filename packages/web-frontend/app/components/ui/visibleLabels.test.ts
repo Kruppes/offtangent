@@ -19,7 +19,6 @@ const field = /<(Input|input|textarea|select|SelectTrigger)\b([^>]*?)\/?>/gs
 
 /** Invisible-only names that stay, with the reason. Key: file, value: count. */
 const EXCEPTIONS: Record<string, { count: number, reason: string }> = {
-  'components/ChatInteractionBlock.vue': { count: 1, reason: 'inline free-text answer that replaces the visible "own answer" button in place' },
   'components/CommandPalette.vue': { count: 1, reason: 'palette search combobox, the only field of the dialog, introduced by its search icon' },
   'components/ThreadHeader.vue': { count: 1, reason: 'inline rename that replaces the visible title in place' },
   'components/ThreadRow.vue': { count: 1, reason: 'inline rename that replaces the visible title in place' },

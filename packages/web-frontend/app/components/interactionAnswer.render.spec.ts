@@ -157,7 +157,11 @@ describe('interaction taps', () => {
 
     const input = find(root, n => n.type === 'input')!
     expect(input).toBeDefined()
-    expect(input.props['aria-label']).toBe('chat.interaction.ownAnswer')
+    // The inline answer is named by the visible question (W12), not by a hidden label.
+    expect(input.props['aria-labelledby']).toBe(`interaction-${block.id}-question`)
+    expect(input.props['aria-label']).toBeUndefined()
+    const question = find(root, n => n.type === 'p' && n.props.id === `interaction-${block.id}-question`)
+    expect(question).toBeDefined()
     ;(input.props.onInput as (e: unknown) => void)({ target: { value: 'Ask Bob first' } })
     await nextTick()
     fireKeydown(input, 'Enter')

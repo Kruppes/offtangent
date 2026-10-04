@@ -115,7 +115,7 @@
             type="text"
             :value="ownAnswerText"
             @input="ownAnswerText = ($event.target as HTMLInputElement).value"
-            :aria-label="$t('chat.interaction.ownAnswer')"
+            :aria-labelledby="questionId"
             :placeholder="$t('chat.interaction.ownAnswerPlaceholder')"
             class="h-11 w-full min-w-0 bg-transparent px-4 text-sm focus:outline-none"
             @keydown.enter.prevent="confirmOwnAnswer"
