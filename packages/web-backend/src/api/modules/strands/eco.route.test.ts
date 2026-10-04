@@ -8,7 +8,7 @@ import fs from 'node:fs'
 import http from 'node:http'
 import os from 'node:os'
 import path from 'node:path'
-import { initDatabase, SessionManager, isStrandEcoEnabled, logToolCall } from '@axiom/core'
+import { initDatabase, SessionManager, isStrandEcoEnabled } from '@axiom/core'
 import type { AgentCore, Database } from '@axiom/core'
 import { createApp } from '../../../app.js'
 import { generateAccessToken } from '../../../auth.js'
@@ -110,17 +110,14 @@ describe('strand eco mode', () => {
   it('reports the last eco view as estimates from the metric row', async () => {
     const strand = sessionManager.createThread('1', 'main', 'Metric')
     await api('PATCH', `/api/strands/${strand.id}/eco`, { enabled: true })
-    logToolCall(db, {
-      sessionId: strand.id,
-      toolName: 'eco_context',
-      input: JSON.stringify({ tokensBefore: 30000, tokensAfter: 20000, inputBudget: 28672, compacted: 3, dropped: 2, degraded: false }),
-      output: '',
-      durationMs: 0,
-    })
+    // Dedicated numeric metric table (review 5c5f47a6 #6): never tool_calls.
+    db.prepare(`INSERT INTO eco_metrics (session_id, context_window, output_reserve, input_budget, observed_limit,
+      tokens_before, tokens_after, compacted, dropped, unrecallable, refused, refusal_reason) VALUES (?, 40960, 8192, 28672, NULL, 30000, 20000, 3, 2, 0, 0, NULL)`).run(strand.id)
     const ctx = await api('GET', `/api/strands/${strand.id}/context`)
     expect(ctx.body.eco).toMatchObject({
       enabled: true,
       last: { estimatedTokensBefore: 30000, estimatedTokensAfter: 20000, inputBudgetTokens: 28672, compactedResults: 3, droppedMessages: 2, degraded: false },
     })
+    expect(db.prepare("SELECT COUNT(*) AS n FROM tool_calls WHERE tool_name = 'eco_context'").get()).toEqual({ n: 0 })
   })
 })

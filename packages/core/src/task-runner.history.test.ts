@@ -197,4 +197,81 @@ describe('TaskRunner history compaction', () => {
     expect(text).toContain('FULL-TOOL-OUTPUT-42')
     expect(text).toContain('Tool: shell')
   })
+
+  it('eco: a task session with Eco on gets the shared Eco stage on every request (budgeted, row-referenced views)', async () => {
+    db.prepare("INSERT INTO sessions (id, agent_id, type, eco_mode) VALUES ('task-eco-1', 'main', 'task', 1)").run()
+    const task = store.create({ name: 'Eco Task', prompt: 'Do work', triggerType: 'agent', sessionId: 'task-eco-1' })
+    // Tiny declared window so the Eco budget (not the chars/4 compactor) is the binding limit.
+    runner.dispose()
+    runner = new TaskRunner({
+      db,
+      buildModel: () => ({ contextWindow: 4096, maxTokens: 512 } as ReturnType<TaskRunnerOptions['buildModel']>),
+      getApiKey: async () => 'test-key',
+      tools: [],
+      onTaskComplete: () => {},
+      sessionManager: new SessionManager({ db }),
+    })
+    await runner.startTask(task, mockProvider)
+    await new Promise(resolve => setTimeout(resolve, 100))
+
+    const transcript: AgentMessage[] = [user('Begin.')]
+    for (let i = 0; i < 3; i++) transcript.push(assistant(`step ${i}`, `e${i}`), toolResult(`e${i}`, `OUT-${i} ${'y'.repeat(3000)} exit code ${i}`))
+    // Same row shape the runner writes on tool_execution_end: only persisted
+    // results may be shortened (recall reference = chat_messages.id).
+    for (let i = 0; i < 3; i++) {
+      db.prepare("INSERT INTO chat_messages (session_id, user_id, role, content, metadata, agent_id) VALUES ('task-eco-1', NULL, 'tool', 'Tool: shell', ?, 'main')")
+        .run(JSON.stringify({ toolName: 'shell', toolCallId: `e${i}`, toolArgs: {}, toolResult: `OUT-${i} ${'y'.repeat(3000)} exit code ${i}`, toolIsError: false }))
+    }
+    const before = JSON.stringify(transcript)
+    const view = await captured.transformContext!(transcript)
+    expect(JSON.stringify(transcript)).toBe(before)
+    const all = view.map(textOf).join('\n')
+    expect(all).toContain('[eco view')
+    expect(all).toContain('OUT-2 ') // current batch head exact
+    const metric = db.prepare('SELECT input_budget AS b, refusal_reason AS r FROM eco_metrics WHERE session_id = ?').get('task-eco-1') as { b: number; r: string | null } | undefined
+    expect(metric).toBeDefined()
+    expect(metric!.b).toBeGreaterThan(0)
+    expect(metric!.r).toBeNull()
+    expect(db.prepare("SELECT COUNT(*) AS n FROM tool_calls WHERE tool_name = 'eco_context'").get()).toEqual({ n: 0 })
+  })
+
+  it('eco: a task session refuses (typed EcoBudgetError) instead of cutting UNpersisted results', async () => {
+    db.prepare("INSERT INTO sessions (id, agent_id, type, eco_mode) VALUES ('task-eco-2', 'main', 'task', 1)").run()
+    const task = store.create({ name: 'Eco Task 2', prompt: 'Do work', triggerType: 'agent', sessionId: 'task-eco-2' })
+    runner.dispose()
+    runner = new TaskRunner({
+      db,
+      buildModel: () => ({ contextWindow: 4096, maxTokens: 512 } as ReturnType<TaskRunnerOptions['buildModel']>),
+      getApiKey: async () => 'test-key',
+      tools: [],
+      onTaskComplete: () => {},
+      sessionManager: new SessionManager({ db }),
+    })
+    await runner.startTask(task, mockProvider)
+    await new Promise(resolve => setTimeout(resolve, 100))
+    const transcript: AgentMessage[] = [user('Begin.')]
+    for (let i = 0; i < 3; i++) transcript.push(assistant(`step ${i}`, `n${i}`), toolResult(`n${i}`, `OUT-${i} ${'y'.repeat(3000)} exit code ${i}`))
+    await expect(captured.transformContext!(transcript)).rejects.toMatchObject({ name: 'EcoBudgetError' })
+  })
+
+  it('eco: normal task sessions (default) never get the Eco stage', async () => {
+    const task = store.create({ name: 'Plain Task', prompt: 'Do work', triggerType: 'agent', sessionId: 'task-plain-1' })
+    await runner.startTask(task, mockProvider)
+    await new Promise(resolve => setTimeout(resolve, 100))
+    const transcript: AgentMessage[] = [user('hi'), assistant('step', 'p1'), toolResult('p1', 'z'.repeat(9000))]
+    const view = await captured.transformContext!(transcript)
+    expect(view.map(textOf).join('')).not.toContain('[eco view')
+    expect(db.prepare('SELECT COUNT(*) AS n FROM eco_metrics').get()).toEqual({ n: 0 })
+  })
+
+  it('eco: a task spawned from an Eco strand persists an inherited Eco switch on its own session', async () => {
+    db.prepare("INSERT INTO sessions (id, agent_id, eco_mode) VALUES ('strand-eco', 'main', 1)").run()
+    const task = store.create({ name: 'Child Task', prompt: 'Do work', triggerType: 'agent' })
+    await runner.startTask(task, mockProvider, undefined, 'strand-eco')
+    await new Promise(resolve => setTimeout(resolve, 100))
+    const sessionId = store.getById(task.id)!.sessionId!
+    expect(sessionId).toBeTruthy()
+    const row = db.prepare('SELECT eco_mode, parent_session_id FROM sessions WHERE id = ?').get(sessionId) as { eco_mode: number; parent_session_id: string }
+    expect(row).toEqual({ eco_mode: 1, parent_session_id: 'strand-eco' })
+  })
 })

@@ -16,10 +16,16 @@
  *   provider config (for a local runner that is the runner's loaded
  *   `num_ctx`, e.g. Ollama `/api/ps` context_length). Never the architecture
  *   maximum of the weights. Missing → a conservative fallback.
- * - outputReserve: the model's `maxTokens`. OpenAI-compatible runners count
- *   reasoning/thinking tokens inside the same completion budget, so the
- *   reserve covers thinking too. (Diagnosis 2026-10-04: 41501 > 40960 with a
- *   ~33k prompt and 8192 maxTokens — nobody reserved the output.)
+ * - outputReserve: the `maxTokens` the request actually carries. pi-ai sends
+ *   `options.maxTokens ?? model.maxTokens` (clamped by pi-ai to the window),
+ *   OpenAI-compatible runners count reasoning/thinking inside that same
+ *   completion budget and the Anthropic path caps base+thinking at
+ *   model.maxTokens, so model.maxTokens bounds answer AND thinking. pi-ai
+ *   additionally clamps the sent limit to (window - prompt estimate - 4096),
+ *   so the reserve is min(maxTokens, window/2) — a limit the request really
+ *   gets (see resolveEcoBudget).
+ *   (Incident 2026-10-04: the runner reported a PROMPT of 41501 tokens
+ *   against n_ctx 40960 — the prompt alone overflowed, output not counted.)
  * - safetyMargin: max(1024, 10 % of the window) because the estimate below is
  *   a conservative calibration, not a tokenizer.
  *
@@ -35,9 +41,18 @@
  *   2. Drop the oldest atomic segments (an assistant message together with
  *      all of its tool results) between the pinned head (system + first user
  *      message) and the protected tail (last user message onwards).
- *   3. Compact the current batch with a tighter cap. If the view still does
- *      not fit, it is sent anyway and flagged `degraded`: the provider's own
- *      error stays visible instead of facts silently vanishing.
+ *   3. Compact the current batch with a tighter cap.
+ *   If the view still does not fit, NOTHING is sent: the caller throws a
+ *   typed EcoBudgetError (fail closed) with an actionable message.
+ *
+ * Safety contract (review 5c5f47a6): a tool result is only shortened or
+ * dropped when its ORIGINAL is already persisted and a session-scoped
+ * recall reference exists. Without that reference it stays in full; if the
+ * request then does not fit, Eco refuses instead of cutting. A compact view
+ * is NOT a fact guarantee (head/tail/key lines are heuristics): it carries an
+ * explicit loss marker and the recall reference. User messages and the
+ * current user turn are never dropped; dropped tool calls stay listed in a
+ * side-effect ledger (tool, call id, status, recall id).
  *
  * Deterministic on purpose: the same transcript gives the same view, so the
  * prompt prefix stays byte-stable between calls and the prompt cache holds.
@@ -52,8 +67,13 @@ export const ECO_FALLBACK_CONTEXT_WINDOW = 8192
 export const ECO_FALLBACK_OUTPUT_RESERVE = 2048
 /** Conservative chars-per-token calibration (code/JSON/non-latin text run denser than prose). */
 export const ECO_CHARS_PER_TOKEN = 3
+/** Upper bounds for the side-effect ledger note (fixed text + per-entry framing incl. recall id). */
+const LEDGER_HEADER_CHARS = 600
+const LEDGER_ENTRY_BASE_CHARS = 64
 /** Per-message framing overhead (role tags, separators) in tokens. */
 export const ECO_MESSAGE_OVERHEAD = 8
+/** Per-tool framing on the wire beyond the serialized schema, in tokens. */
+export const ECO_TOOL_SCHEMA_OVERHEAD = 16
 /** Token cost charged for one image block. */
 export const ECO_IMAGE_TOKENS = 1500
 
@@ -74,9 +94,13 @@ export const ECO_OMITTED_MARKER = '[eco: '
 export interface EcoBudgetInput {
   contextWindow?: number | null
   maxTokens?: number | null
+  /** Runtime limit reported by the runner in an earlier overflow error (see parseContextOverflow). */
+  observedContextLimit?: number | null
 }
 
 export interface EcoBudget {
+  /** True when no maxTokens was declared and ECO_FALLBACK_OUTPUT_RESERVE was used. */
+  reserveFallback?: boolean
   /** Operative context the budget is derived from. */
   contextWindow: number
   /** True when the model declared no window and the fallback was used. */
@@ -93,13 +117,119 @@ function positiveInt(value: unknown): number | null {
 
 export function resolveEcoBudget(model: EcoBudgetInput): EcoBudget {
   const declared = positiveInt(model.contextWindow)
-  const contextWindow = declared ?? ECO_FALLBACK_CONTEXT_WINDOW
-  // A maxTokens at or above the window would leave no room for any prompt;
-  // cap the reserve at half the window so the request stays possible.
-  const outputReserve = Math.min(positiveInt(model.maxTokens) ?? ECO_FALLBACK_OUTPUT_RESERVE, Math.floor(contextWindow / 2))
+  const observed = positiveInt(model.observedContextLimit)
+  // A limit the runner itself reported in an overflow error is evidence; it
+  // can only LOWER the operative window, never raise it above the declared one.
+  const base = declared ?? ECO_FALLBACK_CONTEXT_WINDOW
+  const contextWindow = observed !== null ? Math.min(base, observed) : base
+  // The reserve follows the SDK's real request semantics: pi-ai sends
+  // max_tokens = min(options.maxTokens ?? model.maxTokens,
+  //                  contextWindow - estimate(chars/4) - 4096)
+  // (simple-options.ts clampMaxTokensToContext, used by every streamSimple
+  // API incl. openai-completions). So a declared maxTokens >= the window is
+  // never actually requested in full: the request limit shrinks to the room
+  // the prompt leaves. Reserving min(declared, window/2) therefore matches a
+  // limit the request really gets, not an invented one.
+  const declaredReserve = positiveInt(model.maxTokens)
+  const outputReserve = Math.min(declaredReserve ?? ECO_FALLBACK_OUTPUT_RESERVE, Math.floor(contextWindow / 2))
   const safetyMargin = Math.max(1024, Math.ceil(contextWindow * 0.1))
   const inputBudget = Math.max(0, contextWindow - outputReserve - safetyMargin)
-  return { contextWindow, contextFallback: declared === null, outputReserve, safetyMargin, inputBudget }
+  return { contextWindow, contextFallback: declared === null && observed === null, reserveFallback: declaredReserve === null, outputReserve, safetyMargin, inputBudget }
+}
+
+export type EcoRefusalReason =
+  | 'no_input_budget'
+  | 'fixed_context_too_large'
+  | 'current_user_message_too_large'
+  | 'current_tool_arguments_too_large'
+  | 'current_tool_results_too_large'
+  | 'history_not_reducible'
+  | 'eco_state_unreadable'
+  | 'eco_internal_error'
+
+/** Prefix of every Eco refusal text; the runtime shows it without the "Modellfehler" frame. */
+export const ECO_REFUSAL_PREFIX = 'Eco-Modus hat die Anfrage NICHT gesendet'
+
+const REFUSAL_HINT: Record<EcoRefusalReason, string> = {
+  no_input_budget: 'Das maxTokens des Modells lässt im Kontextfenster keinen Platz für die Eingabe. Abhilfe: maxTokens des Modells senken oder ein Modell mit größerem Fenster wählen.',
+  fixed_context_too_large: 'Systemprompt und Werkzeug-Schemas allein überschreiten das Eingabebudget dieses Modells. Abhilfe: ein Modell mit größerem Kontextfenster oder kleinerem maxTokens wählen oder Eco für diesen Strand ausschalten.',
+  current_user_message_too_large: 'Die aktuelle Nachricht ist allein zu groß für das Budget. Abhilfe: Text kürzen oder als Datei hochladen und gezielt lesen lassen, Eco für diesen Strand ausschalten oder ein Modell mit größerem Fenster wählen.',
+  current_tool_arguments_too_large: 'Die Werkzeug-Argumente dieses Zuges sind zu groß für das Budget. Abhilfe: Aufgabe in kleinere Schritte teilen oder ein Modell mit größerem Fenster wählen.',
+  current_tool_results_too_large: 'Die Werkzeug-Ergebnisse dieses Zuges passen nicht und sind (noch) nicht gespeichert, dürfen also nicht gekürzt werden. Abhilfe: Anfrage wiederholen, gezielter lesen lassen oder Eco ausschalten.',
+  history_not_reducible: 'Der bisherige Verlauf passt nicht und enthält Teile ohne gespeicherte Kopie, die Eco nicht verlustfrei kürzen darf. Abhilfe: neuen Strand beginnen, Eco ausschalten oder ein Modell mit größerem Fenster wählen.',
+  eco_state_unreadable: 'Der Eco-Schalter dieses Strands konnte nicht gelesen werden. Abhilfe: erneut versuchen; bleibt der Fehler, Datenbank prüfen.',
+  eco_internal_error: 'Interner Fehler in der Eco-Aufbereitung. Abhilfe: erneut versuchen oder Eco für diesen Strand ausschalten.',
+}
+
+/**
+ * Typed fail-closed refusal: thrown from the pre-send hook instead of sending
+ * an over-budget or unsafely cut request. Its message is user-facing and
+ * deliberately free of provider overflow phrasing, so it is never parsed as a
+ * runner overflow (parseContextOverflow) or retried as a transient error.
+ */
+export class EcoBudgetError extends Error {
+  readonly code = 'ECO_BUDGET_REFUSED'
+  constructor(
+    readonly reason: EcoRefusalReason,
+    readonly estimatedTokens: number | null = null,
+    readonly inputBudget: number | null = null,
+  ) {
+    const numbers = estimatedTokens !== null && inputBudget !== null
+      ? ` (geschätzt ${estimatedTokens} Tokens, Budget ${inputBudget}; Schätzung chars/3, kein Tokenizer)`
+      : ''
+    super(`${ECO_REFUSAL_PREFIX}${numbers}. ${REFUSAL_HINT[reason]}`)
+    this.name = 'EcoBudgetError'
+  }
+}
+
+export function isEcoRefusalText(text: string | null | undefined): boolean {
+  return typeof text === 'string' && text.startsWith(ECO_REFUSAL_PREFIX)
+}
+
+export interface ContextOverflow {
+  /** Tokens the runner says the request needed, when stated. */
+  requested: number | null
+  /** Context limit the runner says it has, when stated. */
+  limit: number | null
+}
+
+const OVERFLOW_TEXT = /(context (?:length|size|window)|maximum context|prompt is too long|too many tokens|exceeds? the (?:available )?context|context_length_exceeded|n_ctx)/i
+
+/**
+ * Recognise a provider/runner context-overflow error and pull the numbers it
+ * states. Covers the llama.cpp/Ollama phrasing ("request (41501 tokens)
+ * exceeds the available context size (40960 tokens)"), OpenAI
+ * ("maximum context length is 40960 tokens … resulted in 41501 tokens") and
+ * a bare "41501 > 40960". Returns null for anything else.
+ */
+export function parseContextOverflow(message: string | null | undefined): ContextOverflow | null {
+  if (!message || !OVERFLOW_TEXT.test(message)) return null
+  const bare = /(\d{3,8})\s*>\s*(\d{3,8})/.exec(message)
+  if (bare) return { requested: Number(bare[1]), limit: Number(bare[2]) }
+  const llama = /\((\d{3,8}) tokens\)[^()]*context size \((\d{3,8}) tokens\)/i.exec(message)
+  if (llama) return { requested: Number(llama[1]), limit: Number(llama[2]) }
+  const openai = /maximum context length is (\d{3,8})/i.exec(message)
+  if (openai) {
+    const req = /resulted in (\d{3,8})|requested (\d{3,8})/i.exec(message)
+    return { requested: req ? Number(req[1] ?? req[2]) : null, limit: Number(openai[1]) }
+  }
+  return { requested: null, limit: null }
+}
+
+/**
+ * Overflow recovery input: scan the transcript for the newest failed
+ * assistant turn whose error is a context overflow. The transcript is only
+ * read; the retry is the next request through the same budgeted view, so no
+ * tool runs again.
+ */
+export function findLastContextOverflow(messages: readonly AgentMessage[]): ContextOverflow | null {
+  for (let i = messages.length - 1; i >= 0; i--) {
+    const m = messages[i] as { role?: string; stopReason?: string; errorMessage?: string }
+    if (m.role !== 'assistant' || m.stopReason !== 'error') continue
+    const hit = parseContextOverflow(m.errorMessage)
+    if (hit) return hit
+  }
+  return null
 }
 
 export function estimateEcoTextTokens(text: string): number {
@@ -131,13 +261,16 @@ export function estimateEcoFixedTokens(systemPrompt: string | undefined, tools: 
   let n = systemPrompt ? estimateEcoTextTokens(systemPrompt) + ECO_MESSAGE_OVERHEAD : 0
   for (const tool of tools ?? []) {
     const t = tool as { name?: unknown; description?: unknown; parameters?: unknown }
-    n += estimateEcoTextTokens(JSON.stringify({ name: t.name, description: t.description, parameters: t.parameters }))
+    // Provider wire format wraps each schema ({"type":"function","function":{…}}
+    // or Anthropic's input_schema); charge that framing on top of the schema.
+    n += estimateEcoTextTokens(JSON.stringify({ type: 'function', function: { name: t.name, description: t.description, parameters: t.parameters } })) + ECO_TOOL_SCHEMA_OVERHEAD
   }
   return n
 }
 
 interface ToolResultLike {
   role: 'toolResult'
+  details?: unknown
   toolCallId?: string
   toolName?: string
   isError?: boolean
@@ -162,6 +295,8 @@ function toolResultText(msg: ToolResultLike): { text: string; images: number } {
   return { text: parts.join('\n'), images }
 }
 
+/** Bound on recall references listed in the omitted-messages note. */
+
 const ERROR_LINE = /\b(error|errors|failed|failure|fatal|exception|traceback|denied|forbidden|not found|panic|exit (?:code|status)|ENOENT|EACCES|ETIMEDOUT|ECONNREFUSED)\b/i
 const URL_LINE = /https?:\/\/\S+/
 const EXIT_CODE = /\bexit(?:ed)?(?: with)?(?: code| status)?[:= ]\s*(-?\d{1,3})\b/i
@@ -175,7 +310,7 @@ function clipLine(line: string): string {
  * all error/URL lines in between, and a header with the facts a later step
  * needs: tool, call id, status, exit code, original size.
  */
-export function renderEcoToolView(msg: ToolResultLike, headChars: number, tailChars: number): string | null {
+export function renderEcoToolView(msg: ToolResultLike, headChars: number, tailChars: number, recallId?: number): string | null {
   const { text, images } = toolResultText(msg)
   if (text.length <= headChars + tailChars + 200 && images === 0) return null
   const lines = text.split('\n')
@@ -186,7 +321,8 @@ export function renderEcoToolView(msg: ToolResultLike, headChars: number, tailCh
     `call=${msg.toolCallId ?? 'unknown'}`,
     `status=${msg.isError ? 'error' : 'ok'}`,
     ...(exit !== undefined ? [`exit=${exit}`] : []),
-    `original=${text.length} chars/${lines.length} lines`,
+    `stored=${text.length} chars/${lines.length} lines`,
+    ...(toolCapped(msg) ? [`tool_capped=true${toolCapTotal(msg)}`] : []),
     ...(images > 0 ? [`images=${images} omitted`] : []),
   ].join(' · ') + ']'
   const head = text.slice(0, headChars)
@@ -204,8 +340,27 @@ export function renderEcoToolView(msg: ToolResultLike, headChars: number, tailCh
   const out = [header, '--- head (exact) ---', head]
   if (keyLines.length > 0) out.push('--- key lines from the omitted middle (exact) ---', ...keyLines)
   if (tail) out.push(`--- tail (exact, ${middleEnd - middleStart} chars omitted before) ---`, tail)
-  out.push('[eco: shortened view only; the full result is kept unchanged in the transcript and database. Do not re-run a tool that changes state just to see more; re-read a source read-only if needed]')
+  // Reload path: recall_message is scoped to the caller's user and persona
+  // and pages with `offset`, so the raw result stays reachable without a
+  // second execution of a tool that may have side effects.
+  // Callers only render a view when a recall reference exists (safety
+  // contract above); without one there is no view at all.
+  if (recallId === undefined) return null
+  out.push(`[eco: LOSSY view. Head/tail/key lines are a heuristic, values in the omitted middle (numbers, ids, paths) may be missing here. `
+    + `The stored result is message ${recallId}: call recall_message with message_id=${recallId} and part="result" (page with offset) for the exact text instead of re-running the tool`
+    + (toolCapped(msg) ? '. Note: the tool itself already capped this output before it was stored; the stored text is that capped output, not the raw output' : '')
+    + ']')
   return out.join('\n')
+}
+
+function toolCapped(msg: ToolResultLike): boolean {
+  const d = msg.details as { truncated?: unknown } | undefined
+  return !!d && typeof d === 'object' && d.truncated === true
+}
+
+function toolCapTotal(msg: ToolResultLike): string {
+  const d = msg.details as { totalChars?: unknown } | undefined
+  return d && typeof d.totalChars === 'number' ? ` raw_total=${d.totalChars} chars` : ''
 }
 
 function withViewText(msg: AgentMessage & ToolResultLike, view: string): AgentMessage {
@@ -217,6 +372,8 @@ export interface EcoViewInput {
   budget: EcoBudget
   /** System prompt + tool schemas, from estimateEcoFixedTokens. 0 when the system prompt is a message. */
   fixedTokens: number
+  /** Persisted chat row of a tool result (by tool call id), for recall_message references. */
+  resolveRecallId?: (toolCallId: string) => number | undefined
 }
 
 export interface EcoViewResult {
@@ -226,8 +383,13 @@ export interface EcoViewResult {
   tokensAfter: number
   compacted: number
   dropped: number
-  /** The view still exceeds the budget after every step. */
+  /** Large tool results left in full because no recall reference exists. */
+  unrecallable: number
+  /** Dropped tool calls listed in the side-effect ledger note. */
+  ledger: number
+  /** No safe view fits; `messages` is the untouched input and MUST NOT be sent. */
   degraded: boolean
+  refusal: EcoRefusalReason | null
 }
 
 function sumTokens(messages: readonly AgentMessage[], fixed: number): number {
@@ -252,49 +414,89 @@ function lastUserIndex(messages: readonly AgentMessage[]): number {
 
 /**
  * Build the Eco request view. Pure: no I/O, the input array and its messages
- * are never mutated.
+ * are never mutated. Returns `refusal` (and the unchanged input) when no safe
+ * view fits; the caller must then refuse the request (EcoBudgetError).
  */
 export function buildEcoView(input: EcoViewInput): EcoViewResult {
   const { budget, fixedTokens } = input
-  let messages = input.messages.slice()
+  const recallIdOf = (m: ToolResultLike): number | undefined => {
+    if (!input.resolveRecallId || typeof m.toolCallId !== 'string' || !m.toolCallId) return undefined
+    try {
+      const id = input.resolveRecallId(m.toolCallId)
+      return typeof id === 'number' && Number.isInteger(id) && id > 0 ? id : undefined
+    } catch {
+      return undefined
+    }
+  }
+  const original = input.messages
+  let messages = original.slice()
   const tokensBefore = sumTokens(messages, fixedTokens)
-  const base = { tokensBefore, compacted: 0, dropped: 0 }
+  const base = { tokensBefore, compacted: 0, dropped: 0, unrecallable: 0, ledger: 0 }
   if (tokensBefore <= budget.inputBudget) {
-    return { messages, changed: false, tokensAfter: tokensBefore, degraded: false, ...base }
+    return { messages, changed: false, tokensAfter: tokensBefore, degraded: false, refusal: null, ...base }
+  }
+  if (budget.inputBudget <= 0) {
+    return { messages: original.slice(), changed: false, tokensAfter: tokensBefore, degraded: true, refusal: 'no_input_budget', ...base }
   }
 
-  // Step 1: compact every tool result older than the current batch. All of
-  // them, not "just enough": a result's view must not depend on how large
-  // the newest message is, or the prefix would move on every call.
   const batchStart = currentBatchStart(messages)
+  const pinnedUser = lastUserIndex(messages)
+  const unrecallable = new Set<string>()
+  const noteUnrecallable = (m: ToolResultLike, i: number) => unrecallable.add(m.toolCallId ?? `#${i}`)
+
+  // Step 1: compact every tool result older than the current batch — only
+  // when its original is persisted (recall reference). All of them, not
+  // "just enough": a result's view must not depend on how large the newest
+  // message is, or the prefix would move on every call.
   let compacted = 0
   messages = messages.map((m, i) => {
     if (i >= batchStart || !isToolResult(m)) return m
-    const { text } = toolResultText(m)
-    if (text.length < ECO_COMPACT_THRESHOLD_CHARS) return m
-    const view = renderEcoToolView(m, ECO_VIEW_HEAD_CHARS, ECO_VIEW_TAIL_CHARS)
+    const { text, images } = toolResultText(m)
+    if (text.length < ECO_COMPACT_THRESHOLD_CHARS && images === 0) return m
+    const id = recallIdOf(m)
+    if (id === undefined) { noteUnrecallable(m, i); return m }
+    const view = renderEcoToolView(m, ECO_VIEW_HEAD_CHARS, ECO_VIEW_TAIL_CHARS, id)
     if (!view) return m
     compacted++
     return withViewText(m, view)
   })
   let tokens = sumTokens(messages, fixedTokens)
 
-  // Step 2: drop the oldest atomic segments between the pinned head and the
-  // protected tail (last user message onwards). A segment starts at a user or
-  // assistant message and carries every toolResult that follows it, so a
-  // tool call never loses its result (or vice versa).
+  // Step 2: drop the oldest atomic segments (an assistant message with all of
+  // its tool results) after the pinned head and BEFORE the current user
+  // message. User messages are never dropped, the current user turn is never
+  // touched, and a segment is only dropped when every tool result in it has a
+  // recall reference. Every dropped tool call stays in the side-effect ledger.
   let dropped = 0
+  let ledgerCount = 0
   if (tokens > budget.inputBudget) {
     const firstUser = messages.findIndex(m => (m as { role?: string }).role === 'user')
-    const pinnedUser = lastUserIndex(messages)
+    // Older batches of the CURRENT user turn (an agentic tool loop) are
+    // droppable too — otherwise a long single-turn loop could never fit —
+    // but only with their full ledger entry (marked "current turn") so the
+    // side effects of this turn can never be forgotten and redone. The
+    // current batch itself is never dropped.
+    const stop = batchStart
     let cut = firstUser >= 0 ? firstUser + 1 : Math.max(0, messages.findIndex(m => (m as { role?: string }).role !== 'system'))
     const drop = new Set<number>()
-    while (tokens > budget.inputBudget && cut < batchStart) {
+    while (tokens > budget.inputBudget && cut < stop) {
       let end = cut + 1
-      while (end < batchStart && isToolResult(messages[end])) end++
-      if (cut !== pinnedUser) {
+      while (end < stop && isToolResult(messages[end])) end++
+      const role = (messages[cut] as { role?: string }).role
+      // Only tool-call segments are droppable: a pure-text assistant answer
+      // has no recall reference here, so it is kept.
+      let safe = role === 'assistant' && end > cut + 1
+      for (let i = cut + 1; safe && i < end; i++) {
+        if (recallIdOf(messages[i] as ToolResultLike) === undefined) { safe = false; noteUnrecallable(messages[i] as ToolResultLike, i) }
+      }
+      if (safe) {
+        // The ledger note grows with every dropped call; count its cost while
+        // dropping, or the final view overshoots and is wrongly refused.
+        if (drop.size === 0) tokens += Math.ceil(LEDGER_HEADER_CHARS / ECO_CHARS_PER_TOKEN)
         for (let i = cut; i < end; i++) {
           tokens -= estimateEcoMessageTokens(messages[i])
+          const m = messages[i] as ToolResultLike
+          if (isToolResult(messages[i])) tokens += Math.ceil((LEDGER_ENTRY_BASE_CHARS + (m.toolName?.length ?? 4) + (m.toolCallId?.length ?? 1)) / ECO_CHARS_PER_TOKEN)
           drop.add(i)
         }
       }
@@ -302,7 +504,23 @@ export function buildEcoView(input: EcoViewInput): EcoViewResult {
     }
     dropped = drop.size
     if (dropped > 0) {
-      const noteText = `${ECO_OMITTED_MARKER}${dropped} older messages are omitted from this request to fit the local context budget; they are unchanged in the transcript]`
+      // Side-effect ledger: EVERY dropped tool call (no cap), so what already
+      // happened can never be "forgotten" and redone.
+      const ledger: string[] = []
+      let droppedText = 0
+      for (const i of [...drop].sort((a, b) => a - b)) {
+        const m = messages[i] as AgentMessage & ToolResultLike
+        if (isToolResult(m)) {
+          ledger.push(`${m.toolName ?? 'tool'} call=${m.toolCallId ?? '?'} status=${m.isError ? 'error' : 'ok'} recall=${recallIdOf(m)}${i > pinnedUser ? ' (current turn)' : ''}`)
+        } else if (assistantHasText(m)) droppedText++
+      }
+      ledgerCount = ledger.length
+      const noteText = `${ECO_OMITTED_MARKER}${dropped} older messages are NOT in this request (local budget). `
+        + (droppedText > 0 ? `LOSS: ${droppedText} of them carried assistant text next to the tool calls; that text is not in this request. ` : '')
+        + (ledger.length > 0
+          ? `Already executed tool calls — do NOT repeat them; exact results via recall_message(message_id=<recall>, part="result"): ${ledger.join('; ')}.`
+          : '')
+        + ']'
       const noteAt = pinnedUser >= 0 && !drop.has(pinnedUser) ? pinnedUser : firstUser
       messages = messages
         .map((m, i) => {
@@ -316,13 +534,16 @@ export function buildEcoView(input: EcoViewInput): EcoViewResult {
     }
   }
 
-  // Step 3: tighter views for the current batch. Errors and key lines survive
-  // inside the view; the header marks the result as shortened.
+  // Step 3: tighter views for the current batch, again only with a recall
+  // reference. Errors and key lines survive inside the view; the header
+  // marks the result as shortened.
   if (tokens > budget.inputBudget) {
     const start = currentBatchStart(messages)
     messages = messages.map((m, i) => {
       if (i < start || !isToolResult(m)) return m
-      const view = renderEcoToolView(m, ECO_TIGHT_HEAD_CHARS, ECO_TIGHT_TAIL_CHARS)
+      const id = recallIdOf(m)
+      if (id === undefined) { noteUnrecallable(m, i); return m }
+      const view = renderEcoToolView(m, ECO_TIGHT_HEAD_CHARS, ECO_TIGHT_TAIL_CHARS, id)
       if (!view) return m
       compacted++
       return withViewText(m, view)
@@ -333,13 +554,33 @@ export function buildEcoView(input: EcoViewInput): EcoViewResult {
   // Structural net: the drop walk keeps pairs intact, this proves it.
   const sanitized = sanitizeHistoryBoundaries(messages).messages
   const tokensAfter = sumTokens(sanitized, fixedTokens)
-  return {
-    messages: sanitized,
-    changed: true,
-    tokensBefore,
-    tokensAfter,
-    compacted,
-    dropped,
-    degraded: tokensAfter > budget.inputBudget,
+  const stats = { tokensBefore, compacted, dropped, unrecallable: unrecallable.size, ledger: ledgerCount }
+  if (tokensAfter <= budget.inputBudget) {
+    return { messages: sanitized, changed: true, tokensAfter, degraded: false, refusal: null, ...stats }
   }
+  return { messages: original.slice(), changed: false, tokensAfter, degraded: true, refusal: classifyRefusal(sanitized, fixedTokens, budget.inputBudget), ...stats }
+}
+
+function assistantHasText(m: AgentMessage): boolean {
+  const c = (m as { content?: unknown }).content
+  if (typeof c === 'string') return c.trim().length > 0
+  return Array.isArray(c) && c.some(b => (b as { type?: string; text?: string }).type === 'text' && !!(b as { text?: string }).text?.trim())
+}
+
+/** Why a view could not be made to fit: the irreducible current turn first. */
+function classifyRefusal(messages: readonly AgentMessage[], fixedTokens: number, inputBudget: number): EcoRefusalReason {
+  const userAt = lastUserIndex(messages)
+  if (fixedTokens >= inputBudget * 0.9) return 'fixed_context_too_large'
+  if (userAt >= 0 && fixedTokens + estimateEcoMessageTokens(messages[userAt]) > inputBudget) return 'current_user_message_too_large'
+  let args = 0
+  let results = 0
+  for (let i = Math.max(0, userAt + 1); i < messages.length; i++) {
+    const m = messages[i]
+    if (isToolResult(m)) results += estimateEcoMessageTokens(m)
+    else if ((m as { role?: string }).role === 'assistant') args += estimateEcoMessageTokens(m)
+  }
+  const room = inputBudget - fixedTokens - (userAt >= 0 ? estimateEcoMessageTokens(messages[userAt]) : 0)
+  if (args > room / 2 && args >= results) return 'current_tool_arguments_too_large'
+  if (results > room / 2) return 'current_tool_results_too_large'
+  return 'history_not_reducible'
 }

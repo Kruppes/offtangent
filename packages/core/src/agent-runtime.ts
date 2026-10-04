@@ -7,8 +7,8 @@ import type { Api, AssistantMessage, Message, ImageContent, Model, SystemMessage
 import { Type } from '@earendil-works/pi-ai'
 import type { Database } from './database.js'
 import { logTokenUsage, logToolCall } from './token-logger.js'
-import { buildEcoView, estimateEcoFixedTokens, resolveEcoBudget } from './eco-policy.js'
-import { ECO_METRIC_TOOL_NAME, isStrandEcoEnabled } from './eco-mode-store.js'
+import { applyEcoRequestView } from './eco-mode-store.js'
+import { isEcoRefusalText } from './eco-policy.js'
 import { estimateCost, getApiKeyForProvider, buildModel, buildStreamFn, loadProvidersDecrypted, parseProviderModelId, getProviderDefaultModel, resolvePromptProfileOptions } from './provider-config.js'
 import type { ProviderConfig } from './provider-config.js'
 import type { ProviderManager } from './provider-manager.js'
@@ -855,7 +855,7 @@ class PiAgentRuntime implements AgentRuntimeBoundary, AgentRuntimePiAgentAccess 
             `[agent-runtime] tool_use/tool_result boundary violation caught before send (agent ${this.agentId}) — dropped ${drops.length} block(s): ${drops.join('; ')} | structure(before)=${describeHistoryStructure(messages)}`,
           )
         }
-        const viewed = this.applyEcoView(cleaned)
+        const viewed = this.applyEcoView(cleaned, messages)
         // Privacy (plan 2026-09-26, step 4): last net before the request
         // leaves the process. Everything already known (handles, secrets.json
         // env, provider keys, credential-looking process env) is replaced by
@@ -879,42 +879,20 @@ class PiAgentRuntime implements AgentRuntimeBoundary, AgentRuntimePiAgentAccess 
    * pre-send hook, so it covers EVERY request including each tool-loop
    * iteration. Off (the default) it returns the input untouched — the normal
    * path stays byte-identical. Never mutates the transcript, so no tool runs
-   * twice. Fail open: a bug here must not kill a turn.
+   * twice. FAIL CLOSED: throws EcoBudgetError (surfaced to the chat as an
+   * error chunk by pi-agent's run-failure path) instead of sending an
+   * over-budget or unsafely cut request.
    */
-  private applyEcoView(messages: AgentMessage[]): AgentMessage[] {
-    const sessionId = this.currentSessionId
-    if (!isStrandEcoEnabled(this.db, sessionId)) return messages
-    try {
-      const budget = resolveEcoBudget({ contextWindow: this.model.contextWindow, maxTokens: this.model.maxTokens })
-      const hasSystemMessage = messages.some(m => (m as { role?: string }).role === 'system')
-      const fixedTokens = estimateEcoFixedTokens(hasSystemMessage ? undefined : this.agent.state.systemPrompt, this.agent.state.tools)
-      const view = buildEcoView({ messages, budget, fixedTokens })
-      if (view.changed && sessionId) {
-        logToolCall(this.db, {
-          sessionId,
-          toolName: ECO_METRIC_TOOL_NAME,
-          input: JSON.stringify({
-            estimate: 'chars/3',
-            contextWindow: budget.contextWindow,
-            contextFallback: budget.contextFallback,
-            outputReserve: budget.outputReserve,
-            inputBudget: budget.inputBudget,
-            tokensBefore: view.tokensBefore,
-            tokensAfter: view.tokensAfter,
-            compacted: view.compacted,
-            dropped: view.dropped,
-            degraded: view.degraded,
-          }),
-          output: '',
-          durationMs: 0,
-          status: view.degraded ? 'error' : 'success',
-        })
-      }
-      return view.messages
-    } catch (err) {
-      console.error('[agent-runtime] eco view failed, sending the normal view:', err)
-      return messages
-    }
+  private applyEcoView(messages: AgentMessage[], transcript: readonly AgentMessage[]): AgentMessage[] {
+    return applyEcoRequestView({
+      db: this.db,
+      sessionId: this.currentSessionId,
+      messages,
+      transcript,
+      model: this.model,
+      systemPrompt: this.agent.state.systemPrompt,
+      tools: this.agent.state.tools,
+    })
   }
 
   /**
@@ -1592,7 +1570,8 @@ class PiAgentRuntime implements AgentRuntimeBoundary, AgentRuntimePiAgentAccess 
             // 0.27.0) sees the untouched provider message. The human-readable
             // "Modellfehler:" prefix lives in `text` for plain-text channels
             // that render it directly instead of via the runner.
-            chunks.push({ type: 'error', error: errText, text: `Modellfehler: ${errText}` })
+            // Eco refusals are local decisions, not model errors: shown as-is.
+            chunks.push({ type: 'error', error: errText, text: isEcoRefusalText(errText) ? errText : `Modellfehler: ${errText}` })
           }
         }
         break

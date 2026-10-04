@@ -17,6 +17,31 @@ export type Database = BetterSqlite3.Database
 
 let db: Database | null = null
 
+/**
+ * Dedicated numeric-only metric table (review 5c5f47a6 #6): Eco rows used to
+ * be fake `tool_calls`, which polluted tool stats, task counters and resume
+ * logic. No message text, no paths, only numbers and an enum reason.
+ */
+export const ECO_METRICS_SCHEMA = `
+CREATE TABLE IF NOT EXISTS eco_metrics (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  session_id TEXT NOT NULL,
+  created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
+  context_window INTEGER,
+  output_reserve INTEGER,
+  input_budget INTEGER,
+  observed_limit INTEGER,
+  tokens_before INTEGER,
+  tokens_after INTEGER,
+  compacted INTEGER NOT NULL DEFAULT 0,
+  dropped INTEGER NOT NULL DEFAULT 0,
+  unrecallable INTEGER NOT NULL DEFAULT 0,
+  refused INTEGER NOT NULL DEFAULT 0,
+  refusal_reason TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_eco_metrics_session ON eco_metrics(session_id, id);
+`
+
 const SCHEMA = `
 CREATE TABLE IF NOT EXISTS token_usage (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -199,6 +224,9 @@ export function initDatabase(dbPath?: string): Database {
   db.pragma('journal_mode = WAL')
   db.pragma('foreign_keys = ON')
   db.exec(SCHEMA)
+  // Eco metrics (plan 2026-10-04-eco-implementation, review 5c5f47a6 #6):
+  // own numeric-only table instead of fake tool_calls rows. Additive.
+  db.exec(ECO_METRICS_SCHEMA)
 
   // Migration: add status column to tool_calls if missing
   const cols = db.prepare("PRAGMA table_info(tool_calls)").all() as { name: string }[]

@@ -2737,6 +2737,6 @@
     "fallback": "Kontextfenster unbekannt, konservativ",
     "saved": "zuletzt ca. {percent} % kleiner",
     "noData": "noch keine Eco-Anfrage",
-    "degraded": "gekürzt: ältere Verläufe ausgelassen"
+    "degraded": "letzte Anfrage abgelehnt, nicht gesendet (Grund im Chat)"
   }
 }

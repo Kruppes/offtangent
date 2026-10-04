@@ -1,3 +1,4 @@
+import { applyEcoRequestView, inheritEcoMode } from './eco-mode-store.js'
 import { Agent as PiAgent } from '@earendil-works/pi-agent-core'
 import type { AgentEvent, AgentMessage, AgentTool } from '@earendil-works/pi-agent-core'
 import type { AssistantMessage, Message, Model, Api } from '@earendil-works/pi-ai'
@@ -688,6 +689,7 @@ export class TaskRunner {
       agentId: task.agentId ?? 'main',
     })
     const sessionId = session.id
+    inheritEcoMode(this.db, parentSessionId, sessionId)
 
     this.store.update(task.id, { sessionId })
     task.sessionId = sessionId
@@ -909,6 +911,18 @@ export class TaskRunner {
             console.error(`[task-runner] Context compaction failed for task ${taskId}, sending the full transcript:`, err)
             view = [...messages]
           }
+          // Eco (opt-in per task session, inherited from the spawning strand):
+          // the SAME stage as the interactive runtime, on top of the existing
+          // compactor — one policy path, budgeted before every request.
+          view = applyEcoRequestView({
+            db: this.db,
+            sessionId,
+            messages: view,
+            transcript: messages,
+            model,
+            systemPrompt: agent.state.systemPrompt,
+            tools: agent.state.tools,
+          })
           // Privacy (plan 2026-09-26, step 4): last net before the request
           // leaves the process. Fail open — redaction must never kill a task.
           try {
@@ -1659,8 +1673,11 @@ export class TaskRunner {
             toolIsError: isError,
           }), taskAgentId)
           runningTask.history?.noteToolResultId(event.toolCallId, Number(inserted.lastInsertRowid))
-        } catch {
-          // Ignore persistence errors — non-critical
+        } catch (err) {
+          // Not fatal for the task, but no longer silent: without this row the
+          // result has no recall reference, so Eco will refuse to shorten it
+          // (fail closed) instead of cutting an unrecoverable result.
+          console.error(`[task-runner] persisting tool result ${event.toolCallId} failed; it is not recallable:`, err)
         }
 
         // Progress guard last, so the call that trips it is fully logged

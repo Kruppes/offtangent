@@ -3,6 +3,7 @@ import type { AssistantMessage, RetryPolicy } from '@earendil-works/pi-ai'
 import { loadConfig, warnConfigReadFailed } from './config.js'
 import { DEFAULT_RETRY_SETTINGS } from './contracts/settings.js'
 import type { RetryInfo } from './agent-runtime-types.js'
+import { isEcoRefusalText } from './eco-policy.js'
 
 export type { RetryPolicy }
 
@@ -62,6 +63,9 @@ export function loadRetryPolicy(
  * `AssistantMessage`, which is what a turn's error chunk boils down to here.
  */
 export function isRetryableTurnError(errorMessage: string): boolean {
+  // An Eco refusal is a deliberate local decision, never transient; its
+  // numbers could otherwise match HTTP-status patterns like "500".
+  if (isEcoRefusalText(errorMessage)) return false
   return isRetryableAssistantError({
     role: 'assistant',
     content: [],

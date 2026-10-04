@@ -2737,6 +2737,6 @@
     "fallback": "context window unknown, conservative",
     "saved": "last request about {percent} % smaller",
     "noData": "no eco request yet",
-    "degraded": "trimmed: older history left out"
+    "degraded": "last request refused, not sent (reason in chat)"
   }
 }
