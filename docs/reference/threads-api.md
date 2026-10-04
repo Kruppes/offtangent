@@ -181,6 +181,12 @@ how many turns run at once).
 - `since_id` switches to cursor mode: only rows with `id > since_id`, ordered
   **ascending** by id, so a client appends the batch as-is and keeps the last
   id as the next cursor;
+- `before_id` is the backwards cursor: `before_id=latest` returns the newest
+  rows, `before_id=<id>` only rows with `id < before_id`, both ordered
+  **descending** by id (not timestamp, so a row moved into the thread later
+  sorts by its id). `pagination.total` counts the rows before the cursor and
+  `pagination.hasMore` says whether older rows remain. Stable while rows are
+  written or deleted between pages; cannot be combined with `since_id` (400);
 - `agent_id` may be combined; all filters are ANDed, so a thread never shows
   another thread's rows.
 

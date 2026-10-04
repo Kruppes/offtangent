@@ -176,6 +176,49 @@ describe('GET /api/chat/history cursor + persona filter', () => {
   })
 })
 
+describe('GET /api/chat/history before_id (backwards cursor)', () => {
+  const ids: number[] = []
+  beforeAll(() => {
+    db.prepare("INSERT INTO sessions (id, user_id, source, agent_id) VALUES ('s-back', '1', 'web', 'main')").run()
+    for (let n = 1; n <= 5; n++) ids.push(insert(1, 's-back', 'main', `k${n}`, `2026-09-13 10:00:0${n}`))
+    // A row moved into this strand later: newest id, but an old timestamp.
+    ids.push(insert(1, 's-back', 'main', 'moved', '2026-09-01 08:00:00'))
+    insert(2, 's-back', 'main', 'not mine', '2026-09-13 11:00:00')
+  })
+
+  it('before_id=latest returns the newest rows by id, descending, with hasMore', async () => {
+    const { status, body } = await history('?session_id=s-back&before_id=latest&limit=4')
+    expect(status).toBe(200)
+    expect(body.messages.map(m => m.content)).toEqual(['moved', 'k5', 'k4', 'k3'])
+    expect(body.pagination).toMatchObject({ page: 1, limit: 4, total: 6, hasMore: true })
+  })
+
+  it('before_id=<id> returns only older rows of that strand, descending, until the start', async () => {
+    const { body } = await history(`?session_id=s-back&before_id=${ids[2]}&limit=4`)
+    expect(body.messages.map(m => m.content)).toEqual(['k2', 'k1'])
+    expect(body.pagination).toMatchObject({ total: 2, hasMore: false })
+    const { body: none } = await history(`?session_id=s-back&before_id=${ids[0]}`)
+    expect(none.messages).toEqual([])
+    expect(none.pagination).toMatchObject({ total: 0, hasMore: false })
+  })
+
+  it('is stable while rows are written and deleted between pages', async () => {
+    const { body: first } = await history('?session_id=s-back&before_id=latest&limit=3')
+    expect(first.messages.map(m => m.content)).toEqual(['moved', 'k5', 'k4'])
+    const added = insert(1, 's-back', 'main', 'late', '2026-09-13 12:00:00')
+    db.prepare('DELETE FROM chat_messages WHERE id = ?').run(ids[4])
+    const { body: second } = await history(`?session_id=s-back&before_id=${first.messages.at(-1)!.id}&limit=3`)
+    expect(second.messages.map(m => m.content)).toEqual(['k3', 'k2', 'k1'])
+    db.prepare('DELETE FROM chat_messages WHERE id = ?').run(added)
+  })
+
+  it('rejects a malformed before_id and the combination with since_id', async () => {
+    expect((await history('?before_id=abc')).status).toBe(400)
+    expect((await history('?before_id=-1')).status).toBe(400)
+    expect((await history('?before_id=1&since_id=0')).status).toBe(400)
+  })
+})
+
 describe('POST /api/chat/message persona + idempotency', () => {
   async function post(fields: Record<string, string>, file?: { name: string; content: string }, bearer = token) {
     const form = new FormData()

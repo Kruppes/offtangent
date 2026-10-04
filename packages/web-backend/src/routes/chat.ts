@@ -365,6 +365,23 @@ export function createChatRouter(options: ChatRouterOptions): Router {
       }
       sinceId = Number(raw)
     }
+    // Backwards cursor: `before_id=<id>` pages a strand towards its start by id
+    // (stable while rows are written or deleted between pages, unlike OFFSET),
+    // `before_id=latest` is its first page. Ordered by id, not timestamp: a row
+    // moved into a strand later keeps an old timestamp but a new id.
+    let beforeId: number | 'latest' | undefined
+    if (req.query.before_id !== undefined) {
+      const raw = String(req.query.before_id)
+      if (raw !== 'latest' && !/^\d{1,15}$/.test(raw)) {
+        res.status(400).json({ error: 'before_id must be a non-negative integer or "latest"' })
+        return
+      }
+      if (sinceId !== undefined) {
+        res.status(400).json({ error: 'since_id and before_id cannot be combined' })
+        return
+      }
+      beforeId = raw === 'latest' ? 'latest' : Number(raw)
+    }
 
     const where: string[] = ['cm.user_id = ?']
     const params: unknown[] = [userId]
@@ -380,10 +397,16 @@ export function createChatRouter(options: ChatRouterOptions): Router {
       where.push('cm.id > ?')
       params.push(sinceId)
     }
+    if (typeof beforeId === 'number') {
+      where.push('cm.id < ?')
+      params.push(beforeId)
+    }
     const whereSql = where.join(' AND ')
 
     const messages = sinceId !== undefined
       ? db.prepare(`${HISTORY_SELECT} WHERE ${whereSql} ORDER BY cm.id ASC LIMIT ?`).all(...params, limit)
+      : beforeId !== undefined
+      ? db.prepare(`${HISTORY_SELECT} WHERE ${whereSql} ORDER BY cm.id DESC LIMIT ?`).all(...params, limit)
       // `cm.id` is the tiebreaker: `cm.timestamp` has second resolution, so
       // rows written in the same second come back in an undefined order — and
       // the frontend reverses this page straight into the transcript.
@@ -415,10 +438,13 @@ export function createChatRouter(options: ChatRouterOptions): Router {
     res.json({
       messages: withSealed,
       pagination: {
-        page: sinceId !== undefined ? 1 : page,
+        page: sinceId !== undefined || beforeId !== undefined ? 1 : page,
         limit,
         total,
         totalPages: Math.ceil(total / limit),
+        // Backwards cursor only: older rows lie beyond this batch. Additive,
+        // the other modes answer exactly as before.
+        ...(beforeId !== undefined ? { hasMore: total > messages.length } : {}),
       },
     })
   })
