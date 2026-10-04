@@ -87,7 +87,7 @@ watch(activeId, (id, previous) => {
       v-show="panes.list"
       ref="listEl"
       data-testid="strand-list-column"
-      class="flex min-h-0 min-w-0 flex-col overflow-hidden"
+      class="flex min-h-0 min-w-0 flex-col overflow-x-hidden overflow-y-auto"
       :class="compactList ? 'shrink-0 border-r border-border' : 'flex-1'"
       :style="compactList ? { width: `${LIST_WIDTH}px` } : undefined"
     >
