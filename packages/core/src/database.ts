@@ -742,6 +742,11 @@ export function initDatabase(dbPath?: string): Database {
   if (!threadCols.find(c => c.name === 'model_provider_id')) {
     db.exec('ALTER TABLE sessions ADD COLUMN model_provider_id TEXT')
   }
+  // Eco mode (plan 2026-10-04-eco-implementation): opt-in per strand,
+  // default off. Additive, no backfill; switching it off is the rollback.
+  if (!threadCols.find(c => c.name === 'eco_mode')) {
+    db.exec('ALTER TABLE sessions ADD COLUMN eco_mode INTEGER NOT NULL DEFAULT 0')
+  }
   // Offtangent read state: when the user last opened this strand (ISO-8601
   // UTC). Additive and nullable on purpose — NULL means "never opened", which
   // is exactly the state of every row that existed before the column, so no

@@ -2722,5 +2722,21 @@
       "capture": "Ganzes Capture",
       "sentences": "Sätze {list}"
     }
+  },
+  "eco": {
+    "label": "Eco",
+    "on": "an",
+    "off": "aus",
+    "loading": "Eco-Status wird geladen …",
+    "loadError": "Eco-Status konnte nicht geladen werden.",
+    "saveError": "Eco konnte nicht umgeschaltet werden.",
+    "turnedOn": "Eco-Modus eingeschaltet",
+    "turnedOff": "Eco-Modus ausgeschaltet",
+    "hint": "Spart Kontext für lokale Modelle; ab der nächsten Anfrage.",
+    "budget": "Eingabebudget {tokens} (geschätzt)",
+    "fallback": "Kontextfenster unbekannt, konservativ",
+    "saved": "zuletzt ca. {percent} % kleiner",
+    "noData": "noch keine Eco-Anfrage",
+    "degraded": "gekürzt: ältere Verläufe ausgelassen"
   }
 }

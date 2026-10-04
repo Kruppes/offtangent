@@ -28,6 +28,10 @@ import {
   listResurfaceItems,
   listTags,
   lastCompactionForStrand,
+  lastEcoViewForStrand,
+  isStrandEcoEnabled,
+  setStrandEcoEnabled,
+  resolveEcoBudget,
   lastRequestUsageForStrand,
   lastTranscriptWindowForStrand,
   previewStrandDelete,
@@ -43,12 +47,12 @@ import {
   listRecalledMessages,
   toIsoUtc,
 } from '@axiom/core'
-import type { RecalledMessage, StrandFork } from '@axiom/core'
+import type { EcoViewMetric, RecalledMessage, StrandFork } from '@axiom/core'
 import type { ChatEventBus } from '../../../chat-event-bus.js'
 import { resolveNowSetMax, resolveNowSetMode } from '../../../now-set-limit.js'
 import { describePendingTurn } from '../../../turn-queue.js'
 import { searchStrands } from './search.js'
-import type { DeleteStrandQuery, ListStrandsQuery, PatchStrandBody, PatchStrandModelBody, StrandActivityIdsBody, StrandTasksQuery } from './schema.js'
+import type { DeleteStrandQuery, ListStrandsQuery, PatchStrandBody, PatchStrandModelBody, PatchStrandEcoBody, StrandActivityIdsBody, StrandTasksQuery } from './schema.js'
 import { effectiveModelForStrand, getProvider, modelMetadataFor } from '../../../model-selection.js'
 
 /**
@@ -147,7 +151,22 @@ export interface StrandContextReport {
    * retrieval), newest first, excerpt only.
    */
   recalled: RecalledMessage[]
+  /**
+   * Eco mode (plan 2026-10-04-eco-implementation), additive. `inputBudgetTokens`
+   * is derived from the declared model window minus output reserve and margin;
+   * `last` holds estimates of the last Eco request view, never measured tokens.
+   */
+  eco: StrandEcoStatus
   generatedAt: string
+}
+
+export interface StrandEcoStatus {
+  enabled: boolean
+  inputBudgetTokens: number | null
+  outputReserveTokens: number | null
+  /** True when the model declares no context window and a conservative fallback is used. */
+  contextFallback: boolean
+  last: EcoViewMetric | null
 }
 
 /** One fact of the slim `GET /api/strands/:id/facts` list (W5b). */
@@ -469,6 +488,36 @@ export function createStrandsService(options: StrandsServiceOptions) {
     }
   }
 
+  function ecoStatusOf(strandId: string, model: { contextWindow: number | null; maxTokens: number | null } | null): StrandEcoStatus {
+    const budget = model ? resolveEcoBudget(model) : null
+    return {
+      enabled: isStrandEcoEnabled(db, strandId),
+      inputBudgetTokens: budget?.inputBudget ?? null,
+      outputReserveTokens: budget?.outputReserve ?? null,
+      contextFallback: budget?.contextFallback ?? false,
+      last: lastEcoViewForStrand(db, strandId),
+    }
+  }
+
+  /**
+   * Eco switch of one strand. Owner-checked like every strand write (404 for
+   * a foreign or missing strand). Takes effect on the next LLM request, also
+   * inside a running tool loop, so it is deliberately not blocked by a busy
+   * strand. Switching it off is the complete rollback.
+   */
+  function patchStrandEco(userId: number, strandId: string, patch: PatchStrandEcoBody): { strandId: string; eco: StrandEcoStatus } {
+    requireStrand(userId, strandId)
+    if (!setStrandEcoEnabled(db, strandId, patch.enabled)) {
+      throw new StrandServiceError(404, 'strand_not_found', 'Strand not found')
+    }
+    const effective = effectiveModelForStrand(db, strandId)
+    const meta = effective ? modelMetadataFor(effective.providerId, effective.modelId) : null
+    return {
+      strandId,
+      eco: ecoStatusOf(strandId, meta ? { contextWindow: meta.contextWindow ?? null, maxTokens: meta.maxTokens ?? null } : null),
+    }
+  }
+
   function patchStrandModel(userId: number, strandId: string, patch: PatchStrandModelBody) {
     const strand = requireStrand(userId, strandId)
     assertNotBusy(userId, strandId)
@@ -742,6 +791,7 @@ export function createStrandsService(options: StrandsServiceOptions) {
         ? { ...effective, displayName: meta?.displayName ?? null, providerName: meta?.providerName ?? null }
         : null,
       recalled: listRecalledMessages(db, userId, strandId),
+      eco: ecoStatusOf(strandId, effective ? { contextWindow, maxTokens: outputCap } : null),
       generatedAt: new Date().toISOString(),
     }
   }
@@ -996,6 +1046,7 @@ export function createStrandsService(options: StrandsServiceOptions) {
     markRead,
     getStrand,
     patchStrandModel,
+    patchStrandEco,
     patchStrand,
     deletePreview,
     removeStrand,

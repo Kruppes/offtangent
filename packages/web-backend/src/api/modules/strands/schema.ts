@@ -205,6 +205,23 @@ export function parsePatchStrandModelBody(body: unknown): ParseResult<PatchStran
   return { ok: true, value: { providerId: providerId.trim(), modelId: modelId.trim() } }
 }
 
+export interface PatchStrandEcoBody {
+  enabled: boolean
+}
+
+/** `PATCH /api/strands/:id/eco` — exactly `{ enabled: boolean }`, nothing coerced. */
+export function parsePatchStrandEcoBody(body: unknown): ParseResult<PatchStrandEcoBody> {
+  if (typeof body !== 'object' || body === null || Array.isArray(body)) {
+    return { ok: false, error: 'Body must be an object { enabled: boolean }', code: 'invalid_eco' }
+  }
+  const value = body as Record<string, unknown>
+  const extra = Object.keys(value).filter(k => k !== 'enabled')
+  if (typeof value.enabled !== 'boolean' || extra.length > 0) {
+    return { ok: false, error: 'enabled must be a boolean and the only field', code: 'invalid_eco' }
+  }
+  return { ok: true, value: { enabled: value.enabled } }
+}
+
 export interface DeleteStrandQuery {
   confirm: boolean
   deleteFacts: boolean

@@ -8,6 +8,7 @@ import {
   parseNowSetBody,
   parsePatchStrandBody,
   parsePatchStrandModelBody,
+  parsePatchStrandEcoBody,
   parseResurfaceQuery,
   parseSnoozeBody,
   parseStrandTagsBody,
@@ -23,6 +24,7 @@ export interface StrandsController {
   getStrand: (req: AuthenticatedRequest, res: Response) => void
   markStrandRead: (req: AuthenticatedRequest, res: Response) => void
   patchStrandModel: (req: AuthenticatedRequest, res: Response) => void
+  patchStrandEco: (req: AuthenticatedRequest, res: Response) => void
   patchStrand: (req: AuthenticatedRequest, res: Response) => void
   deletePreview: (req: AuthenticatedRequest, res: Response) => void
   deleteStrand: (req: AuthenticatedRequest, res: Response) => void
@@ -118,6 +120,17 @@ export function createStrandsController(service: StrandsService): StrandsControl
       }
       run(res, 'Failed to update strand model', () => {
         res.json(service.patchStrandModel(req.user!.userId, String(req.params.id), parsed.value))
+      })
+    },
+
+    patchStrandEco(req, res) {
+      const parsed = parsePatchStrandEcoBody(req.body)
+      if (!parsed.ok) {
+        res.status(400).json({ error: parsed.error, code: parsed.code })
+        return
+      }
+      run(res, 'Failed to update strand eco mode', () => {
+        res.json(service.patchStrandEco(req.user!.userId, String(req.params.id), parsed.value))
       })
     },
 

@@ -2722,5 +2722,21 @@
       "capture": "Whole capture",
       "sentences": "Sentences {list}"
     }
+  },
+  "eco": {
+    "label": "Eco",
+    "on": "on",
+    "off": "off",
+    "loading": "Loading eco status …",
+    "loadError": "Could not load the eco status.",
+    "saveError": "Could not switch eco mode.",
+    "turnedOn": "Eco mode on",
+    "turnedOff": "Eco mode off",
+    "hint": "Saves context for local models; from the next request.",
+    "budget": "Input budget {tokens} (estimate)",
+    "fallback": "context window unknown, conservative",
+    "saved": "last request about {percent} % smaller",
+    "noData": "no eco request yet",
+    "degraded": "trimmed: older history left out"
   }
 }

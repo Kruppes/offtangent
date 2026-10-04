@@ -132,6 +132,7 @@ export function createStrandsRouters(options: StrandsRouterOptions): StrandsRout
   strands.get('/:id', controller.getStrand)
   strands.post('/:id/read', controller.markStrandRead)
   strands.patch('/:id/model', controller.patchStrandModel)
+  strands.patch('/:id/eco', controller.patchStrandEco)
   strands.get('/:id/tasks', controller.strandTasks)
   strands.get('/:id/context', controller.strandContext)
   strands.get('/:id/facts', controller.strandFacts)

@@ -4,6 +4,7 @@ import type { Thread, Project } from '@axiom/core'
 import { useModelsApi, type ModelSelection, type SelectableModel } from '~/api/models'
 import { useProjectsApi } from '~/api/projects'
 import StrandActions from './StrandActions.vue'
+import EcoModeSwitch from './EcoModeSwitch.vue'
 import { strandErrorKey, useStrandDetailApi, type StrandDetail } from './detailApi'
 import { messageRoute } from '~/api/strandW5b'
 const props = withDefaults(defineProps<{ strandId: string; showBack?: boolean }>(), { showBack: true })
@@ -157,6 +158,7 @@ onMounted(() => { void load(); void loadProjects() })
         <span v-if="modelDiffers" role="status" class="rounded-md bg-muted px-2 py-1 text-muted-foreground [overflow-wrap:anywhere]">{{ t('strandDetail.answeringWith', { model: runningModel!.modelId, next: strand.effectiveModel?.modelId || t('strandDetail.defaultModel') }) }}</span>
         <Button v-if="strand.pinnedModel" class="min-h-11" variant="ghost" :disabled="saving" @click="chooseModel(null)">{{ t('strandDetail.resetModel') }}</Button>
         <Button class="min-h-11" variant="ghost" :disabled="saving" :aria-pressed="strand.pinned" @click="mutate(() => api.patch(strandId, { pinned: !strand!.pinned }))">{{ t(strand.pinned ? 'strandDetail.unpin' : 'strandDetail.pin') }}</Button>
+        <EcoModeSwitch :strand-id="strandId" :disabled="loading" />
       </div>
       <section v-if="strand.projectSuggestion && !strand.projectId" class="mt-2 flex flex-wrap items-center gap-2 rounded-lg border border-border p-2" :aria-label="t('strandDetail.suggestion')">
         <p class="text-sm">{{ t('strandDetail.suggestProject', { project: strand.projectSuggestion.projectName || strand.projectSuggestion.projectId }) }} <span class="text-muted-foreground">{{ strand.projectSuggestion.reason }}</span></p>

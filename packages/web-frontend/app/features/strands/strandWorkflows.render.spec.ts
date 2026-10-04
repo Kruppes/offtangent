@@ -8,6 +8,7 @@ import { parse, compileScript } from '@vue/compiler-sfc'
 import { transpileModule, ModuleKind } from 'typescript'
 import * as shellCommands from '../../composables/useShellCommands'
 import * as strandW5b from '~/api/strandW5b'
+import * as strandEco from '~/api/strandEco'
 
 // The existing render config compiles imports for SSR. Compile these four
 // SFCs for Vue's client renderer instead, so onMounted and clicks really run.
@@ -17,7 +18,7 @@ function loadPage(path: string): Component {
   const script = compileScript(descriptor, { id: path, inlineTemplate: true })
   const { outputText } = transpileModule(script.content, { compilerOptions: { module: ModuleKind.CommonJS } })
   const exports: { default?: Component } = {}
-  const modules: Record<string, unknown> = { vue: Vue, '~/composables/useShellCommands': shellCommands, './detailApi': detailApi, '~/api/strandW5b': strandW5b, '~/api/models': { useModelsApi: () => ({ listModels: async () => [] }) }, '~/api/projects': { useProjectsApi: () => ({ list: async () => [] }) }, './StrandActions.vue': { default: defineComponent({ render: () => h('aside') }) } }
+  const modules: Record<string, unknown> = { vue: Vue, '~/composables/useShellCommands': shellCommands, './detailApi': detailApi, '~/api/strandW5b': strandW5b, '~/api/models': { useModelsApi: () => ({ listModels: async () => [] }) }, '~/api/projects': { useProjectsApi: () => ({ list: async () => [] }) }, './StrandActions.vue': { default: defineComponent({ render: () => h('aside') }) }, './EcoModeSwitch.vue': { default: defineComponent({ render: () => h('span') }) }, '~/api/strandEco': strandEco }
   new Function('require', 'exports', outputText)((name: string) => {
     if (!(name in modules)) throw new Error(`Unexpected import: ${name}`)
     return modules[name]
@@ -26,6 +27,7 @@ function loadPage(path: string): Component {
 }
 const Actions = loadPage('./StrandActions.vue')
 const Header = loadPage('./StrandDetailHeader.vue')
+const EcoSwitch = loadPage('./EcoModeSwitch.vue')
 
 // Like the SSR render specs, compile the real SFCs without booting Nuxt.
 // A tiny in-memory Vue host also exercises mounted fetches and retry clicks.
@@ -207,5 +209,45 @@ describe('strand mutation workflows', () => {
     await click(root, 'strandDetail.' + action)
     expect(api).toHaveBeenLastCalledWith('/api/strands/s/project-suggestion/' + action, { method: 'POST' })
     expect(text(root)).not.toContain('Reason')
+  })
+})
+
+describe('eco mode switch', () => {
+  const eco = (enabled: boolean, last: unknown = null) => ({ eco: { enabled, inputBudgetTokens: 28000, outputReserveTokens: 4096, contextFallback: false, last } })
+  it('loads off by default, switches on with a strict PATCH and shows estimates', async () => {
+    const api = setup()
+    api.mockResolvedValueOnce(eco(false))
+    api.mockResolvedValueOnce(eco(true, { estimatedTokensBefore: 1000, estimatedTokensAfter: 400, inputBudgetTokens: 28000, compactedResults: 2, droppedMessages: 0, degraded: true, at: null }))
+    const { root } = mount(EcoSwitch, { strandId: 's/1' })
+    await flush()
+    const toggle = all(root).find(n => n.props['data-testid'] === 'eco-toggle')!
+    expect(toggle.props['aria-checked']).toBe(false)
+    expect(text(root)).toContain('eco.off')
+    await click(root, 'eco.label')
+    expect(api.mock.calls).toEqual([['/api/strands/s%2F1/context'], ['/api/strands/s%2F1/eco', { method: 'PATCH', body: '{"enabled":true}' }]])
+    expect(text(root)).toContain('eco.on')
+    expect(text(root)).toContain('eco.saved{"percent":60}')
+    expect(text(root)).toContain('eco.degraded')
+    expect(text(root)).toContain('eco.turnedOn')
+  })
+  it('keeps the old state and shows an error when the switch fails', async () => {
+    const api = setup()
+    api.mockResolvedValueOnce(eco(true))
+    api.mockRejectedValueOnce(new ApiError('raw', 500, {}))
+    const { root } = mount(EcoSwitch, { strandId: 's' })
+    await flush()
+    await click(root, 'eco.label')
+    expect(text(root)).toContain('eco.saveError')
+    expect(text(root)).toContain('eco.on')
+  })
+  it('offers retry on a load error and hides itself for an older server without eco', async () => {
+    const api = setup()
+    api.mockRejectedValueOnce(new ApiError('raw', 500, {}))
+    api.mockResolvedValueOnce({ tokens: {} })
+    const { root } = mount(EcoSwitch, { strandId: 's' })
+    await flush()
+    expect(text(root)).toContain('eco.loadError')
+    await click(root, 'strandDetail.retry')
+    expect(all(root).some(n => n.props['data-testid'] === 'eco-mode')).toBe(false)
   })
 })
