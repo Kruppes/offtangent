@@ -17,7 +17,7 @@ const mappedProps = computed(() => ({
 
 const wrappedEmit = ((name: string, ...args: unknown[]) => {
   if (name === 'update:modelValue') {
-    emits('update:modelValue', args[0] === EMPTY_SENTINEL ? '' : args[0])
+    emits('update:modelValue', (args[0] === EMPTY_SENTINEL ? '' : args[0]) as SelectRootEmits['update:modelValue'][0])
   } else {
     (emits as (event: string, ...payload: unknown[]) => void)(name, ...args)
   }
