@@ -106,6 +106,12 @@ onMounted(() => { void load() })
         <span v-if="cw.effective !== undefined" class="text-xs text-muted-foreground" data-testid="eco-cw-effective">
           {{ cw.effective === null ? t('eco.cwEffectiveNone') : t('eco.cwEffective', { tokens: kLabel(cw.effective) }) }}
         </span>
+        <span v-if="cw.baseline" class="text-xs text-muted-foreground" data-testid="eco-cw-baseline">
+          {{ t('eco.cwBaseline', { tokens: kLabel(cw.baseline), source: t(`eco.cwBaselineSource.${cw.baselineSource ?? 'modelfile'}`) }) }}
+        </span>
+        <span v-else-if="cw.baseline === null && cw.supported" class="text-xs text-muted-foreground [overflow-wrap:anywhere]" data-testid="eco-cw-baseline-missing">
+          {{ t('eco.cwBaselineMissing') }}
+        </span>
         <p v-if="cwError" role="alert" class="text-sm">{{ t('eco.cwSaveError') }}</p>
       </div>
       <span class="sr-only" role="status" aria-live="polite">{{ announce }}</span>

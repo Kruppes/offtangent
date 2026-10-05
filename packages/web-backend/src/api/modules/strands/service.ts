@@ -35,6 +35,7 @@ import {
   readStrandContextWindow,
   setStrandContextWindow,
   decideNumCtx,
+  resolveBaseline,
   peekOllamaShowFacts,
   ECO_CONTEXT_PRESETS,
   OLLAMA_CHAT_API,
@@ -198,6 +199,10 @@ export interface StrandContextWindowStatus {
   effective?: number | null
   /** Native only: whether the /api/show facts behind `state` are cached ('known'), being fetched or failed. */
   facts?: 'known' | 'pending' | 'failed'
+  /** Native only: the window a request keeps without override (null = unknown → a choice cannot take effect). */
+  baseline?: number | null
+  /** Native only: where `baseline` comes from (per-model setting, provider setting or modelfile). */
+  baselineSource?: 'model_setting' | 'provider_setting' | 'modelfile' | null
 }
 
 /** One fact of the slim `GET /api/strands/:id/facts` list (W5b). */
@@ -554,14 +559,23 @@ export function createStrandsService(options: StrandsServiceOptions) {
     // strand's CURRENT model, re-read per status call). Not yet cached → the
     // baseline is honestly unknown; nothing is guessed.
     const peek = nativeProvider && modelId ? peekOllamaShowFacts(provider?.baseUrl, modelId) : { known: false, facts: {}, failed: false }
-    const facts = { ...peek.facts, ...(provider?.ollamaNumCtx !== undefined ? { providerNumCtx: provider.ollamaNumCtx } : {}) }
+    // Same baseline precedence as the request path: per-model setting >
+    // provider setting > modelfile (resolveBaseline).
+    const modelNumCtx = nativeProvider && modelId ? provider?.models?.find(m => m.id === modelId)?.ollamaNumCtx : undefined
+    const facts = {
+      ...peek.facts,
+      ...(provider?.ollamaNumCtx !== undefined ? { providerNumCtx: provider.ollamaNumCtx } : {}),
+      ...(modelNumCtx !== undefined ? { modelNumCtx } : {}),
+    }
     const decision = decideNumCtx({ nativeProvider, choice, facts })
+    const baseline = nativeProvider ? resolveBaseline(facts) : { known: false as const }
     return {
       choice,
       presets,
       supported: nativeProvider,
       state: decision.state,
       effective: decision.numCtx ?? null,
+      ...(nativeProvider ? { baseline: baseline.known ? baseline.value : null, baselineSource: baseline.known ? baseline.source : null } : {}),
       ...(nativeProvider ? { facts: peek.known ? 'known' as const : peek.failed ? 'failed' as const : 'pending' as const } : {}),
     }
   }

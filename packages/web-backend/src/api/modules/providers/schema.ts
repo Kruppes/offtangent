@@ -1,5 +1,5 @@
 import { URL } from 'node:url'
-import { DATA_REGIONS, DATA_TRAINING_VALUES, PROVIDER_TYPE_PRESETS } from '@axiom/core'
+import { DATA_REGIONS, DATA_TRAINING_VALUES, MAX_NUM_CTX, MIN_NUM_CTX_BASELINE, PROVIDER_TYPE_PRESETS, isValidNumCtxBaseline } from '@axiom/core'
 import type {
   DataPolicyContract,
   ProviderCreatePayloadContract,
@@ -171,12 +171,34 @@ function parseOptionalContextWindow(body: Record<string, unknown>): ParseResult<
   return { ok: true, value: contextWindow }
 }
 
+/** Bounds of a configured native num_ctx baseline (integer tokens). */
+const OLLAMA_NUM_CTX_BASELINE_MIN = MIN_NUM_CTX_BASELINE
+const OLLAMA_NUM_CTX_BASELINE_MAX = MAX_NUM_CTX
+
+function parseOptionalReasoning(body: Record<string, unknown>): ParseResult<boolean | null | undefined> {
+  if (!Object.prototype.hasOwnProperty.call(body, 'reasoning')) return { ok: true, value: undefined }
+  const v = body.reasoning
+  if (v === null || typeof v === 'boolean') return { ok: true, value: v }
+  return { ok: false, error: 'reasoning must be true, false or null' }
+}
+
+function parseOptionalOllamaNumCtx(body: Record<string, unknown>): ParseResult<number | null | undefined> {
+  if (!Object.prototype.hasOwnProperty.call(body, 'ollamaNumCtx')) return { ok: true, value: undefined }
+  const v = body.ollamaNumCtx
+  if (v === null) return { ok: true, value: null }
+  // No string coercion: a JSON integer is required.
+  if (!isValidNumCtxBaseline(v)) {
+    return { ok: false, error: `ollamaNumCtx must be null or an integer between ${OLLAMA_NUM_CTX_BASELINE_MIN} and ${OLLAMA_NUM_CTX_BASELINE_MAX}` }
+  }
+  return { ok: true, value: v }
+}
+
 export function parseProviderModelUpdatePayload(payload: unknown): ParseResult<ProviderModelUpdatePayloadContract> {
   const body = toRecord(payload)
   const hasCost = typeof body.cost === 'object' && body.cost !== null
-  const hasAnyField = hasCost || ['name', 'description', 'contextWindow'].some(key => Object.prototype.hasOwnProperty.call(body, key))
+  const hasAnyField = hasCost || ['name', 'description', 'contextWindow', 'reasoning', 'ollamaNumCtx'].some(key => Object.prototype.hasOwnProperty.call(body, key))
   if (!hasAnyField) {
-    return { ok: false, error: 'Provide at least a name, description, contextWindow or cost to update.' }
+    return { ok: false, error: 'Provide at least a name, description, reasoning, ollamaNumCtx, contextWindow or cost to update.' }
   }
 
   const name = parseOptionalStringField(body, 'name')
@@ -185,8 +207,14 @@ export function parseProviderModelUpdatePayload(payload: unknown): ParseResult<P
   if (!description.ok) return description
   const contextWindow = parseOptionalContextWindow(body)
   if (!contextWindow.ok) return contextWindow
+  const reasoning = parseOptionalReasoning(body)
+  if (!reasoning.ok) return reasoning
+  const ollamaNumCtx = parseOptionalOllamaNumCtx(body)
+  if (!ollamaNumCtx.ok) return ollamaNumCtx
 
   const value: ProviderModelUpdatePayloadContract = {}
+  if (reasoning.value !== undefined) value.reasoning = reasoning.value
+  if (ollamaNumCtx.value !== undefined) value.ollamaNumCtx = ollamaNumCtx.value
   if (name.value !== undefined) value.name = name.value
   if (description.value !== undefined) value.description = description.value
   if (contextWindow.value !== undefined) value.contextWindow = contextWindow.value

@@ -409,6 +409,12 @@
     "editModelCostOutput": "Ausgabe",
     "editModelCostCacheRead": "Cache-Read",
     "editModelCostCacheWrite": "Cache-Write",
+    "editModelNumCtxLabel": "Basis-Kontextfenster (num_ctx, gemessen)",
+    "editModelNumCtxPlaceholder": "leer = unbekannt",
+    "editModelNumCtxHint": "Fenster, mit dem der Ollama-Server dieses Modell ohne Vorgabe lädt (z. B. aus /api/ps nach einer normalen Anfrage) – nicht das Modellmaximum. Eine Eco-Kontextwahl wird nur gesendet, wenn sie größer ist. Leer lassen, wenn unbekannt.",
+    "editModelNumCtxInvalid": "Ganze Zahl zwischen {min} und {max} oder leer.",
+    "editModelReasoningLabel": "Modell kann denken (Thinking)",
+    "editModelReasoningHint": "Aktiviert Thinking-Stufen. Aus = es wird think:false gesendet, sofern der Server das anbietet.",
     "editModelCostHint": "Leer lassen, um bestehende Werte beizubehalten. 0 bedeutet kostenlos.",
     "editModelSave": "Speichern",
     "editModelSuccess": "Modell gespeichert",
@@ -2762,6 +2768,9 @@
     "cwEffective": "Aktuell gesendet: num_ctx {tokens}",
     "cwEffectiveNone": "Aktuell gesendet: kein num_ctx (Server-Fenster)",
     "cwFactsPending": "Modell-Fakten werden geprüft…",
+    "cwBaseline": "Basis {tokens} ({source})",
+    "cwBaselineSource": { "model_setting": "Modell-Einstellung", "provider_setting": "Provider-Einstellung", "modelfile": "Modelfile" },
+    "cwBaselineMissing": "Basis-Fenster unbekannt: in Einstellungen › Provider › Modell bearbeiten eintragen, sonst bleibt die Auswahl wirkungslos.",
     "cwNotGuaranteed": "Die Auswahl ist eine Anfrage an Ollama, keine garantierte Token-Grenze; ein größeres Fenster braucht mehr RAM/VRAM."
   }
 }

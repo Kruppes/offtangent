@@ -7,6 +7,7 @@ import { guardStream } from './request-overflow-guard.js'
 import { OLLAMA_CHAT_API } from './ollama-native/chat-stream.js'
 import { streamNativeOllama } from './ollama-native/native-request.js'
 import type { ContextWindowChoice, OllamaModelFacts } from './ollama-native/context-window.js'
+import { isValidNumCtxBaseline } from './ollama-native/context-window.js'
 import { getBuiltinModels as getPiAiModels } from '@earendil-works/pi-ai/providers/all'
 import type { BuiltinProvider } from '@earendil-works/pi-ai/providers/all'
 import type { OAuthCredentials } from '@earendil-works/pi-ai/oauth'
@@ -727,7 +728,7 @@ export function applyRequestTimeout<T extends object | undefined>(
  * `sessionId`. Ollama & friends see byte-identical requests to before.
  */
 export function buildStreamFn(
-  provider: Pick<ProviderConfig, 'textVerbosity' | 'transport'> & Partial<Pick<ProviderConfig, 'providerType' | 'ollamaNumCtx'>>,
+  provider: Pick<ProviderConfig, 'textVerbosity' | 'transport'> & Partial<Pick<ProviderConfig, 'providerType' | 'ollamaNumCtx'>> & { models?: Array<Pick<ProviderModelConfig, 'id' | 'ollamaNumCtx'>> },
   streamImpl: typeof streamSimple = streamSimple,
   cache?: StreamCacheOptions,
 ): typeof streamSimple {
@@ -759,6 +760,7 @@ export function buildStreamFn(
       return streamNativeOllama(streamImpl as never, model as never, cleanContext, withCache, {
         getContextWindowChoice: cache?.getContextWindowChoice,
         providerNumCtx: provider.ollamaNumCtx,
+        modelNumCtx: provider.models?.find(m => m.id === model.id)?.ollamaNumCtx,
         loadFacts: cache?.loadOllamaFacts as never,
       }) as ReturnType<typeof streamSimple>
     }
@@ -1170,6 +1172,16 @@ export interface ProviderModelConfig {
    * `resolveModelTemperature()` so this constraint is honored.
    */
   fixedTemperature?: number
+  /**
+   * Native Ollama only (`ollama-native`): the operator's explicit num_ctx
+   * BASELINE for this model id — the window the server actually loads it with
+   * when no num_ctx is sent (measured, e.g. /api/ps after a plain request).
+   * Needed when the modelfile carries no num_ctx (/api/show cannot report the
+   * server default). NOT the architecture maximum. Outranks the provider-wide
+   * `ollamaNumCtx` and the modelfile; a strand's Eco choice is only sent when
+   * it exceeds this value.
+   */
+  ollamaNumCtx?: number
   cost?: {
     input: number
     output: number
@@ -1794,12 +1806,25 @@ export function updateProviderModel(
     description?: string
     contextWindow?: number
     cost?: { input?: number; output?: number; cacheRead?: number; cacheWrite?: number }
+    /** ollama-native only; null removes the override. */
+    reasoning?: boolean | null
+    /** ollama-native only; null removes the configured baseline. */
+    ollamaNumCtx?: number | null
   },
 ): ProviderConfig {
   const file = loadProviders()
   const provider = file.providers.find(p => p.id === providerId)
   if (!provider) {
     throw new ProviderNotFoundError(providerId)
+  }
+  // Native-only metadata: rejected (before any write) for every other type so
+  // the /v1 and hosted wires can never change through this path.
+  const nativeOnly = (['reasoning', 'ollamaNumCtx'] as const).filter(k => patch[k] !== undefined)
+  if (nativeOnly.length > 0 && provider.providerType !== 'ollama-native') {
+    throw new Error(`${nativeOnly.join(', ')} can only be set for native Ollama providers (ollama-native)`)
+  }
+  if (patch.ollamaNumCtx !== undefined && patch.ollamaNumCtx !== null && !isValidNumCtxBaseline(patch.ollamaNumCtx)) {
+    throw new Error(`invalid ollamaNumCtx ${String(patch.ollamaNumCtx)}`)
   }
 
   if (!provider.models) provider.models = []
@@ -1842,6 +1867,12 @@ export function updateProviderModel(
   if (patch.contextWindow !== undefined && patch.contextWindow > 0) {
     entry.contextWindow = patch.contextWindow
   }
+
+  if (patch.reasoning === null) delete entry.reasoning
+  else if (patch.reasoning !== undefined) entry.reasoning = patch.reasoning
+
+  if (patch.ollamaNumCtx === null) delete entry.ollamaNumCtx
+  else if (patch.ollamaNumCtx !== undefined) entry.ollamaNumCtx = patch.ollamaNumCtx
 
   if (patch.cost) {
     if (!entry.cost) entry.cost = { input: 0, output: 0 }

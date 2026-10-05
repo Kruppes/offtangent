@@ -100,6 +100,44 @@
           </div>
           <p class="text-xs text-muted-foreground">{{ $t('providers.editModelCostHint') }}</p>
         </div>
+
+        <!-- Native Ollama only: measured num_ctx baseline + thinking capability. -->
+        <div v-if="isNative" class="flex flex-col gap-3" data-testid="native-model-settings">
+          <div class="flex flex-col gap-1">
+            <Label for="model-ollama-num-ctx">{{ $t('providers.editModelNumCtxLabel') }}</Label>
+            <Input
+              id="model-ollama-num-ctx"
+              v-model="form.ollamaNumCtx"
+              type="number"
+              :min="NUM_CTX_MIN"
+              :max="NUM_CTX_MAX"
+              step="1"
+              inputmode="numeric"
+              :placeholder="$t('providers.editModelNumCtxPlaceholder')"
+              :aria-invalid="numCtxError ? 'true' : undefined"
+              aria-describedby="model-ollama-num-ctx-hint"
+              class="text-sm"
+            />
+            <p v-if="numCtxError" class="text-xs text-destructive" role="alert" data-testid="num-ctx-error">
+              {{ $t('providers.editModelNumCtxInvalid', { min: NUM_CTX_MIN, max: NUM_CTX_MAX }) }}
+            </p>
+            <p id="model-ollama-num-ctx-hint" class="break-words text-xs text-muted-foreground">
+              {{ $t('providers.editModelNumCtxHint') }}
+            </p>
+          </div>
+          <label class="flex items-start gap-2 text-sm">
+            <input
+              v-model="form.reasoning"
+              type="checkbox"
+              class="mt-0.5 h-4 w-4 shrink-0 accent-primary"
+              data-testid="model-reasoning"
+            >
+            <span class="min-w-0 break-words">
+              {{ $t('providers.editModelReasoningLabel') }}
+              <span class="block text-xs text-muted-foreground">{{ $t('providers.editModelReasoningHint') }}</span>
+            </span>
+          </label>
+        </div>
       </div>
 
       <DialogFooter>
@@ -121,6 +159,7 @@
 <script setup lang="ts">
 import type { Provider } from '~/features/providers/composables/useProviders'
 import type { ProviderModelUpdatePayloadContract } from '@axiom/core/contracts'
+import { NUM_CTX_MAX, NUM_CTX_MIN, nativeModelPatch, parseNumCtxInput } from '~/features/providers/nativeModelSettings'
 
 const props = defineProps<{
   open: boolean
@@ -141,8 +180,13 @@ const form = reactive({
   costOutput: '',
   costCacheRead: '',
   costCacheWrite: '',
+  ollamaNumCtx: '' as string | number,
+  reasoning: false,
 })
 const saving = ref(false)
+
+const isNative = computed(() => props.provider?.providerType === 'ollama-native')
+const numCtxError = computed(() => isNative.value && parseNumCtxInput(form.ollamaNumCtx) === 'invalid')
 
 const existingEntry = computed(() =>
   props.provider?.models?.find(m => m.id === props.modelId),
@@ -186,7 +230,7 @@ function parseCostField(value: string): number | undefined {
 const canSave = computed(() => {
   // Gates on the dialog having a target provider and model. The server
   // enforces non-empty patches (at least a description or cost field).
-  return Boolean(props.provider && props.modelId)
+  return Boolean(props.provider && props.modelId) && !numCtxError.value
 })
 
 async function handleSave() {
@@ -206,6 +250,11 @@ async function handleSave() {
     if (cacheRead !== undefined) cost.cacheRead = cacheRead
     if (cacheWrite !== undefined) cost.cacheWrite = cacheWrite
     if (Object.keys(cost).length > 0) payload.cost = cost
+    if (isNative.value) {
+      const native = nativeModelPatch(form, existingEntry.value)
+      if (native === 'invalid') return
+      Object.assign(payload, native)
+    }
 
     const result = await updateProviderModel(props.provider.id, props.modelId, payload)
     if (result) {
@@ -224,6 +273,8 @@ function loadFromEntry() {
   form.costOutput = entry?.cost?.output != null ? String(entry.cost.output) : ''
   form.costCacheRead = entry?.cost?.cacheRead != null ? String(entry.cost.cacheRead) : ''
   form.costCacheWrite = entry?.cost?.cacheWrite != null ? String(entry.cost.cacheWrite) : ''
+  form.ollamaNumCtx = entry?.ollamaNumCtx != null ? String(entry.ollamaNumCtx) : ''
+  form.reasoning = Boolean(entry?.reasoning)
 }
 
 watch(

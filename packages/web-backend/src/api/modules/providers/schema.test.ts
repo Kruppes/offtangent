@@ -238,4 +238,22 @@ describe('providers schema', () => {
     expect(nonStringDescription.ok).toBe(false)
     if (!nonStringDescription.ok) expect(nonStringDescription.error).toContain('description must be a string')
   })
+
+  it('parses native Ollama model metadata: reasoning and ollamaNumCtx with bounds, null reset, no coercion', () => {
+    const ok = parseProviderModelUpdatePayload({ reasoning: true, ollamaNumCtx: 40960 })
+    expect(ok).toEqual({ ok: true, value: { reasoning: true, ollamaNumCtx: 40960 } })
+    expect(parseProviderModelUpdatePayload({ reasoning: null, ollamaNumCtx: null })).toEqual({ ok: true, value: { reasoning: null, ollamaNumCtx: null } })
+    expect(parseProviderModelUpdatePayload({ ollamaNumCtx: 1024 }).ok).toBe(true)
+    expect(parseProviderModelUpdatePayload({ ollamaNumCtx: 1_048_576 }).ok).toBe(true)
+    for (const bad of [1023, 1_048_577, 4096.5, '40960', -1, 0, true, Number.NaN, Number.POSITIVE_INFINITY, {}]) {
+      const r = parseProviderModelUpdatePayload({ ollamaNumCtx: bad })
+      expect(r.ok, String(bad)).toBe(false)
+      if (!r.ok) expect(r.error).toContain('ollamaNumCtx must be null or an integer between 1024 and 1048576')
+    }
+    for (const bad of ['true', 1, 'on', {}]) {
+      const r = parseProviderModelUpdatePayload({ reasoning: bad })
+      expect(r.ok).toBe(false)
+      if (!r.ok) expect(r.error).toContain('reasoning must be true, false or null')
+    }
+  })
 })

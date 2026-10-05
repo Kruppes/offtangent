@@ -409,6 +409,12 @@
     "editModelCostOutput": "Output",
     "editModelCostCacheRead": "Cache read",
     "editModelCostCacheWrite": "Cache write",
+    "editModelNumCtxLabel": "Baseline context window (num_ctx, measured)",
+    "editModelNumCtxPlaceholder": "empty = unknown",
+    "editModelNumCtxHint": "Window the Ollama server loads this model with when nothing is sent (e.g. from /api/ps after a plain request) – not the model maximum. An Eco context choice is only sent when it is larger. Leave empty if unknown.",
+    "editModelNumCtxInvalid": "Whole number between {min} and {max}, or empty.",
+    "editModelReasoningLabel": "Model can think (thinking)",
+    "editModelReasoningHint": "Enables thinking levels. Off sends think:false where the server offers it.",
     "editModelCostHint": "Leave empty to keep existing values. 0 means free.",
     "editModelSave": "Save",
     "editModelSuccess": "Model saved",
@@ -2762,6 +2768,9 @@
     "cwEffective": "Sent now: num_ctx {tokens}",
     "cwEffectiveNone": "Sent now: no num_ctx (server window)",
     "cwFactsPending": "checking model facts…",
+    "cwBaseline": "Baseline {tokens} ({source})",
+    "cwBaselineSource": { "model_setting": "model setting", "provider_setting": "provider setting", "modelfile": "modelfile" },
+    "cwBaselineMissing": "Baseline window unknown: set it under Settings › Providers › Edit model, otherwise the choice has no effect.",
     "cwNotGuaranteed": "A choice is a request to Ollama, not a guaranteed token limit; a larger window needs more RAM/VRAM."
   }
 }

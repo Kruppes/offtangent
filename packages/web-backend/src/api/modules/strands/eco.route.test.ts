@@ -201,6 +201,12 @@ describe('strand eco context window on a native Ollama provider (fake /api/show,
         res.writeHead(404, { 'Content-Type': 'application/json' }); res.end('{"error":"model not found"}')
         return
       }
+      if (req.method === 'POST' && req.url === '/api/show' && body.includes('nofile-')) {
+        // Like gemma4/qwen3.8 MLX on the real server: no num_ctx in the modelfile.
+        res.writeHead(200, { 'Content-Type': 'application/json' })
+        res.end(JSON.stringify({ parameters: 'temperature 1', model_info: { 'general.architecture': 'gemma4', 'gemma4.context_length': 131072 } }))
+        return
+      }
       if (req.method === 'POST' && req.url === '/api/show') {
         res.writeHead(200, { 'Content-Type': 'application/json' })
         res.end(JSON.stringify({ parameters: 'num_ctx 32768', model_info: { 'general.architecture': 'qwen3', 'qwen3.context_length': 65536 } }))
@@ -213,7 +219,7 @@ describe('strand eco context window on a native Ollama provider (fake /api/show,
     fakeUrl = `http://127.0.0.1:${(fake.address() as { port: number }).port}`
     saveProviders({
       providers: [
-        { id: 'native', name: 'Native', type: 'ollama-chat', providerType: 'ollama-native', provider: 'ollama-native', baseUrl: fakeUrl, apiKey: '', enabledModels: ['synthetic-model', 'missing-model'], models: [{ id: 'synthetic-model', name: 'Synthetic', contextWindow: 32768 }, { id: 'missing-model', name: 'Missing' }] },
+        { id: 'native', name: 'Native', type: 'ollama-chat', providerType: 'ollama-native', provider: 'ollama-native', baseUrl: fakeUrl, apiKey: '', enabledModels: ['synthetic-model', 'missing-model', 'nofile-configured', 'nofile-bare'], models: [{ id: 'synthetic-model', name: 'Synthetic', contextWindow: 32768 }, { id: 'missing-model', name: 'Missing' }, { id: 'nofile-configured', name: 'NoFile configured', ollamaNumCtx: 40960 }, { id: 'nofile-bare', name: 'NoFile bare' }] },
         { id: 'compat', name: 'Compat', type: 'openai-completions', providerType: 'ollama', provider: 'ollama', baseUrl: `${fakeUrl}/v1`, apiKey: '', enabledModels: ['synthetic-model'], models: [{ id: 'synthetic-model', name: 'Synthetic', contextWindow: 32768 }] },
       ],
       activeProvider: 'compat', activeModel: 'synthetic-model', fallbackProvider: 'compat', fallbackModel: 'synthetic-model',
@@ -254,6 +260,22 @@ describe('strand eco context window on a native Ollama provider (fake /api/show,
     // Only read-only /api/show was ever called: no chat, generate, unload or ps.
     expect(seen.length).toBeGreaterThan(0)
     expect(seen.every(s => s === 'POST /api/show')).toBe(true)
+  })
+
+  it('modelfile without num_ctx: a configured per-model baseline makes the choice effective; without it the state stays baseline_unknown', async () => {
+    await getOllamaShowFacts(fakeUrl, 'nofile-configured')
+    await getOllamaShowFacts(fakeUrl, 'nofile-bare')
+    const strand = sessionManager.createThread('1', 'main', 'Native nofile')
+    db.prepare('UPDATE sessions SET model_provider_id = ?, model_id = ? WHERE id = ?').run('native', 'nofile-bare', strand.id)
+    const bare = await api('PATCH', `/api/strands/${strand.id}/eco`, { contextWindow: 65536 })
+    expect((bare.body.eco as Record<string, unknown>).contextWindow).toMatchObject({ choice: 65536, state: 'baseline_unknown', effective: null, baseline: null, baselineSource: null, facts: 'known' })
+    // Model switch to the configured twin: same choice now takes effect above the baseline.
+    db.prepare('UPDATE sessions SET model_provider_id = ?, model_id = ? WHERE id = ?').run('native', 'nofile-configured', strand.id)
+    const ctx = await api('GET', `/api/strands/${strand.id}/context`)
+    expect((ctx.body.eco as Record<string, unknown>).contextWindow).toMatchObject({ choice: 65536, state: 'applied', effective: 65536, baseline: 40960, baselineSource: 'model_setting' })
+    // A choice at/below the baseline never lowers it.
+    const lower = await api('PATCH', `/api/strands/${strand.id}/eco`, { contextWindow: 32768 })
+    expect((lower.body.eco as Record<string, unknown>).contextWindow).toMatchObject({ choice: 32768, state: 'baseline_kept', effective: null, baseline: 40960 })
   })
 
   it('reports an honest non-applied state (no guessed floor) while /api/show facts are not yet known', async () => {

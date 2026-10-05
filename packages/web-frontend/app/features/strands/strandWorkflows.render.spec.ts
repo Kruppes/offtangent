@@ -275,6 +275,22 @@ describe('eco mode switch', () => {
     expect(text(second.root)).toContain('eco.cwEffectiveNone')
     expect(text(second.root)).toContain('eco.cwFactsPending')
   })
+  it('context window: shows the configured baseline and its source, or a clear "baseline unknown" call to action', async () => {
+    const api = setup()
+    const base = { choice: 65536, presets: [32768, 49152, 65536, 131072], supported: true, facts: 'known' }
+    api.mockResolvedValueOnce({ eco: { ...eco(false).eco, contextWindow: { ...base, state: 'applied', effective: 65536, baseline: 40960, baselineSource: 'model_setting' } } })
+    const { root } = mount(EcoSwitch, { strandId: 's' })
+    await flush()
+    expect(all(root).some(n => n.props['data-testid'] === 'eco-cw-baseline')).toBe(true)
+    expect(text(root)).toContain('eco.cwBaseline')
+    expect(text(root)).not.toContain('eco.cwBaselineMissing')
+    const api2 = setup()
+    api2.mockResolvedValueOnce({ eco: { ...eco(false).eco, contextWindow: { ...base, state: 'baseline_unknown', effective: null, baseline: null, baselineSource: null } } })
+    const second = mount(EcoSwitch, { strandId: 's' })
+    await flush()
+    expect(text(second.root)).toContain('eco.cwBaselineMissing')
+    expect(text(second.root)).toContain('eco.cwEffectiveNone')
+  })
   it('context window: disabled with a reason on a non-native provider, error keeps the old value', async () => {
     const api = setup()
     api.mockResolvedValueOnce({ eco: { ...eco(false).eco, contextWindow: { choice: null, presets: [32768], supported: false, state: 'provider_unsupported' } } })

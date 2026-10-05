@@ -39,7 +39,11 @@ export interface EcoContextWindowStatus {
   effective?: number | null
   /** Whether the /api/show facts behind `state` are known, still being fetched, or failed. */
   facts?: 'known' | 'pending' | 'failed'
+  /** Native only: window kept without override (null = unknown). Omitted by older servers. */
+  baseline?: number | null
+  baselineSource?: 'model_setting' | 'provider_setting' | 'modelfile' | null
 }
+const CW_SOURCES = ['model_setting', 'provider_setting', 'modelfile'] as const
 const CW_STATES: readonly EcoContextWindowState[] = ['unchanged', 'applied', 'baseline_kept', 'provider_unsupported', 'baseline_unknown', 'supported_unknown', 'exceeds_supported', 'invalid_choice', 'no_model']
 export function mapContextWindow(raw: unknown): EcoContextWindowStatus | undefined {
   if (!raw || typeof raw !== 'object') return undefined
@@ -54,6 +58,9 @@ export function mapContextWindow(raw: unknown): EcoContextWindowStatus | undefin
     state: v.state as EcoContextWindowState,
     ...(v.effective === null || okInt(v.effective) ? { effective: v.effective as number | null } : {}),
     ...(v.facts === 'known' || v.facts === 'pending' || v.facts === 'failed' ? { facts: v.facts } : {}),
+    ...(v.baseline === null || okInt(v.baseline) ? { baseline: v.baseline as number | null } : {}),
+    ...(v.baselineSource === null || CW_SOURCES.includes(v.baselineSource as typeof CW_SOURCES[number])
+      ? { baselineSource: v.baselineSource as EcoContextWindowStatus['baselineSource'] } : {}),
   }
 }
 export const STRAND_ECO_PATH = (id: string) => `/api/strands/${encodeURIComponent(id)}/eco`

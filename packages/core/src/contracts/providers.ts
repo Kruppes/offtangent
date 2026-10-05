@@ -116,6 +116,8 @@ export interface ProviderModelContract {
   reasoning?: boolean
   thinkingLevelMap?: Record<string, string | null>
   fixedTemperature?: number
+  /** Native Ollama only: configured num_ctx baseline for this model. */
+  ollamaNumCtx?: number
   cost?: { input: number; output: number; cacheRead?: number; cacheWrite?: number }
 }
 
@@ -296,6 +298,18 @@ export interface ProviderModelUpdatePayloadContract {
   name?: string
   description?: string
   contextWindow?: number
+  /**
+   * Native Ollama (`ollama-native`) only: mark the model as thinking-capable
+   * so the UI offers thinking levels. `null` removes the override (thinking
+   * off). The `think` wire value follows the model's /api/show contract.
+   */
+  reasoning?: boolean | null
+  /**
+   * Native Ollama (`ollama-native`) only: measured num_ctx baseline the server
+   * loads this model with when no num_ctx is sent (NOT the model maximum).
+   * Integer 1024…1048576; `null` removes it (baseline unknown again).
+   */
+  ollamaNumCtx?: number | null
   cost?: {
     input?: number
     output?: number

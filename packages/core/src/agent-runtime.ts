@@ -844,6 +844,7 @@ class PiAgentRuntime implements AgentRuntimeBoundary, AgentRuntimePiAgentAccess 
           transport: this.providerConfig?.transport,
           providerType: this.providerConfig?.providerType,
           ollamaNumCtx: this.providerConfig?.ollamaNumCtx,
+          models: this.providerConfig?.models,
         },
         undefined,
         // Prompt-cache routing: the strand id is stable for the whole

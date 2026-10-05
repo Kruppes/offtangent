@@ -378,6 +378,32 @@ describe('provider-config', () => {
     )
   })
 
+  it('updateProviderModel: native Ollama reasoning/ollamaNumCtx set, reset with null, rejected for other types', () => {
+    setupTmpConfig({
+      providers: [
+        { id: 'nat', name: 'Ollama (native)', type: 'ollama-chat', providerType: 'ollama-native', provider: 'ollama', baseUrl: 'http://127.0.0.1:11434', apiKey: '', enabledModels: ['qwen3.8:27b-mlx', 'gemma4:12b-mlx'] },
+        { id: 'v1', name: 'Ollama', type: 'openai-completions', providerType: 'ollama', provider: 'ollama', baseUrl: 'http://127.0.0.1:11434/v1', apiKey: '', enabledModels: ['qwen3.8:27b-mlx'] },
+      ],
+    })
+    const set = updateProviderModel('nat', 'qwen3.8:27b-mlx', { reasoning: true, ollamaNumCtx: 40960 })
+    expect(set.models?.find(m => m.id === 'qwen3.8:27b-mlx')).toMatchObject({ reasoning: true, ollamaNumCtx: 40960 })
+    const reloaded = loadProviders().providers.find(p => p.id === 'nat')!
+    expect(reloaded.models?.find(m => m.id === 'qwen3.8:27b-mlx')).toMatchObject({ reasoning: true, ollamaNumCtx: 40960 })
+    // Untouched fields stay; null resets.
+    const reset = updateProviderModel('nat', 'qwen3.8:27b-mlx', { ollamaNumCtx: null, reasoning: null })
+    const entry = reset.models?.find(m => m.id === 'qwen3.8:27b-mlx')
+    expect(entry).toBeDefined()
+    expect(entry).not.toHaveProperty('ollamaNumCtx')
+    expect(entry).not.toHaveProperty('reasoning')
+    // Out-of-range baseline is refused even when the API layer is bypassed.
+    expect(() => updateProviderModel('nat', 'gemma4:12b-mlx', { ollamaNumCtx: 12 })).toThrowError(/invalid ollamaNumCtx/)
+    // Non-native providers can never receive native-only metadata, and nothing is written.
+    const before = fs.readFileSync(path.join(tmpDir, 'config', 'providers.json'), 'utf-8')
+    expect(() => updateProviderModel('v1', 'qwen3.8:27b-mlx', { ollamaNumCtx: 40960 })).toThrowError(/only be set for native Ollama/)
+    expect(() => updateProviderModel('v1', 'qwen3.8:27b-mlx', { reasoning: true })).toThrowError(/only be set for native Ollama/)
+    expect(fs.readFileSync(path.join(tmpDir, 'config', 'providers.json'), 'utf-8')).toBe(before)
+  })
+
   it('updateProviderModel persists name/contextWindow/cost for models outside the bundled catalog', () => {
     // Merge note (upstream 0.27.0 test on fork pi-ai 0.85.1): the original id
     // `qwen/qwen3.8-flash` is now PART of the pi-ai 0.85.1 openrouter catalog,

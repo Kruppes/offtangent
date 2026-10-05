@@ -36,6 +36,8 @@ export interface NativeRequestInput {
   getContextWindowChoice?: () => ContextWindowChoice
   /** Explicit provider num_ctx (operator setting) — outranks the modelfile. */
   providerNumCtx?: number
+  /** Explicit per-model num_ctx baseline (operator setting for this model id). */
+  modelNumCtx?: number
   /** Facts loader injection for tests; production uses the cached `/api/show`. */
   loadFacts?: (model: AnyModel) => Promise<OllamaModelFacts>
   /** Observer for tests/diagnostics: the single decision of this request. */
@@ -72,7 +74,11 @@ export function decideNativeRequest(
     : undefined
   const window = decision.guardWindow !== undefined && learned !== undefined ? Math.min(decision.guardWindow, learned) : decision.guardWindow
   // Unchanged options object when nothing is overridden: no-choice requests stay identical.
-  const sendOptions = decision.numCtx !== undefined ? ({ ...(options ?? {}), ollamaNumCtx: decision.numCtx } as SimpleStreamOptions) : options
+  // Native thinking contract: only when /api/show advertises thinking.values.
+  const extra: Record<string, unknown> = {}
+  if (decision.numCtx !== undefined) extra.ollamaNumCtx = decision.numCtx
+  if (facts.thinkValues !== undefined) extra.ollamaThinkValues = facts.thinkValues
+  const sendOptions = Object.keys(extra).length > 0 ? ({ ...(options ?? {}), ...extra } as SimpleStreamOptions) : options
   if (window === undefined) return { kind: 'send', options: sendOptions, decision, window }
   const estimate = estimateRequest(context)
   const nums = `estimated input ${estimate.optimistic}–${estimate.conservative} tokens (chars/4 … chars/3 safety estimate, not a tokenizer count) vs native Ollama window ${window} tokens (num_ctx ${decision.numCtx ?? 'not overridden'}, state ${decision.state})`
@@ -101,6 +107,7 @@ export function streamNativeOllama(inner: Inner, model: AnyModel, context: Conte
         : (await getOllamaShowFacts(model.baseUrl, model.id, { signal: options?.signal })).facts
       const facts: OllamaModelFacts = { ...loaded }
       if (isValidNumCtx(input.providerNumCtx)) facts.providerNumCtx = input.providerNumCtx
+      if (isValidNumCtx(input.modelNumCtx)) facts.modelNumCtx = input.modelNumCtx
       const decided = decideNativeRequest(model, context, options, choice, facts)
       input.onDecision?.({ ...decided.decision, window: decided.window })
       const src = decided.kind === 'refuse' ? failStream(model, decided.message) : inner(model, context, decided.options)

@@ -35,13 +35,18 @@ import type {
   TranscriptContext,
 } from '@earendil-works/pi-ai'
 import { transformMessages } from '@earendil-works/pi-ai/api/transform-messages'
-import { isValidNumCtx } from './context-window.js'
+import { isValidNumCtx, resolveNativeThink, type OllamaThinkValue } from './context-window.js'
 
 export const OLLAMA_CHAT_API = 'ollama-chat'
 
 export interface OllamaChatOptions extends SimpleStreamOptions {
   /** Explicit per-request `options.num_ctx`. Omitted = key not sent. */
   ollamaNumCtx?: number
+  /**
+   * Native `thinking.values` advertised by /api/show for this model. When set,
+   * `think` follows {@link resolveNativeThink}; omitted = legacy {@link resolveThink}.
+   */
+  ollamaThinkValues?: readonly OllamaThinkValue[]
 }
 
 interface OllamaToolCall {
@@ -62,7 +67,7 @@ export interface OllamaChatBody {
   model: string
   messages: OllamaMessage[]
   tools?: Array<{ type: 'function'; function: { name: string; description: string; parameters: unknown } }>
-  think?: boolean | 'low' | 'medium' | 'high'
+  think?: OllamaThinkValue
   options?: { num_ctx?: number; num_predict?: number; temperature?: number }
   stream: true
 }
@@ -153,7 +158,11 @@ export function buildOllamaChatBody(model: Model<string>, context: TranscriptCon
   }
   const body: OllamaChatBody = { model: model.id, messages, stream: true }
   if (tools.length > 0) body.tools = tools.map(convertTool)
-  const think = resolveThink(model, options.reasoning)
+  // A model whose metadata is not marked reasoning gets thinking OFF even
+  // when a level is passed (same rule as resolveThink).
+  const think = options.ollamaThinkValues !== undefined
+    ? resolveNativeThink(options.ollamaThinkValues, model.reasoning ? options.reasoning : undefined).think
+    : resolveThink(model, options.reasoning)
   if (think !== undefined) body.think = think
   const opts: NonNullable<OllamaChatBody['options']> = {}
   if (options.ollamaNumCtx !== undefined) {

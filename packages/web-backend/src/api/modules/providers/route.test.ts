@@ -375,6 +375,44 @@ describe('providers route module', () => {
     )
     expect(missing.status).toBe(404)
   })
+
+  it('native Ollama model metadata: admin-only, validated, rejected for non-native providers, null resets', async () => {
+    const create = await fetch(`${baseUrl}/api/providers`, {
+      method: 'POST',
+      headers: { ...authHeaders(adminToken), 'Content-Type': 'application/json' },
+      body: JSON.stringify({ name: 'Native Meta', providerType: 'ollama-native', baseUrl: 'http://127.0.0.1:9', enabledModels: ['qwen3.8:27b-mlx'] }),
+    })
+    expect(create.status).toBe(201)
+    const nativeId = (await create.json() as { provider: { id: string } }).provider.id
+    const url = (id: string, m: string) => `${baseUrl}/api/providers/${id}/models/${encodeURIComponent(m)}`
+    const patch = (token: string, id: string, m: string, body: unknown) => fetch(url(id, m), {
+      method: 'PATCH', headers: { ...authHeaders(token), 'Content-Type': 'application/json' }, body: JSON.stringify(body),
+    })
+
+    expect((await fetch(url(nativeId, 'qwen3.8:27b-mlx'), { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: '{"ollamaNumCtx":40960}' })).status).toBe(401)
+    expect((await patch(userToken, nativeId, 'qwen3.8:27b-mlx', { ollamaNumCtx: 40960 })).status).toBe(403)
+    for (const bad of [{ ollamaNumCtx: 12 }, { ollamaNumCtx: '40960' }, { ollamaNumCtx: 4096.5 }, { reasoning: 'yes' }]) {
+      expect((await patch(adminToken, nativeId, 'qwen3.8:27b-mlx', bad)).status).toBe(400)
+    }
+    const ok = await patch(adminToken, nativeId, 'qwen3.8:27b-mlx', { ollamaNumCtx: 40960, reasoning: true })
+    expect(ok.status).toBe(200)
+    const okBody = await ok.json() as { provider: { models?: Array<{ id: string; ollamaNumCtx?: number; reasoning?: boolean }> } }
+    expect(okBody.provider.models?.find(m => m.id === 'qwen3.8:27b-mlx')).toMatchObject({ ollamaNumCtx: 40960, reasoning: true })
+    const reset = await patch(adminToken, nativeId, 'qwen3.8:27b-mlx', { ollamaNumCtx: null })
+    const resetEntry = (await reset.json() as { provider: { models?: Array<Record<string, unknown>> } }).provider.models?.find(m => m.id === 'qwen3.8:27b-mlx')
+    expect(resetEntry).not.toHaveProperty('ollamaNumCtx')
+    expect(resetEntry).toMatchObject({ reasoning: true })
+
+    const other = await fetch(`${baseUrl}/api/providers`, {
+      method: 'POST',
+      headers: { ...authHeaders(adminToken), 'Content-Type': 'application/json' },
+      body: JSON.stringify({ name: 'Not native', providerType: 'openai', apiKey: 'sk-x', enabledModels: ['gpt-4o'] }),
+    })
+    const otherId = (await other.json() as { provider: { id: string } }).provider.id
+    const refused = await patch(adminToken, otherId, 'gpt-4o', { ollamaNumCtx: 40960 })
+    expect(refused.status).toBe(400)
+    expect((await refused.json() as { error: string }).error).toContain('only be set for native Ollama')
+  })
 })
 
 describe('ollama create-mode probe/pull routes accept ollama-native', () => {
