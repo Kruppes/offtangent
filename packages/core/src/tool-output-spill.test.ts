@@ -60,6 +60,44 @@ function printCommand(head: string, middle: string, tail: string, extra = ''): s
   return `node -e "process.stdout.write('${head}'+'${middle}'+'${tail}');${extra}"`
 }
 
+/**
+ * Spill a 600 H + 5000 M + 600 T text with maxChars 1000 and check the contract:
+ * exactly 500 H and 500 T stay inline, none of the 5000 M payload characters
+ * does, and the complete text sits in a private file.
+ *
+ * Why not `expect(r.text).not.toContain('M')`: the inline message also names
+ * the spill file, and that path is not under the test's control (mkdtemp
+ * appends a random suffix that can hold an "M"). The leak check therefore
+ * compares the head and tail slices exactly and counts the "M" characters of
+ * the whole message against the ones the path itself contributes: any payload
+ * character that leaks (even one) changes the count, the path never does.
+ */
+function verifyHeadTailInlineAndCompleteFile(expectedDir = tmpDir) {
+  const text = `${'H'.repeat(600)}${'M'.repeat(5000)}${'T'.repeat(600)}`
+  const r = spillToolOutput(text, { maxChars: 1000, label: 'shell', note: 'exit code 2' })!
+  const count = (value: string) => (value.match(/M/g) ?? []).length
+  expect(r.totalChars).toBe(6200)
+  expect(r.headChars).toBe(500)
+  // Inline components: head slice, marker, tail slice. Exact equality, so a leaked payload character cannot hide in either.
+  const head = r.text.slice(0, r.headChars)
+  const tail = r.text.slice(r.text.length - 500)
+  const marker = r.text.slice(r.headChars, r.text.length - 500)
+  expect(head).toBe('H'.repeat(500))
+  expect(tail).toBe('T'.repeat(500))
+  expect(r.text.split(r.path)).toHaveLength(2) // the path is named exactly once, in the marker
+  expect(count(r.text)).toBe(count(r.path)) // no payload "M" beyond what the path brings along
+  expect(count(marker)).toBe(count(r.path))
+  expect(r.text).toContain('shell output truncated: 6200 characters total, exit code 2')
+  expect(r.text).toContain('5200 omitted here')
+  expect(r.text).toContain(r.path)
+  expect(r.text).toContain('offset 500')
+  expect(fs.readFileSync(r.path, 'utf-8')).toBe(text) // complete payload intact in the file
+  expect(path.dirname(r.path)).toBe(path.join(expectedDir, 'tool-output'))
+  expect(fs.statSync(r.path).mode & 0o777).toBe(0o600)
+  expect(fs.statSync(path.dirname(r.path)).mode & 0o777).toBe(0o700)
+  return r
+}
+
 describe('spillToolOutput', () => {
   it('returns null at or below the threshold', () => {
     expect(spillToolOutput('x'.repeat(100), { maxChars: 100, label: 'shell' })).toBeNull()
@@ -68,20 +106,17 @@ describe('spillToolOutput', () => {
   })
 
   it('keeps head and tail inline and the complete text in a private file', () => {
-    const text = `${'H'.repeat(600)}${'M'.repeat(5000)}${'T'.repeat(600)}`
-    const r = spillToolOutput(text, { maxChars: 1000, label: 'shell', note: 'exit code 2' })!
-    expect(r.totalChars).toBe(6200)
-    expect(r.headChars).toBe(500)
-    expect(r.text.startsWith('H'.repeat(500))).toBe(true)
-    expect(r.text.endsWith('T'.repeat(500))).toBe(true)
-    expect(r.text).not.toContain('M')
-    expect(r.text).toContain('shell output truncated: 6200 characters total, exit code 2')
-    expect(r.text).toContain(r.path)
-    expect(r.text).toContain('offset 500')
-    expect(fs.readFileSync(r.path, 'utf-8')).toBe(text)
-    expect(path.dirname(r.path)).toBe(path.join(tmpDir, 'tool-output'))
-    expect(fs.statSync(r.path).mode & 0o777).toBe(0o600)
-    expect(fs.statSync(path.dirname(r.path)).mode & 0o777).toBe(0o700)
+    verifyHeadTailInlineAndCompleteFile()
+  })
+
+  it('stays deterministic when the spill path itself contains the marker character (regression: random mkdtemp suffix)', () => {
+    // The spill path is part of the inline message. mkdtemp picks a random
+    // suffix, so a path with an upper-case "M" is a fixed fixture here, not luck.
+    const dataDir = path.join(tmpDir, 'MMMM-forced-marker-chars')
+    fs.mkdirSync(dataDir, { recursive: true })
+    process.env.DATA_DIR = dataDir // restored by afterEach
+    const r = verifyHeadTailInlineAndCompleteFile(dataDir)
+    expect(r.path).toContain('MMMM-forced-marker-chars') // guard: the fixture really puts "M" into the path
   })
 
   it('generates the file name itself; the label cannot steer the path', () => {
