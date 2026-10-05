@@ -375,7 +375,9 @@ export function parseOllamaProbePayload(payload: unknown): ParseResult<{ baseUrl
   const body = toRecord(payload)
   const providerType = asTrimmedString(body.providerType)
 
-  if (!providerType || providerType !== 'ollama') {
+  // Both Ollama transports share the create-mode probe/pull endpoints; the
+  // base URL is still validated by the service exactly as before.
+  if (providerType !== 'ollama' && providerType !== 'ollama-native') {
     return { ok: false, error: 'providerType must be ollama' }
   }
 

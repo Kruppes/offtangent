@@ -1,4 +1,4 @@
-import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest'
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest'
 import fs from 'node:fs'
 import http from 'node:http'
 import os from 'node:os'
@@ -374,5 +374,98 @@ describe('providers route module', () => {
       },
     )
     expect(missing.status).toBe(404)
+  })
+})
+
+describe('ollama create-mode probe/pull routes accept ollama-native', () => {
+  // Only the loopback test server is reached with the real fetch; every
+  // Ollama call made by the backend is answered by this fake (no network).
+  const FAKE_OLLAMA = 'http://ollama.invalid:11434'
+  const realFetch = globalThis.fetch.bind(globalThis)
+  let ollamaCalls: Array<{ url: string; method: string; body?: string }> = []
+
+  beforeEach(() => {
+    ollamaCalls = []
+    vi.spyOn(globalThis, 'fetch').mockImplementation(async (input: string | URL | Request, init?: RequestInit) => {
+      const url = typeof input === 'string' ? input : input instanceof URL ? input.href : input.url
+      if (url.startsWith(baseUrl)) return realFetch(input, init)
+      ollamaCalls.push({ url, method: init?.method ?? 'GET', body: typeof init?.body === 'string' ? init.body : undefined })
+      if (url === `${FAKE_OLLAMA}/api/tags`) {
+        return new Response(JSON.stringify({
+          models: [{ name: 'qwen3:8b', size: 5, details: { parameter_size: '8B', quantization_level: 'Q4_K_M', family: 'qwen3' } }],
+        }), { status: 200, headers: { 'Content-Type': 'application/json' } })
+      }
+      if (url === `${FAKE_OLLAMA}/api/pull`) {
+        return new Response('{"status":"pulling manifest"}\n{"status":"success"}\n', { status: 200 })
+      }
+      return new Response('unexpected', { status: 599 })
+    })
+  })
+
+  afterEach(() => {
+    vi.restoreAllMocks()
+  })
+
+  async function post(pathName: string, body: unknown): Promise<Response> {
+    return realFetch(`${baseUrl}/api/providers${pathName}`, {
+      method: 'POST',
+      headers: { ...authHeaders(adminToken), 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+    })
+  }
+
+  it('probes models for both ollama and ollama-native, /v1 base still normalized', async () => {
+    for (const providerType of ['ollama', 'ollama-native']) {
+      ollamaCalls = []
+      const res = await post('/ollama-probe', { providerType, baseUrl: `${FAKE_OLLAMA}/v1` })
+      expect(res.status).toBe(200)
+      expect(await res.json()).toEqual({
+        models: [{ name: 'qwen3:8b', size: 5, parameterSize: '8B', quantization: 'Q4_K_M', family: 'qwen3' }],
+      })
+      expect(ollamaCalls).toEqual([{ url: `${FAKE_OLLAMA}/api/tags`, method: 'GET', body: undefined }])
+    }
+  })
+
+  it('pulls a model for ollama-native through the probe pull route', async () => {
+    const res = await post('/ollama-probe/pull', { providerType: 'ollama-native', baseUrl: FAKE_OLLAMA, modelName: 'qwen3:8b' })
+    expect(res.status).toBe(200)
+    expect(res.headers.get('content-type')).toContain('text/event-stream')
+    const text = await res.text()
+    expect(text).toContain('data: {"status":"pulling manifest"}')
+    expect(text).toContain('data: {"status":"success"}')
+    expect(text).toContain('data: {"done":true}')
+    expect(ollamaCalls).toEqual([
+      { url: `${FAKE_OLLAMA}/api/pull`, method: 'POST', body: JSON.stringify({ name: 'qwen3:8b', stream: true }) },
+    ])
+  })
+
+  it('rejects malformed probe/pull params with 400 and never calls Ollama', async () => {
+    const cases: Array<[string, unknown, string]> = [
+      ['/ollama-probe', { baseUrl: FAKE_OLLAMA }, 'providerType must be ollama'],
+      ['/ollama-probe', { providerType: 'openai', baseUrl: FAKE_OLLAMA }, 'providerType must be ollama'],
+      ['/ollama-probe', { providerType: 'Ollama-Native', baseUrl: FAKE_OLLAMA }, 'providerType must be ollama'],
+      ['/ollama-probe/pull', { baseUrl: FAKE_OLLAMA, modelName: 'qwen3:8b' }, 'providerType must be ollama'],
+      ['/ollama-probe/pull', { providerType: 'ollama_native', baseUrl: FAKE_OLLAMA, modelName: 'qwen3:8b' }, 'providerType must be ollama'],
+      ['/ollama-probe/pull', { providerType: 'ollama-native', baseUrl: FAKE_OLLAMA }, 'modelName is required'],
+    ]
+    for (const [pathName, body, error] of cases) {
+      const res = await post(pathName, body)
+      expect(res.status).toBe(400)
+      expect(await res.json()).toEqual({ error })
+    }
+    expect(ollamaCalls).toEqual([])
+  })
+
+  it('keeps URL validation identical for ollama-native and legacy ollama', async () => {
+    for (const badUrl of ['ftp://ollama.invalid', 'not a url']) {
+      for (const pathName of ['/ollama-probe', '/ollama-probe/pull']) {
+        const legacy = await post(pathName, { providerType: 'ollama', baseUrl: badUrl, modelName: 'qwen3:8b' })
+        const native = await post(pathName, { providerType: 'ollama-native', baseUrl: badUrl, modelName: 'qwen3:8b' })
+        expect(legacy.status).not.toBe(200)
+        expect(native.status).toBe(legacy.status)
+        expect(await native.json()).toEqual(await legacy.json())
+      }
+    }
+    expect(ollamaCalls).toEqual([])
   })
 })

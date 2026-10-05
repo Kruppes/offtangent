@@ -5,6 +5,7 @@ import {
   parseOAuthCodePayload,
   parseOAuthLoginPayload,
   parseOllamaProbePayload,
+  parseOllamaPullPayload,
   parseProviderCreatePayload,
   parseProviderModelUpdatePayload,
   parseProviderTypeParam,
@@ -160,6 +161,46 @@ describe('providers schema', () => {
 
     expect(() => validateOllamaUrl('ftp://localhost')).toThrowError('Only http/https URLs are allowed')
     expect(() => validateOllamaUrl('http://localhost:11434')).not.toThrow()
+  })
+
+  it('accepts exactly ollama or ollama-native for the ollama probe and pull payloads', () => {
+    for (const providerType of ['ollama', 'ollama-native']) {
+      expect(parseOllamaProbePayload({ providerType, baseUrl: 'http://gpu-box:11434' })).toEqual({
+        ok: true,
+        value: { providerType, baseUrl: 'http://gpu-box:11434' },
+      })
+      expect(parseOllamaProbePayload({ providerType })).toEqual({
+        ok: true,
+        value: { providerType, baseUrl: 'http://localhost:11434' },
+      })
+      expect(parseOllamaPullPayload({ providerType, baseUrl: 'http://gpu-box:11434', modelName: 'qwen3:8b' })).toEqual({
+        ok: true,
+        value: { providerType, baseUrl: 'http://gpu-box:11434', modelName: 'qwen3:8b' },
+      })
+      expect(parseOllamaPullPayload({ providerType })).toEqual({ ok: false, error: 'modelName is required' })
+    }
+
+    const rejected = [undefined, '', '   ', 'openai', 'openai-compatible', 'Ollama-Native', 'ollama-nativ', 'ollama_native', 'ollama-native-x', 42]
+    for (const providerType of rejected) {
+      expect(parseOllamaProbePayload({ providerType, baseUrl: 'http://gpu-box:11434' })).toEqual({
+        ok: false,
+        error: 'providerType must be ollama',
+      })
+      expect(parseOllamaPullPayload({ providerType, modelName: 'qwen3:8b' })).toEqual({
+        ok: false,
+        error: 'providerType must be ollama',
+      })
+    }
+    expect(parseOllamaProbePayload(null)).toEqual({ ok: false, error: 'providerType must be ollama' })
+
+    // URL trust is unchanged: the parser passes the base URL through, the
+    // service validates it (same rules for both provider types).
+    expect(parseOllamaProbePayload({ providerType: 'ollama-native', baseUrl: 'ftp://gpu-box' })).toEqual({
+      ok: true,
+      value: { providerType: 'ollama-native', baseUrl: 'ftp://gpu-box' },
+    })
+    expect(() => validateOllamaUrl('ftp://gpu-box')).toThrowError('Only http/https URLs are allowed')
+    expect(() => validateOllamaUrl('not a url')).toThrowError('Invalid Ollama base URL')
   })
 
   it('parses model update payload and rejects empty / invalid input', () => {
