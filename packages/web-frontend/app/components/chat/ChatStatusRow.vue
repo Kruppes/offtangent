@@ -29,7 +29,7 @@
         : msg.stallInfo.outcome === 'aborted' || msg.stallInfo.outcome === 'error'
           ? 'border-destructive/30 bg-destructive/5 text-muted-foreground'
           : msg.stallInfo.outcome === 'canceled' || msg.stallInfo.outcome === 'ended'
-            ? 'border-border bg-muted/30 text-muted-foreground'
+            ? 'border-border bg-muted text-muted-foreground'
             : 'border-warning/30 bg-warning/5 text-muted-foreground'"
     >
       <div class="flex items-center gap-2">
