@@ -93,8 +93,8 @@
       </div>
 
       <div v-else class="overflow-hidden rounded-xl border border-border bg-card">
-        <div class="overflow-x-auto">
-          <Table>
+        <div>
+          <Table class="min-w-[44rem]" data-testid="email-log-table">
             <TableHeader>
               <TableRow class="hover:bg-transparent">
                 <TableHead class="w-28">{{ $t('email.sentLog.columns.status') }}</TableHead>
@@ -126,9 +126,9 @@
                   </p>
                 </TableCell>
                 <TableCell class="max-w-xs truncate text-xs">{{ recipientSummary(entry) }}</TableCell>
-                <TableCell>
-                  <div class="flex items-center gap-2">
-                    <span class="truncate">{{ entry.subject || $t('email.sentLog.noSubject') }}</span>
+                <TableCell class="w-full max-w-0">
+                  <div class="flex min-w-0 items-center gap-2">
+                    <span class="truncate" :title="entry.subject || undefined">{{ entry.subject || $t('email.sentLog.noSubject') }}</span>
                     <AppIcon
                       v-if="entry.attachments.length > 0"
                       name="paperclip"

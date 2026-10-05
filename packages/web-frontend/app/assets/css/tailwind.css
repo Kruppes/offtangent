@@ -57,6 +57,10 @@
      `max-w-reading`, `max-w-conversation`. */
   --container-reading: 31rem;
   --container-conversation: 720px;
+  /* Workspace column (tables, lists, admin views): the full width of the
+     main pane, capped only on ultrawide screens so a row stays scannable.
+     `max-w-workspace`. */
+  --container-workspace: 112.5rem;
 
   /* Colors — mapped from CSS variables for shadcn compatibility */
   --color-border: hsl(var(--border));
@@ -459,6 +463,21 @@
     font-synthesis: none;
     -webkit-font-smoothing: antialiased;
     -moz-osx-font-smoothing: grayscale;
+  }
+
+  /* Mouse/trackpad screens only: a horizontal wheel that reaches the edge
+     of a scroller (or starts on content that cannot scroll sideways) must
+     not chain to the document, where macOS Chrome/Safari turn it into the
+     "swipe between pages" history gesture. Every app tab is a history
+     entry, so that gesture switched tabs instead of scrolling. CSS only, no
+     preventDefault: back/forward stay on the toolbar, Cmd+[ / Alt+Left,
+     and touch screens keep their edge swipe (the media query excludes
+     coarse pointers). */
+  @media (hover: hover) and (pointer: fine) {
+    html,
+    body {
+      overscroll-behavior-x: none;
+    }
   }
 
   #__nuxt {

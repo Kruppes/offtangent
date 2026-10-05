@@ -2,7 +2,7 @@
   <div class="flex h-full flex-col overflow-hidden">
     <PageHeader :title="$t('memory.title')" :subtitle="$t('memory.subtitle')" />
 
-    <div class="mx-auto flex w-full max-w-6xl flex-1 flex-col overflow-hidden p-6">
+    <div class="mx-auto flex w-full max-w-workspace flex-1 flex-col overflow-hidden p-6">
       <!-- Error / success banners -->
       <Alert v-if="error" variant="destructive" class="mb-3 shrink-0">
         <AlertDescription class="flex items-center justify-between">

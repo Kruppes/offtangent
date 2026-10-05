@@ -79,7 +79,7 @@
           v-else
           data-testid="settings-section"
           :data-section="activeSection"
-          :class="['mx-auto w-full px-4 py-6 md:px-8 md:py-8', activeSection === 'email' ? 'max-w-5xl' : 'max-w-xl']"
+          :class="['mx-auto w-full px-4 py-6 md:px-8 md:py-8', activeSection === 'email' ? 'max-w-workspace' : 'max-w-xl']"
         >
           <NuxtLink
             to="/settings"
