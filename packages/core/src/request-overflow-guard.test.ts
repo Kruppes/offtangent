@@ -89,11 +89,14 @@ async function run(model: Model<Api>, context: Context, options: Record<string, 
 
 describe('parseProviderOverflow', () => {
   it('parses OpenAI/vLLM, llama.cpp, Anthropic, Ollama; ignores own refusals and ordinary errors', () => {
-    expect(parseProviderOverflow("400 This model's maximum context length is 40960 tokens. However, you requested 65000 tokens (2000 in the messages, 63000 in the completion).")).toEqual({ limit: 40960, inputTokens: 2000 })
-    expect(parseProviderOverflow('400 {"error":{"code":400,"message":"the request exceeds the available context size","type":"exceed_context_size_error","n_prompt_tokens":9000,"n_ctx":8192}}')).toEqual({ limit: 8192, inputTokens: 9000 })
-    expect(parseProviderOverflow('400 {"type":"error","error":{"type":"invalid_request_error","message":"prompt is too long: 210000 tokens > 200000 maximum"}}')).toEqual({ limit: 200000, inputTokens: 210000 })
-    expect(parseProviderOverflow('input length and `max_tokens` exceed context limit: 190000 + 21333 > 200000')).toEqual({ limit: 200000, inputTokens: 190000 })
-    expect(parseProviderOverflow('prompt too long; exceeded max context length by 12 tokens')).toEqual({ limit: null, inputTokens: null })
+    // exact strings as serialized by pi-ai 1.0.0 (probed over a fake HTTP server)
+    expect(parseProviderOverflow(`400: {"message":"This model's maximum context length is 40960 tokens. However, you requested 65000 tokens (2000 in the messages, 63000 in the completion).","type":"invalid_request_error","code":"context_length_exceeded"}`)).toEqual({ limit: 40960, inputTokens: 2000, source: 'openai:max-context-length' })
+    expect(parseProviderOverflow('400: {"code":400,"message":"the request exceeds the available context size, try increasing it","type":"exceed_context_size_error","n_prompt_tokens":9000,"n_ctx":8192}')).toEqual({ limit: 8192, inputTokens: 9000, source: 'llamacpp:exceed-context-size' })
+    expect(parseProviderOverflow('400 {"type":"error","error":{"type":"invalid_request_error","message":"prompt is too long: 210000 tokens > 200000 maximum"}}')).toEqual({ limit: 200000, inputTokens: 210000, source: 'anthropic:prompt-too-long' })
+    expect(parseProviderOverflow('400 {"type":"error","error":{"type":"invalid_request_error","message":"input length and `max_tokens` exceed context limit: 190000 + 21333 > 200000, decrease input length or `max_tokens` and try again"}}')).toEqual({ limit: 200000, inputTokens: 190000, source: 'anthropic:exceed-context-limit' })
+    expect(parseProviderOverflow('400: {"message":"prompt too long; exceeded max context length by 12 tokens","type":"invalid_request_error","param":null,"code":null}')).toEqual({ limit: null, inputTokens: null, source: 'ollama:prompt-too-long' })
+    // bare text without the provider envelope is never trusted
+    expect(parseProviderOverflow("400 This model's maximum context length is 40960 tokens. However, you requested 65000 tokens (2000 in the messages, 63000 in the completion).")).toBeNull()
     expect(parseProviderOverflow(`${CONTEXT_GUARD_MARKER} maximum context length is 10 tokens`)).toBeNull()
     expect(parseProviderOverflow('403 forbidden')).toBeNull()
     expect(parseProviderOverflow('500 internal server error')).toBeNull()
@@ -203,7 +206,8 @@ describe('guard: learned windows survive a restart (persisted store)', () => {
     const file = observedLimitsFilePath()
     expect(fs.existsSync(file)).toBe(true)
     const stored = JSON.parse(fs.readFileSync(file, 'utf-8')) as { version: number; limits: Record<string, { tokens: number; source: string }> }
-    expect(stored.version).toBe(1)
+    expect(stored.version).toBe(2)
+    expect(Object.values(stored.limits).map(v => v.source)).toEqual(['openai:max-context-length'])
     expect(Object.values(stored.limits).map(v => v.tokens)).toEqual([4096])
     // the key is a hash of provider|id|baseUrl: no URL or prompt text in the file
     expect(JSON.stringify(stored)).not.toContain('127.0.0.1')
@@ -272,7 +276,7 @@ describe('guard: thinking / reasoning fields never changed to fit', () => {
   })
 
   it('malformed/unknown window: no pre-send check, provider error gets an explicit reason', async () => {
-    script.push(res => jsonError(res, 400, 'the request exceeds the available context size, n_ctx: 2048, n_prompt_tokens: 5000'))
+    script.push(res => { res.writeHead(400, { 'content-type': 'application/json' }); res.end(JSON.stringify({ error: { code: 400, message: 'the request exceeds the available context size, try increasing it', type: 'exceed_context_size_error', n_prompt_tokens: 5000, n_ctx: 2048 } })) })
     const r = await run(oaModel({ contextWindow: 0 }), ctx(100))
     expect(received).toHaveLength(1)
     expect(r.errorMessage).toContain('declares no valid context window')
