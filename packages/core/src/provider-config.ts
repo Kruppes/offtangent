@@ -23,8 +23,6 @@ import {
   splitSystemPromptAtCacheMarker,
 } from './prompt-cache.js'
 import type { PromptCacheSettings } from './prompt-cache.js'
-import { applyEcoStreamLimits } from './eco-mode-store.js'
-import type { EcoRequestGate } from './eco-mode-store.js'
 
 /**
  * Claude Code CLI version to advertise in the user-agent header for Anthropic
@@ -732,18 +730,7 @@ export function buildStreamFn(
       settings: cache?.settings,
     })
 
-    if (!cache?.ecoGate) return streamImpl(model, cleanContext, withCache)
-    // Eco (B1): the request carries exactly the limits its view was budgeted
-    // for. Off → same objects, normal path byte-identical.
-    const sessionId = cache.getSessionId?.()
-    const eco = applyEcoStreamLimits(
-      cache.ecoGate.take(),
-      sessionId,
-      cache.readEcoMode ?? (() => 'unknown'),
-      model,
-      withCache,
-    )
-    return streamImpl(eco.model, cleanContext, eco.options)
+    return streamImpl(model, cleanContext, withCache)
   }) as typeof streamSimple
 }
 
@@ -757,14 +744,6 @@ export interface StreamCacheOptions {
   getSessionId?: () => string | undefined
   /** Settings injection for tests; production reads `settings.json`. */
   settings?: PromptCacheSettings
-  /**
-   * Eco handoff of the owning agent instance: the pre-send view stages the
-   * limits of the request it built, this stream function applies them to
-   * that same request (applyEcoStreamLimits). Absent → no Eco on this agent.
-   */
-  ecoGate?: EcoRequestGate
-  /** Live Eco switch read, used only when no decision was staged (fail closed unless 'off'). */
-  readEcoMode?: (sessionId: string | undefined) => 'on' | 'off' | 'unknown'
 }
 
 /**

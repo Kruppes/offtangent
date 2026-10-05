@@ -1,4 +1,5 @@
-import { applyEcoRequestView, EcoRequestGate, inheritEcoMode, readStrandEcoMode } from './eco-mode-store.js'
+import { inheritEcoMode, readStrandEcoMode } from './eco-mode-store.js'
+import { freezeEcoToolResult, frozenEcoRowId } from './eco-tool-freeze.js'
 import { Agent as PiAgent } from '@earendil-works/pi-agent-core'
 import type { AgentEvent, AgentMessage, AgentTool } from '@earendil-works/pi-agent-core'
 import type { AssistantMessage, Message, Model, Api } from '@earendil-works/pi-ai'
@@ -890,7 +891,6 @@ export class TaskRunner {
       // extraction, verifier and schema correction are unaffected.
       const history = this.createHistoryCompactor(taskId)
 
-      const ecoGate = new EcoRequestGate()
       const agent = new PiAgent({
         initialState: {
           systemPrompt,
@@ -901,13 +901,27 @@ export class TaskRunner {
         // The task session id is stable for the whole run — hand it to the
         // provider so a per-session prompt cache keeps hitting across the
         // hundreds of tool-loop calls a task makes.
-        // Eco (B1): the limits the pre-send view budgeted are applied to the
-        // same request (options.maxTokens + effective window).
-        streamFn: buildStreamFn(provider, undefined, {
-          getSessionId: () => sessionId,
-          ecoGate,
-          readEcoMode: sid => readStrandEcoMode(this.db, sid),
-        }),
+        streamFn: buildStreamFn(provider, undefined, { getSessionId: () => sessionId }),
+        // Real Eco (plan 2026-10-05-real-eco): a NEW tool result is compacted
+        // once, before the model ever sees it, and that projection is what the
+        // transcript keeps. Already-sent context is never touched.
+        afterToolCall: async (ctx) => {
+          if (readStrandEcoMode(this.db, sessionId) !== 'on') return undefined
+          if ((ctx.result as { structuredContent?: unknown }).structuredContent !== undefined) return undefined
+          const frozen = freezeEcoToolResult({
+            db: this.db,
+            sessionId,
+            userId: null,
+            agentId: this.store.getById(taskId)?.agentId ?? 'main',
+            toolName: ctx.toolCall.name,
+            toolCallId: ctx.toolCall.id,
+            args: ctx.args,
+            content: ctx.result.content,
+            details: ctx.result.details,
+            isError: ctx.isError,
+          })
+          return frozen ? { content: frozen.content, details: frozen.details } : undefined
+        },
         // Fail open: a bug in the compaction must never kill a running task,
         // it may only cost tokens.
         transformContext: async (messages) => {
@@ -918,19 +932,6 @@ export class TaskRunner {
             console.error(`[task-runner] Context compaction failed for task ${taskId}, sending the full transcript:`, err)
             view = [...messages]
           }
-          // Eco (opt-in per task session, inherited from the spawning strand):
-          // the SAME stage as the interactive runtime, on top of the existing
-          // compactor — one policy path, budgeted before every request.
-          view = applyEcoRequestView({
-            db: this.db,
-            sessionId,
-            messages: view,
-            transcript: messages,
-            model,
-            systemPrompt: agent.state.systemPrompt,
-            tools: agent.state.tools,
-            gate: ecoGate,
-          })
           // Privacy (plan 2026-09-26, step 4): last net before the request
           // leaves the process. Fail open — redaction must never kill a task.
           try {
@@ -1669,7 +1670,11 @@ export class TaskRunner {
         // interactive path writes (turn-runner.ts) — so `recall_message` can
         // hand a compacted task its own tool results back. Without this a
         // trimmed tool result would be unrecoverable.
-        try {
+        const frozenRowId = frozenEcoRowId(this.db, sessionId, event.toolCallId, event.result)
+        if (frozenRowId !== undefined) {
+          // Real Eco: frozen at creation, the row was written before the model saw it.
+          runningTask.history?.noteToolResultId(event.toolCallId, frozenRowId)
+        } else try {
           const taskAgentId = this.store.getById(runningTask.taskId)?.agentId ?? 'main'
           const inserted = this.db.prepare(
             'INSERT INTO chat_messages (session_id, user_id, role, content, metadata, agent_id) VALUES (?, ?, ?, ?, ?, ?)'
@@ -1683,8 +1688,7 @@ export class TaskRunner {
           runningTask.history?.noteToolResultId(event.toolCallId, Number(inserted.lastInsertRowid))
         } catch (err) {
           // Not fatal for the task, but no longer silent: without this row the
-          // result has no recall reference, so Eco will refuse to shorten it
-          // (fail closed) instead of cutting an unrecoverable result.
+          // result has no recall reference.
           console.error(`[task-runner] persisting tool result ${event.toolCallId} failed; it is not recallable:`, err)
         }
 

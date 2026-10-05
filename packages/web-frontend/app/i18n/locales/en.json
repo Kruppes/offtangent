@@ -2732,12 +2732,12 @@
     "saveError": "Could not switch eco mode.",
     "turnedOn": "Eco mode on",
     "turnedOff": "Eco mode off",
-    "hint": "Saves context for local models; from the next request.",
-    "budget": "Input budget {tokens} (estimate)",
+    "hint": "Shrinks NEW large tool results once when they are created (original stays available via recall_message); context already sent stays unchanged. Applies to the next new results.",
+    "budget": "Context budget {tokens} (estimate, display only)",
     "fallback": "context window unknown, conservative",
     "observed": "runner limit {limit} tokens (below the declared window)",
-    "saved": "last request about {percent} % smaller",
-    "noData": "no eco request yet",
+    "saved": "frozen results about {percent} % smaller",
+    "noData": "no result compacted yet",
     "degraded": "last request refused, not sent (reason in chat)"
   }
 }

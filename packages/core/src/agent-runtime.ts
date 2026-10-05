@@ -1,4 +1,7 @@
 import { spawn } from 'node:child_process'
+import { readStrandEcoMode } from './eco-mode-store.js'
+import { freezeEcoToolResult } from './eco-tool-freeze.js'
+import type { AfterToolCallContext, AfterToolCallResult } from '@earendil-works/pi-agent-core'
 import fs from 'node:fs'
 import nodePath from 'node:path'
 import { Agent as PiAgent } from '@earendil-works/pi-agent-core'
@@ -7,8 +10,6 @@ import type { Api, AssistantMessage, Message, ImageContent, Model, SystemMessage
 import { Type } from '@earendil-works/pi-ai'
 import type { Database } from './database.js'
 import { logTokenUsage, logToolCall } from './token-logger.js'
-import { applyEcoRequestView, EcoRequestGate, readStrandEcoMode } from './eco-mode-store.js'
-import { isEcoRefusalText } from './eco-policy.js'
 import { estimateCost, getApiKeyForProvider, buildModel, buildStreamFn, loadProvidersDecrypted, parseProviderModelId, getProviderDefaultModel, resolvePromptProfileOptions } from './provider-config.js'
 import type { ProviderConfig } from './provider-config.js'
 import type { ProviderManager } from './provider-manager.js'
@@ -759,8 +760,6 @@ class PiAgentRuntime implements AgentRuntimeBoundary, AgentRuntimePiAgentAccess 
    * abort is process-wide and hits foreign strands.
    */
   private currentSessionId: string | null = null
-  /** Eco request-limit handoff of THIS runtime's agent (pre-send view → stream call of the same request). */
-  private readonly ecoGate = new EcoRequestGate()
 
   constructor(options: AgentRuntimeOptions) {
     this.model = options.model
@@ -839,13 +838,7 @@ class PiAgentRuntime implements AgentRuntimeBoundary, AgentRuntimePiAgentAccess 
         // Prompt-cache routing: the strand id is stable for the whole
         // conversation, so providers that key their cache per session keep
         // hitting the same replica/entry across turns.
-        {
-          getSessionId: () => this.currentSessionId ?? undefined,
-          // Eco (B1): the limits the pre-send view budgeted are applied to
-          // the same request (options.maxTokens + effective window).
-          ecoGate: this.ecoGate,
-          readEcoMode: sessionId => readStrandEcoMode(this.db, sessionId),
-        },
+        { getSessionId: () => this.currentSessionId ?? undefined },
       ),
       // Ebene B (last net before send): enforce the tool_use/tool_result
       // boundary invariant on EVERY LLM call, right before pi-ai converts the
@@ -863,45 +856,47 @@ class PiAgentRuntime implements AgentRuntimeBoundary, AgentRuntimePiAgentAccess 
             `[agent-runtime] tool_use/tool_result boundary violation caught before send (agent ${this.agentId}) — dropped ${drops.length} block(s): ${drops.join('; ')} | structure(before)=${describeHistoryStructure(messages)}`,
           )
         }
-        const viewed = this.applyEcoView(cleaned, messages)
         // Privacy (plan 2026-09-26, step 4): last net before the request
         // leaves the process. Everything already known (handles, secrets.json
         // env, provider keys, credential-looking process env) is replaced by
         // its handle in every text part. Fail open — a redaction bug must not
         // kill a turn, the earlier boundaries already did the real work.
         try {
-          return redactMessages(viewed)
+          return redactMessages(cleaned)
         } catch (err) {
           console.error('[agent-runtime] redactKnown failed on the outgoing context:', err)
-          return viewed
+          return cleaned
         }
       },
       ...(this.providerConfig?.transport && this.providerConfig.transport !== 'sse'
         && { transport: this.providerConfig.transport }),
       getApiKey: () => this.resolveApiKey('agent-runtime'),
+      // Real Eco (plan 2026-10-05-real-eco): a NEW tool result is compacted
+      // once, persisted with its verbatim original BEFORE the model sees it,
+      // and that frozen projection is what every later request carries (Eco
+      // on/off, restart, resume). Already-sent context is never touched; off
+      // (the default) this returns undefined and the result stays as is.
+      afterToolCall: async (ctx) => this.freezeEcoToolResult(ctx),
     })
   }
 
-  /**
-   * Eco request view (plan 2026-10-04-eco-implementation). Runs inside the one
-   * pre-send hook, so it covers EVERY request including each tool-loop
-   * iteration. Off (the default) it returns the input untouched — the normal
-   * path stays byte-identical. Never mutates the transcript, so no tool runs
-   * twice. FAIL CLOSED: throws EcoBudgetError (surfaced to the chat as an
-   * error chunk by pi-agent's run-failure path) instead of sending an
-   * over-budget or unsafely cut request.
-   */
-  private applyEcoView(messages: AgentMessage[], transcript: readonly AgentMessage[]): AgentMessage[] {
-    return applyEcoRequestView({
+  private async freezeEcoToolResult(ctx: AfterToolCallContext): Promise<AfterToolCallResult | undefined> {
+    const sessionId = this.currentSessionId
+    if (!sessionId || readStrandEcoMode(this.db, sessionId) !== 'on') return undefined
+    if ((ctx.result as { structuredContent?: unknown }).structuredContent !== undefined) return undefined
+    const frozen = freezeEcoToolResult({
       db: this.db,
-      sessionId: this.currentSessionId,
-      messages,
-      transcript,
-      model: this.model,
-      systemPrompt: this.agent.state.systemPrompt,
-      tools: this.agent.state.tools,
-      gate: this.ecoGate,
+      sessionId,
+      userId: this.getCurrentToolUserId() ?? null,
+      agentId: this.agentId,
+      toolName: ctx.toolCall.name,
+      toolCallId: ctx.toolCall.id,
+      args: ctx.args,
+      content: ctx.result.content,
+      details: ctx.result.details,
+      isError: ctx.isError,
     })
+    return frozen ? { content: frozen.content, details: frozen.details } : undefined
   }
 
   /**
@@ -1579,8 +1574,7 @@ class PiAgentRuntime implements AgentRuntimeBoundary, AgentRuntimePiAgentAccess 
             // 0.27.0) sees the untouched provider message. The human-readable
             // "Modellfehler:" prefix lives in `text` for plain-text channels
             // that render it directly instead of via the runner.
-            // Eco refusals are local decisions, not model errors: shown as-is.
-            chunks.push({ type: 'error', error: errText, text: isEcoRefusalText(errText) ? errText : `Modellfehler: ${errText}` })
+            chunks.push({ type: 'error', error: errText, text: `Modellfehler: ${errText}` })
           }
         }
         break

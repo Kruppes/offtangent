@@ -2732,12 +2732,12 @@
     "saveError": "Eco konnte nicht umgeschaltet werden.",
     "turnedOn": "Eco-Modus eingeschaltet",
     "turnedOff": "Eco-Modus ausgeschaltet",
-    "hint": "Spart Kontext für lokale Modelle; ab der nächsten Anfrage.",
-    "budget": "Eingabebudget {tokens} (geschätzt)",
+    "hint": "Kürzt NEUE große Tool-Ergebnisse einmalig beim Entstehen (Original per recall_message abrufbar); bereits gesendeter Kontext bleibt unverändert. Gilt für die nächsten neuen Ergebnisse.",
+    "budget": "Kontextbudget {tokens} (Schätzung, nur Anzeige)",
     "fallback": "Kontextfenster unbekannt, konservativ",
     "observed": "Runner-Limit {limit} Tokens (statt deklariertem Fenster)",
-    "saved": "zuletzt ca. {percent} % kleiner",
-    "noData": "noch keine Eco-Anfrage",
+    "saved": "eingefrorene Ergebnisse ca. {percent} % kleiner",
+    "noData": "noch kein Ergebnis gekürzt",
     "degraded": "letzte Anfrage abgelehnt, nicht gesendet (Grund im Chat)"
   }
 }

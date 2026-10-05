@@ -1,4 +1,5 @@
 import { randomUUID } from 'node:crypto'
+import { frozenEcoRowId } from './eco-tool-freeze.js'
 import type { Database } from './database.js'
 import type {
   AbortScope,
@@ -1372,7 +1373,10 @@ class TurnTranscript {
     if (chunk.type === 'tool_call_end' && chunk.toolCallId) {
       const pending = this.pendingToolCalls.get(chunk.toolCallId)
       const toolName = pending?.toolName ?? chunk.toolName ?? 'unknown'
-      this.remember(saveChatMessage(this.db, this.sessionId, this.userId, 'tool', `Tool: ${toolName}`, JSON.stringify({
+      // Real Eco: a result frozen at creation already owns its row (written
+      // before the model could see it) — reuse it, never insert a duplicate.
+      const frozenRowId = (this.db && frozenEcoRowId(this.db, this.sessionId, chunk.toolCallId, chunk.toolResult)) || undefined
+      this.remember(frozenRowId ?? saveChatMessage(this.db, this.sessionId, this.userId, 'tool', `Tool: ${toolName}`, JSON.stringify({
         toolName,
         toolCallId: chunk.toolCallId,
         toolArgs: pending?.toolArgs ?? null,

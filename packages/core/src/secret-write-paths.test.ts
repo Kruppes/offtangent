@@ -80,6 +80,10 @@ const WRITE_SITES: Record<string, { class: WriteClass; why: string }> = {
     class: 'system-text',
     why: 'Status line about a task (name, status, duration), composed by the server.',
   },
+  'core/src/eco-tool-freeze.ts#freezeEcoToolResult': {
+    class: 'tool-text',
+    why: 'Real Eco freeze: stores the verbatim tool result (eco_original) and its compacted projection. Runs in afterToolCall, i.e. after the tool already went through withSecretBoundary, so both texts only contain handles.',
+  },
   'core/src/task-runner.ts#finalizeTaskFailure': {
     class: 'tool-text',
     why: 'Assistant and tool transcript rows of a task turn. The task tools are wrapped with withSecretBoundary, so tool args/results only contain handles.',

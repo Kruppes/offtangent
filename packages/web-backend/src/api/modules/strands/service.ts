@@ -153,9 +153,11 @@ export interface StrandContextReport {
    */
   recalled: RecalledMessage[]
   /**
-   * Eco mode (plan 2026-10-04-eco-implementation), additive. `inputBudgetTokens`
-   * is derived from the declared model window minus output reserve and margin;
-   * `last` holds estimates of the last Eco request view, never measured tokens.
+   * Eco mode (plan 2026-10-05-real-eco), additive. `inputBudgetTokens` is a
+   * display estimate (declared window minus reserve and margin), never applied
+   * to requests. `last` aggregates the tool results frozen smaller at creation
+   * (chars/3 estimates of stored original vs stored projection); refusal
+   * fields stay false/null because real Eco never refuses a request.
    */
   eco: StrandEcoStatus
   generatedAt: string

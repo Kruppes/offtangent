@@ -197,26 +197,6 @@ describe('previewStrandDelete / deleteStrand', () => {
     expect(one("SELECT COUNT(*) AS c FROM chat_messages WHERE session_id = 's1'")).toBe(1)
     expect(one("SELECT COUNT(*) AS c FROM now_set WHERE strand_id = 's1'")).toBe(1)
   })
-
-  it('removes the Eco metrics of the strand in the same transaction and keeps other strands', () => {
-    createStrand('s1')
-    createStrand('s2')
-    const add = (sid: string) => db.prepare(
-      'INSERT INTO eco_metrics (session_id, context_window, output_reserve, input_budget) VALUES (?, 40960, 8192, 30000)',
-    ).run(sid)
-    add('s1'); add('s1'); add('s2')
-    const one = (sql: string): number => (db.prepare(sql).get() as { c: number }).c
-
-    // rollback: a failing later statement keeps the metrics too
-    db.exec('DROP TABLE strand_task_dismissals')
-    expect(() => deleteStrand(db, '1', 's1')).toThrow()
-    expect(one("SELECT COUNT(*) AS c FROM eco_metrics WHERE session_id = 's1'")).toBe(2)
-    db.exec('CREATE TABLE strand_task_dismissals (strand_id TEXT, task_id TEXT)')
-
-    deleteStrand(db, '1', 's1')
-    expect(one("SELECT COUNT(*) AS c FROM eco_metrics WHERE session_id = 's1'")).toBe(0)
-    expect(one("SELECT COUNT(*) AS c FROM eco_metrics WHERE session_id = 's2'")).toBe(1)
-  })
 })
 
 describe('hasLiveTaskForStrand', () => {

@@ -1690,7 +1690,7 @@ export type {
 // registered in `createBaseAgentTools` — that happens through the local
 // sub-agent in P2.
 export * from './connectors/index.js'
-export { resolveEcoBudget, buildEcoView, renderEcoToolView, estimateEcoFixedTokens } from './eco-policy.js'
-export type { EcoBudget, EcoViewResult } from './eco-policy.js'
+export { resolveEcoBudget, estimateEcoFixedTokens } from './eco-policy.js'
+export type { EcoBudget } from './eco-policy.js'
 export { isStrandEcoEnabled, setStrandEcoEnabled, lastEcoViewForStrand, observedEcoContextLimit, ECO_METRIC_TOOL_NAME } from './eco-mode-store.js'
 export type { EcoViewMetric } from './eco-mode-store.js'

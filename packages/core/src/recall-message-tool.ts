@@ -3,6 +3,15 @@ import { Type } from '@earendil-works/pi-ai'
 import type { Database } from './database.js'
 import { resolveAgentReadScope } from './agent-read-scope.js'
 import { RECALLED_MARKER } from './message-digest.js'
+import { toolResultText } from './eco-tool-projection.js'
+
+function recallPage(body: string, rawOffset: number | undefined, maxChars: number): { slice: string; offset: number; remaining: number; note: string } {
+  const offset = Math.max(0, Math.floor(rawOffset ?? 0))
+  const slice = body.slice(offset, offset + maxChars)
+  const remaining = Math.max(0, body.length - offset - slice.length)
+  const note = `${offset > 0 ? `, from offset ${offset}` : ''}${remaining > 0 ? `; ${remaining} more chars — call again with offset ${offset + slice.length}` : ''}`
+  return { slice, offset, remaining, note }
+}
 
 export interface RecallMessageToolOptions {
   db: Database
@@ -23,6 +32,8 @@ interface RecallRow {
   metadata: string | null
   timestamp: string
   agent_id: string | null
+  /** Real Eco: verbatim original of a result compacted at creation (additive column). */
+  eco_original?: string | null
 }
 
 const DEFAULT_MAX_CHARS = 16000
@@ -66,7 +77,7 @@ export function createRecallMessageTool(options: RecallMessageToolOptions): Agen
       let row: RecallRow | undefined
       try {
         row = options.db.prepare(
-          'SELECT id, session_id, user_id, role, content, metadata, timestamp, agent_id FROM chat_messages WHERE id = ?',
+          'SELECT * FROM chat_messages WHERE id = ?',
         ).get(id) as RecallRow | undefined
       } catch (err) {
         return { content: [{ type: 'text' as const, text: `Error reading message: ${err instanceof Error ? err.message : String(err)}` }], details: { error: true } }
@@ -87,6 +98,23 @@ export function createRecallMessageTool(options: RecallMessageToolOptions): Agen
       if (row.role === 'tool' && row.metadata) {
         try {
           const meta = JSON.parse(row.metadata) as { toolName?: string; toolResult?: unknown; toolArgs?: unknown }
+          // Real Eco: the model saw a projection; recall hands back the
+          // verbatim original stored before the projection was shown.
+          // The body is then the original text itself, so the char offsets the
+          // projection names ("recall_message offset ≈ N") hit exactly.
+          if (typeof row.eco_original === 'string') {
+            let originalText: string | null = null
+            try {
+              originalText = toolResultText((JSON.parse(row.eco_original) as { content?: unknown }).content)
+            } catch { /* fall through to the stored row */ }
+            if (originalText !== null) {
+              const page = recallPage(originalText, rawOffset, maxChars)
+              return {
+                content: [{ type: 'text' as const, text: `${RECALLED_MARKER} message ${row.id} (tool ${meta.toolName ?? 'unknown'}, verbatim original of an Eco-compacted result, ${originalText.length} chars${page.note})\n${page.slice}` }],
+                details: { messageId: row.id, role: row.role, totalChars: originalText.length, offset: page.offset, returnedChars: page.slice.length, remainingChars: page.remaining, ecoOriginal: true },
+              }
+            }
+          }
           const result = meta.toolResult
           const resultText = typeof result === 'string' ? result : result == null ? '' : JSON.stringify(result, null, 2)
           const details = result && typeof result === 'object' ? (result as { details?: { truncated?: unknown; totalChars?: unknown; fullOutputPath?: unknown } }).details : undefined

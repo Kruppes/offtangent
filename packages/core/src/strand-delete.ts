@@ -258,8 +258,6 @@ export function deleteStrand(
     db.prepare('DELETE FROM resurface_snoozes WHERE strand_id = ?').run(strandId)
     db.prepare('DELETE FROM session_summaries WHERE session_id = ?').run(strandId)
     db.prepare('DELETE FROM tool_calls WHERE session_id = ?').run(strandId)
-    // Eco request-view metrics (numeric only) belong to the strand: same transaction.
-    db.prepare('DELETE FROM eco_metrics WHERE session_id = ?').run(strandId)
     db.prepare('DELETE FROM artifacts WHERE strand_id = ?').run(strandId)
     db.prepare('DELETE FROM strand_task_dismissals WHERE strand_id = ?').run(strandId)
     if (options.deleteFacts) {

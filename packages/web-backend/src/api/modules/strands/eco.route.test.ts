@@ -107,16 +107,20 @@ describe('strand eco mode', () => {
     expect(isStrandEcoEnabled(db, strand.id)).toBe(false)
   })
 
-  it('reports the last eco view as estimates from the metric row', async () => {
+  it('reports frozen tool results (real Eco) as estimates, never refusals', async () => {
     const strand = sessionManager.createThread('1', 'main', 'Metric')
     await api('PATCH', `/api/strands/${strand.id}/eco`, { enabled: true })
-    // Dedicated numeric metric table (review 5c5f47a6 #6): never tool_calls.
-    db.prepare(`INSERT INTO eco_metrics (session_id, context_window, output_reserve, input_budget, observed_limit,
-      tokens_before, tokens_after, compacted, dropped, unrecallable, refused, refusal_reason) VALUES (?, 40960, 8192, 28672, NULL, 30000, 20000, 3, 2, 0, 0, NULL)`).run(strand.id)
+    const ctx0 = await api('GET', `/api/strands/${strand.id}/context`)
+    expect(ctx0.body.eco).toMatchObject({ enabled: true, last: null })
+    // Two results frozen at creation: originals 3000 + 6000 chars, projections 900 + 1200.
+    const meta = (o: number, p: number) => JSON.stringify({ toolName: 'shell', toolResult: { content: [{ type: 'text', text: 'x' }], details: { eco: { rowId: 1, originalChars: o, projectedChars: p } } } })
+    const ins = db.prepare("INSERT INTO chat_messages (session_id, user_id, role, content, metadata, eco_original) VALUES (?, 1, 'tool', 'Tool: shell', ?, ?)")
+    ins.run(strand.id, meta(3000, 900), '{"content":[]}')
+    ins.run(strand.id, meta(6000, 1200), '{"content":[]}')
     const ctx = await api('GET', `/api/strands/${strand.id}/context`)
     expect(ctx.body.eco).toMatchObject({
       enabled: true,
-      last: { estimatedTokensBefore: 30000, estimatedTokensAfter: 20000, inputBudgetTokens: 28672, compactedResults: 3, droppedMessages: 2, degraded: false },
+      last: { estimatedTokensBefore: 3000, estimatedTokensAfter: 700, compactedResults: 2, droppedMessages: 0, degraded: false, refused: false, refusalReason: null },
     })
     expect(db.prepare("SELECT COUNT(*) AS n FROM tool_calls WHERE tool_name = 'eco_context'").get()).toEqual({ n: 0 })
   })
