@@ -259,6 +259,22 @@ describe('eco mode switch', () => {
     expect(text(root)).toContain('eco.cwState.baseline_unknown')
     expect(text(root)).toContain('eco.off')
   })
+  it('context window: shows the effective num_ctx, pending facts, and that a choice is a request, not a guaranteed limit', async () => {
+    const api = setup()
+    const cw = { choice: 65536, presets: [32768, 49152, 65536, 131072], supported: true, state: 'applied', effective: 65536, facts: 'known' }
+    api.mockResolvedValueOnce({ eco: { ...eco(false).eco, contextWindow: cw } })
+    const { root } = mount(EcoSwitch, { strandId: 's' })
+    await flush()
+    const eff = all(root).find(n => n.props['data-testid'] === 'eco-cw-effective')!
+    expect(text(eff)).toContain('eco.cwEffective')
+    expect(text(root)).toContain('eco.cwNotGuaranteed')
+    const api2 = setup()
+    api2.mockResolvedValueOnce({ eco: { ...eco(false).eco, contextWindow: { ...cw, state: 'baseline_unknown', effective: null, facts: 'pending' } } })
+    const second = mount(EcoSwitch, { strandId: 's' })
+    await flush()
+    expect(text(second.root)).toContain('eco.cwEffectiveNone')
+    expect(text(second.root)).toContain('eco.cwFactsPending')
+  })
   it('context window: disabled with a reason on a non-native provider, error keeps the old value', async () => {
     const api = setup()
     api.mockResolvedValueOnce({ eco: { ...eco(false).eco, contextWindow: { choice: null, presets: [32768], supported: false, state: 'provider_unsupported' } } })

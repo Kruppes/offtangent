@@ -35,6 +35,10 @@ export interface EcoContextWindowStatus {
   presets: number[]
   supported: boolean
   state: EcoContextWindowState
+  /** num_ctx a request would send right now (null = none; the server keeps its own window). Omitted by older servers. */
+  effective?: number | null
+  /** Whether the /api/show facts behind `state` are known, still being fetched, or failed. */
+  facts?: 'known' | 'pending' | 'failed'
 }
 const CW_STATES: readonly EcoContextWindowState[] = ['unchanged', 'applied', 'baseline_kept', 'provider_unsupported', 'baseline_unknown', 'supported_unknown', 'exceeds_supported', 'invalid_choice', 'no_model']
 export function mapContextWindow(raw: unknown): EcoContextWindowStatus | undefined {
@@ -48,6 +52,8 @@ export function mapContextWindow(raw: unknown): EcoContextWindowStatus | undefin
     presets: v.presets as number[],
     supported: v.supported === true,
     state: v.state as EcoContextWindowState,
+    ...(v.effective === null || okInt(v.effective) ? { effective: v.effective as number | null } : {}),
+    ...(v.facts === 'known' || v.facts === 'pending' || v.facts === 'failed' ? { facts: v.facts } : {}),
   }
 }
 export const STRAND_ECO_PATH = (id: string) => `/api/strands/${encodeURIComponent(id)}/eco`

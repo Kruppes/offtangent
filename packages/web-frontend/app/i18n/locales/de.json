@@ -2753,6 +2753,10 @@
       "exceeds_supported": "Größer als das Modell unterstützt: es wird nichts überschrieben.",
       "invalid_choice": "Ungültige Auswahl: es wird nichts überschrieben.",
       "no_model": "Kein Modell gewählt."
-    }
+    },
+    "cwEffective": "Aktuell gesendet: num_ctx {tokens}",
+    "cwEffectiveNone": "Aktuell gesendet: kein num_ctx (Server-Fenster)",
+    "cwFactsPending": "Modell-Fakten werden geprüft…",
+    "cwNotGuaranteed": "Die Auswahl ist eine Anfrage an Ollama, keine garantierte Token-Grenze; ein größeres Fenster braucht mehr RAM/VRAM."
   }
 }

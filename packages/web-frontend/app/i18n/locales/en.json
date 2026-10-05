@@ -2753,6 +2753,10 @@
       "exceeds_supported": "Larger than the model supports: nothing is overridden.",
       "invalid_choice": "Invalid choice: nothing is overridden.",
       "no_model": "No model selected."
-    }
+    },
+    "cwEffective": "Sent now: num_ctx {tokens}",
+    "cwEffectiveNone": "Sent now: no num_ctx (server window)",
+    "cwFactsPending": "checking model facts…",
+    "cwNotGuaranteed": "A choice is a request to Ollama, not a guaranteed token limit; a larger window needs more RAM/VRAM."
   }
 }

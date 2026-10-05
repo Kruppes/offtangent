@@ -100,6 +100,11 @@ onMounted(() => { void load() })
         </select>
         <span :id="`eco-cw-hint-${strandId}`" class="text-xs text-muted-foreground [overflow-wrap:anywhere]" data-testid="eco-cw-state">
           {{ t(`eco.cwState.${cw.state}`) }}
+          <span v-if="cw.facts === 'pending'"> · {{ t('eco.cwFactsPending') }}</span>
+          <span v-if="cw.choice !== null"> · {{ t('eco.cwNotGuaranteed') }}</span>
+        </span>
+        <span v-if="cw.effective !== undefined" class="text-xs text-muted-foreground" data-testid="eco-cw-effective">
+          {{ cw.effective === null ? t('eco.cwEffectiveNone') : t('eco.cwEffective', { tokens: kLabel(cw.effective) }) }}
         </span>
         <p v-if="cwError" role="alert" class="text-sm">{{ t('eco.cwSaveError') }}</p>
       </div>

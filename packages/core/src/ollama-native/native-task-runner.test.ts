@@ -339,4 +339,38 @@ describe('native Ollama context-window snapshot in the TaskRunner (fake HTTP)', 
     expect(text(foreign)).not.toContain('src/m450.test.ts')
     db.close()
   })
+
+  it('Eco OFF on the task session + resume: the frozen projection stays byte-identical, exactly one persisted original, no re-freeze, num_ctx unchanged', async () => {
+    const db = initDatabase(path.join(tmpDir, 'eco-toggle.db'))
+    const store = new TaskStore(db)
+    strand(db, 'eco-toggle-parent')
+    setStrandEcoEnabled(db, 'eco-toggle-parent', true)
+    setStrandContextWindow(db, 'eco-toggle-parent', 65536)
+    const runner = makeRunner(db)
+    scripts['synthetic-a:8b'] = [tool, question, completed]
+    const task = store.create({ name: 'native eco toggle', prompt: 'run the synthetic tests', triggerType: 'user', agentId: 'main' })
+    await runner.startTask(task, provider(), undefined, 'eco-toggle-parent')
+    await waitFor(() => store.getById(task.id)?.status === 'paused', 'pause', 15000, () => store.getById(task.id))
+    const sessionId = store.getById(task.id)!.sessionId!
+    // the user switches Eco OFF on the parent AND on the task session while it is paused
+    setStrandEcoEnabled(db, 'eco-toggle-parent', false)
+    setStrandEcoEnabled(db, sessionId, false)
+    expect(await runner.resumeTask(task.id, 'src/pay.test.ts')).toBe(true)
+    await waitFor(() => store.getById(task.id)?.status === 'completed', 'completion', 15000, () => store.getById(task.id))
+    runner.dispose()
+    const sent = chatsFor('synthetic-a:8b')
+    expect(sent.length).toBe(3)
+    for (const body of sent) expect(body.options?.num_ctx).toBe(65536)
+    const toolOf = (b: typeof sent[number]) => b.messages.filter(m => m.role === 'tool').map(m => m.content)
+    expect(toolOf(sent[1])).toHaveLength(1)
+    expect(String(toolOf(sent[1])[0])).toContain('[eco: shell result compacted once')
+    // after Eco OFF + resume the pinned projection is sent unchanged (prefix stable, no un-freeze, no re-freeze)
+    expect(toolOf(sent[2])).toEqual(toolOf(sent[1]))
+    const rows = db.prepare("SELECT id, eco_original FROM chat_messages WHERE session_id = ? AND role = 'tool'").all(sessionId) as Array<{ id: number; eco_original: string | null }>
+    expect(rows.length).toBe(1)
+    expect(rows.filter(r => r.eco_original !== null).length).toBe(1)
+    // the tool ran exactly once
+    expect(sent.flatMap(b => b.messages).filter(m => m.role === 'assistant' && Array.isArray((m as { tool_calls?: unknown[] }).tool_calls)).length).toBe(2)
+    db.close()
+  })
 })
