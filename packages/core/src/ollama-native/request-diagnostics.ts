@@ -113,5 +113,12 @@ export function formatNativeRequestDiagnostics(fields: {
     + `chars=${diag.totalChars} max_msg_chars=${diag.maxMessageChars} sys_chars=${diag.systemChars} tools=${diag.toolCount} `
     + `eco_frozen_results=${diag.ecoFrozenResults} think=${fields.think === undefined ? '-' : String(fields.think)} `
     + `num_ctx=${fields.numCtx ?? '-'} num_ctx_state=${fields.numCtxState ?? '-'} est_input_tokens=${fields.estimatedInputTokens} `
-    + `per_msg=${diag.perMessage.join(' ')}`
+    + `per_msg=${boundedPerMessage(diag.perMessage)}`
+}
+
+/** Bounded log line: the newest entries matter most (what this request added). */
+const PER_MSG_LOG_LIMIT = 80
+function boundedPerMessage(entries: string[]): string {
+  if (entries.length <= PER_MSG_LOG_LIMIT) return entries.join(' ')
+  return `[+${entries.length - PER_MSG_LOG_LIMIT} older] ` + entries.slice(-PER_MSG_LOG_LIMIT).join(' ')
 }
