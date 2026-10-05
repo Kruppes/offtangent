@@ -3,7 +3,7 @@
  * `PATCH /api/strands/:id/eco` and the additive `eco` block of
  * `GET /api/strands/:id/context`. Real SessionManager, real database.
  */
-import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest'
+import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest'
 import fs from 'node:fs'
 import http from 'node:http'
 import os from 'node:os'
@@ -187,6 +187,7 @@ describe('strand eco context window (plan 2026-10-05-ollama-native-context)', ()
 })
 
 describe('strand eco context window on a native Ollama provider (fake /api/show, synthetic)', () => {
+  let mlxOutage = false
   let fake: http.Server
   let fakeUrl: string
   const seen: string[] = []
@@ -202,6 +203,7 @@ describe('strand eco context window on a native Ollama provider (fake /api/show,
         return
       }
       if (req.method === 'POST' && req.url === '/api/show' && body.includes('mlx-synth')) {
+        if (mlxOutage) { res.writeHead(503); res.end('synthetic outage'); return }
         // Like gemma4/qwen3.8 *-mlx on Ollama 0.34: safetensors → MLX runner, window fixed at the model max.
         res.writeHead(200, { 'Content-Type': 'application/json' })
         res.end(JSON.stringify({ parameters: 'temperature 1', details: { format: 'safetensors' }, model_info: { 'general.architecture': 'gemma4', 'gemma4.context_length': 262144 } }))
@@ -305,6 +307,41 @@ describe('strand eco context window on a native Ollama provider (fake /api/show,
     const reset = await api('PATCH', `/api/strands/${strand.id}/eco`, { contextWindow: null })
     expect(reset.status).toBe(200)
     expect(readStrandContextWindow(db, strand.id)).toBeNull()
+  })
+
+  it('F1: a failed refresh keeps the last good MLX facts (facts "stale"), never flips to a guessed baseline; recovery clears it', async () => {
+    resetShowFactsCacheForTest()
+    let clock = 5_000_000
+    const spy = vi.spyOn(Date, 'now').mockImplementation(() => clock)
+    try {
+      await getOllamaShowFacts(fakeUrl, 'mlx-synth')
+      const strand = sessionManager.createThread('1', 'main', 'Native mlx stale')
+      db.prepare('UPDATE sessions SET model_provider_id = ?, model_id = ? WHERE id = ?').run('native', 'mlx-synth', strand.id)
+      const fixed = { state: 'unchanged', effective: null, baseline: 262144, baselineSource: 'runner_max' }
+      // TTL over, revalidation still possible: known (no 'pending' flicker)
+      clock += 5 * 60_000 + 1
+      expect((await api('GET', `/api/strands/${strand.id}/context`)).body.eco).toMatchObject({ contextWindow: { ...fixed, facts: 'known' } })
+      // let the background revalidation started by that read finish (shared in-flight fetch) before the outage
+      expect((await getOllamaShowFacts(fakeUrl, 'mlx-synth')).source).not.toBe('failed')
+      clock += 5 * 60_000 + 1
+      mlxOutage = true
+      // refresh runs into the outage → last good facts, marked stale
+      const failed = await getOllamaShowFacts(fakeUrl, 'mlx-synth')
+      expect(failed.source).toBe('stale')
+      expect((await api('GET', `/api/strands/${strand.id}/context`)).body.eco).toMatchObject({ contextWindow: { ...fixed, facts: 'stale' } })
+      // the MLX guard (fixed window) still holds during the outage
+      const refused = await api('PATCH', `/api/strands/${strand.id}/eco`, { contextWindow: 65536 })
+      expect(refused.status).toBe(400)
+      expect(refused.body.code).toBe('context_window_runner_fixed')
+      // recovery after the failure window
+      mlxOutage = false
+      clock += 31_000
+      expect((await getOllamaShowFacts(fakeUrl, 'mlx-synth')).source).toBe('fresh')
+      expect((await api('GET', `/api/strands/${strand.id}/context`)).body.eco).toMatchObject({ contextWindow: { ...fixed, facts: 'known' } })
+    } finally {
+      mlxOutage = false
+      spy.mockRestore()
+    }
   })
 
   it('reports an honest non-applied state (no guessed floor) while /api/show facts are not yet known', async () => {

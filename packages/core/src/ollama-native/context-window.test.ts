@@ -27,6 +27,35 @@ describe('parseContextWindowChoice', () => {
 })
 
 describe('parseOllamaShow / resolveBaseline', () => {
+  it('H2: supportedMax is exactly <general.architecture>.context_length; vision/sub-model keys never win, in any order', () => {
+    const textFirst = { 'general.architecture': 'gemma4', 'gemma4.context_length': 262144, 'gemma4.vision.context_length': 1024 }
+    const visionFirst = { 'gemma4.vision.context_length': 1024, 'clip.context_length': 512, 'general.architecture': 'gemma4', 'gemma4.context_length': 262144 }
+    expect(parseOllamaShow({ model_info: textFirst }).supportedMax).toBe(262144)
+    expect(parseOllamaShow({ model_info: visionFirst }).supportedMax).toBe(262144)
+    // a later competing top-level key of ANOTHER architecture does not override
+    expect(parseOllamaShow({ model_info: { 'general.architecture': 'qwen3_5', 'qwen3_5.context_length': 262144, 'mllama.context_length': 1024 } }).supportedMax).toBe(262144)
+    // architecture named but its own key missing/invalid → unknown, no guess from other keys
+    expect(parseOllamaShow({ model_info: { 'general.architecture': 'gemma4', 'gemma4.vision.context_length': 1024 } }).supportedMax).toBeUndefined()
+    expect(parseOllamaShow({ model_info: { 'general.architecture': 'gemma4', 'gemma4.context_length': 'x', 'clip.context_length': 1024 } }).supportedMax).toBeUndefined()
+  })
+  it('H2: without general.architecture only agreeing top-level keys count; competing values → unknown', () => {
+    expect(parseOllamaShow({ model_info: { 'a.context_length': 32768 } }).supportedMax).toBe(32768)
+    expect(parseOllamaShow({ model_info: { 'a.context_length': 32768, 'a.vision.context_length': 1024 } }).supportedMax).toBe(32768)
+    expect(parseOllamaShow({ model_info: { 'a.context_length': 32768, 'b.context_length': 32768 } }).supportedMax).toBe(32768)
+    expect(parseOllamaShow({ model_info: { 'a.context_length': 32768, 'clip.context_length': 1024 } }).supportedMax).toBeUndefined()
+    expect(parseOllamaShow({ model_info: { 'clip.context_length': 1024, 'a.context_length': 32768 } }).supportedMax).toBeUndefined()
+    expect(parseOllamaShow({ model_info: { 'general.architecture': 7, 'a.context_length': 4096 } }).supportedMax).toBe(4096)
+  })
+  it('H1: runner is MLX only for the exact format "safetensors"; anything else stays unknown (never invented as fixed)', () => {
+    expect(parseOllamaShow({ details: { format: 'safetensors' } }).runner).toBe('mlx')
+    for (const details of [{ format: 'gguf' }, { format: 'Safetensors' }, { format: ' safetensors' }, { format: 1 }, {}, null, 'safetensors']) {
+      expect(parseOllamaShow({ details }).runner).toBeUndefined()
+      // unknown runner + choice + no baseline → baseline_unknown, never runner_fixed
+      expect(decideNumCtx({ nativeProvider: true, choice: 65536, facts: parseOllamaShow({ details }) }).state).toBe('baseline_unknown')
+    }
+    expect(parseOllamaShow({}).runner).toBeUndefined()
+    expect(decideNumCtx({ nativeProvider: true, choice: 65536, facts: {} }).state).toBe('baseline_unknown')
+  })
   it('reads modelfile num_ctx and architecture context_length separately', () => {
     expect(parseOllamaShow(show(16384, 262144))).toEqual({ modelfileNumCtx: 16384, supportedMax: 262144 })
   })

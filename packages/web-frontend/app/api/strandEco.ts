@@ -37,8 +37,8 @@ export interface EcoContextWindowStatus {
   state: EcoContextWindowState
   /** num_ctx a request would send right now (null = none; the server keeps its own window). Omitted by older servers. */
   effective?: number | null
-  /** Whether the /api/show facts behind `state` are known, still being fetched, or failed. */
-  facts?: 'known' | 'pending' | 'failed'
+  /** /api/show facts behind `state`: known, stale (refresh failed, last good facts used), still being fetched, or failed. */
+  facts?: 'known' | 'stale' | 'pending' | 'failed'
   /** Native only: window kept without override (null = unknown). Omitted by older servers. */
   baseline?: number | null
   baselineSource?: 'model_setting' | 'provider_setting' | 'modelfile' | 'runner_max' | null
@@ -57,7 +57,7 @@ export function mapContextWindow(raw: unknown): EcoContextWindowStatus | undefin
     supported: v.supported === true,
     state: v.state as EcoContextWindowState,
     ...(v.effective === null || okInt(v.effective) ? { effective: v.effective as number | null } : {}),
-    ...(v.facts === 'known' || v.facts === 'pending' || v.facts === 'failed' ? { facts: v.facts } : {}),
+    ...(v.facts === 'known' || v.facts === 'stale' || v.facts === 'pending' || v.facts === 'failed' ? { facts: v.facts } : {}),
     ...(v.baseline === null || okInt(v.baseline) ? { baseline: v.baseline as number | null } : {}),
     ...(v.baselineSource === null || CW_SOURCES.includes(v.baselineSource as typeof CW_SOURCES[number])
       ? { baselineSource: v.baselineSource as EcoContextWindowStatus['baselineSource'] } : {}),

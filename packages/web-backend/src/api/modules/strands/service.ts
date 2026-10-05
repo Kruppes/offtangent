@@ -197,8 +197,13 @@ export interface StrandContextWindowStatus {
   state: 'unchanged' | 'applied' | 'baseline_kept' | 'provider_unsupported' | 'baseline_unknown' | 'supported_unknown' | 'exceeds_supported' | 'invalid_choice' | 'runner_fixed' | 'no_model'
   /** num_ctx a request would send right now (null = none; the model keeps its own window). */
   effective?: number | null
-  /** Native only: whether the /api/show facts behind `state` are cached ('known'), being fetched or failed. */
-  facts?: 'known' | 'pending' | 'failed'
+  /**
+   * Native only: the /api/show facts behind `state`: 'known' (cached, also
+   * while a background refresh runs), 'stale' (the latest refresh FAILED, the
+   * last good facts are still used, bounded), 'pending' (first fetch running),
+   * 'failed' (no usable facts → nothing is assumed).
+   */
+  facts?: 'known' | 'stale' | 'pending' | 'failed'
   /** Native only: the window a request keeps without override (null = unknown → a choice cannot take effect). */
   baseline?: number | null
   /** Native only: where `baseline` comes from (per-model setting, provider setting, modelfile, or the MLX runner's fixed model maximum). */
@@ -558,7 +563,7 @@ export function createStrandsService(options: StrandsServiceOptions) {
     // Same facts the request path uses (cached read-only /api/show for the
     // strand's CURRENT model, re-read per status call). Not yet cached → the
     // baseline is honestly unknown; nothing is guessed.
-    const peek = nativeProvider && modelId ? peekOllamaShowFacts(provider?.baseUrl, modelId) : { known: false, facts: {}, failed: false }
+    const peek = nativeProvider && modelId ? peekOllamaShowFacts(provider?.baseUrl, modelId) : { known: false, facts: {}, failed: false, stale: false }
     // Same baseline precedence as the request path: per-model setting >
     // provider setting > modelfile (resolveBaseline).
     const modelNumCtx = nativeProvider && modelId ? provider?.models?.find(m => m.id === modelId)?.ollamaNumCtx : undefined
@@ -576,7 +581,7 @@ export function createStrandsService(options: StrandsServiceOptions) {
       state: decision.state,
       effective: decision.numCtx ?? null,
       ...(nativeProvider ? { baseline: baseline.known ? baseline.value : null, baselineSource: baseline.known ? baseline.source : null } : {}),
-      ...(nativeProvider ? { facts: peek.known ? 'known' as const : peek.failed ? 'failed' as const : 'pending' as const } : {}),
+      ...(nativeProvider ? { facts: peek.stale ? 'stale' as const : peek.known ? 'known' as const : peek.failed ? 'failed' as const : 'pending' as const } : {}),
     }
   }
 

@@ -79,8 +79,41 @@ export interface OllamaModelFacts {
    * the MLX runner always serves the model maximum, `options.num_ctx` and
    * OLLAMA_CONTEXT_LENGTH never change its window. Undefined = GGUF/llama
    * runner or unknown → the configurable num_ctx path applies.
+   * Uncertainty (documented, not guessed): only the EXACT string
+   * `safetensors` counts (no case folding, no other shapes); a missing or
+   * different format is unknown, never MLX. The rule mirrors 0.34.x. Should a
+   * later Ollama honour num_ctx for MLX, this stays on the safe side for
+   * sending (nothing sent) but the guard would assume the model maximum —
+   * re-verify with the repro in plans/2026-10-05-ollama-native-gemma-qwen.md
+   * before any Ollama upgrade.
    */
   runner?: 'mlx'
+}
+
+const isPositiveInt = (v: unknown): v is number => typeof v === 'number' && Number.isSafeInteger(v) && v > 0
+
+/**
+ * The TEXT model's context length from /api/show `model_info`.
+ * - `general.architecture` names the text model → exactly
+ *   `<architecture>.context_length` (verified live on 0.34.4-snapfix:
+ *   qwen3_5 / gemma4_unified / gemma4). Sub-model keys such as
+ *   `<arch>.vision.context_length` never count, whatever their order.
+ * - Architecture named but its key missing/invalid → unknown (no guess from
+ *   other keys: they may belong to a projector or encoder).
+ * - No architecture → only top-level `<x>.context_length` keys (one dot) are
+ *   considered and only when they all agree; competing values → unknown.
+ */
+function textContextLength(info: Record<string, unknown>): number | undefined {
+  const arch = info['general.architecture']
+  if (typeof arch === 'string' && arch.length > 0) {
+    const v = info[`${arch}.context_length`]
+    return isPositiveInt(v) ? v : undefined
+  }
+  const values = new Set<number>()
+  for (const [key, value] of Object.entries(info)) {
+    if (/^[^.]+\.context_length$/.test(key) && isPositiveInt(value)) values.add(value)
+  }
+  return values.size === 1 ? [...values][0] : undefined
 }
 
 /** Extract facts from an /api/show response. Garbage is ignored, never guessed. */
@@ -99,11 +132,8 @@ export function parseOllamaShow(raw: unknown): OllamaModelFacts {
     }
   }
   if (r.model_info && typeof r.model_info === 'object') {
-    for (const [key, value] of Object.entries(r.model_info as Record<string, unknown>)) {
-      if (key.endsWith('.context_length') && typeof value === 'number' && Number.isSafeInteger(value) && value > 0) {
-        facts.supportedMax = value
-      }
-    }
+    const max = textContextLength(r.model_info as Record<string, unknown>)
+    if (max !== undefined) facts.supportedMax = max
   }
   if (r.thinking && typeof r.thinking === 'object') {
     const values = (r.thinking as { values?: unknown }).values

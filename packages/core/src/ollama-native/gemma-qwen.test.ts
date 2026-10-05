@@ -1,6 +1,6 @@
 import http from 'node:http'
 import type { AddressInfo } from 'node:net'
-import { afterEach, beforeEach, describe, expect, it } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { Api, Context, Model } from '@earendil-works/pi-ai'
 import { buildStreamFn } from '../provider-config.js'
 import { resetObservedContextLimits } from '../request-overflow-guard.js'
@@ -36,18 +36,25 @@ const PLAIN_SHOW = {
 let server: http.Server
 let origin = ''
 let chats: Array<Record<string, unknown>> = []
+/** Synthetic /api/show outage switch + call counter (stale-on-error repro). */
+let showFails = false
+let showCalls = 0
 const shows: Record<string, unknown> = { 'qwen-synth:27b': QWEN_SHOW, 'gemma-synth:12b': GEMMA_SHOW, 'plain-synth:8b': PLAIN_SHOW }
 
 beforeEach(async () => {
   resetShowFactsCacheForTest()
   resetObservedContextLimits()
   chats = []
+  showFails = false
+  showCalls = 0
   server = http.createServer((req, res) => {
     let raw = ''
     req.on('data', (c: Buffer) => { raw += c.toString('utf8') })
     req.on('end', () => {
       const body = JSON.parse(raw || '{}') as { model?: string }
       if (req.url === '/api/show') {
+        showCalls += 1
+        if (showFails) { res.writeHead(500); res.end('synthetic outage'); return }
         res.writeHead(200, { 'content-type': 'application/json' })
         res.end(JSON.stringify(shows[body.model ?? ''] ?? {}))
         return
@@ -78,12 +85,12 @@ function model(id: string, reasoning = false): Model<Api> {
 }
 const ctx: Context = { systemPrompt: 'sys', messages: [{ role: 'user', content: 'synthetic ping', timestamp: 1 }] }
 
-async function send(m: Model<Api>, choice: ContextWindowChoice, opts: { modelNumCtx?: Record<string, number>; reasoning?: string } = {}) {
+async function send(m: Model<Api>, choice: ContextWindowChoice, opts: { modelNumCtx?: Record<string, number>; reasoning?: string; context?: Context } = {}) {
   const fn = buildStreamFn({
     textVerbosity: undefined, transport: undefined, providerType: 'ollama-native',
     models: Object.entries(opts.modelNumCtx ?? {}).map(([id, n]) => ({ id, ollamaNumCtx: n })),
   }, undefined, { getSessionId: () => undefined, getContextWindowChoice: () => choice })
-  const stream = fn(m, ctx, { apiKey: 'no-key', ...(opts.reasoning ? { reasoning: opts.reasoning as never } : {}) })
+  const stream = fn(m, opts.context ?? ctx, { apiKey: 'no-key', ...(opts.reasoning ? { reasoning: opts.reasoning as never } : {}) })
   const final = await stream.result()
   return { final, body: chats.at(-1) }
 }
@@ -182,5 +189,75 @@ describe('gap 3: MLX runner window is fixed at the model maximum', () => {
     const { body } = await send(model('gemma-mlx-synth:12b'), 131072, { modelNumCtx: { 'gemma-mlx-synth:12b': 40960 } })
     expect(body?.options).toBeUndefined()
     expect(body?.think).toBe(false)
+  })
+})
+
+/*
+ * Review F1 (2026-10-05): a failed /api/show REFRESH after the TTL used to
+ * replace the last good facts with {} for the failure window. For an MLX model
+ * with the (old rollout) per-model baseline 40960 that meant: guard 40960 →
+ * long requests refused, and no thinking contract → Gemma's think:false
+ * dropped (Gemma thinks by default). Synthetic outage, fake clock.
+ */
+describe('F1: stale-on-error keeps the last good facts on the request path', () => {
+  const ID = 'gemma-mlx-stale:12b'
+  // ~60k tokens: above the old 40960 pin, far below the 262144 MLX maximum
+  const longCtx: Context = { systemPrompt: 'sys', messages: [{ role: 'user', content: 'synthetic '.repeat(60_000), timestamp: 1 }] }
+  let clock = 1_000_000
+  beforeEach(() => {
+    shows[ID] = { ...GEMMA_SHOW, details: MLX_DETAILS }
+    clock = 1_000_000
+    vi.spyOn(Date, 'now').mockImplementation(() => clock)
+  })
+  afterEach(() => { vi.restoreAllMocks() })
+
+  it('success → TTL → outage: thinking off and the MLX window survive; bounded retry; recovery', async () => {
+    const pin = { modelNumCtx: { [ID]: 40960 } }
+    const m = model(ID)
+    // 1. success
+    let r = await send(m, null, { ...pin, context: longCtx })
+    expect(r.final.stopReason).toBe('stop')
+    expect(r.body?.think).toBe(false)
+    expect(showCalls).toBe(1)
+    // 2. TTL over, server outage → refresh fails, last good facts are used
+    clock += 5 * 60_000 + 1
+    showFails = true
+    const sentBefore = chats.length
+    r = await send(m, null, { ...pin, context: longCtx })
+    expect(showCalls).toBe(2)
+    expect(r.final.stopReason).toBe('stop')
+    expect(chats.length).toBe(sentBefore + 1)
+    expect(r.body?.think).toBe(false)
+    expect(r.body?.options).toBeUndefined()
+    // 3. inside the failure window: no new /api/show (bounded retry), still stale facts
+    clock += 10_000
+    r = await send(m, 65536, { ...pin, context: longCtx })
+    expect(showCalls).toBe(2)
+    expect(r.final.stopReason).toBe('stop')
+    expect(r.body?.think).toBe(false)
+    expect(r.body?.options).toBeUndefined()
+    // 4. recovery after the failure window
+    clock += 30_000
+    showFails = false
+    r = await send(m, null, { ...pin, context: longCtx })
+    expect(showCalls).toBe(3)
+    expect(r.final.stopReason).toBe('stop')
+    expect(r.body?.think).toBe(false)
+  })
+
+  it('cold outage (never a success) stays honestly unknown: no MLX invented, the configured baseline guards', async () => {
+    showFails = true
+    const r = await send(model(ID), null, { modelNumCtx: { [ID]: 40960 }, context: longCtx })
+    expect(r.final.stopReason).toBe('error')
+    expect(chats.length).toBe(0)
+  })
+
+  it('after maxStale (30 min) without a successful refresh the facts are dropped (no forever cache)', async () => {
+    const m = model(ID)
+    await send(m, null, { modelNumCtx: { [ID]: 40960 } })
+    showFails = true
+    clock += 30 * 60_000 + 1
+    const r = await send(m, null, { modelNumCtx: { [ID]: 40960 }, context: longCtx })
+    expect(r.final.stopReason).toBe('error')
   })
 })

@@ -7,7 +7,7 @@ import { learnContextLimit, resetObservedContextLimits } from '../request-overfl
 import { OLLAMA_CHAT_API } from './chat-stream.js'
 import type { ContextWindowChoice } from './context-window.js'
 import { nativeLimitIdentity } from './native-request.js'
-import { getOllamaShowFacts, resetShowFactsCacheForTest } from './show-facts.js'
+import { getOllamaShowFacts, peekOllamaShowFacts, resetShowFactsCacheForTest } from './show-facts.js'
 
 /*
  * M2 runtime wiring against a FAKE Ollama HTTP server (synthetic only, no real
@@ -184,6 +184,73 @@ describe('show-facts cache', () => {
     const r = await getOllamaShowFacts('http://h.invalid:11434', 'slow', { fetchImpl: hang, timeoutMs: 20 })
     expect(r.source).toBe('failed')
     expect(r.facts).toEqual({})
+  })
+
+  it('stale-on-error: success → TTL → failure keeps the last good facts (stale), bounded retry, recovery', async () => {
+    const n = { calls: 0 }
+    let fail = false
+    const flaky = (async () => {
+      n.calls += 1
+      if (fail) return new Response('x', { status: 503 })
+      return new Response(JSON.stringify({ parameters: 'num_ctx 8192', model_info: { 'general.architecture': 'a', 'a.context_length': 32768 }, details: { format: 'safetensors' } }), { status: 200 })
+    }) as unknown as typeof fetch
+    let t = 0
+    const now = () => t
+    const o = { fetchImpl: flaky, now }
+    const good = { modelfileNumCtx: 8192, supportedMax: 32768, runner: 'mlx' }
+    expect(await getOllamaShowFacts('http://h.invalid:11434', 's', o)).toMatchObject({ source: 'fresh', facts: good })
+    t = 5 * 60_000 + 1
+    fail = true
+    const r = await getOllamaShowFacts('http://h.invalid:11434', 's', o)
+    expect(r).toMatchObject({ source: 'stale', facts: good })
+    expect(r.error).toContain('503')
+    expect(peekOllamaShowFacts('http://h.invalid:11434', 's', o)).toEqual({ known: true, facts: good, failed: true, stale: true })
+    // within the failure window: no new request (peek does not refresh either)
+    t += 29_000
+    expect((await getOllamaShowFacts('http://h.invalid:11434', 's', o)).source).toBe('stale')
+    expect(n.calls).toBe(2)
+    // after the failure window: one retry, still failing → still stale
+    t += 2_000
+    expect((await getOllamaShowFacts('http://h.invalid:11434', 's', o)).source).toBe('stale')
+    expect(n.calls).toBe(3)
+    // recovery: fresh again, stale flags cleared
+    t += 31_000
+    fail = false
+    expect((await getOllamaShowFacts('http://h.invalid:11434', 's', o)).source).toBe('fresh')
+    expect(peekOllamaShowFacts('http://h.invalid:11434', 's', o)).toEqual({ known: true, facts: good, failed: false, stale: false })
+  })
+
+  it('stale facts expire after maxStaleMs (no forever cache) and a cold failure is empty', async () => {
+    let fail = false
+    const flaky = (async () => fail ? new Response('x', { status: 500 }) : new Response(JSON.stringify({ parameters: 'num_ctx 4096' }), { status: 200 })) as unknown as typeof fetch
+    let t = 0
+    const o = { fetchImpl: flaky, now: () => t, maxStaleMs: 60 * 60_000 }
+    await getOllamaShowFacts('http://h.invalid:11434', 'x', o)
+    fail = true
+    t = 59 * 60_000
+    expect((await getOllamaShowFacts('http://h.invalid:11434', 'x', o)).source).toBe('stale')
+    t = 60 * 60_000 + 1
+    expect(await getOllamaShowFacts('http://h.invalid:11434', 'x', o)).toMatchObject({ source: 'failed', facts: {} })
+    expect(peekOllamaShowFacts('http://h.invalid:11434', 'x', o)).toEqual({ known: false, facts: {}, failed: true, stale: false })
+    // cold: never a success
+    const cold = await getOllamaShowFacts('http://h.invalid:11434', 'never', o)
+    expect(cold).toMatchObject({ source: 'failed', facts: {} })
+    expect(peekOllamaShowFacts('http://h.invalid:11434', 'never', o)).toEqual({ known: false, facts: {}, failed: true, stale: false })
+  })
+
+  it('peek: unknown key → pending (not failed) and starts one background fetch; concurrent callers share it', async () => {
+    const n = { calls: 0 }
+    let release: () => void = () => undefined
+    const gate = new Promise<void>(r => { release = r })
+    const slow = (async () => { n.calls += 1; await gate; return new Response(JSON.stringify({ parameters: 'num_ctx 2048' }), { status: 200 }) }) as unknown as typeof fetch
+    const o = { fetchImpl: slow }
+    expect(peekOllamaShowFacts('http://h.invalid:11434', 'p', o)).toEqual({ known: false, facts: {}, failed: false, stale: false })
+    const a = getOllamaShowFacts('http://h.invalid:11434', 'p', o)
+    const b = getOllamaShowFacts('http://h.invalid:11434', 'p', o)
+    release()
+    expect((await a).facts).toEqual({ modelfileNumCtx: 2048 })
+    expect((await b).facts).toEqual({ modelfileNumCtx: 2048 })
+    expect(n.calls).toBe(1)
   })
 
   it('a caller abort is not cached as a server failure', async () => {

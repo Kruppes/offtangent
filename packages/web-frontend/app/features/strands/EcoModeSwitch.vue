@@ -45,7 +45,7 @@ async function setContextWindow(event: Event) {
   if (!status.value || !cw.value || cwSaving.value || props.disabled) return
   const raw = (event.target as HTMLSelectElement).value
   const next = raw === '' ? null : Number(raw)
-  if (next !== null && !cw.value.presets.includes(next)) return
+  if (next !== null && (!cw.value.presets.includes(next) || mlxFixed.value)) return
   cwSaving.value = true
   cwError.value = false
   try {
@@ -54,6 +54,24 @@ async function setContextWindow(event: Event) {
     announce.value = t('eco.cwSaved')
   } catch { cwError.value = true }
   finally { cwSaving.value = false }
+}
+// MLX runner (window fixed at the model maximum): a preset can never take
+// effect and the server refuses it (400 context_window_runner_fixed), so only
+// the reset to "Unverändert" of an older stored choice stays selectable.
+const mlxFixed = computed(() => cw.value?.baselineSource === 'runner_max')
+// /api/show facts could not be refreshed ('stale': last good facts are used)
+// or are not available at all ('failed'). Re-reading the status triggers the
+// server's bounded background retry; it never blocks and never guesses.
+const factsProblem = computed(() => cw.value?.facts === 'stale' || cw.value?.facts === 'failed' ? cw.value.facts : null)
+const recheckBusy = ref(false)
+async function recheck() {
+  if (recheckBusy.value) return
+  recheckBusy.value = true
+  try {
+    const next = await api.get(props.strandId)
+    if (next) status.value = next
+  } catch { /* keep the shown state; the hint stays */ }
+  finally { recheckBusy.value = false }
 }
 const kLabel = (n: number) => `${Math.round(n / 1024)}k`
 const saved = computed(() => ecoSavedPercent(status.value?.last ?? null))
@@ -93,15 +111,16 @@ onMounted(() => { void load() })
         <label :for="`eco-cw-${strandId}`" class="text-sm">{{ t('eco.cwLabel') }}</label>
         <select :id="`eco-cw-${strandId}`" data-testid="eco-cw-select"
           class="min-h-11 rounded-md border border-input bg-background px-2 text-sm text-foreground"
-          :value="cw.choice === null ? '' : String(cw.choice)" :disabled="cwSaving || disabled || !cw.supported || (cw.baselineSource === 'runner_max' && cw.choice === null)"
+          :value="cw.choice === null ? '' : String(cw.choice)" :disabled="cwSaving || disabled || !cw.supported || (mlxFixed && cw.choice === null)"
           :aria-describedby="`eco-cw-hint-${strandId}`" @change="setContextWindow">
           <option value="">{{ t('eco.cwUnchanged') }}</option>
-          <option v-for="p in cw.presets" :key="p" :value="String(p)">{{ kLabel(p) }}</option>
+          <option v-for="p in cw.presets" :key="p" :value="String(p)" :disabled="mlxFixed">{{ kLabel(p) }}</option>
         </select>
         <span :id="`eco-cw-hint-${strandId}`" class="text-xs text-muted-foreground [overflow-wrap:anywhere]" data-testid="eco-cw-state">
-          {{ t(`eco.cwState.${cw.baselineSource === 'runner_max' ? 'runner_fixed' : cw.state}`) }}
+          {{ t(`eco.cwState.${mlxFixed ? 'runner_fixed' : cw.state}`) }}
           <span v-if="cw.facts === 'pending'"> · {{ t('eco.cwFactsPending') }}</span>
-          <span v-if="cw.choice !== null"> · {{ t('eco.cwNotGuaranteed') }}</span>
+          <span v-if="mlxFixed && cw.choice !== null"> · {{ t('eco.cwResetOnly') }}</span>
+          <span v-else-if="cw.choice !== null"> · {{ t('eco.cwNotGuaranteed') }}</span>
         </span>
         <span v-if="cw.effective !== undefined" class="text-xs text-muted-foreground" data-testid="eco-cw-effective">
           {{ cw.effective === null ? t('eco.cwEffectiveNone') : t('eco.cwEffective', { tokens: kLabel(cw.effective) }) }}
@@ -112,6 +131,14 @@ onMounted(() => { void load() })
         <span v-else-if="cw.baseline === null && cw.supported" class="text-xs text-muted-foreground [overflow-wrap:anywhere]" data-testid="eco-cw-baseline-missing">
           {{ t('eco.cwBaselineMissing') }}
         </span>
+        <div v-if="factsProblem" class="flex w-full min-w-0 flex-wrap items-center gap-2" data-testid="eco-cw-facts-problem">
+          <p role="status" class="min-w-0 flex-1 text-sm text-foreground [overflow-wrap:anywhere]">
+            {{ t(factsProblem === 'stale' ? 'eco.cwFactsStale' : 'eco.cwFactsFailed') }}
+          </p>
+          <button type="button" data-testid="eco-cw-recheck"
+            class="min-h-11 rounded-md border border-input bg-background px-3 text-sm text-foreground"
+            :disabled="recheckBusy" @click="recheck">{{ t('eco.cwRecheck') }}</button>
+        </div>
         <p v-if="cwError" role="alert" class="text-sm">{{ t('eco.cwSaveError') }}</p>
       </div>
       <span class="sr-only" role="status" aria-live="polite">{{ announce }}</span>
