@@ -411,7 +411,7 @@
     "editModelCostCacheWrite": "Cache write",
     "editModelNumCtxLabel": "Baseline context window (num_ctx, measured)",
     "editModelNumCtxPlaceholder": "empty = unknown",
-    "editModelNumCtxHint": "Window the Ollama server loads this model with when nothing is sent (e.g. from /api/ps after a plain request) – not the model maximum. An Eco context choice is only sent when it is larger. Leave empty if unknown.",
+    "editModelNumCtxHint": "Window the Ollama server loads this model with when nothing is sent (e.g. from /api/ps after a plain request) – not the model maximum. An Eco context choice is only sent when it is larger. Leave empty if unknown. Not used for MLX models (safetensors): Ollama always runs them with the model maximum, /api/ps only shows a soft value there.",
     "editModelNumCtxInvalid": "Whole number between {min} and {max}, or empty.",
     "editModelReasoningLabel": "Model can think (thinking)",
     "editModelReasoningHint": "Enables thinking levels. Off sends think:false where the server offers it.",

@@ -299,6 +299,8 @@ describe('eco mode switch', () => {
     await flush()
     expect(all(root).find(n => n.props['data-testid'] === 'eco-cw-select')!.props.disabled).toBe(true)
     expect(text(root)).toContain('eco.cwBaseline')
+    expect(text(root)).toContain('eco.cwState.runner_fixed')
+    expect(text(root)).not.toContain('eco.cwState.unchanged')
     const api2 = setup()
     api2.mockResolvedValueOnce({ eco: { ...eco(false).eco, contextWindow: { ...base, choice: 65536, state: 'runner_fixed' } } })
     const second = mount(EcoSwitch, { strandId: 's' })

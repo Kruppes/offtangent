@@ -99,7 +99,7 @@ onMounted(() => { void load() })
           <option v-for="p in cw.presets" :key="p" :value="String(p)">{{ kLabel(p) }}</option>
         </select>
         <span :id="`eco-cw-hint-${strandId}`" class="text-xs text-muted-foreground [overflow-wrap:anywhere]" data-testid="eco-cw-state">
-          {{ t(`eco.cwState.${cw.state}`) }}
+          {{ t(`eco.cwState.${cw.baselineSource === 'runner_max' ? 'runner_fixed' : cw.state}`) }}
           <span v-if="cw.facts === 'pending'"> · {{ t('eco.cwFactsPending') }}</span>
           <span v-if="cw.choice !== null"> · {{ t('eco.cwNotGuaranteed') }}</span>
         </span>

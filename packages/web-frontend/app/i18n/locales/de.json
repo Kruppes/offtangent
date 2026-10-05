@@ -411,7 +411,7 @@
     "editModelCostCacheWrite": "Cache-Write",
     "editModelNumCtxLabel": "Basis-Kontextfenster (num_ctx, gemessen)",
     "editModelNumCtxPlaceholder": "leer = unbekannt",
-    "editModelNumCtxHint": "Fenster, mit dem der Ollama-Server dieses Modell ohne Vorgabe lädt (z. B. aus /api/ps nach einer normalen Anfrage) – nicht das Modellmaximum. Eine Eco-Kontextwahl wird nur gesendet, wenn sie größer ist. Leer lassen, wenn unbekannt.",
+    "editModelNumCtxHint": "Fenster, mit dem der Ollama-Server dieses Modell ohne Vorgabe lädt (z. B. aus /api/ps nach einer normalen Anfrage) – nicht das Modellmaximum. Eine Eco-Kontextwahl wird nur gesendet, wenn sie größer ist. Leer lassen, wenn unbekannt. Gilt nicht für MLX-Modelle (safetensors): Ollama betreibt sie immer mit dem Modellmaximum, /api/ps zeigt dort nur einen weichen Richtwert.",
     "editModelNumCtxInvalid": "Ganze Zahl zwischen {min} und {max} oder leer.",
     "editModelReasoningLabel": "Modell kann denken (Thinking)",
     "editModelReasoningHint": "Aktiviert Thinking-Stufen. Aus = es wird think:false gesendet, sofern der Server das anbietet.",
