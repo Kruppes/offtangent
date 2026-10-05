@@ -405,7 +405,7 @@ export function scheduleOllamaTagRefresh(providers: readonly OllamaProviderView[
   if (process.env.VITEST) return
   const now = Date.now()
   for (const provider of providers) {
-    if (provider.providerType !== 'ollama' && provider.providerType !== 'ollama-local') continue
+    if (provider.providerType !== 'ollama' && provider.providerType !== 'ollama-local' && provider.providerType !== 'ollama-native') continue
     const baseUrl = (provider.baseUrl ?? '').trim()
     if (!baseUrl) continue
     const source: OllamaTagSource = { providerId: provider.id ?? null, baseUrl }
@@ -442,7 +442,7 @@ export interface OllamaTagWarmup {
 }
 
 function isOllamaProvider(provider: OllamaProviderView): boolean {
-  return provider.providerType === 'ollama' || provider.providerType === 'ollama-local'
+  return provider.providerType === 'ollama' || provider.providerType === 'ollama-local' || provider.providerType === 'ollama-native'
 }
 
 /**

@@ -4,6 +4,9 @@ import crypto from 'node:crypto'
 import type { Api, Model, ModelAuth, OAuthAuth, OAuthCredential, Transport } from '@earendil-works/pi-ai'
 import { streamSimple } from './pi-models.js'
 import { guardStream } from './request-overflow-guard.js'
+import { OLLAMA_CHAT_API } from './ollama-native/chat-stream.js'
+import { streamNativeOllama } from './ollama-native/native-request.js'
+import type { ContextWindowChoice, OllamaModelFacts } from './ollama-native/context-window.js'
 import { getBuiltinModels as getPiAiModels } from '@earendil-works/pi-ai/providers/all'
 import type { BuiltinProvider } from '@earendil-works/pi-ai/providers/all'
 import type { OAuthCredentials } from '@earendil-works/pi-ai/oauth'
@@ -42,7 +45,7 @@ export const CLAUDE_CODE_VERSION = '2.1.280'
  * Supported provider types with presets
  */
 export type ProviderType =
-  | 'openai' | 'anthropic' | 'mistral' | 'ollama' | 'openrouter' | 'deepseek' | 'kimi' | 'kimi-coding' | 'minimax' | 'zai' | 'zai-coding' | 'xai' | 'opencode-go' | 'opencode-zen' | 'openai-compatible' | 'google'
+  | 'openai' | 'anthropic' | 'mistral' | 'ollama' | 'ollama-native' | 'openrouter' | 'deepseek' | 'kimi' | 'kimi-coding' | 'minimax' | 'zai' | 'zai-coding' | 'xai' | 'opencode-go' | 'opencode-zen' | 'openai-compatible' | 'google'
   // Legacy aliases kept for migration
   | 'ollama-local' | 'ollama-cloud'
   | 'openai-codex' | 'github-copilot' | 'anthropic-oauth'
@@ -209,6 +212,20 @@ export const PROVIDER_TYPE_PRESETS: Record<ProviderType, ProviderTypePreset> = {
     apiType: 'openai-completions',
     providerName: 'ollama',
     baseUrl: 'http://localhost:11434/v1',
+    requiresApiKey: false,
+    urlEditable: true,
+    piAiProvider: null,
+    authMethod: 'api-key',
+  },
+  // Native Ollama /api/chat (plan 2026-10-05-ollama-native-context): an
+  // ADDITIONAL, explicitly chosen type. The `ollama` /v1 preset above is
+  // untouched; only this type can carry a per-strand num_ctx.
+  'ollama-native': {
+    type: 'ollama-native',
+    label: 'Ollama (native /api/chat)',
+    apiType: 'ollama-chat',
+    providerName: 'ollama-native',
+    baseUrl: 'http://localhost:11434',
     requiresApiKey: false,
     urlEditable: true,
     piAiProvider: null,
@@ -656,7 +673,7 @@ export const LOCAL_REQUEST_TIMEOUT_MS = 3_600_000
 export function getDefaultRequestTimeoutMs(providerType: ProviderType | string | undefined): number | undefined {
   if (!providerType) return undefined
   const preset = PROVIDER_TYPE_PRESETS[providerType as ProviderType]
-  return preset?.type === 'ollama' ? LOCAL_REQUEST_TIMEOUT_MS : undefined
+  return preset?.type === 'ollama' || preset?.type === 'ollama-native' ? LOCAL_REQUEST_TIMEOUT_MS : undefined
 }
 
 /**
@@ -710,7 +727,7 @@ export function applyRequestTimeout<T extends object | undefined>(
  * `sessionId`. Ollama & friends see byte-identical requests to before.
  */
 export function buildStreamFn(
-  provider: Pick<ProviderConfig, 'textVerbosity' | 'transport'> & Partial<Pick<ProviderConfig, 'providerType'>>,
+  provider: Pick<ProviderConfig, 'textVerbosity' | 'transport'> & Partial<Pick<ProviderConfig, 'providerType' | 'ollamaNumCtx'>>,
   streamImpl: typeof streamSimple = streamSimple,
   cache?: StreamCacheOptions,
 ): typeof streamSimple {
@@ -735,6 +752,16 @@ export function buildStreamFn(
       settings: cache?.settings,
     })
 
+    if ((model as { api?: unknown }).api === OLLAMA_CHAT_API) {
+      // Native Ollama: own snapshot + single num_ctx decision + native guard
+      // (plan 2026-10-05-ollama-native-context, M2). The shared guard keeps
+      // serving every other api byte-identically.
+      return streamNativeOllama(streamImpl as never, model as never, cleanContext, withCache, {
+        getContextWindowChoice: cache?.getContextWindowChoice,
+        providerNumCtx: provider.ollamaNumCtx,
+        loadFacts: cache?.loadOllamaFacts as never,
+      }) as ReturnType<typeof streamSimple>
+    }
     return guarded(model, cleanContext, withCache)
   }) as typeof streamSimple
 }
@@ -749,6 +776,13 @@ export interface StreamCacheOptions {
   getSessionId?: () => string | undefined
   /** Settings injection for tests; production reads `settings.json`. */
   settings?: PromptCacheSettings
+  /**
+   * Native Ollama only: the CURRENT session's context-window choice, read once
+   * per request (task sessions read their own snapshot row).
+   */
+  getContextWindowChoice?: () => ContextWindowChoice
+  /** Native Ollama facts loader injection for tests; production: cached `/api/show`. */
+  loadOllamaFacts?: (model: { baseUrl?: string; id: string }) => Promise<OllamaModelFacts>
 }
 
 /**
@@ -1021,7 +1055,7 @@ export const LOCAL_HEALTH_CHECK_TIMEOUT_MS = 60000
  */
 export function getDefaultHealthCheckTimeoutMs(providerType: ProviderType): number {
   const preset = PROVIDER_TYPE_PRESETS[providerType]
-  return preset?.type === 'ollama' ? LOCAL_HEALTH_CHECK_TIMEOUT_MS : DEFAULT_HEALTH_CHECK_TIMEOUT_MS
+  return preset?.type === 'ollama' || preset?.type === 'ollama-native' ? LOCAL_HEALTH_CHECK_TIMEOUT_MS : DEFAULT_HEALTH_CHECK_TIMEOUT_MS
 }
 
 /**
@@ -1035,6 +1069,12 @@ export interface ProviderConfig {
   provider: string // e.g., 'openai', 'anthropic', 'xai'
   baseUrl: string
   apiKey: string // encrypted at rest
+  /**
+   * Native Ollama only (`ollama-native`): the operator's explicit num_ctx for
+   * this server. Outranks the modelfile `num_ctx` as the baseline a strand's
+   * context choice must exceed. Absent → the modelfile value, else unknown.
+   */
+  ollamaNumCtx?: number
   enabledModels?: string[] // list of model IDs enabled for this provider; first entry is the default/primary model
   degradedThresholdMs?: number
   /**

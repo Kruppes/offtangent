@@ -1,5 +1,5 @@
 import { spawn } from 'node:child_process'
-import { readStrandEcoMode } from './eco-mode-store.js'
+import { readStrandContextWindow, readStrandEcoMode } from './eco-mode-store.js'
 import { resolveTurnEcoOwner, freezeEcoToolResult } from './eco-tool-freeze.js'
 import type { AfterToolCallContext, AfterToolCallResult } from '@earendil-works/pi-agent-core'
 import fs from 'node:fs'
@@ -843,12 +843,20 @@ class PiAgentRuntime implements AgentRuntimeBoundary, AgentRuntimePiAgentAccess 
           textVerbosity: this.providerConfig?.textVerbosity,
           transport: this.providerConfig?.transport,
           providerType: this.providerConfig?.providerType,
+          ollamaNumCtx: this.providerConfig?.ollamaNumCtx,
         },
         undefined,
         // Prompt-cache routing: the strand id is stable for the whole
         // conversation, so providers that key their cache per session keep
         // hitting the same replica/entry across turns.
-        { getSessionId: () => this.currentSessionId ?? undefined },
+        {
+          getSessionId: () => this.currentSessionId ?? undefined,
+          // Native Ollama only (never consulted for other apis): the CURRENT
+          // session's own row, read once per request. A task session carries
+          // its own snapshot (inheritEcoMode at task start), so a resume reads
+          // exactly that and a later parent toggle never leaks in.
+          getContextWindowChoice: () => readStrandContextWindow(this.db, this.currentSessionId ?? null),
+        },
       ),
       // Ebene B (last net before send): enforce the tool_use/tool_result
       // boundary invariant on EVERY LLM call, right before pi-ai converts the

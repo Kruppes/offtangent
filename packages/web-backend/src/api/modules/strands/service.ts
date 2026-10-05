@@ -35,6 +35,7 @@ import {
   readStrandContextWindow,
   setStrandContextWindow,
   decideNumCtx,
+  peekOllamaShowFacts,
   ECO_CONTEXT_PRESETS,
   OLLAMA_CHAT_API,
   PROVIDER_TYPE_PRESETS,
@@ -193,6 +194,10 @@ export interface StrandContextWindowStatus {
   /** Only the native Ollama /api/chat provider can carry num_ctx; the /v1 adapter cannot. */
   supported: boolean
   state: 'unchanged' | 'applied' | 'baseline_kept' | 'provider_unsupported' | 'baseline_unknown' | 'supported_unknown' | 'exceeds_supported' | 'invalid_choice' | 'no_model'
+  /** num_ctx a request would send right now (null = none; the model keeps its own window). */
+  effective?: number | null
+  /** Native only: whether the /api/show facts behind `state` are cached ('known'), being fetched or failed. */
+  facts?: 'known' | 'pending' | 'failed'
 }
 
 /** One fact of the slim `GET /api/strands/:id/facts` list (W5b). */
@@ -527,7 +532,7 @@ export function createStrandsService(options: StrandsServiceOptions) {
       outputReserveTokens: budget?.outputReserve ?? null,
       contextFallback: budget?.contextFallback ?? false,
       last: lastEcoViewForStrand(db, strandId),
-      contextWindow: contextWindowStatusOf(strandId, model?.providerId ?? null),
+      contextWindow: contextWindowStatusOf(strandId, model?.providerId ?? null, model?.modelId ?? null),
     }
   }
 
@@ -537,15 +542,28 @@ export function createStrandsService(options: StrandsServiceOptions) {
    * nothing is overridden (no guessed floor). Pure read: never mutates
    * server config, other strands or global state.
    */
-  function contextWindowStatusOf(strandId: string, providerId: string | null): StrandContextWindowStatus {
-    const choice = readStrandContextWindow(db, strandId)
+  function contextWindowStatusOf(strandId: string, providerId: string | null, modelId: string | null, candidate?: number | null): StrandContextWindowStatus {
+    const choice = candidate !== undefined ? candidate : readStrandContextWindow(db, strandId)
     const presets = [...ECO_CONTEXT_PRESETS]
     if (!providerId) return { choice, presets, supported: false, state: 'no_model' }
-    const providerType = getProvider(providerId)?.providerType
+    const provider = getProvider(providerId)
+    const providerType = provider?.providerType
     const apiType = providerType ? PROVIDER_TYPE_PRESETS[providerType]?.apiType : undefined
     const nativeProvider = apiType === OLLAMA_CHAT_API
-    const decision = decideNumCtx({ nativeProvider, choice, facts: {} })
-    return { choice, presets, supported: nativeProvider, state: decision.state }
+    // Same facts the request path uses (cached read-only /api/show for the
+    // strand's CURRENT model, re-read per status call). Not yet cached → the
+    // baseline is honestly unknown; nothing is guessed.
+    const peek = nativeProvider && modelId ? peekOllamaShowFacts(provider?.baseUrl, modelId) : { known: false, facts: {}, failed: false }
+    const facts = { ...peek.facts, ...(provider?.ollamaNumCtx !== undefined ? { providerNumCtx: provider.ollamaNumCtx } : {}) }
+    const decision = decideNumCtx({ nativeProvider, choice, facts })
+    return {
+      choice,
+      presets,
+      supported: nativeProvider,
+      state: decision.state,
+      effective: decision.numCtx ?? null,
+      ...(nativeProvider ? { facts: peek.known ? 'known' as const : peek.failed ? 'failed' as const : 'pending' as const } : {}),
+    }
   }
 
   /**
@@ -556,6 +574,16 @@ export function createStrandsService(options: StrandsServiceOptions) {
    */
   function patchStrandEco(userId: number, strandId: string, patch: PatchStrandEcoBody): { strandId: string; eco: StrandEcoStatus } {
     requireStrand(userId, strandId)
+    // Server-side range check BEFORE any write (the body parser already limits
+    // the value to the presets + hard cap): a choice above the KNOWN supported
+    // maximum of the strand's current native model is refused, nothing stored.
+    if (typeof patch.contextWindow === 'number') {
+      const current = effectiveModelForStrand(db, strandId)
+      const status = contextWindowStatusOf(strandId, current?.providerId ?? null, current?.modelId ?? null, patch.contextWindow)
+      if (status.state === 'exceeds_supported') {
+        throw new StrandServiceError(400, 'context_window_exceeds_supported', 'Context window exceeds what the current model supports')
+      }
+    }
     // Owner-checked above; each write touches only this strand's row.
     if (patch.enabled !== undefined && !setStrandEcoEnabled(db, strandId, patch.enabled)) {
       throw new StrandServiceError(404, 'strand_not_found', 'Strand not found')

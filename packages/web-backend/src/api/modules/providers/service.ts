@@ -610,7 +610,7 @@ export function createProvidersService(options: ProvidersRouterOptions = {}): Pr
 
   async function listOllamaModels(providerId: string): Promise<OllamaTagsResponse> {
     const provider = requireProvider(providerId)
-    if (provider.providerType !== 'ollama') {
+    if (provider.providerType !== 'ollama' && provider.providerType !== 'ollama-native') {
       throw new ProvidersValidationError('Not an Ollama provider')
     }
 
@@ -628,7 +628,7 @@ export function createProvidersService(options: ProvidersRouterOptions = {}): Pr
 
   async function requestOllamaPull(providerId: string, modelName: string, signal: AbortSignal): Promise<Response> {
     const provider = requireProvider(providerId)
-    if (provider.providerType !== 'ollama') {
+    if (provider.providerType !== 'ollama' && provider.providerType !== 'ollama-native') {
       throw new ProvidersValidationError('Not an Ollama provider')
     }
 
@@ -640,7 +640,7 @@ export function createProvidersService(options: ProvidersRouterOptions = {}): Pr
 
   async function deleteOllamaModel(providerId: string, modelName: string): Promise<void> {
     const provider = requireProvider(providerId)
-    if (provider.providerType !== 'ollama') {
+    if (provider.providerType !== 'ollama' && provider.providerType !== 'ollama-native') {
       throw new ProvidersValidationError('Not an Ollama provider')
     }
 

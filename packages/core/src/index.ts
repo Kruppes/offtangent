@@ -1696,5 +1696,7 @@ export { readStrandContextWindow, setStrandContextWindow } from './eco-mode-stor
 export { ECO_CONTEXT_PRESETS, parseContextWindowChoice, decideNumCtx } from './ollama-native/context-window.js'
 export type { ContextWindowChoice, NumCtxDecision } from './ollama-native/context-window.js'
 export { OLLAMA_CHAT_API } from './ollama-native/chat-stream.js'
+export { getOllamaShowFacts, peekOllamaShowFacts, ollamaRootUrl, resetShowFactsCacheForTest } from './ollama-native/show-facts.js'
+export { streamNativeOllama, decideNativeRequest, nativeLimitIdentity } from './ollama-native/native-request.js'
 export { isStrandEcoEnabled, setStrandEcoEnabled, lastEcoViewForStrand, observedEcoContextLimit, ECO_METRIC_TOOL_NAME } from './eco-mode-store.js'
 export type { EcoViewMetric } from './eco-mode-store.js'

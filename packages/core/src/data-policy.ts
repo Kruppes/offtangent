@@ -144,7 +144,7 @@ const CN_HOST = /(^|\.)(z\.ai|bigmodel\.cn|zhipuai\.cn|moonshot\.ai|moonshot\.cn
 
 /** Provider types that can be a box on this network. */
 const LOCAL_CAPABLE_TYPES: ReadonlySet<string> = new Set([
-  'ollama', 'ollama-local', 'openai-compatible',
+  'ollama', 'ollama-local', 'ollama-native', 'openai-compatible',
 ])
 
 /**
@@ -153,7 +153,7 @@ const LOCAL_CAPABLE_TYPES: ReadonlySet<string> = new Set([
  * {@link LOCAL_CAPABLE_TYPES} keeps the old heuristic — an `openai-compatible`
  * endpoint has no `/api/tags`, see the open points of the docs.
  */
-const TAG_VERIFIABLE_TYPES: ReadonlySet<string> = new Set(['ollama', 'ollama-local'])
+const TAG_VERIFIABLE_TYPES: ReadonlySet<string> = new Set(['ollama', 'ollama-local', 'ollama-native'])
 
 /**
  * Ollama's hosted models carry this marker in their id, in both spellings the
