@@ -175,4 +175,42 @@ describe('per-user system prompt isolation (F1)', () => {
     await core.injectTaskResult('user_id=1 username=u1 synthetic task result', '2', 'S2', 'inj-5', 'main')
     expect(profiles()).toEqual(['U1', 'U2'])
   }, 60_000)
+
+  it('group strand: injection into a telegram-group strand carries no profile even for its owner', async () => {
+    const { db, core } = setup()
+    db.prepare("INSERT INTO sessions (id, user_id, agent_id, source) VALUES ('SG', 2, 'main', 'telegram-group')").run()
+    await core.injectTaskResult('synthetic task result', '2', 'SG', 'inj-6', 'main')
+    expect(profiles()).toEqual(['none'])
+  }, 60_000)
+
+  it('ownerless strand (user_id NULL): injection carries no profile', async () => {
+    const { db, core } = setup()
+    db.prepare("INSERT INTO sessions (id, user_id, agent_id) VALUES ('SN', NULL, 'main')").run()
+    await core.injectTaskResult('synthetic task result', '1', 'SN', 'inj-7', 'main')
+    expect(profiles()).toEqual(['none'])
+  }, 60_000)
+
+  it('non-numeric target user id: injection carries no profile', async () => {
+    const { core } = setup()
+    await core.injectTaskResult('synthetic task result', 'u2', 'S2', 'inj-8', 'main')
+    expect(profiles()).toEqual(['none'])
+  }, 60_000)
+
+  it('an injection into U2\'s strand leaves U1\'s live runtime head untouched', async () => {
+    const { core } = setup()
+    await drain(core.sendMessage('1', 'hello from one', 'web', undefined, 'main', 'S1'))
+    await core.injectTaskResult('synthetic task result', '2', 'S2', 'inj-9', 'main')
+    const snapshot = (core as unknown as { runtimes: Map<string, AgentRuntimeBoundary> }).runtimes
+    let checked = 0
+    for (const [key, rt] of snapshot) {
+      if (!key.endsWith('S1')) continue
+      const head = (rt.getMessages?.() ?? [])[0] as { role?: string; content?: string } | undefined
+      expect(head?.role).toBe('system')
+      expect(head?.content).toContain('PROFILE_MARKER_USER_ONE')
+      expect(head?.content).not.toContain('PROFILE_MARKER_USER_TWO')
+      checked++
+    }
+    expect(checked).toBeGreaterThan(0)
+    expect(profiles()).toEqual(['U1', 'U2'])
+  }, 60_000)
 })
