@@ -1206,9 +1206,15 @@ export class TurnRunner {
       if (event.phase === 'first_token') {
         console.log(`[turn-runner] native first token req=${event.requestId} session=${turn.sessionId} after_ms=${event.elapsedMs}`)
       }
+      // Only real output is a recovery. A request that ended without its
+      // first token (error, cancel, empty end) is closed as exactly that, so
+      // the row never claims the model "started answering" (review F2).
+      const outcome: StallOutcome = event.phase === 'first_token'
+        ? 'recovered'
+        : event.end === 'done' ? 'ended' : event.end === 'canceled' ? 'canceled' : 'error'
       // First output or end of request: back to the regular stall budget,
       // which keeps a hang AFTER the first token bounded as before.
-      closeStall(now, 'recovered')
+      closeStall(now, outcome)
       lastActivityAt = now
       firstToken = null
     })

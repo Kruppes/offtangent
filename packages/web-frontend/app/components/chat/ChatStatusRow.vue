@@ -26,13 +26,15 @@
       class="w-full overflow-hidden rounded-lg border px-3 py-2 text-xs"
       :class="msg.stallInfo.outcome === 'recovered'
         ? 'border-success/30 bg-success/5 text-muted-foreground'
-        : msg.stallInfo.outcome === 'aborted'
+        : msg.stallInfo.outcome === 'aborted' || msg.stallInfo.outcome === 'error'
           ? 'border-destructive/30 bg-destructive/5 text-muted-foreground'
-          : 'border-warning/30 bg-warning/5 text-muted-foreground'"
+          : msg.stallInfo.outcome === 'canceled' || msg.stallInfo.outcome === 'ended'
+            ? 'border-border bg-muted/30 text-muted-foreground'
+            : 'border-warning/30 bg-warning/5 text-muted-foreground'"
     >
       <div class="flex items-center gap-2">
         <AppIcon
-          :name="msg.stallInfo.outcome === 'recovered' ? 'check' : msg.stallInfo.outcome === 'aborted' ? 'warning' : 'clock'"
+          :name="msg.stallInfo.outcome === 'recovered' ? 'check' : msg.stallInfo.outcome === 'aborted' || msg.stallInfo.outcome === 'error' ? 'warning' : msg.stallInfo.outcome === 'canceled' || msg.stallInfo.outcome === 'ended' ? 'close' : 'clock'"
           class="h-3 w-3 shrink-0"
         />
         <span class="min-w-0 flex-1 break-words text-foreground">{{ msg.content }}</span>

@@ -49,7 +49,7 @@ function message(text: string): AssistantMessage {
   } as AssistantMessage
 }
 
-type Step = { afterMs: number; event: 'thinking' | 'text' | 'done' }
+type Step = { afterMs: number; event: 'thinking' | 'text' | 'done' | 'error' | 'empty-done' }
 
 /** Fake inner stream: silent for the prefill, then the scripted events. Honors abort. */
 function fakeInner(steps: Step[], seen: { aborted: boolean }) {
@@ -70,6 +70,16 @@ function fakeInner(steps: Step[], seen: { aborted: boolean }) {
         }
         if (step.event === 'thinking') out.push({ type: 'thinking_delta', contentIndex: 0, delta: '.', partial } as AssistantMessageEvent)
         if (step.event === 'text') out.push({ type: 'text_delta', contentIndex: 0, delta: 'answer', partial } as AssistantMessageEvent)
+        if (step.event === 'error') {
+          out.push({ type: 'error', reason: 'error', error: { ...partial, stopReason: 'error', errorMessage: 'synthetic runner failure' } } as AssistantMessageEvent)
+          out.end()
+          return
+        }
+        if (step.event === 'empty-done') {
+          out.push({ type: 'done', reason: 'stop', message: message('') } as AssistantMessageEvent)
+          out.end()
+          return
+        }
         if (step.event === 'done') {
           out.push({ type: 'done', reason: 'stop', message: message('answer') } as AssistantMessageEvent)
           out.end()
@@ -247,6 +257,55 @@ describe('native first-token budget', () => {
     await vi.advanceTimersByTimeAsync(1)
     expect(seen.aborted).toBe(true)
     expect(runner.hasActiveTurn(USER_ID)).toBe(false)
+  })
+
+  // Review F2: the end of a request WITHOUT a first token must never be shown
+  // as "started answering" — only real output is a recovery.
+  it('F2: a provider error before the first token closes the wait as error, not recovered', async () => {
+    vi.useFakeTimers()
+    const { agent } = nativeAgent([{ afterMs: 45_000, event: 'error' }])
+    const { db, runner, events } = start(agent, { retryPolicy: { enabled: false } })
+    await vi.advanceTimersByTimeAsync(46_000)
+    expect(runner.hasActiveTurn(USER_ID)).toBe(false)
+    const rows = stallRows(db)
+    expect(rows).toHaveLength(1)
+    expect(rows[0]!.metadata).toMatchObject({ phase: 'first_token', outcome: 'error' })
+    expect(rows[0]!.content).not.toContain('started answering')
+    const resolved = chunks(events).filter(c => c.type === 'stall_resolved')
+    expect(resolved.map(c => c.stall?.outcome)).toEqual(['error'])
+  })
+
+  it('F2: a user cancel during the first-token wait closes the wait as canceled, not recovered', async () => {
+    vi.useFakeTimers()
+    const { agent } = nativeAgent([{ afterMs: 10 * 60 * 60_000, event: 'text' }])
+    const { db, runner } = start(agent)
+    await vi.advanceTimersByTimeAsync(60_000)
+    runner.abortTurn(USER_ID)
+    await vi.advanceTimersByTimeAsync(1)
+    const rows = stallRows(db)
+    expect(rows).toHaveLength(1)
+    expect(rows[0]!.metadata).toMatchObject({ phase: 'first_token', outcome: 'canceled' })
+    expect(rows[0]!.content).not.toContain('started answering')
+  })
+
+  it('F2: a request that ends without any output closes the wait as ended, not recovered', async () => {
+    vi.useFakeTimers()
+    const { agent } = nativeAgent([{ afterMs: 45_000, event: 'empty-done' }])
+    const { db, runner } = start(agent, { retryPolicy: { enabled: false } })
+    await vi.advanceTimersByTimeAsync(46_000)
+    expect(runner.hasActiveTurn(USER_ID)).toBe(false)
+    const rows = stallRows(db)
+    expect(rows).toHaveLength(1)
+    expect(rows[0]!.metadata).toMatchObject({ phase: 'first_token', outcome: 'ended' })
+    expect(rows[0]!.content).not.toContain('started answering')
+  })
+
+  it('F2: texts of the no-output outcomes never claim an answer started', () => {
+    for (const outcome of ['ended', 'error', 'canceled'] as const) {
+      const text = formatProviderStallContent({ startedAt: '', durationMs: 50_000, outcome, phase: 'first_token', budgetMs: 100_000 } as never)
+      expect(text).not.toContain('started answering')
+      expect(text).toContain('no output')
+    }
   })
 })
 

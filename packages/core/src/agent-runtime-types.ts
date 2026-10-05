@@ -1,4 +1,11 @@
-export const STALL_OUTCOMES = ['recovered', 'aborted'] as const
+/**
+ * `recovered` = output came back (for a native first-token wait: the first
+ * real token). `aborted` = the watchdog (or the end of the turn) killed it.
+ * `ended` / `error` / `canceled` only close a native first-token wait whose
+ * request ended WITHOUT any output (review F2); regular stalls of every other
+ * provider never get them.
+ */
+export const STALL_OUTCOMES = ['recovered', 'aborted', 'ended', 'error', 'canceled'] as const
 
 /** How a provider stall ended: the stream came back, or the turn was killed. */
 export type StallOutcome = (typeof STALL_OUTCOMES)[number]

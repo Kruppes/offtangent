@@ -152,11 +152,17 @@ export function streamNativeOllama(inner: Inner, model: AnyModel, context: Conte
       // Background work (summary, health check) on the same server+model waits
       // while this lease (plus a short linger) is held — see local-inference-activity.ts.
       const releaseInference = beginLocalInference(model.baseUrl, model.id)
+      // Without a done/error event (inner threw) the request failed.
+      let end: 'done' | 'error' | 'canceled' = 'error'
       try {
         for await (const ev of inner(model, context, decided.options)) {
           if (firstAt === undefined && OUTPUT_EVENTS.has(ev.type)) {
             firstAt = Date.now()
             emitProviderPhase(input.sessionId, { phase: 'first_token', requestId, elapsedMs: firstAt - sentAt })
+          }
+          if (ev.type === 'done') end = 'done'
+          if (ev.type === 'error') {
+            end = ev.reason === 'aborted' || options?.signal?.aborted ? 'canceled' : 'error'
           }
           if (ev.type === 'done' || ev.type === 'error') {
             const msg = (ev.type === 'done' ? ev.message : ev.error) as { usage?: { input?: number; output?: number; cacheRead?: number }; stopReason?: string }
@@ -167,7 +173,8 @@ export function streamNativeOllama(inner: Inner, model: AnyModel, context: Conte
         }
       } finally {
         releaseInference()
-        emitProviderPhase(input.sessionId, { phase: 'request_end', requestId })
+        if (end === 'error' && options?.signal?.aborted) end = 'canceled'
+        emitProviderPhase(input.sessionId, { phase: 'request_end', requestId, end })
       }
       out.end()
     } catch (err) {

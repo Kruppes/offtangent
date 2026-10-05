@@ -66,6 +66,8 @@ export type ProviderPhaseEvent =
     /** The request is over (done, error or aborted). */
     phase: 'request_end'
     requestId: string
+    /** How it ended: `done` (normal end), `error` (provider/stream failure), `canceled` (aborted by signal). */
+    end?: 'done' | 'error' | 'canceled'
   }
 
 type Listener = (event: ProviderPhaseEvent) => void

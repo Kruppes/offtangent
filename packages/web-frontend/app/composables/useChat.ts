@@ -67,7 +67,7 @@ export interface ChatActionMessage {
   resolution?: string
 }
 
-export type ChatStallOutcome = 'recovered' | 'aborted'
+export type ChatStallOutcome = 'recovered' | 'aborted' | 'ended' | 'error' | 'canceled'
 
 /**
  * Provider-stall details attached to a stall notice. Mirrors the backend

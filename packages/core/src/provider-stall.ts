@@ -95,10 +95,16 @@ export function formatProviderStallContent(stall: StallInfo): string {
     const est = typeof stall.estimatedInputTokens === 'number' ? ` (~${stall.estimatedInputTokens} input tokens estimated)` : ''
     if (stall.outcome === 'recovered') return `\u2705 Local model started answering after ${seconds}s of prompt processing`
     if (stall.outcome === 'aborted') return `\u26A0\uFE0F Local model produced no output within ${budget}${est} \u2014 aborted after ${seconds}s`
+    if (stall.outcome === 'error') return `\u26A0\uFE0F Local model request failed after ${seconds}s of prompt processing, no output`
+    if (stall.outcome === 'canceled') return `\u23F9\uFE0F Local model request canceled after ${seconds}s of prompt processing, no output yet`
+    if (stall.outcome === 'ended') return `\u2139\uFE0F Local model request ended after ${seconds}s with no output`
     return `\u23F3 Local model is still processing the prompt${est}: no output yet after ${seconds}s, waiting up to ${budget} for the first token\u2026`
   }
   if (stall.outcome === 'recovered') return `\u2705 Provider recovered after ${seconds}s of silence`
   if (stall.outcome === 'aborted') return `\u26A0\uFE0F Provider stopped responding \u2014 aborted after ${seconds}s of silence`
+  if (stall.outcome === 'error') return `\u26A0\uFE0F Provider request failed after ${seconds}s of silence`
+  if (stall.outcome === 'canceled') return `\u23F9\uFE0F Request canceled after ${seconds}s of silence`
+  if (stall.outcome === 'ended') return `\u2139\uFE0F Request ended after ${seconds}s of silence with no output`
   return `\u23F3 Provider has not responded for ${seconds}s\u2026`
 }
 
@@ -149,12 +155,14 @@ export function queryStallStats(db: Database, options: StallStatsQueryOptions = 
     SELECT
       COUNT(*) AS total,
       COALESCE(SUM(CASE WHEN outcome = 'recovered' THEN 1 ELSE 0 END), 0) AS recovered,
-      COALESCE(SUM(CASE WHEN outcome = 'aborted' THEN 1 ELSE 0 END), 0) AS aborted,
+      -- 'aborted' = the stall ended without the provider coming back; the
+      -- native no-output ends (ended/error/canceled, review F2) belong here.
+      COALESCE(SUM(CASE WHEN outcome IN ('aborted', 'ended', 'error', 'canceled') THEN 1 ELSE 0 END), 0) AS aborted,
       COALESCE(SUM(CASE WHEN outcome IS NULL THEN 1 ELSE 0 END), 0) AS unresolved,
       AVG(CASE WHEN outcome IS NOT NULL THEN durationMs END) AS averageDurationMs,
       MAX(CASE WHEN outcome IS NOT NULL THEN durationMs END) AS maxDurationMs,
       AVG(CASE WHEN outcome = 'recovered' THEN durationMs END) AS averageRecoveredDurationMs,
-      AVG(CASE WHEN outcome = 'aborted' THEN durationMs END) AS averageAbortedDurationMs
+      AVG(CASE WHEN outcome IN ('aborted', 'ended', 'error', 'canceled') THEN durationMs END) AS averageAbortedDurationMs
     FROM (
       SELECT
         json_extract(metadata, '$.outcome') AS outcome,
