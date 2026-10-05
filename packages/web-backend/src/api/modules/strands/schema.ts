@@ -1,3 +1,4 @@
+import { parseContextWindowChoice } from '@axiom/core'
 import { normalizeSessionId, resolveAgentId } from '../../../persona-request.js'
 import { STRAND_SEARCH_MAX_LENGTH, STRAND_SEARCH_MIN_LENGTH } from './search.js'
 
@@ -206,20 +207,34 @@ export function parsePatchStrandModelBody(body: unknown): ParseResult<PatchStran
 }
 
 export interface PatchStrandEcoBody {
-  enabled: boolean
+  enabled?: boolean
+  /** Per-strand context window: null = "Unverändert", else a preset. Absent = unchanged. */
+  contextWindow?: number | null
 }
 
-/** `PATCH /api/strands/:id/eco` — exactly `{ enabled: boolean }`, nothing coerced. */
+/**
+ * `PATCH /api/strands/:id/eco` — `{ enabled?: boolean, contextWindow?: number | null }`,
+ * at least one field, nothing coerced. `{ enabled }` alone stays valid (backward compatible).
+ */
 export function parsePatchStrandEcoBody(body: unknown): ParseResult<PatchStrandEcoBody> {
   if (typeof body !== 'object' || body === null || Array.isArray(body)) {
-    return { ok: false, error: 'Body must be an object { enabled: boolean }', code: 'invalid_eco' }
+    return { ok: false, error: 'Body must be an object { enabled?: boolean, contextWindow?: number | null }', code: 'invalid_eco' }
   }
   const value = body as Record<string, unknown>
-  const extra = Object.keys(value).filter(k => k !== 'enabled')
-  if (typeof value.enabled !== 'boolean' || extra.length > 0) {
-    return { ok: false, error: 'enabled must be a boolean and the only field', code: 'invalid_eco' }
+  const extra = Object.keys(value).filter(k => k !== 'enabled' && k !== 'contextWindow')
+  const hasEnabled = 'enabled' in value
+  const hasWindow = 'contextWindow' in value
+  if (extra.length > 0 || (!hasEnabled && !hasWindow) || (hasEnabled && typeof value.enabled !== 'boolean')) {
+    return { ok: false, error: 'enabled must be a boolean; only enabled and contextWindow are allowed', code: 'invalid_eco' }
   }
-  return { ok: true, value: { enabled: value.enabled } }
+  const out: PatchStrandEcoBody = {}
+  if (hasEnabled) out.enabled = value.enabled as boolean
+  if (hasWindow) {
+    const parsed = parseContextWindowChoice(value.contextWindow)
+    if (!parsed.ok) return { ok: false, error: parsed.error, code: 'invalid_context_window' }
+    out.contextWindow = parsed.value
+  }
+  return { ok: true, value: out }
 }
 
 export interface DeleteStrandQuery {

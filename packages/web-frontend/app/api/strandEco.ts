@@ -2,7 +2,7 @@
  * Eco mode of one strand (plan 2026-10-04-eco-implementation).
  *
  *   GET   /api/strands/:id/context  -> report.eco (status + last view estimates)
- *   PATCH /api/strands/:id/eco      { enabled: boolean } -> { strandId, eco }
+ *   PATCH /api/strands/:id/eco      { enabled?: boolean, contextWindow?: number | null } -> { strandId, eco }
  *
  * Token numbers are estimates of the server's conservative counter, never
  * measured provider usage; the UI labels them as such.
@@ -24,6 +24,31 @@ export interface StrandEcoStatus {
   outputReserveTokens: number | null
   contextFallback: boolean
   last: EcoViewMetric | null
+  /** Absent on older servers: the context-window picker is then hidden. */
+  contextWindow?: EcoContextWindowStatus
+}
+export type EcoContextWindowState = 'unchanged' | 'applied' | 'baseline_kept' | 'provider_unsupported' | 'baseline_unknown'
+  | 'supported_unknown' | 'exceeds_supported' | 'invalid_choice' | 'no_model'
+export interface EcoContextWindowStatus {
+  /** null = "Unverändert" (no num_ctx override). */
+  choice: number | null
+  presets: number[]
+  supported: boolean
+  state: EcoContextWindowState
+}
+const CW_STATES: readonly EcoContextWindowState[] = ['unchanged', 'applied', 'baseline_kept', 'provider_unsupported', 'baseline_unknown', 'supported_unknown', 'exceeds_supported', 'invalid_choice', 'no_model']
+export function mapContextWindow(raw: unknown): EcoContextWindowStatus | undefined {
+  if (!raw || typeof raw !== 'object') return undefined
+  const v = raw as Record<string, unknown>
+  const okInt = (n: unknown): n is number => typeof n === 'number' && Number.isSafeInteger(n) && n > 0
+  if (!Array.isArray(v.presets) || !v.presets.every(okInt)) return undefined
+  if (typeof v.state !== 'string' || !CW_STATES.includes(v.state as EcoContextWindowState)) return undefined
+  return {
+    choice: okInt(v.choice) ? v.choice : null,
+    presets: v.presets as number[],
+    supported: v.supported === true,
+    state: v.state as EcoContextWindowState,
+  }
 }
 export const STRAND_ECO_PATH = (id: string) => `/api/strands/${encodeURIComponent(id)}/eco`
 const CONTEXT_PATH = (id: string) => `/api/strands/${encodeURIComponent(id)}/context`
@@ -41,6 +66,7 @@ export function mapEcoStatus(raw: unknown): StrandEcoStatus | null {
     inputBudgetTokens: num(value.inputBudgetTokens),
     outputReserveTokens: num(value.outputReserveTokens),
     contextFallback: value.contextFallback === true,
+    ...(mapContextWindow(value.contextWindow) ? { contextWindow: mapContextWindow(value.contextWindow) } : {}),
     last: last
       ? {
           estimatedTokensBefore: num(last.estimatedTokensBefore),
@@ -70,6 +96,10 @@ export function useStrandEcoApi() {
     },
     async set(id: string, enabled: boolean): Promise<StrandEcoStatus | null> {
       return mapEcoStatus((await apiFetch<{ eco?: unknown }>(STRAND_ECO_PATH(id), { method: 'PATCH', body: JSON.stringify({ enabled }) })).eco)
+    },
+    /** Only `contextWindow` is sent, so the Eco switch is never touched. */
+    async setContextWindow(id: string, contextWindow: number | null): Promise<StrandEcoStatus | null> {
+      return mapEcoStatus((await apiFetch<{ eco?: unknown }>(STRAND_ECO_PATH(id), { method: 'PATCH', body: JSON.stringify({ contextWindow }) })).eco)
     },
   }
 }

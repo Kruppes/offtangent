@@ -2738,6 +2738,21 @@
     "observed": "runner limit {limit} tokens (below the declared window)",
     "saved": "frozen results about {percent} % smaller",
     "noData": "no result compacted yet",
-    "degraded": "last request refused, not sent (reason in chat)"
+    "degraded": "last request refused, not sent (reason in chat)",
+    "cwLabel": "Context window",
+    "cwUnchanged": "Unchanged",
+    "cwSaveError": "Context window could not be saved.",
+    "cwSaved": "Context window saved",
+    "cwState": {
+      "unchanged": "No change: the server uses its configured window.",
+      "applied": "Sent per request as num_ctx (this strand only). A larger window needs more memory on the Ollama host; other strands of the same model may trigger a reload.",
+      "baseline_kept": "Smaller than or equal to the server window: nothing is overridden (never shrunk).",
+      "provider_unsupported": "Not available: only the native Ollama provider (/api/chat) can set num_ctx, the /v1 interface cannot.",
+      "baseline_unknown": "Server window cannot be established safely: nothing is overridden.",
+      "supported_unknown": "Model's maximum supported window unknown: nothing is overridden.",
+      "exceeds_supported": "Larger than the model supports: nothing is overridden.",
+      "invalid_choice": "Invalid choice: nothing is overridden.",
+      "no_model": "No model selected."
+    }
   }
 }

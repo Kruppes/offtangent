@@ -32,6 +32,12 @@ import {
   observedEcoContextLimit,
   isStrandEcoEnabled,
   setStrandEcoEnabled,
+  readStrandContextWindow,
+  setStrandContextWindow,
+  decideNumCtx,
+  ECO_CONTEXT_PRESETS,
+  OLLAMA_CHAT_API,
+  PROVIDER_TYPE_PRESETS,
   resolveEcoBudget,
   lastRequestUsageForStrand,
   lastTranscriptWindowForStrand,
@@ -172,6 +178,21 @@ export interface StrandEcoStatus {
   /** True when the model declares no context window and a conservative fallback is used. */
   contextFallback: boolean
   last: EcoViewMetric | null
+  /**
+   * Per-strand context-window choice, re-evaluated against the CURRENT model
+   * on every read (a model switch keeps the choice but never silently carries
+   * it over). `state` says what a request would actually do.
+   */
+  contextWindow: StrandContextWindowStatus
+}
+
+export interface StrandContextWindowStatus {
+  /** null = "Unverändert" (no num_ctx override). */
+  choice: number | null
+  presets: number[]
+  /** Only the native Ollama /api/chat provider can carry num_ctx; the /v1 adapter cannot. */
+  supported: boolean
+  state: 'unchanged' | 'applied' | 'baseline_kept' | 'provider_unsupported' | 'baseline_unknown' | 'supported_unknown' | 'exceeds_supported' | 'invalid_choice' | 'no_model'
 }
 
 /** One fact of the slim `GET /api/strands/:id/facts` list (W5b). */
@@ -493,7 +514,7 @@ export function createStrandsService(options: StrandsServiceOptions) {
     }
   }
 
-  function ecoStatusOf(strandId: string, model: { modelId: string; contextWindow: number | null; maxTokens: number | null } | null): StrandEcoStatus {
+  function ecoStatusOf(strandId: string, model: { providerId?: string; modelId: string; contextWindow: number | null; maxTokens: number | null } | null): StrandEcoStatus {
     // Same inputs as the request budget (B1): a runner limit observed in an
     // overflow lowers the shown budget exactly like it lowers the request.
     // MAJOR-1: only evidence of the strand's CURRENT model counts.
@@ -506,7 +527,25 @@ export function createStrandsService(options: StrandsServiceOptions) {
       outputReserveTokens: budget?.outputReserve ?? null,
       contextFallback: budget?.contextFallback ?? false,
       last: lastEcoViewForStrand(db, strandId),
+      contextWindow: contextWindowStatusOf(strandId, model?.providerId ?? null),
     }
+  }
+
+  /**
+   * Re-evaluated on every read. Baseline facts (/api/show) are not fetched
+   * here yet, so a native provider reports baseline_unknown for a choice and
+   * nothing is overridden (no guessed floor). Pure read: never mutates
+   * server config, other strands or global state.
+   */
+  function contextWindowStatusOf(strandId: string, providerId: string | null): StrandContextWindowStatus {
+    const choice = readStrandContextWindow(db, strandId)
+    const presets = [...ECO_CONTEXT_PRESETS]
+    if (!providerId) return { choice, presets, supported: false, state: 'no_model' }
+    const providerType = getProvider(providerId)?.providerType
+    const apiType = providerType ? PROVIDER_TYPE_PRESETS[providerType]?.apiType : undefined
+    const nativeProvider = apiType === OLLAMA_CHAT_API
+    const decision = decideNumCtx({ nativeProvider, choice, facts: {} })
+    return { choice, presets, supported: nativeProvider, state: decision.state }
   }
 
   /**
@@ -517,14 +556,18 @@ export function createStrandsService(options: StrandsServiceOptions) {
    */
   function patchStrandEco(userId: number, strandId: string, patch: PatchStrandEcoBody): { strandId: string; eco: StrandEcoStatus } {
     requireStrand(userId, strandId)
-    if (!setStrandEcoEnabled(db, strandId, patch.enabled)) {
+    // Owner-checked above; each write touches only this strand's row.
+    if (patch.enabled !== undefined && !setStrandEcoEnabled(db, strandId, patch.enabled)) {
+      throw new StrandServiceError(404, 'strand_not_found', 'Strand not found')
+    }
+    if (patch.contextWindow !== undefined && !setStrandContextWindow(db, strandId, patch.contextWindow)) {
       throw new StrandServiceError(404, 'strand_not_found', 'Strand not found')
     }
     const effective = effectiveModelForStrand(db, strandId)
     const meta = effective ? modelMetadataFor(effective.providerId, effective.modelId) : null
     return {
       strandId,
-      eco: ecoStatusOf(strandId, effective && meta ? { modelId: effective.modelId, contextWindow: meta.contextWindow ?? null, maxTokens: meta.maxTokens ?? null } : null),
+      eco: ecoStatusOf(strandId, effective && meta ? { providerId: effective.providerId, modelId: effective.modelId, contextWindow: meta.contextWindow ?? null, maxTokens: meta.maxTokens ?? null } : null),
     }
   }
 
@@ -801,7 +844,7 @@ export function createStrandsService(options: StrandsServiceOptions) {
         ? { ...effective, displayName: meta?.displayName ?? null, providerName: meta?.providerName ?? null }
         : null,
       recalled: listRecalledMessages(db, userId, strandId),
-      eco: ecoStatusOf(strandId, effective ? { modelId: effective.modelId, contextWindow, maxTokens: outputCap } : null),
+      eco: ecoStatusOf(strandId, effective ? { providerId: effective.providerId, modelId: effective.modelId, contextWindow, maxTokens: outputCap } : null),
       generatedAt: new Date().toISOString(),
     }
   }

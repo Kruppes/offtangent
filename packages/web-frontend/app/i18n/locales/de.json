@@ -2738,6 +2738,21 @@
     "observed": "Runner-Limit {limit} Tokens (statt deklariertem Fenster)",
     "saved": "eingefrorene Ergebnisse ca. {percent} % kleiner",
     "noData": "noch kein Ergebnis gekürzt",
-    "degraded": "letzte Anfrage abgelehnt, nicht gesendet (Grund im Chat)"
+    "degraded": "letzte Anfrage abgelehnt, nicht gesendet (Grund im Chat)",
+    "cwLabel": "Kontextfenster",
+    "cwUnchanged": "Unverändert",
+    "cwSaveError": "Kontextfenster konnte nicht gespeichert werden.",
+    "cwSaved": "Kontextfenster gespeichert",
+    "cwState": {
+      "unchanged": "Keine Änderung: der Server nutzt sein konfiguriertes Fenster.",
+      "applied": "Wird pro Anfrage als num_ctx gesendet (nur dieser Strang). Größeres Fenster braucht mehr Speicher auf dem Ollama-Host; andere Stränge desselben Modells können ein Neuladen auslösen.",
+      "baseline_kept": "Kleiner oder gleich dem Server-Fenster: es wird nichts überschrieben (nie verkleinert).",
+      "provider_unsupported": "Nicht verfügbar: nur der native Ollama-Anbieter (/api/chat) kann num_ctx setzen, die /v1-Schnittstelle nicht.",
+      "baseline_unknown": "Server-Fenster nicht sicher ermittelbar: es wird nichts überschrieben.",
+      "supported_unknown": "Maximal unterstütztes Fenster des Modells unbekannt: es wird nichts überschrieben.",
+      "exceeds_supported": "Größer als das Modell unterstützt: es wird nichts überschrieben.",
+      "invalid_choice": "Ungültige Auswahl: es wird nichts überschrieben.",
+      "no_model": "Kein Modell gewählt."
+    }
   }
 }

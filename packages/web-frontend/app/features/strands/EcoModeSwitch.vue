@@ -36,6 +36,26 @@ async function toggle() {
   } catch { saveError.value = true }
   finally { saving.value = false }
 }
+// Per-strand context window (plan 2026-10-05-ollama-native-context). Separate
+// from the switch: changing it never toggles Eco and never rewrites history.
+const cwSaving = ref(false)
+const cwError = ref(false)
+const cw = computed(() => status.value?.contextWindow)
+async function setContextWindow(event: Event) {
+  if (!status.value || !cw.value || cwSaving.value || props.disabled) return
+  const raw = (event.target as HTMLSelectElement).value
+  const next = raw === '' ? null : Number(raw)
+  if (next !== null && !cw.value.presets.includes(next)) return
+  cwSaving.value = true
+  cwError.value = false
+  try {
+    const result = await api.setContextWindow(props.strandId, next)
+    if (result) status.value = result
+    announce.value = t('eco.cwSaved')
+  } catch { cwError.value = true }
+  finally { cwSaving.value = false }
+}
+const kLabel = (n: number) => `${Math.round(n / 1024)}k`
 const saved = computed(() => ecoSavedPercent(status.value?.last ?? null))
 const budgetLabel = computed(() => {
   const budget = status.value?.inputBudgetTokens
@@ -69,6 +89,20 @@ onMounted(() => { void load() })
         <template v-else>{{ t('eco.hint') }}</template>
       </span>
       <p v-if="saveError" role="alert" class="text-sm">{{ t('eco.saveError') }}</p>
+      <div v-if="cw" class="flex w-full min-w-0 flex-wrap items-center gap-2" data-testid="eco-context-window">
+        <label :for="`eco-cw-${strandId}`" class="text-sm">{{ t('eco.cwLabel') }}</label>
+        <select :id="`eco-cw-${strandId}`" data-testid="eco-cw-select"
+          class="min-h-11 rounded-md border border-input bg-background px-2 text-sm text-foreground"
+          :value="cw.choice === null ? '' : String(cw.choice)" :disabled="cwSaving || disabled || !cw.supported"
+          :aria-describedby="`eco-cw-hint-${strandId}`" @change="setContextWindow">
+          <option value="">{{ t('eco.cwUnchanged') }}</option>
+          <option v-for="p in cw.presets" :key="p" :value="String(p)">{{ kLabel(p) }}</option>
+        </select>
+        <span :id="`eco-cw-hint-${strandId}`" class="text-xs text-muted-foreground [overflow-wrap:anywhere]" data-testid="eco-cw-state">
+          {{ t(`eco.cwState.${cw.state}`) }}
+        </span>
+        <p v-if="cwError" role="alert" class="text-sm">{{ t('eco.cwSaveError') }}</p>
+      </div>
       <span class="sr-only" role="status" aria-live="polite">{{ announce }}</span>
     </template>
   </div>

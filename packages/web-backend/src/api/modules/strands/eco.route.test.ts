@@ -8,7 +8,7 @@ import fs from 'node:fs'
 import http from 'node:http'
 import os from 'node:os'
 import path from 'node:path'
-import { initDatabase, SessionManager, isStrandEcoEnabled } from '@axiom/core'
+import { initDatabase, SessionManager, isStrandEcoEnabled, readStrandContextWindow } from '@axiom/core'
 import type { AgentCore, Database } from '@axiom/core'
 import { createApp } from '../../../app.js'
 import { generateAccessToken } from '../../../auth.js'
@@ -82,7 +82,7 @@ describe('strand eco mode', () => {
 
   it('rejects anything but a strict boolean body', async () => {
     const strand = sessionManager.createThread('1', 'main', 'Strict')
-    for (const body of [{ enabled: 'true' }, { enabled: 1 }, {}, { enabled: true, extra: 1 }, [true]]) {
+    for (const body of [{ enabled: 'true' }, { enabled: 1 }, {}, { enabled: true, extra: 1 }, [true], { contextWindow: 65536, extra: 1 }]) {
       const res = await api('PATCH', `/api/strands/${strand.id}/eco`, body)
       expect(res.status).toBe(400)
       expect(res.body.code).toBe('invalid_eco')
@@ -125,3 +125,64 @@ describe('strand eco mode', () => {
     expect(db.prepare("SELECT COUNT(*) AS n FROM tool_calls WHERE tool_name = 'eco_context'").get()).toEqual({ n: 0 })
   })
 })
+
+describe('strand eco context window (plan 2026-10-05-ollama-native-context)', () => {
+  it('defaults to Unverändert (null) and old { enabled } bodies keep working without touching it', async () => {
+    const strand = sessionManager.createThread('1', 'main', 'Ctx default')
+    const ctx = await api('GET', `/api/strands/${strand.id}/context`)
+    expect((ctx.body.eco as Record<string, unknown>).contextWindow).toMatchObject({ choice: null, presets: [32768, 49152, 65536, 131072] })
+    const on = await api('PATCH', `/api/strands/${strand.id}/eco`, { enabled: true })
+    expect(on.status).toBe(200)
+    expect(readStrandContextWindow(db, strand.id)).toBeNull()
+  })
+
+  it('persists a preset independently of the Eco switch and resets with null', async () => {
+    const strand = sessionManager.createThread('1', 'main', 'Ctx set')
+    const res = await api('PATCH', `/api/strands/${strand.id}/eco`, { contextWindow: 65536 })
+    expect(res.status).toBe(200)
+    expect(res.body.eco).toMatchObject({ enabled: false, contextWindow: { choice: 65536 } })
+    expect(isStrandEcoEnabled(db, strand.id)).toBe(false)
+    await api('PATCH', `/api/strands/${strand.id}/eco`, { enabled: true })
+    expect(readStrandContextWindow(db, strand.id)).toBe(65536)
+    await api('PATCH', `/api/strands/${strand.id}/eco`, { contextWindow: null })
+    expect(readStrandContextWindow(db, strand.id)).toBeNull()
+  })
+
+  it('rejects invalid windows server-side (800000000, 0, -1, 1.5, string, unlisted) and changes nothing', async () => {
+    const strand = sessionManager.createThread('1', 'main', 'Ctx invalid')
+    for (const contextWindow of [800000000, 0, -1, 1.5, '65536', 12345]) {
+      const res = await api('PATCH', `/api/strands/${strand.id}/eco`, { contextWindow })
+      expect(res.status).toBe(400)
+      expect(res.body.code).toBe('invalid_context_window')
+    }
+    expect(readStrandContextWindow(db, strand.id)).toBeNull()
+  })
+
+  it('rejects a foreign owner (404) and isolates concurrent writes per strand and user', async () => {
+    const mine = sessionManager.createThread('1', 'main', 'Mine A')
+    const mineB = sessionManager.createThread('1', 'main', 'Mine B')
+    const theirs = sessionManager.createThread('2', 'main', 'Theirs')
+    const foreign = await api('PATCH', `/api/strands/${mine.id}/eco`, { contextWindow: 131072 }, otherToken)
+    expect(foreign.status).toBe(404)
+    expect(readStrandContextWindow(db, mine.id)).toBeNull()
+    const results = await Promise.all([
+      api('PATCH', `/api/strands/${mine.id}/eco`, { contextWindow: 32768 }),
+      api('PATCH', `/api/strands/${mineB.id}/eco`, { contextWindow: 131072 }),
+      api('PATCH', `/api/strands/${theirs.id}/eco`, { contextWindow: 49152 }, otherToken),
+    ])
+    expect(results.map(r => r.status)).toEqual([200, 200, 200])
+    expect(readStrandContextWindow(db, mine.id)).toBe(32768)
+    expect(readStrandContextWindow(db, mineB.id)).toBe(131072)
+    expect(readStrandContextWindow(db, theirs.id)).toBe(49152)
+  })
+
+  it('reports an honest state for a strand without a native provider (never claims an override)', async () => {
+    const strand = sessionManager.createThread('1', 'main', 'Ctx state')
+    const res = await api('PATCH', `/api/strands/${strand.id}/eco`, { contextWindow: 131072 })
+    const cw = (res.body.eco as Record<string, unknown>).contextWindow as Record<string, unknown>
+    expect(cw.supported).toBe(false)
+    expect(['no_model', 'provider_unsupported']).toContain(cw.state)
+    expect(cw.state).not.toBe('applied')
+  })
+})
+

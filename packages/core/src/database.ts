@@ -747,6 +747,11 @@ export function initDatabase(dbPath?: string): Database {
   if (!threadCols.find(c => c.name === 'eco_mode')) {
     db.exec('ALTER TABLE sessions ADD COLUMN eco_mode INTEGER NOT NULL DEFAULT 0')
   }
+  // Per-strand Eco context window (plan 2026-10-05-ollama-native-context):
+  // NULL = "Unverändert" (no num_ctx override). Additive, no backfill.
+  if (!threadCols.find(c => c.name === 'eco_context_window')) {
+    db.exec('ALTER TABLE sessions ADD COLUMN eco_context_window INTEGER')
+  }
   // Offtangent read state: when the user last opened this strand (ISO-8601
   // UTC). Additive and nullable on purpose — NULL means "never opened", which
   // is exactly the state of every row that existed before the column, so no

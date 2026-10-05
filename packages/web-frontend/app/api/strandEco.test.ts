@@ -31,4 +31,16 @@ describe('strand eco contract', () => {
     expect(ecoSavedPercent({ ...base, estimatedTokensBefore: 1000, estimatedTokensAfter: 400 })).toBe(60)
     expect(ecoSavedPercent({ ...base, estimatedTokensBefore: 1000, estimatedTokensAfter: 1200 })).toBe(0)
   })
+
+  it('maps the context-window block strictly and sends only contextWindow on change', async () => {
+    const cw = { choice: 65536, presets: [32768, 49152, 65536, 131072], supported: true, state: 'applied' }
+    expect(mapEcoStatus({ enabled: false, contextWindow: cw })?.contextWindow).toEqual(cw)
+    expect(mapEcoStatus({ enabled: false })?.contextWindow).toBeUndefined()
+    expect(mapEcoStatus({ enabled: false, contextWindow: { ...cw, state: 'bogus' } })?.contextWindow).toBeUndefined()
+    expect(mapEcoStatus({ enabled: false, contextWindow: { ...cw, choice: 800.5 } })?.contextWindow?.choice).toBeNull()
+    const apiFetch = vi.fn().mockResolvedValue({ eco: { enabled: true, contextWindow: cw } })
+    vi.stubGlobal('useApi', () => ({ apiFetch }))
+    await useStrandEcoApi().setContextWindow('s', null)
+    expect(apiFetch.mock.calls[0]).toEqual(['/api/strands/s/eco', { method: 'PATCH', body: '{"contextWindow":null}' }])
+  })
 })

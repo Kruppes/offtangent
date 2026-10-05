@@ -11,6 +11,7 @@
  */
 
 import type { Database } from './database.js'
+import { parseContextWindowChoice, type ContextWindowChoice } from './ollama-native/context-window.js'
 
 /**
  * Tri-state read of the switch. 'unknown' = the read itself failed; the
@@ -110,7 +111,43 @@ export function observedEcoContextLimit(_sessionId: string, _model?: { id: strin
  * a running task. An unreadable parent switch keeps the task in Normal (the
  * fail-safe side for real Eco: originals stay as the tool returned them).
  */
+/**
+ * Per-strand Eco context-window choice (null = "Unverändert"). Independent of
+ * the Eco switch. A persisted value that no longer validates is read as null,
+ * so a corrupt row can never turn into a resource request.
+ */
+export function readStrandContextWindow(db: Database, sessionId: string | null | undefined): ContextWindowChoice {
+  if (!sessionId) return null
+  try {
+    const row = db.prepare('SELECT eco_context_window AS v FROM sessions WHERE id = ?').get(sessionId) as { v?: unknown } | undefined
+    if (!row || row.v === null || row.v === undefined) return null
+    const parsed = parseContextWindowChoice(row.v)
+    return parsed.ok ? parsed.value : null
+  } catch (err) {
+    if (err instanceof Error && /no such column: eco_context_window/i.test(err.message)) return null
+    console.error('[eco] reading eco_context_window failed:', err)
+    return null
+  }
+}
+
+/** Validates before writing; throws on an invalid choice (never coerced). */
+export function setStrandContextWindow(db: Database, sessionId: string, choice: ContextWindowChoice): boolean {
+  const parsed = parseContextWindowChoice(choice)
+  if (!parsed.ok) throw new Error(`invalid context window: ${parsed.error}`)
+  return db.prepare('UPDATE sessions SET eco_context_window = ? WHERE id = ?').run(parsed.value, sessionId).changes > 0
+}
+
 export function inheritEcoMode(db: Database, parentSessionId: string | null | undefined, childSessionId: string): boolean {
+  // Snapshot the parent's context-window choice at task start (independent of
+  // the Eco switch). The child keeps its own copy, so resume reads the child row.
+  const parentWindow = readStrandContextWindow(db, parentSessionId)
+  if (parentWindow !== null) {
+    try {
+      setStrandContextWindow(db, childSessionId, parentWindow)
+    } catch (err) {
+      console.error(`[eco] could not snapshot the context window on task session ${childSessionId}:`, err)
+    }
+  }
   const mode = readStrandEcoMode(db, parentSessionId)
   if (mode !== 'on') return false
   try {
