@@ -327,7 +327,7 @@ export {
 export type { TokenUsageRecord, ToolCallRecord, ToolCallQueryOptions, ToolCallQueryResult, MemoryFileReadStat, MemorySearchStat, MemoryUsageStats } from './token-logger.js'
 export { queryUsageStats, getUsageSummary } from './usage-stats.js'
 export type { UsageGroupBy, UsageStatsQueryOptions, UsageTotals, UsageStatsRow, UsageStatsResult, UsageSummary } from './usage-stats.js'
-export { isLocalInferenceBusy, beginLocalInference, resetLocalInferenceActivityForTest } from './local-inference-activity.js'
+export { isLocalInferenceBusy, beginLocalInference, beginLocalTurn, resetLocalInferenceActivityForTest } from './local-inference-activity.js'
 export {
   performProviderHealthCheck,
   logHealthCheck,

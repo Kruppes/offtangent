@@ -29,7 +29,7 @@ import { setStrandEcoEnabled } from '../eco-mode-store.js'
 import { frozenEcoRowId } from '../eco-tool-freeze.js'
 import type { ProviderConfig } from '../provider-config.js'
 import { resetObservedContextLimits } from '../request-overflow-guard.js'
-import { resetLocalInferenceActivityForTest } from '../local-inference-activity.js'
+import { isLocalInferenceBusy, localInferenceActivitySizeForTest, resetLocalInferenceActivityForTest } from '../local-inference-activity.js'
 import { OLLAMA_CHAT_API } from './chat-stream.js'
 import { resetShowFactsCacheForTest } from './show-facts.js'
 
@@ -42,6 +42,9 @@ let server: http.Server
 let origin = ''
 let chats: WireChat[] = []
 let script: Array<Record<string, unknown>> = []
+/** F9 probe: busy state of the runner key seen from inside a tool (= the tool gap of a turn). */
+let toolGapBusy: boolean[] = []
+let failChat = false
 
 const SESSION = 's-native-2turn'
 const THINKING = 'synthetic reasoning step. '.repeat(120)
@@ -56,7 +59,11 @@ function tools(): AgentTool[] {
   const webFetch: AgentTool = {
     name: 'web_fetch', label: 'web_fetch', description: 'synthetic fetch',
     parameters: Type.Object({ url: Type.String() }),
-    execute: async (_id, args) => ({ content: [{ type: 'text', text: (args as { url: string }).url.endsWith('a') ? WEB_A : WEB_B }], details: {} }),
+    execute: async (_id, args) => {
+      // Probe through the LEGACY /v1 URL on a loopback alias, like the session summary would ask.
+      toolGapBusy.push(isLocalInferenceBusy(origin.replace('127.0.0.1', 'localhost') + '/v1', 'synthetic-native:8b'))
+      return { content: [{ type: 'text', text: (args as { url: string }).url.endsWith('a') ? WEB_A : WEB_B }], details: {} }
+    },
   }
   const shell: AgentTool = {
     ...REAL_SHELL,
@@ -79,6 +86,8 @@ beforeEach(async () => {
   resetLocalInferenceActivityForTest()
   chats = []
   script = []
+  toolGapBusy = []
+  failChat = false
   server = http.createServer((req, res) => {
     let raw = ''
     req.on('data', (c: Buffer) => { raw += c.toString('utf8') })
@@ -90,6 +99,7 @@ beforeEach(async () => {
       }
       if (req.url === '/api/chat') {
         chats.push(JSON.parse(raw) as WireChat)
+        if (failChat) { res.writeHead(500, { 'content-type': 'application/json' }); res.end(JSON.stringify({ error: 'synthetic runner failure' })); return }
         const msg = script.shift() ?? { role: 'assistant', content: 'fallback' }
         res.writeHead(200, { 'content-type': 'application/x-ndjson' })
         res.end(JSON.stringify({ message: msg, done: true, done_reason: 'stop', prompt_eval_count: 1, eval_count: 1 }) + '\n')
@@ -240,5 +250,32 @@ describe('H1/H2 real Axiom path: native 2-turn message conservation (Eco on, thi
     const expected = 'turn one final answer'.length + THINKING.length + firstTurn2.messages.at(-1)!.content!.length
     expect(growth).toBe(expected)
     expect(total(firstTurn2)).toBeLessThan(total(lastTurn1) * 1.2)
+  })
+})
+
+describe('F9 real Axiom path: the runner stays busy exactly for the turn lifetime', () => {
+  const busy = () => isLocalInferenceBusy(`${origin}/v1`, 'synthetic-native:8b')
+
+  it('busy in the tool gap of a native turn, idle the moment the turn ended; no leaked leases', async () => {
+    const { db, core } = nativeSetup()
+    script = [
+      { role: 'assistant', content: '', tool_calls: [{ function: { name: 'web_fetch', arguments: { url: 'https://example.invalid/a' } } }] },
+      { role: 'assistant', content: 'synthetic answer' },
+    ]
+    expect(busy()).toBe(false)
+    await turn(db, core, 'first synthetic question')
+    expect(chats).toHaveLength(2)
+    expect(toolGapBusy).toEqual([true]) // between request 1 and request 2 of the turn
+    expect(busy()).toBe(false) // no linger after the turn: /new can summarize at once
+    expect(localInferenceActivitySizeForTest()).toEqual({ keys: 0, turns: 0 })
+  })
+
+  it('a turn that ends with a runner error releases the runner at once', async () => {
+    const { db, core } = nativeSetup()
+    failChat = true
+    await turn(db, core, 'question against a failing runner')
+    expect(chats.length).toBeGreaterThanOrEqual(1)
+    expect(busy()).toBe(false)
+    expect(localInferenceActivitySizeForTest()).toEqual({ keys: 0, turns: 0 })
   })
 })

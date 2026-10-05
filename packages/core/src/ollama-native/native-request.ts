@@ -150,12 +150,14 @@ export function streamNativeOllama(inner: Inner, model: AnyModel, context: Conte
       let firstAt: number | undefined
       emitProviderPhase(input.sessionId, { phase: 'awaiting_first_token', requestId, estimatedInputTokens })
       // Background work (summary, health check) on the same server+model waits
-      // while this lease (plus a short linger) is held — see local-inference-activity.ts.
-      const releaseInference = beginLocalInference(model.baseUrl, model.id)
+      // while this request runs and, bound via the session id, until the turn
+      // that sent it ends — see local-inference-activity.ts.
+      const releaseInference = beginLocalInference(model.baseUrl, model.id, { sessionId: input.sessionId })
       // Without a done/error event (inner threw) the request failed.
       let end: 'done' | 'error' | 'canceled' = 'error'
       try {
         for await (const ev of inner(model, context, decided.options)) {
+          releaseInference.touch()
           if (firstAt === undefined && OUTPUT_EVENTS.has(ev.type)) {
             firstAt = Date.now()
             emitProviderPhase(input.sessionId, { phase: 'first_token', requestId, elapsedMs: firstAt - sentAt })

@@ -8,7 +8,7 @@ import type { TurnAgentLike, TurnEvent } from '../turn-runner.js'
 import type { ResponseChunk } from '../agent-runtime-types.js'
 import { PROVIDER_STALL_KIND, formatProviderStallContent, parseProviderStallMetadata } from '../provider-stall.js'
 import { streamNativeOllama } from './native-request.js'
-import { LOCAL_INFERENCE_LINGER_MS, isLocalInferenceBusy, resetLocalInferenceActivityForTest } from '../local-inference-activity.js'
+import { isLocalInferenceBusy, resetLocalInferenceActivityForTest } from '../local-inference-activity.js'
 import {
   NATIVE_FIRST_TOKEN_BASE_MS, NATIVE_FIRST_TOKEN_HARD_CAP_MS, nativeFirstTokenBudgetMs,
 } from '../provider-phase.js'
@@ -182,8 +182,7 @@ describe('native first-token budget', () => {
     await vi.advanceTimersByTimeAsync(60_000)
     expect(isLocalInferenceBusy('http://ollama.invalid:11434/v1', 'synthetic-native:1b')).toBe(true)
     await vi.advanceTimersByTimeAsync(70_000)
-    expect(isLocalInferenceBusy('http://ollama.invalid:11434', 'synthetic-native:1b')).toBe(true) // linger
-    await vi.advanceTimersByTimeAsync(LOCAL_INFERENCE_LINGER_MS)
+    // Request over and no AgentCore turn holds the key (F9): idle at once, no linger.
     expect(isLocalInferenceBusy('http://ollama.invalid:11434', 'synthetic-native:1b')).toBe(false)
 
     const types = chunks(events).map(c => c.type)

@@ -3,7 +3,7 @@ import { AsyncLocalStorage } from 'node:async_hooks'
 import type { AgentMessage, Agent as PiAgent } from '@earendil-works/pi-agent-core'
 import type { Api, Model } from '@earendil-works/pi-ai'
 import { completeSimple } from './pi-models.js'
-import { isLocalInferenceBusy, waitForLocalInferenceIdle } from './local-inference-activity.js'
+import { beginLocalTurn, isLocalInferenceBusy, waitForLocalInferenceIdle } from './local-inference-activity.js'
 import type { Database } from './database.js'
 import { getApiKeyForProvider, buildModel } from './provider-config.js'
 import { assertLlmResponseOk } from './llm-response.js'
@@ -1118,6 +1118,10 @@ export class AgentCore {
     // limit the turn WAITS (it is never rejected) and the wait is announced
     // so the stall watchdog does not mistake it for a dead provider stream.
     const releaseSlot = await this.acquireProviderSlot(resolvedModel, runtime, agentId, sessionId, userId)
+    // Turn lease (review F9): native local requests of this strand keep their
+    // server+model busy for background work until this turn ends — on
+    // success, error or cancel — never longer.
+    const endLocalTurn = beginLocalTurn(sessionId)
     try {
       // Merge: retry/stream run on the SAME per-persona runtime the turn was
       // routed to (NOT a singular this.runtime), so a manual retry replays under
@@ -1127,6 +1131,7 @@ export class AgentCore {
         : runtime.streamPrompt(enrichedText, sessionId, images.length > 0 ? images : undefined)
       yield* this.bindToolTurn(stream, turn)
     } finally {
+      endLocalTurn()
       releaseSlot?.()
       if (strandContext) this.dropStrandContextFromTranscript(runtime)
       if (requestedThinking !== undefined && previousThinking !== undefined && previousThinking !== requestedThinking) {
@@ -1258,6 +1263,7 @@ export class AgentCore {
     // turn and has to wait for a free provider slot instead of pushing the
     // account over its parallel-call budget.
     const releaseSlot = await this.acquireProviderSlot(resolvedModel, runtime, agentId, sessionId, targetUserId)
+    const endLocalTurn = beginLocalTurn(sessionId)
     try {
       for await (const chunk of this.bindToolTurn(runtime.streamPrompt(injectionText, sessionId), turn)) {
         // Tag task-injection chunks with the actual session used AND the
@@ -1268,6 +1274,7 @@ export class AgentCore {
         yield { ...chunk, sessionId, injectionId }
       }
     } finally {
+      endLocalTurn()
       releaseSlot?.()
     }
 
@@ -1421,7 +1428,9 @@ export class AgentCore {
 
     // H5 guard (plan 2026-10-05-native-ollama-prefill-fix): do not queue the
     // summary into a local runner that is busy with a native turn on the SAME
-    // server+model — it would land in front of the turn's next request. Bounded:
+    // server+model — it would land in front of the turn's next request. Busy
+    // lasts exactly as long as such a turn runs (F9: the strand's own finished
+    // turn no longer delays /new). Bounded:
     // after SUMMARY_LOCAL_DEFER_MAX_MS the summary runs anyway.
     if (isLocalInferenceBusy(summaryModel?.baseUrl, summaryModel?.id)) {
       console.log(`[session-summary] deferred: local model ${summaryModel?.id ?? '?'} busy with an active turn (max ${SUMMARY_LOCAL_DEFER_MAX_MS}ms)`)

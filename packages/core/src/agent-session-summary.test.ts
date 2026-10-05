@@ -85,7 +85,7 @@ vi.mock('./pi-models.js', async (importOriginal) => {
 // ── Imports after mocks ────────────────────────────────────────────────────────
 
 import { AgentCore, SUMMARY_LOCAL_DEFER_MAX_MS } from './agent.js'
-import { beginLocalInference, resetLocalInferenceActivityForTest, LOCAL_INFERENCE_LINGER_MS } from './local-inference-activity.js'
+import { beginLocalInference, beginLocalTurn, resetLocalInferenceActivityForTest } from './local-inference-activity.js'
 import { initDatabase } from './database.js'
 import type { Database } from './database.js'
 import { completeSimple } from './pi-models.js'
@@ -296,16 +296,28 @@ describe('generateSessionSummary (schema delta, SPEC 11.2)', () => {
       resetLocalInferenceActivityForTest()
     })
 
-    it('defers while the native /api turn holds the runner and runs after it ended (+ linger)', async () => {
+    it('defers while another strand\'s native /api turn holds the runner (incl. its tool gap) and runs right after that turn ended', async () => {
       mockCompleteSimple.mockResolvedValue(response())
-      // Native turn on /api of the SAME server; the summary uses the /v1 legacy URL.
-      const release = beginLocalInference('http://127.0.0.1:11434', 'qwen-local')
+      // Native turn on /api of the SAME server (localhost alias, F3); the summary uses the /v1 legacy URL on 127.0.0.1.
+      const endOther = beginLocalTurn('s-other')
+      beginLocalInference('http://localhost:11434', 'qwen-local', { sessionId: 's-other' })() // request 1 done, tool gap
       const pending = makeLocalAgent().generateSessionSummary('user1', 'User: hi\nAssistant: hello', 's-h5')
       await vi.advanceTimersByTimeAsync(30_000)
       expect(mockCompleteSimple).not.toHaveBeenCalled()
-      release()
-      await vi.advanceTimersByTimeAsync(LOCAL_INFERENCE_LINGER_MS + 5_000)
+      endOther()
+      await vi.advanceTimersByTimeAsync(5_000) // next poll
       await pending
+      expect(mockCompleteSimple).toHaveBeenCalledTimes(1)
+    })
+
+    it('F9: /new right after the strand\'s OWN finished native turn summarizes without any delay', async () => {
+      mockCompleteSimple.mockResolvedValue(response())
+      const endOwn = beginLocalTurn('s-own')
+      beginLocalInference('http://127.0.0.1:11434', 'qwen-local', { sessionId: 's-own' })()
+      endOwn() // turn finished
+      const startedAt = Date.now()
+      await makeLocalAgent().generateSessionSummary('user1', 'User: hi\nAssistant: hello', 's-own')
+      expect(Date.now() - startedAt).toBe(0)
       expect(mockCompleteSimple).toHaveBeenCalledTimes(1)
     })
 
