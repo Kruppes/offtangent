@@ -1,4 +1,4 @@
-import { inheritEcoMode, readStrandEcoMode } from './eco-mode-store.js'
+import { inheritEcoMode, readStrandContextWindow, readStrandEcoMode, snapshotContextWindow } from './eco-mode-store.js'
 import { freezeEcoToolResult, frozenEcoRowId, resolveEcoOwner } from './eco-tool-freeze.js'
 import { Agent as PiAgent } from '@earendil-works/pi-agent-core'
 import type { AgentEvent, AgentMessage, AgentTool } from '@earendil-works/pi-agent-core'
@@ -692,6 +692,14 @@ export class TaskRunner {
     })
     const sessionId = session.id
     inheritEcoMode(this.db, parentSessionId, sessionId)
+    // Sub-tasks spawned from inside a background task get `parentSessionId =
+    // null` (no interactive strand). Their trusted parent is the task row the
+    // runner itself recorded in `triggerSourceId` (ALS task context, never
+    // user input): snapshot that task session's context-window choice only.
+    if (!parentSessionId && task.triggerType === 'agent' && task.triggerSourceId) {
+      const parentTaskSession = this.store.getById(task.triggerSourceId)?.sessionId ?? null
+      if (parentTaskSession && parentTaskSession !== sessionId) snapshotContextWindow(this.db, parentTaskSession, sessionId)
+    }
 
     this.store.update(task.id, { sessionId })
     task.sessionId = sessionId
@@ -902,7 +910,13 @@ export class TaskRunner {
         // The task session id is stable for the whole run — hand it to the
         // provider so a per-session prompt cache keeps hitting across the
         // hundreds of tool-loop calls a task makes.
-        streamFn: buildStreamFn(provider, undefined, { getSessionId: () => sessionId }),
+        streamFn: buildStreamFn(provider, undefined, {
+          getSessionId: () => sessionId,
+          // Native Ollama (plan 2026-10-05-ollama-native-context): the task
+          // reads ITS OWN session row — the snapshot copied from the parent at
+          // creation — once per request; later parent changes never leak in.
+          getContextWindowChoice: () => readStrandContextWindow(this.db, sessionId),
+        }),
         // Real Eco (plan 2026-10-05-real-eco): a NEW tool result is compacted
         // once, before the model ever sees it, and that projection is what the
         // transcript keeps. Already-sent context is never touched.

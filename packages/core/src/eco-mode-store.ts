@@ -137,17 +137,27 @@ export function setStrandContextWindow(db: Database, sessionId: string, choice: 
   return db.prepare('UPDATE sessions SET eco_context_window = ? WHERE id = ?').run(parsed.value, sessionId).changes > 0
 }
 
+/**
+ * Copy the (validated) context-window choice of `sourceSessionId` onto the
+ * child task session. The child keeps its own copy, so a resume — also after a
+ * restart — reads the child row and later source changes never leak in.
+ */
+export function snapshotContextWindow(db: Database, sourceSessionId: string | null | undefined, childSessionId: string): ContextWindowChoice {
+  const window = readStrandContextWindow(db, sourceSessionId)
+  if (window === null) return null
+  try {
+    setStrandContextWindow(db, childSessionId, window)
+    return window
+  } catch (err) {
+    console.error(`[eco] could not snapshot the context window on task session ${childSessionId}:`, err)
+    return null
+  }
+}
+
 export function inheritEcoMode(db: Database, parentSessionId: string | null | undefined, childSessionId: string): boolean {
   // Snapshot the parent's context-window choice at task start (independent of
-  // the Eco switch). The child keeps its own copy, so resume reads the child row.
-  const parentWindow = readStrandContextWindow(db, parentSessionId)
-  if (parentWindow !== null) {
-    try {
-      setStrandContextWindow(db, childSessionId, parentWindow)
-    } catch (err) {
-      console.error(`[eco] could not snapshot the context window on task session ${childSessionId}:`, err)
-    }
-  }
+  // the Eco switch).
+  snapshotContextWindow(db, parentSessionId, childSessionId)
   const mode = readStrandEcoMode(db, parentSessionId)
   if (mode !== 'on') return false
   try {
