@@ -327,6 +327,16 @@ describe('native Ollama context-window snapshot in the TaskRunner (fake HTTP)', 
     const meta = JSON.parse(rows[0].metadata) as { toolCallId?: string }
     expect(typeof meta.toolCallId).toBe('string')
     expect(toolMsg.content).toContain(`message_id=${rows[0].id}`)
+    // recall_message: the owner (user 1, the task session) gets the verbatim
+    // original incl. the factual middle line; a foreign user never sees it.
+    const taskSession = store.getById(task.id)!.sessionId!
+    const text = (r: { content: unknown }) => (r.content as Array<{ text: string }>).map(c => c.text).join('')
+    const owner = await createRecallMessageTool({ db, getCurrentUserId: () => 1, getCurrentAgentId: () => 'main', getCurrentSessionId: () => taskSession, maxChars: 200000 }).execute('r', { message_id: rows[0].id })
+    expect(text(owner)).toContain('src/m450.test.ts')
+    expect(text(owner)).toContain(MIDDLE_MARK)
+    strand(db, 'foreign', '2')
+    const foreign = await createRecallMessageTool({ db, getCurrentUserId: () => 2, getCurrentAgentId: () => 'main', getCurrentSessionId: () => 'foreign', maxChars: 200000 }).execute('r', { message_id: rows[0].id })
+    expect(text(foreign)).not.toContain('src/m450.test.ts')
     db.close()
   })
 })
