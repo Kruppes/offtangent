@@ -1022,7 +1022,12 @@ export class AgentCore {
 
     // Pass channel as 'telegram' for both DM and group sources
     const channel = source.startsWith('telegram') ? 'telegram' : source
-    this.refreshSystemPrompt(channel, currentUser, agentId)
+    // Security (review F1): the user profile of THIS turn goes only into the
+    // runtime of THIS strand (refreshed below, after the strand transcript is
+    // loaded). No persona-wide refresh with a user here: that loop rewrote the
+    // system prompt of every live strand of the persona — including strands of
+    // other users — with this user's profile, and a later task injection into
+    // such a strand sent it to the model there.
     this.sessionManager.recordMessage(userId, agentId)
 
     // The text as the transport persisted it, before any injection.
@@ -1235,6 +1240,12 @@ export class AgentCore {
     // strand runtime is seeded from the persona runtime).
     const resolvedModel = await this.applyTurnModel(runtime, agentId, sessionId)
     this.useSessionTranscript(agentId, sessionId)
+    // Security (review F1): the system head of an injection carries the
+    // profile of the strand OWNER only, resolved from the server-side session
+    // row — never from the injection text and never whatever profile the last
+    // turn of another user left behind. Anything unclear → no profile at all.
+    const owner = this.resolveStrandOwnerForInjection(sessionId, targetUserId)
+    runtime.refreshSystemPrompt(owner.channel, owner.currentUser, agentId)
 
     // Same turn-local note as an interactive turn: the answer to a finished
     // task is spoken by the server too, so the agent must not attach its own
@@ -1266,6 +1277,39 @@ export class AgentCore {
     if (this.sessionManager.getSession(targetUserId, agentId)?.id === sessionId) {
       this.sessionManager.recordMessage(targetUserId, agentId)
     }
+  }
+
+  /**
+   * Owner of the strand a task injection lands in (security, review F1).
+   * Source of truth is the `sessions` row of that strand plus the `users` row
+   * of its owner. A profile is only used when the row exists, the owner still
+   * exists, the owner IS the injection's target user and the strand is not a
+   * group chat; every other case fails closed to "no user profile". The
+   * channel follows the strand's source like an interactive turn does.
+   */
+  private resolveStrandOwnerForInjection(
+    sessionId: string,
+    targetUserId: string,
+  ): { channel?: string; currentUser?: { username: string } } {
+    let row: { user_id: number | null; source: string | null; username: string | null } | undefined
+    try {
+      row = this.db.prepare(
+        'SELECT s.user_id AS user_id, s.source AS source, u.username AS username FROM sessions s LEFT JOIN users u ON u.id = s.user_id WHERE s.id = ?',
+      ).get(sessionId) as typeof row
+    } catch {
+      row = undefined
+    }
+    if (!row) return {}
+    const source = row.source ?? undefined
+    const channel = source ? (source.startsWith('telegram') ? 'telegram' : source) : undefined
+    const target = parsedUserId(targetUserId)
+    if (source === 'telegram-group' || row.user_id === null || target === null || row.user_id !== target || !row.username) {
+      if (row.user_id !== null && target !== null && row.user_id !== target) {
+        console.warn(`[agent] task injection target does not own strand ${sessionId}; sending without user profile`)
+      }
+      return { channel }
+    }
+    return { channel, currentUser: { username: row.username } }
   }
 
   /**
