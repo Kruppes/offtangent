@@ -209,8 +209,9 @@ export function streamOllamaChat(model: Model<string>, context: TranscriptContex
         if (replaced !== undefined) body = replaced
       }
       const fetchFn = options.fetch ?? fetch
-      const headers: Record<string, string> = { 'content-type': 'application/json', ...(model.headers ?? {}) }
-      if (options.apiKey) headers.authorization = `Bearer ${options.apiKey}`
+      const headers: Record<string, string> = { 'content-type': 'application/json', ...(model.headers ?? {}), ...(options.headers ?? {}) }
+      // 'no-key' is Offtangent's dummy for keyless providers; never forward it.
+      if (options.apiKey && options.apiKey !== 'no-key') headers.authorization = `Bearer ${options.apiKey}`
       const response = await (fetchFn as typeof fetch)(chatUrl(model.baseUrl), { method: 'POST', headers, body: JSON.stringify(body), signal: options.signal })
       if (!response.ok) {
         const text = await response.text().catch(() => '')

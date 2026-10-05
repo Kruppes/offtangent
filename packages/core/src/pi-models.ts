@@ -15,6 +15,7 @@ import type {
 } from '@earendil-works/pi-ai'
 import { anthropicMessagesApi } from '@earendil-works/pi-ai/api/anthropic-messages.lazy'
 import { googleGenerativeAIApi } from '@earendil-works/pi-ai/api/google-generative-ai.lazy'
+import { OLLAMA_CHAT_API, ollamaChatStreams } from './ollama-native/chat-stream.js'
 import { mistralConversationsApi } from '@earendil-works/pi-ai/api/mistral-conversations.lazy'
 import { openAICodexResponsesApi } from '@earendil-works/pi-ai/api/openai-codex-responses.lazy'
 import { openAICompletionsApi } from '@earendil-works/pi-ai/api/openai-completions.lazy'
@@ -71,6 +72,8 @@ const API_IMPLEMENTATIONS: Partial<Record<Api, () => ProviderStreams>> = {
   'openai-codex-responses': openAICodexResponsesApi,
   'google-generative-ai': googleGenerativeAIApi,
   'mistral-conversations': mistralConversationsApi,
+  // Native Ollama /api/chat (additive; the /v1 Ollama preset keeps openai-completions).
+  [OLLAMA_CHAT_API]: () => ollamaChatStreams as unknown as ProviderStreams,
 }
 
 /**
