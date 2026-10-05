@@ -112,6 +112,37 @@ function parsedUserId(userId: string): number | null {
   return Number.isFinite(parsed) ? parsed : null
 }
 
+/**
+ * Strict user id for ownership decisions: plain ASCII digits only, a safe
+ * integer and > 0. No prefix parsing ('1abc' is NOT 1) and no coercion.
+ */
+function strictUserId(value: unknown): number | null {
+  if (typeof value === 'number') {
+    return Number.isSafeInteger(value) && value > 0 ? value : null
+  }
+  if (typeof value !== 'string' || !/^[0-9]+$/.test(value)) return null
+  const parsed = Number(value)
+  return Number.isSafeInteger(parsed) && parsed > 0 ? parsed : null
+}
+
+/**
+ * Owner id of a `sessions` row from its two owner columns (`user_id`, set on
+ * legacy/migrated rows; `session_user`, set by SessionManager). A set column
+ * that is not a strict user id, or two set columns naming different ids,
+ * yield null (fail closed) instead of picking one of them.
+ */
+function strandOwnerId(userIdColumn: unknown, sessionUserColumn: unknown): number | null {
+  const hasUserId = userIdColumn !== null && userIdColumn !== undefined
+  const hasSessionUser = sessionUserColumn !== null && sessionUserColumn !== undefined
+  if (!hasUserId && !hasSessionUser) return null
+  // user_id is an INTEGER column: only a real JS number counts, never text.
+  const fromUserId = hasUserId ? (typeof userIdColumn === 'number' ? strictUserId(userIdColumn) : null) : undefined
+  const fromSessionUser = hasSessionUser ? (typeof sessionUserColumn === 'string' ? strictUserId(sessionUserColumn) : null) : undefined
+  if (fromUserId === null || fromSessionUser === null) return null
+  if (fromUserId !== undefined && fromSessionUser !== undefined && fromUserId !== fromSessionUser) return null
+  return fromUserId ?? fromSessionUser ?? null
+}
+
 // Re-export for backward compatibility
 export { getWorkspaceDir } from './workspace.js'
 
@@ -1289,34 +1320,48 @@ export class AgentCore {
   /**
    * Owner of the strand a task injection lands in (security, review F1).
    * Source of truth is the `sessions` row of that strand plus the `users` row
-   * of its owner. A profile is only used when the row exists, the owner still
-   * exists, the owner IS the injection's target user and the strand is not a
-   * group chat; every other case fails closed to "no user profile". The
-   * channel follows the strand's source like an interactive turn does.
+   * of its owner. Ownership follows the same two columns as
+   * {@link SessionManager.assertSessionAccess} (`session_user` or `user_id`),
+   * but stricter: both must name the same id when both are set, an id only
+   * counts as a positive safe integer written as plain ASCII digits (no SQL
+   * CAST, no prefix parsing), and the owner must still exist. A profile is
+   * only used when that owner IS the injection's target user (taken from the
+   * task record, same strict parsing) and the strand is not a group chat;
+   * every other case fails closed to "no user profile". The channel follows
+   * the strand's source like an interactive turn does.
    */
   private resolveStrandOwnerForInjection(
     sessionId: string,
     targetUserId: string,
   ): { channel?: string; currentUser?: { username: string } } {
-    let row: { user_id: number | null; source: string | null; username: string | null } | undefined
+    let row: { user_id: unknown; session_user: unknown; source: string | null } | undefined
     try {
       row = this.db.prepare(
-        'SELECT s.user_id AS user_id, s.source AS source, u.username AS username FROM sessions s LEFT JOIN users u ON u.id = s.user_id WHERE s.id = ?',
+        'SELECT user_id, session_user, source FROM sessions WHERE id = ?',
       ).get(sessionId) as typeof row
     } catch {
       row = undefined
     }
     if (!row) return {}
-    const source = row.source ?? undefined
+    const source = typeof row.source === 'string' ? row.source : undefined
     const channel = source ? (source.startsWith('telegram') ? 'telegram' : source) : undefined
-    const target = parsedUserId(targetUserId)
-    if (source === 'telegram-group' || row.user_id === null || target === null || row.user_id !== target || !row.username) {
-      if (row.user_id !== null && target !== null && row.user_id !== target) {
-        console.warn(`[agent] task injection target does not own strand ${sessionId}; sending without user profile`)
-      }
+    if (source === 'telegram-group') return { channel }
+
+    const owner = strandOwnerId(row.user_id, row.session_user)
+    const target = strictUserId(targetUserId)
+    if (owner === null || target === null) return { channel }
+    if (owner !== target) {
+      console.warn(`[agent] task injection target does not own strand ${sessionId}; sending without user profile`)
       return { channel }
     }
-    return { channel, currentUser: { username: row.username } }
+    let user: { username: unknown } | undefined
+    try {
+      user = this.db.prepare('SELECT username FROM users WHERE id = ?').get(owner) as typeof user
+    } catch {
+      user = undefined
+    }
+    if (!user || typeof user.username !== 'string' || !user.username) return { channel }
+    return { channel, currentUser: { username: user.username } }
   }
 
   /**
