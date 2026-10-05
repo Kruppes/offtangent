@@ -194,15 +194,15 @@ export interface StrandContextWindowStatus {
   presets: number[]
   /** Only the native Ollama /api/chat provider can carry num_ctx; the /v1 adapter cannot. */
   supported: boolean
-  state: 'unchanged' | 'applied' | 'baseline_kept' | 'provider_unsupported' | 'baseline_unknown' | 'supported_unknown' | 'exceeds_supported' | 'invalid_choice' | 'no_model'
+  state: 'unchanged' | 'applied' | 'baseline_kept' | 'provider_unsupported' | 'baseline_unknown' | 'supported_unknown' | 'exceeds_supported' | 'invalid_choice' | 'runner_fixed' | 'no_model'
   /** num_ctx a request would send right now (null = none; the model keeps its own window). */
   effective?: number | null
   /** Native only: whether the /api/show facts behind `state` are cached ('known'), being fetched or failed. */
   facts?: 'known' | 'pending' | 'failed'
   /** Native only: the window a request keeps without override (null = unknown → a choice cannot take effect). */
   baseline?: number | null
-  /** Native only: where `baseline` comes from (per-model setting, provider setting or modelfile). */
-  baselineSource?: 'model_setting' | 'provider_setting' | 'modelfile' | null
+  /** Native only: where `baseline` comes from (per-model setting, provider setting, modelfile, or the MLX runner's fixed model maximum). */
+  baselineSource?: 'model_setting' | 'provider_setting' | 'modelfile' | 'runner_max' | null
 }
 
 /** One fact of the slim `GET /api/strands/:id/facts` list (W5b). */
@@ -596,6 +596,12 @@ export function createStrandsService(options: StrandsServiceOptions) {
       const status = contextWindowStatusOf(strandId, current?.providerId ?? null, current?.modelId ?? null, patch.contextWindow)
       if (status.state === 'exceeds_supported') {
         throw new StrandServiceError(400, 'context_window_exceeds_supported', 'Context window exceeds what the current model supports')
+      }
+      // MLX runner: the window is fixed at the model maximum (num_ctx is never
+      // honoured), so a new choice could only suggest an effect that cannot
+      // happen. Refused before any write; `null` (reset) stays allowed.
+      if (status.state === 'runner_fixed') {
+        throw new StrandServiceError(400, 'context_window_runner_fixed', 'This model runs on the MLX runner: its context window is fixed at the model maximum and cannot be changed per request')
       }
     }
     // Owner-checked above; each write touches only this strand's row.

@@ -201,6 +201,12 @@ describe('strand eco context window on a native Ollama provider (fake /api/show,
         res.writeHead(404, { 'Content-Type': 'application/json' }); res.end('{"error":"model not found"}')
         return
       }
+      if (req.method === 'POST' && req.url === '/api/show' && body.includes('mlx-synth')) {
+        // Like gemma4/qwen3.8 *-mlx on Ollama 0.34: safetensors → MLX runner, window fixed at the model max.
+        res.writeHead(200, { 'Content-Type': 'application/json' })
+        res.end(JSON.stringify({ parameters: 'temperature 1', details: { format: 'safetensors' }, model_info: { 'general.architecture': 'gemma4', 'gemma4.context_length': 262144 } }))
+        return
+      }
       if (req.method === 'POST' && req.url === '/api/show' && body.includes('nofile-')) {
         // Like gemma4/qwen3.8 MLX on the real server: no num_ctx in the modelfile.
         res.writeHead(200, { 'Content-Type': 'application/json' })
@@ -219,7 +225,7 @@ describe('strand eco context window on a native Ollama provider (fake /api/show,
     fakeUrl = `http://127.0.0.1:${(fake.address() as { port: number }).port}`
     saveProviders({
       providers: [
-        { id: 'native', name: 'Native', type: 'ollama-chat', providerType: 'ollama-native', provider: 'ollama-native', baseUrl: fakeUrl, apiKey: '', enabledModels: ['synthetic-model', 'missing-model', 'nofile-configured', 'nofile-bare'], models: [{ id: 'synthetic-model', name: 'Synthetic', contextWindow: 32768 }, { id: 'missing-model', name: 'Missing' }, { id: 'nofile-configured', name: 'NoFile configured', ollamaNumCtx: 40960 }, { id: 'nofile-bare', name: 'NoFile bare' }] },
+        { id: 'native', name: 'Native', type: 'ollama-chat', providerType: 'ollama-native', provider: 'ollama-native', baseUrl: fakeUrl, apiKey: '', enabledModels: ['synthetic-model', 'missing-model', 'nofile-configured', 'nofile-bare', 'mlx-synth'], models: [{ id: 'mlx-synth', name: 'MLX synth', ollamaNumCtx: 40960 }, { id: 'synthetic-model', name: 'Synthetic', contextWindow: 32768 }, { id: 'missing-model', name: 'Missing' }, { id: 'nofile-configured', name: 'NoFile configured', ollamaNumCtx: 40960 }, { id: 'nofile-bare', name: 'NoFile bare' }] },
         { id: 'compat', name: 'Compat', type: 'openai-completions', providerType: 'ollama', provider: 'ollama', baseUrl: `${fakeUrl}/v1`, apiKey: '', enabledModels: ['synthetic-model'], models: [{ id: 'synthetic-model', name: 'Synthetic', contextWindow: 32768 }] },
       ],
       activeProvider: 'compat', activeModel: 'synthetic-model', fallbackProvider: 'compat', fallbackModel: 'synthetic-model',
@@ -276,6 +282,29 @@ describe('strand eco context window on a native Ollama provider (fake /api/show,
     // A choice at/below the baseline never lowers it.
     const lower = await api('PATCH', `/api/strands/${strand.id}/eco`, { contextWindow: 32768 })
     expect((lower.body.eco as Record<string, unknown>).contextWindow).toMatchObject({ choice: 32768, state: 'baseline_kept', effective: null, baseline: 40960 })
+  })
+
+  it('MLX model: window reported as the fixed model maximum, a new choice is refused before any write, reset stays allowed', async () => {
+    await getOllamaShowFacts(fakeUrl, 'mlx-synth')
+    const strand = sessionManager.createThread('1', 'main', 'Native mlx')
+    db.prepare('UPDATE sessions SET model_provider_id = ?, model_id = ? WHERE id = ?').run('native', 'mlx-synth', strand.id)
+    const ctx = await api('GET', `/api/strands/${strand.id}/context`)
+    // The per-model setting 40960 does not describe the served window on MLX: the runner max does.
+    expect((ctx.body.eco as Record<string, unknown>).contextWindow).toMatchObject({ choice: null, state: 'unchanged', effective: null, baseline: 262144, baselineSource: 'runner_max' })
+    const refused = await api('PATCH', `/api/strands/${strand.id}/eco`, { contextWindow: 65536 })
+    expect(refused.status).toBe(400)
+    expect(refused.body.code).toBe('context_window_runner_fixed')
+    expect(readStrandContextWindow(db, strand.id)).toBeNull()
+    // A stale choice (stored before the model switch) shows runner_fixed and can be reset.
+    db.prepare('UPDATE sessions SET model_provider_id = ?, model_id = ? WHERE id = ?').run('native', 'synthetic-model', strand.id)
+    await getOllamaShowFacts(fakeUrl, 'synthetic-model')
+    expect((await api('PATCH', `/api/strands/${strand.id}/eco`, { contextWindow: 65536 })).status).toBe(200)
+    db.prepare('UPDATE sessions SET model_provider_id = ?, model_id = ? WHERE id = ?').run('native', 'mlx-synth', strand.id)
+    const stale = await api('GET', `/api/strands/${strand.id}/context`)
+    expect((stale.body.eco as Record<string, unknown>).contextWindow).toMatchObject({ choice: 65536, state: 'runner_fixed', effective: null })
+    const reset = await api('PATCH', `/api/strands/${strand.id}/eco`, { contextWindow: null })
+    expect(reset.status).toBe(200)
+    expect(readStrandContextWindow(db, strand.id)).toBeNull()
   })
 
   it('reports an honest non-applied state (no guessed floor) while /api/show facts are not yet known', async () => {

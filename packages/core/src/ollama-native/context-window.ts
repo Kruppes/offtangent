@@ -70,13 +70,25 @@ export interface OllamaModelFacts {
    * server advertises nothing → the legacy `resolveThink` wire is kept.
    */
   thinkValues?: OllamaThinkValue[]
+  /**
+   * Runner that serves the model, from /api/show `details.format`:
+   * `safetensors` = Ollama's MLX runner. Verified on 0.34.4-snapfix
+   * (mlxrunner/runner.go `r.contextLength = m.MaxContextLength()`,
+   * server/sched.go `needsReload` skips option changes for MLX,
+   * mlxrunner/client.go `softContextLength` only feeds the /api/ps report):
+   * the MLX runner always serves the model maximum, `options.num_ctx` and
+   * OLLAMA_CONTEXT_LENGTH never change its window. Undefined = GGUF/llama
+   * runner or unknown → the configurable num_ctx path applies.
+   */
+  runner?: 'mlx'
 }
 
 /** Extract facts from an /api/show response. Garbage is ignored, never guessed. */
 export function parseOllamaShow(raw: unknown): OllamaModelFacts {
   const facts: OllamaModelFacts = {}
   if (!raw || typeof raw !== 'object') return facts
-  const r = raw as { parameters?: unknown; model_info?: unknown; thinking?: unknown }
+  const r = raw as { parameters?: unknown; model_info?: unknown; thinking?: unknown; details?: unknown }
+  if (r.details && typeof r.details === 'object' && (r.details as { format?: unknown }).format === 'safetensors') facts.runner = 'mlx'
   if (typeof r.parameters === 'string') {
     for (const lineRaw of r.parameters.split('\n')) {
       const m = /^\s*num_ctx\s+(\S+)\s*$/.exec(lineRaw)
@@ -124,9 +136,15 @@ export function resolveNativeThink(values: readonly OllamaThinkValue[], level: s
   return { think: values.includes(true) ? true : undefined }
 }
 
-export type Baseline = { known: true; value: number; source: 'model_setting' | 'provider_setting' | 'modelfile' } | { known: false }
+export type BaselineSource = 'model_setting' | 'provider_setting' | 'modelfile' | 'runner_max'
+export type Baseline = { known: true; value: number; source: BaselineSource } | { known: false }
 
 export function resolveBaseline(facts: OllamaModelFacts): Baseline {
+  // MLX runner: the served window IS the model maximum, whatever is configured
+  // (settings cannot change it, so they must not be reported as the window).
+  if (facts.runner === 'mlx') {
+    return isValidNumCtx(facts.supportedMax) ? { known: true, value: facts.supportedMax, source: 'runner_max' } : { known: false }
+  }
   if (isValidNumCtx(facts.modelNumCtx)) return { known: true, value: facts.modelNumCtx, source: 'model_setting' }
   if (isValidNumCtx(facts.providerNumCtx)) return { known: true, value: facts.providerNumCtx, source: 'provider_setting' }
   if (isValidNumCtx(facts.modelfileNumCtx)) return { known: true, value: facts.modelfileNumCtx, source: 'modelfile' }
@@ -142,6 +160,7 @@ export type ContextWindowState =
   | 'supported_unknown'
   | 'exceeds_supported'
   | 'invalid_choice'
+  | 'runner_fixed' // MLX runner: window fixed at the model maximum, num_ctx has no effect → never sent
 
 export interface NumCtxDecision {
   /** Value for `options.num_ctx`, or undefined = do not send the key at all. */
@@ -158,6 +177,9 @@ export function decideNumCtx(input: { nativeProvider: boolean; choice: ContextWi
   const choice = input.choice ?? null
   if (choice === null) return { numCtx: undefined, state: 'unchanged', guardWindow: baseWindow }
   if (!parseContextWindowChoice(choice).ok) return { numCtx: undefined, state: 'invalid_choice', guardWindow: baseWindow }
+  // MLX: a choice cannot take effect (verified: the runner ignores num_ctx), so
+  // nothing is sent and the state says so; the guard uses the real window.
+  if (input.facts.runner === 'mlx') return { numCtx: undefined, state: 'runner_fixed', guardWindow: baseWindow }
   if (!baseline.known) return { numCtx: undefined, state: 'baseline_unknown', guardWindow: undefined }
   if (choice <= baseline.value) return { numCtx: undefined, state: 'baseline_kept', guardWindow: baseline.value }
   const max = input.facts.supportedMax

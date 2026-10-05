@@ -5,7 +5,7 @@ import type { Api, Context, Model } from '@earendil-works/pi-ai'
 import { buildStreamFn } from '../provider-config.js'
 import { resetObservedContextLimits } from '../request-overflow-guard.js'
 import { OLLAMA_CHAT_API } from './chat-stream.js'
-import { decideNumCtx, parseOllamaShow, resolveNativeThink, type ContextWindowChoice } from './context-window.js'
+import { decideNumCtx, parseOllamaShow, resolveBaseline, resolveNativeThink, type ContextWindowChoice } from './context-window.js'
 import { resetShowFactsCacheForTest } from './show-facts.js'
 
 /*
@@ -147,5 +147,40 @@ describe('gap 2: think follows the native /api/show thinking contract', () => {
     const { body } = await send(model('plain-synth:8b'), null)
     expect(body).not.toHaveProperty('think')
     expect(body).not.toHaveProperty('options')
+  })
+})
+
+/*
+ * Gap 3 (verified live 2026-10-05 on Ollama 0.34.4-snapfix): models in
+ * safetensors format run on Ollama's MLX runner, which always serves the model
+ * maximum (mlxrunner/runner.go `r.contextLength = m.MaxContextLength()`);
+ * request `options.num_ctx` never reaches it and /api/ps only shows a soft
+ * report value. A 56k-token synthetic needle prompt was answered correctly with
+ * /api/ps still reporting 40960/49152. So for MLX: no num_ctx on the wire, the
+ * state says the window is fixed, and the guard uses the real (maximum) window.
+ */
+const MLX_DETAILS = { format: 'safetensors', family: 'gemma4_unified' }
+describe('gap 3: MLX runner window is fixed at the model maximum', () => {
+  it('parseOllamaShow marks safetensors models as runner mlx (gguf/unknown stays unset)', () => {
+    expect(parseOllamaShow({ ...GEMMA_SHOW, details: MLX_DETAILS }).runner).toBe('mlx')
+    expect(parseOllamaShow({ ...GEMMA_SHOW, details: { format: 'gguf' } }).runner).toBeUndefined()
+    expect(parseOllamaShow(GEMMA_SHOW).runner).toBeUndefined()
+  })
+  it('decideNumCtx: any choice → runner_fixed, nothing sent, guard = model max; settings cannot fake a smaller window', () => {
+    const facts = { runner: 'mlx' as const, supportedMax: 262144, modelNumCtx: 40960, providerNumCtx: 8192 }
+    for (const choice of [32768, 49152, 65536, 131072]) {
+      expect(decideNumCtx({ nativeProvider: true, choice, facts })).toEqual({ numCtx: undefined, state: 'runner_fixed', guardWindow: 262144 })
+    }
+    expect(decideNumCtx({ nativeProvider: true, choice: null, facts })).toEqual({ numCtx: undefined, state: 'unchanged', guardWindow: 262144 })
+    expect(resolveBaseline(facts)).toEqual({ known: true, value: 262144, source: 'runner_max' })
+    // MLX without a known maximum: honest unknown, still nothing sent
+    expect(decideNumCtx({ nativeProvider: true, choice: 65536, facts: { runner: 'mlx' } })).toEqual({ numCtx: undefined, state: 'runner_fixed', guardWindow: undefined })
+    expect(resolveBaseline({ runner: 'mlx', modelNumCtx: 40960 })).toEqual({ known: false })
+  })
+  it('wire: MLX model with a per-model baseline and a large choice sends no num_ctx, think contract unchanged', async () => {
+    shows['gemma-mlx-synth:12b'] = { ...GEMMA_SHOW, details: MLX_DETAILS }
+    const { body } = await send(model('gemma-mlx-synth:12b'), 131072, { modelNumCtx: { 'gemma-mlx-synth:12b': 40960 } })
+    expect(body?.options).toBeUndefined()
+    expect(body?.think).toBe(false)
   })
 })

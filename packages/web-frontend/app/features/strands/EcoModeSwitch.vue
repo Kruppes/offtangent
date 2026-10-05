@@ -93,7 +93,7 @@ onMounted(() => { void load() })
         <label :for="`eco-cw-${strandId}`" class="text-sm">{{ t('eco.cwLabel') }}</label>
         <select :id="`eco-cw-${strandId}`" data-testid="eco-cw-select"
           class="min-h-11 rounded-md border border-input bg-background px-2 text-sm text-foreground"
-          :value="cw.choice === null ? '' : String(cw.choice)" :disabled="cwSaving || disabled || !cw.supported"
+          :value="cw.choice === null ? '' : String(cw.choice)" :disabled="cwSaving || disabled || !cw.supported || (cw.baselineSource === 'runner_max' && cw.choice === null)"
           :aria-describedby="`eco-cw-hint-${strandId}`" @change="setContextWindow">
           <option value="">{{ t('eco.cwUnchanged') }}</option>
           <option v-for="p in cw.presets" :key="p" :value="String(p)">{{ kLabel(p) }}</option>

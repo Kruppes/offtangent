@@ -291,6 +291,22 @@ describe('eco mode switch', () => {
     expect(text(second.root)).toContain('eco.cwBaselineMissing')
     expect(text(second.root)).toContain('eco.cwEffectiveNone')
   })
+  it('context window: MLX runner (fixed window) blocks a new choice, keeps a stale choice resettable and says why', async () => {
+    const api = setup()
+    const base = { presets: [32768, 49152, 65536, 131072], supported: true, facts: 'known', effective: null, baseline: 262144, baselineSource: 'runner_max' }
+    api.mockResolvedValueOnce({ eco: { ...eco(false).eco, contextWindow: { ...base, choice: null, state: 'unchanged' } } })
+    const { root } = mount(EcoSwitch, { strandId: 's' })
+    await flush()
+    expect(all(root).find(n => n.props['data-testid'] === 'eco-cw-select')!.props.disabled).toBe(true)
+    expect(text(root)).toContain('eco.cwBaseline')
+    const api2 = setup()
+    api2.mockResolvedValueOnce({ eco: { ...eco(false).eco, contextWindow: { ...base, choice: 65536, state: 'runner_fixed' } } })
+    const second = mount(EcoSwitch, { strandId: 's' })
+    await flush()
+    expect(all(second.root).find(n => n.props['data-testid'] === 'eco-cw-select')!.props.disabled).toBe(false)
+    expect(text(second.root)).toContain('eco.cwState.runner_fixed')
+    expect(text(second.root)).toContain('eco.cwEffectiveNone')
+  })
   it('context window: disabled with a reason on a non-native provider, error keeps the old value', async () => {
     const api = setup()
     api.mockResolvedValueOnce({ eco: { ...eco(false).eco, contextWindow: { choice: null, presets: [32768], supported: false, state: 'provider_unsupported' } } })

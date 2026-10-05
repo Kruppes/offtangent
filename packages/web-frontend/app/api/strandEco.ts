@@ -28,7 +28,7 @@ export interface StrandEcoStatus {
   contextWindow?: EcoContextWindowStatus
 }
 export type EcoContextWindowState = 'unchanged' | 'applied' | 'baseline_kept' | 'provider_unsupported' | 'baseline_unknown'
-  | 'supported_unknown' | 'exceeds_supported' | 'invalid_choice' | 'no_model'
+  | 'supported_unknown' | 'exceeds_supported' | 'invalid_choice' | 'runner_fixed' | 'no_model'
 export interface EcoContextWindowStatus {
   /** null = "Unverändert" (no num_ctx override). */
   choice: number | null
@@ -41,10 +41,10 @@ export interface EcoContextWindowStatus {
   facts?: 'known' | 'pending' | 'failed'
   /** Native only: window kept without override (null = unknown). Omitted by older servers. */
   baseline?: number | null
-  baselineSource?: 'model_setting' | 'provider_setting' | 'modelfile' | null
+  baselineSource?: 'model_setting' | 'provider_setting' | 'modelfile' | 'runner_max' | null
 }
-const CW_SOURCES = ['model_setting', 'provider_setting', 'modelfile'] as const
-const CW_STATES: readonly EcoContextWindowState[] = ['unchanged', 'applied', 'baseline_kept', 'provider_unsupported', 'baseline_unknown', 'supported_unknown', 'exceeds_supported', 'invalid_choice', 'no_model']
+const CW_SOURCES = ['model_setting', 'provider_setting', 'modelfile', 'runner_max'] as const
+const CW_STATES: readonly EcoContextWindowState[] = ['unchanged', 'applied', 'baseline_kept', 'provider_unsupported', 'baseline_unknown', 'supported_unknown', 'exceeds_supported', 'invalid_choice', 'runner_fixed', 'no_model']
 export function mapContextWindow(raw: unknown): EcoContextWindowStatus | undefined {
   if (!raw || typeof raw !== 'object') return undefined
   const v = raw as Record<string, unknown>
