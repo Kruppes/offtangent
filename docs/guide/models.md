@@ -132,6 +132,17 @@ The system prompt is layered (see [System Prompt](../concepts/system-prompt)) an
 
 A model with a small window will not fail cleanly — it will start dropping the parts of the context that make the agent useful. If you must run a small window, lower the heuristics deliberately ([settings reference](../reference/settings#heuristics)) instead of hoping.
 
+#### Context-overflow guard (all modes, Normal and Eco)
+
+Every request of a strand and of a background task goes through one shared pre-send check (`request-overflow-guard.ts`, wired once in `buildStreamFn`). What it does and does not do:
+
+- **Allowed requests are sent unchanged.** The guard never cuts history, never edits the system prompt, tool schemas, model id or thinking/reasoning fields, and adds no instructions. Without a learned limit the SDK receives the very same objects as before (wire byte-identical).
+- **Window** = the model's declared `contextWindow` (explicit setting > catalog > existing default), lowered by a window a provider actually reported in an overflow error. Learned windows are keyed by provider + model id + base URL, shared across sessions, only ever lower, and kept **in process memory** (a restart forgets them; the first overflow after a restart teaches them again).
+- **Estimates are not a tokenizer.** A conservative chars/3 estimate and the SDK's own estimate (measured usage + chars/4) are compared with the window. A request is refused before sending only when *both* say the pure input alone is over the window; the gray zone is sent and the provider decides. The output reserve is the `max_tokens` the SDK really sends (its own clamp and thinking adjustment), not the catalog `maxTokens` — a model declaring `maxTokens = contextWindow` is not refused.
+- **Provider overflow error** (OpenAI/vLLM "maximum context length", llama.cpp `exceed_context_size`/`n_ctx`, Anthropic "prompt is too long" / "exceed context limit", Ollama "exceeded max context length"): the window is learned and the request is retried **at most once**, inside the same model call, before any token was forwarded — no tool runs again and nothing in the history changes. Only `max_tokens` differs in the retry (the SDK's own clamp on the learned window). If it still does not fit, or if fitting would require changing the thinking budget, the turn ends with a message marked `[context-guard]` (estimated vs. reported numbers, advice: new strand or a larger-context model). These messages are never retried by the turn retry and never parsed as provider evidence.
+- **Ordinary provider errors** pass through unchanged.
+- **Scope limit:** only the pi-ai `streamSimple` path (OpenAI-compatible, Anthropic and the other APIs going through it) is guarded; native adapters outside `buildStreamFn` are not.
+
 ### 4. Nice to have, not required
 
 Reasoning / thinking modes, prompt caching and cost metadata are used when the provider offers them (the catalog carries `reasoning`, cost and limit fields per model) and simply absent otherwise.

@@ -1,4 +1,5 @@
 import { isRetryableAssistantError } from '@earendil-works/pi-ai'
+import { CONTEXT_GUARD_MARKER, parseProviderOverflow } from './request-overflow-guard.js'
 import type { AssistantMessage, RetryPolicy } from '@earendil-works/pi-ai'
 import { loadConfig, warnConfigReadFailed } from './config.js'
 import { DEFAULT_RETRY_SETTINGS } from './contracts/settings.js'
@@ -62,6 +63,11 @@ export function loadRetryPolicy(
  * `AssistantMessage`, which is what a turn's error chunk boils down to here.
  */
 export function isRetryableTurnError(errorMessage: string): boolean {
+  // Context overflow is deterministic: retrying the same transcript repeats
+  // the HTTP 400 (pi-ai's pattern list matches bare digits like "500" inside
+  // token counts such as "40500"). The guard's own typed messages carry the
+  // marker; raw provider overflow text is recognised by the shared parser.
+  if (errorMessage.includes(CONTEXT_GUARD_MARKER) || parseProviderOverflow(errorMessage) !== null) return false
   return isRetryableAssistantError({
     role: 'assistant',
     content: [],

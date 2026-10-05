@@ -3,6 +3,7 @@ import path from 'node:path'
 import crypto from 'node:crypto'
 import type { Api, Model, ModelAuth, OAuthAuth, OAuthCredential, Transport } from '@earendil-works/pi-ai'
 import { streamSimple } from './pi-models.js'
+import { guardStream } from './request-overflow-guard.js'
 import { getBuiltinModels as getPiAiModels } from '@earendil-works/pi-ai/providers/all'
 import type { BuiltinProvider } from '@earendil-works/pi-ai/providers/all'
 import type { OAuthCredentials } from '@earendil-works/pi-ai/oauth'
@@ -713,6 +714,10 @@ export function buildStreamFn(
   streamImpl: typeof streamSimple = streamSimple,
   cache?: StreamCacheOptions,
 ): typeof streamSimple {
+  // Universal context-overflow guard (plan 2026-10-05-real-eco, M4): wraps
+  // only the final SDK call, so the guard sees exactly the context/options the
+  // SDK receives and passes them through unchanged when it allows the request.
+  const guarded = guardStream(streamImpl as Parameters<typeof guardStream>[0]) as typeof streamSimple
   return ((model, context, options) => {
     const withVerbosity = applyTextVerbosity(provider.textVerbosity, options)
     const withTransport = applyTransport(provider.transport, withVerbosity)
@@ -730,7 +735,7 @@ export function buildStreamFn(
       settings: cache?.settings,
     })
 
-    return streamImpl(model, cleanContext, withCache)
+    return guarded(model, cleanContext, withCache)
   }) as typeof streamSimple
 }
 
