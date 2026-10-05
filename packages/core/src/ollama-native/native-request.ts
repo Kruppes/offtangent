@@ -29,6 +29,7 @@ import { decideNumCtx, isValidNumCtx, type ContextWindowChoice, type NumCtxDecis
 import { getOllamaShowFacts } from './show-facts.js'
 import { randomUUID } from 'node:crypto'
 import { emitProviderPhase } from '../provider-phase.js'
+import { beginLocalInference } from '../local-inference-activity.js'
 import { formatNativeRequestDiagnostics, summarizeNativeRequest } from './request-diagnostics.js'
 
 type AnyModel = Model<Api>
@@ -148,6 +149,9 @@ export function streamNativeOllama(inner: Inner, model: AnyModel, context: Conte
       const sentAt = Date.now()
       let firstAt: number | undefined
       emitProviderPhase(input.sessionId, { phase: 'awaiting_first_token', requestId, estimatedInputTokens })
+      // Background work (summary, health check) on the same server+model waits
+      // while this lease (plus a short linger) is held — see local-inference-activity.ts.
+      const releaseInference = beginLocalInference(model.baseUrl, model.id)
       try {
         for await (const ev of inner(model, context, decided.options)) {
           if (firstAt === undefined && OUTPUT_EVENTS.has(ev.type)) {
@@ -162,6 +166,7 @@ export function streamNativeOllama(inner: Inner, model: AnyModel, context: Conte
           out.push(ev)
         }
       } finally {
+        releaseInference()
         emitProviderPhase(input.sessionId, { phase: 'request_end', requestId })
       }
       out.end()

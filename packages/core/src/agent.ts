@@ -3,6 +3,7 @@ import { AsyncLocalStorage } from 'node:async_hooks'
 import type { AgentMessage, Agent as PiAgent } from '@earendil-works/pi-agent-core'
 import type { Api, Model } from '@earendil-works/pi-ai'
 import { completeSimple } from './pi-models.js'
+import { isLocalInferenceBusy, waitForLocalInferenceIdle } from './local-inference-activity.js'
 import type { Database } from './database.js'
 import { getApiKeyForProvider, buildModel } from './provider-config.js'
 import { assertLlmResponseOk } from './llm-response.js'
@@ -113,6 +114,12 @@ function parsedUserId(userId: string): number | null {
 
 // Re-export for backward compatibility
 export { getWorkspaceDir } from './workspace.js'
+
+/**
+ * Upper bound for deferring a session summary while a native local turn uses
+ * the same server+model (H5 guard). /new awaits the summary, so this stays short.
+ */
+export const SUMMARY_LOCAL_DEFER_MAX_MS = 5 * 60_000
 
 /**
  * How many turns may run at the same time across all personas
@@ -475,12 +482,25 @@ export class AgentCore {
       store.set(activeSessionId, runtime.getMessages())
     }
 
-    const incoming = store.get(sessionId) ?? []
+    const parked = store.get(sessionId) ?? []
     store.delete(sessionId)
-    // A fresh strand runtime starts empty; writing an empty array back would
-    // still be correct but pointlessly replaces the array. Only write when
-    // there is something to restore or something to clear.
-    if (incoming.length > 0 || runtime.getMessages().length > 0) runtime.setMessages(incoming)
+    // pi-agent-core >= 0.87 keeps the system prompt IN the transcript as its
+    // leading system message (with the initial tool declarations). Swapping
+    // the transcript must keep the runtime's CURRENT head — the one
+    // refreshSystemPrompt maintains — instead of clearing it: a fresh strand
+    // runtime otherwise sent its first turn without any system prompt and got
+    // it back at index 0 in turn 2, which broke the provider prompt cache at
+    // token 0 and grew turn 2 by the whole prompt (plan
+    // 2026-10-05-native-ollama-prefill-fix, H2). A parked transcript's own
+    // head is stale and is replaced by the current one.
+    const current = runtime.getMessages()
+    const head = current[0]?.role === 'system' ? current[0] : undefined
+    const body = parked[0]?.role === 'system' && head ? parked.slice(1) : parked
+    const incoming = head ? [head, ...body] : body
+    // Only write when the transcript actually changes (a fresh strand runtime
+    // holding just its head keeps its array).
+    const unchanged = incoming.length === current.length && incoming.every((m, i) => m === current[i])
+    if (!unchanged) runtime.setMessages(incoming)
     this.activeTranscriptSessions.set(runtimeKey, sessionId)
 
     // Bound the RAM: drop the least recently used parked transcripts. A
@@ -1044,6 +1064,12 @@ export class AgentCore {
     this.applyDeferredProviderSwap(agentId, sessionId, runtime)
     const resolvedModel = await this.applyTurnModel(runtime, agentId, sessionId, turnModelOverride)
     this.useSessionTranscript(agentId, sessionId)
+    // A strand runtime created just above missed the persona-wide refresh at
+    // the top of this turn and still carries its construction-time prompt
+    // (no channel/user). Bring it to the exact prompt every later turn of this
+    // strand will send, so the cached prefix stays stable from turn 1 on.
+    // No-op when the prompt is already current.
+    runtime.refreshSystemPrompt(channel, currentUser, agentId)
 
     // Strand context by token budget (SPEC 11.3): trim the verbatim window,
     // then prepend strand notes, an index of the older messages and capped
@@ -1348,6 +1374,16 @@ export class AgentCore {
     const previousBlock = previous
       ? `<previous_summary version="${previous.version}">\n${JSON.stringify(previous.summary, null, 2)}\n</previous_summary>\n\n`
       : ''
+
+    // H5 guard (plan 2026-10-05-native-ollama-prefill-fix): do not queue the
+    // summary into a local runner that is busy with a native turn on the SAME
+    // server+model — it would land in front of the turn's next request. Bounded:
+    // after SUMMARY_LOCAL_DEFER_MAX_MS the summary runs anyway.
+    if (isLocalInferenceBusy(summaryModel?.baseUrl, summaryModel?.id)) {
+      console.log(`[session-summary] deferred: local model ${summaryModel?.id ?? '?'} busy with an active turn (max ${SUMMARY_LOCAL_DEFER_MAX_MS}ms)`)
+      const waited = await waitForLocalInferenceIdle(summaryModel?.baseUrl, summaryModel?.id, { maxWaitMs: SUMMARY_LOCAL_DEFER_MAX_MS })
+      console.log(`[session-summary] defer ended after ${waited.waitedMs}ms${waited.timedOut ? ' (cap reached, running anyway)' : ''}`)
+    }
 
     try {
       // Session summary is a background job — use the background thinking level.

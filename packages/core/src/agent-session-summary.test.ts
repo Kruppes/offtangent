@@ -84,7 +84,8 @@ vi.mock('./pi-models.js', async (importOriginal) => {
 
 // ── Imports after mocks ────────────────────────────────────────────────────────
 
-import { AgentCore } from './agent.js'
+import { AgentCore, SUMMARY_LOCAL_DEFER_MAX_MS } from './agent.js'
+import { beginLocalInference, resetLocalInferenceActivityForTest, LOCAL_INFERENCE_LINGER_MS } from './local-inference-activity.js'
 import { initDatabase } from './database.js'
 import type { Database } from './database.js'
 import { completeSimple } from './pi-models.js'
@@ -277,5 +278,56 @@ describe('generateSessionSummary (schema delta, SPEC 11.2)', () => {
     mockCompleteSimple.mockResolvedValue(makeCompleteSimpleResponse('{"add":{"decisions":["Task started."],"open":["Something open"]}}'))
     await makeAgent().generateSessionSummary('user1', 'User: Start a task\nAssistant: Task started.')
     expect(mockCompleteSimple).toHaveBeenCalledTimes(1)
+  })
+
+  describe('H5 guard: summary vs. a native turn on the same local server+model', () => {
+    const LOCAL = { ...makeModel(), id: 'qwen-local', provider: 'ollama', baseUrl: 'http://127.0.0.1:11434/v1' }
+    function makeLocalAgent() {
+      return new AgentCore({ model: LOCAL, apiKey: 'k', db, tools: [], memoryDir }) as unknown as SummaryAccess
+    }
+    const response = () => makeCompleteSimpleResponse('{"add":{"decisions":["ok"]}}')
+
+    beforeEach(() => {
+      resetLocalInferenceActivityForTest()
+      vi.useFakeTimers({ toFake: ['setTimeout', 'Date'] })
+    })
+    afterEach(() => {
+      vi.useRealTimers()
+      resetLocalInferenceActivityForTest()
+    })
+
+    it('defers while the native /api turn holds the runner and runs after it ended (+ linger)', async () => {
+      mockCompleteSimple.mockResolvedValue(response())
+      // Native turn on /api of the SAME server; the summary uses the /v1 legacy URL.
+      const release = beginLocalInference('http://127.0.0.1:11434', 'qwen-local')
+      const pending = makeLocalAgent().generateSessionSummary('user1', 'User: hi\nAssistant: hello', 's-h5')
+      await vi.advanceTimersByTimeAsync(30_000)
+      expect(mockCompleteSimple).not.toHaveBeenCalled()
+      release()
+      await vi.advanceTimersByTimeAsync(LOCAL_INFERENCE_LINGER_MS + 5_000)
+      await pending
+      expect(mockCompleteSimple).toHaveBeenCalledTimes(1)
+    })
+
+    it('starvation is bounded: a lease that never ends delays the summary by at most SUMMARY_LOCAL_DEFER_MAX_MS', async () => {
+      mockCompleteSimple.mockResolvedValue(response())
+      beginLocalInference('http://127.0.0.1:11434', 'qwen-local')
+      const pending = makeLocalAgent().generateSessionSummary('user1', 'User: hi\nAssistant: hello', 's-h5b')
+      await vi.advanceTimersByTimeAsync(SUMMARY_LOCAL_DEFER_MAX_MS - 1_000)
+      expect(mockCompleteSimple).not.toHaveBeenCalled()
+      await vi.advanceTimersByTimeAsync(2_000)
+      await pending
+      expect(mockCompleteSimple).toHaveBeenCalledTimes(1)
+    })
+
+    it('no defer for a different model on the same server, nor for a cloud model', async () => {
+      mockCompleteSimple.mockResolvedValue(response())
+      beginLocalInference('http://127.0.0.1:11434', 'gemma-other')
+      await makeLocalAgent().generateSessionSummary('user1', 'User: hi\nAssistant: hello', 's-h5c')
+      expect(mockCompleteSimple).toHaveBeenCalledTimes(1)
+      beginLocalInference('https://api.openai.com', 'qwen-local')
+      await makeLocalAgent().generateSessionSummary('user1', 'User: hi\nAssistant: hello', 's-h5d')
+      expect(mockCompleteSimple).toHaveBeenCalledTimes(2)
+    })
   })
 })

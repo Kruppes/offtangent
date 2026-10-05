@@ -2,7 +2,7 @@ import { beforeEach, afterEach, describe, expect, it, vi } from 'vitest'
 import fs from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
-import { initDatabase, addProvider, setActiveProvider, getActiveProvider, ProviderManager } from '@axiom/core'
+import { initDatabase, addProvider, setActiveProvider, getActiveProvider, ProviderManager, beginLocalInference, resetLocalInferenceActivityForTest } from '@axiom/core'
 import type { ProviderConfig } from '@axiom/core'
 import { HealthMonitorService } from './health-monitor.js'
 
@@ -99,6 +99,32 @@ describe('HealthMonitorService', () => {
     expect(fetchImpl).toHaveBeenCalledTimes(2)
 
     service.stop()
+    db.close()
+  })
+
+  it('H5: skips the check (no inference, no row, no failure count) while a turn uses the same server+model', async () => {
+    resetLocalInferenceActivityForTest()
+    const db = initDatabase(':memory:')
+    addProvider({ name: 'Primary', providerType: 'openai', apiKey: 'sk-test', enabledModels: ['gpt-4o-mini'] })
+    const fetchImpl = vi.fn(async () => new Response(JSON.stringify({ ok: true }), { status: 200 }))
+    const service = new HealthMonitorService({ db, fetchImpl: fetchImpl as typeof fetch })
+
+    const first = await service.runNow()
+    expect(fetchImpl).toHaveBeenCalledTimes(1)
+    const rowsBefore = (db.prepare('SELECT COUNT(*) AS n FROM health_checks').get() as { n: number }).n
+
+    const provider = getActiveProvider()!
+    const release = beginLocalInference(provider.baseUrl, 'gpt-4o-mini')
+    const skipped = await service.runNow()
+    expect(fetchImpl).toHaveBeenCalledTimes(1)
+    expect(skipped).toBe(first)
+    expect((db.prepare('SELECT COUNT(*) AS n FROM health_checks').get() as { n: number }).n).toBe(rowsBefore)
+
+    // after the lease and its linger are over, checks run again
+    release()
+    resetLocalInferenceActivityForTest()
+    await service.runNow()
+    expect(fetchImpl).toHaveBeenCalledTimes(2)
     db.close()
   })
 

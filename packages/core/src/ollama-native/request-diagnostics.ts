@@ -18,7 +18,8 @@
  * the deployment applies; nothing is written to the database or the repo.
  */
 import { createHmac, randomBytes } from 'node:crypto'
-import type { Context } from '@earendil-works/pi-ai'
+import { getCurrentTools, getSystemMessageText, resolveTranscript } from '@earendil-works/pi-ai'
+import type { Context, TranscriptContext } from '@earendil-works/pi-ai'
 
 const HASH_KEY = randomBytes(32)
 
@@ -63,6 +64,24 @@ export interface NativeRequestDiagnostics {
   perMessage: string[]
 }
 
+/**
+ * System prompt length and tool count the way the native request sees them:
+ * pi folds systemPrompt/tools into a leading system message, so
+ * `context.tools` alone under-reports (it read 0 with tools present).
+ */
+function systemAndTools(context: Context): { systemChars: number; toolCount: number } {
+  try {
+    const transcript = resolveTranscript(context as TranscriptContext, false)
+    const system = transcript.messages.find((m) => (m as { role?: string }).role === 'system')
+    return {
+      systemChars: system ? getSystemMessageText(system as never).length : (context.systemPrompt ?? '').length,
+      toolCount: getCurrentTools(transcript.messages).length,
+    }
+  } catch {
+    return { systemChars: (context.systemPrompt ?? '').length, toolCount: context.tools?.length ?? 0 }
+  }
+}
+
 export function summarizeNativeRequest(context: Context, withHashes = nativeDiagHashesEnabled()): NativeRequestDiagnostics {
   const roles: Record<string, number> = {}
   let totalChars = 0
@@ -88,8 +107,7 @@ export function summarizeNativeRequest(context: Context, withHashes = nativeDiag
     roles,
     totalChars,
     maxMessageChars,
-    systemChars: (context.systemPrompt ?? '').length,
-    toolCount: context.tools?.length ?? 0,
+    ...systemAndTools(context),
     ecoFrozenResults,
     perMessage,
   }

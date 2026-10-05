@@ -3,6 +3,7 @@ import {
   DEFAULT_HEALTH_CHECK_TIMEOUT_MS,
   getActiveProvider,
   getProviderDefaultModel,
+  isLocalInferenceBusy,
   performProviderHealthCheck,
   logHealthCheck,
   updateProviderStatus,
@@ -310,6 +311,20 @@ export class HealthMonitorService {
     if (provider?.id !== this.activeProviderId) {
       this.activeProviderId = provider?.id ?? null
       this.lastCheck = null
+    }
+
+    // H5 guard (plan 2026-10-05-native-ollama-prefill-fix): a health check is a
+    // real completion request. While a native turn uses the same local
+    // server+model it would queue behind the turn's prefill, time out, count as
+    // a failure (→ fallback swap) and delay the turn's next request. Skip this
+    // cycle and keep the last result; nothing is recorded or counted.
+    if (
+      provider
+      && this.lastCheck?.providerId === provider.id
+      && isLocalInferenceBusy(provider.baseUrl, getProviderDefaultModel(provider))
+    ) {
+      console.log(`[axiom] Health check for provider "${provider.name}" skipped: local model busy with an active turn`)
+      return this.lastCheck
     }
 
     const previousStatus = this.lastCheck?.status ?? null

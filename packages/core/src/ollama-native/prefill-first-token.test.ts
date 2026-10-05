@@ -8,6 +8,7 @@ import type { TurnAgentLike, TurnEvent } from '../turn-runner.js'
 import type { ResponseChunk } from '../agent-runtime-types.js'
 import { PROVIDER_STALL_KIND, formatProviderStallContent, parseProviderStallMetadata } from '../provider-stall.js'
 import { streamNativeOllama } from './native-request.js'
+import { LOCAL_INFERENCE_LINGER_MS, isLocalInferenceBusy, resetLocalInferenceActivityForTest } from '../local-inference-activity.js'
 import {
   NATIVE_FIRST_TOKEN_BASE_MS, NATIVE_FIRST_TOKEN_HARD_CAP_MS, nativeFirstTokenBudgetMs,
 } from '../provider-phase.js'
@@ -135,7 +136,7 @@ function start(agent: TurnAgentLike, overrides: Record<string, unknown> = {}) {
 }
 
 describe('native first-token budget', () => {
-  afterEach(() => { vi.useRealTimers() })
+  afterEach(() => { vi.useRealTimers(); resetLocalInferenceActivityForTest() })
 
   it('is explicit, conservative and bounded', () => {
     expect(nativeFirstTokenBudgetMs(0, 90_000)).toBe(NATIVE_FIRST_TOKEN_BASE_MS)
@@ -166,7 +167,14 @@ describe('native first-token budget', () => {
       { afterMs: 1, event: 'done' },
     ])
     const { db, runner, events } = start(agent)
-    await vi.advanceTimersByTimeAsync(130_000)
+    // H5: while the native request prefills, background work on the same
+    // server+model sees the runner as busy (Legacy /v1 URL of the same server too).
+    await vi.advanceTimersByTimeAsync(60_000)
+    expect(isLocalInferenceBusy('http://ollama.invalid:11434/v1', 'synthetic-native:1b')).toBe(true)
+    await vi.advanceTimersByTimeAsync(70_000)
+    expect(isLocalInferenceBusy('http://ollama.invalid:11434', 'synthetic-native:1b')).toBe(true) // linger
+    await vi.advanceTimersByTimeAsync(LOCAL_INFERENCE_LINGER_MS)
+    expect(isLocalInferenceBusy('http://ollama.invalid:11434', 'synthetic-native:1b')).toBe(false)
 
     const types = chunks(events).map(c => c.type)
     expect(types).not.toContain('error')
