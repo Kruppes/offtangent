@@ -45,6 +45,12 @@ export interface TaskExecutionContext {
   userId?: number | null
   /** The strand that triggered the current task (see {@link TaskOrigin}). */
   sessionId?: string | null
+  /**
+   * The task's OWN session (its transcript; `parent_session_id` leads to the
+   * strand). Used to resolve the trusted owner of a tool caller inside a
+   * background task (recall_message on raw Eco originals).
+   */
+  taskSessionId?: string | null
 }
 
 const storage = new AsyncLocalStorage<TaskExecutionContext>()

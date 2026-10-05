@@ -2732,7 +2732,7 @@
     "saveError": "Eco konnte nicht umgeschaltet werden.",
     "turnedOn": "Eco-Modus eingeschaltet",
     "turnedOff": "Eco-Modus ausgeschaltet",
-    "hint": "Kürzt NEUE große Tool-Ergebnisse einmalig beim Entstehen (Original per recall_message abrufbar); bereits gesendeter Kontext bleibt unverändert. Gilt für die nächsten neuen Ergebnisse.",
+    "hint": "Kürzt nur NEUE große Build-, Test- und Log-Ausgaben eindeutiger Shell-Befehle sowie reine Suchtrefferlisten, einmalig beim Entstehen (Original per recall_message abrufbar). Dateien, Diffs, Webseiten und E-Mails bleiben immer vollständig; bereits gesendeter Kontext bleibt unverändert.",
     "budget": "Kontextbudget {tokens} (Schätzung, nur Anzeige)",
     "fallback": "Kontextfenster unbekannt, konservativ",
     "observed": "Runner-Limit {limit} Tokens (statt deklariertem Fenster)",

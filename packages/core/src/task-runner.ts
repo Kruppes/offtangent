@@ -666,6 +666,7 @@ export class TaskRunner {
       taskId,
       userId: origin?.userId ?? null,
       sessionId: origin?.sessionId ?? null,
+      taskSessionId: task?.sessionId ?? null,
     }
   }
 

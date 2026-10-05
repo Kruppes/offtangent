@@ -16,12 +16,11 @@ import os from 'node:os'
 import path from 'node:path'
 import type { AddressInfo } from 'node:net'
 import { describe, it, expect, beforeEach, afterEach } from 'vitest'
-import { createAgentRuntime } from './agent-runtime.js'
+import { createAgentRuntime, createYoloTools } from './agent-runtime.js'
 import type { ResponseChunk } from './agent-runtime-types.js'
 import { initDatabase } from './database.js'
 import type { Database } from './database.js'
 import type { AgentTool } from '@earendil-works/pi-agent-core'
-import { Type } from '@earendil-works/pi-ai'
 import { setStrandEcoEnabled } from './eco-mode-store.js'
 import { frozenEcoRowId } from './eco-tool-freeze.js'
 import { createRecallMessageTool } from './recall-message-tool.js'
@@ -39,6 +38,8 @@ let origin: string
 let received: Body[] = []
 let script: Array<(res: http.ServerResponse) => void> = []
 let defaultReply: (res: http.ServerResponse) => void
+
+const REAL_SHELL = (({ name, label, description, parameters }) => ({ name, label, description, parameters }))(createYoloTools().find(t => t.name === 'shell')!)
 
 function anthropicSse(res: http.ServerResponse, blocks: Array<{ tool?: { id: string; name: string; input: unknown }; text?: string }>) {
   res.writeHead(200, { 'content-type': 'text/event-stream', 'cache-control': 'no-cache' })
@@ -63,7 +64,7 @@ function openaiSse(res: http.ServerResponse, opts: { tool?: { id: string; name: 
   res.writeHead(200, { 'content-type': 'text/event-stream', 'cache-control': 'no-cache' })
   const frame = (delta: Record<string, unknown>, finish: string | null) => `data: ${JSON.stringify({ id: 'f', object: 'chat.completion.chunk', created: 1, model: 'local-test', choices: [{ index: 0, delta, finish_reason: finish }] })}\n\n`
   if (opts.tool) {
-    res.write(frame({ role: 'assistant', content: null, tool_calls: [{ index: 0, id: opts.tool.id, type: 'function', function: { name: opts.tool.name, arguments: '{}' } }] }, null))
+    res.write(frame({ role: 'assistant', content: null, tool_calls: [{ index: 0, id: opts.tool.id, type: 'function', function: { name: opts.tool.name, arguments: JSON.stringify(opts.tool.name === 'shell' ? { command: 'npm test' } : {}) } }] }, null))
     res.write(frame({}, 'tool_calls'))
   } else {
     res.write(frame({ role: 'assistant', content: opts.text ?? 'ok' }, null))
@@ -106,14 +107,13 @@ afterEach(async () => {
 
 const MIDDLE_MARK = 'SYNTHETIC-MIDDLE-ID-4711 /srv/synthetic/deep/path 98765'
 function shellLikeTool(): AgentTool {
-  // A shell-family tool (name "synthetic_shell", no clash with the built-in shell) returning a long synthetic test log with
+  // The `shell` tool (F1 allowlist: only recognised build/test runs are projected) returning a long synthetic test log with
   // one failure in the middle, so the shell profile (error + trace frames, long
   // tail) is exercised on the real request path.
   return {
-    name: 'synthetic_shell',
-    label: 'Synthetic shell',
-    description: 'Synthetic shell (test only).',
-    parameters: Type.Object({ command: Type.Optional(Type.String()) }),
+    // Same definition as the built-in shell (name/description/schema), only
+    // execute is a double: the request's tool list stays byte-identical.
+    ...REAL_SHELL,
     execute: async (toolCallId: string) => {
       const ok = Array.from({ length: 600 }, (_, i) => ` ✓ src/m${i}.test.ts (3 tests) ${i % 40}ms [${toolCallId}]`)
       ok.splice(300, 0, ' FAIL src/pay.test.ts > totals', `AssertionError: ${MIDDLE_MARK}`, '  at src/pay.ts:88:13')
@@ -169,7 +169,7 @@ async function anthropicScenario(eco: boolean[], recallPages = 0) {
   })
   for (let turn = 0; turn < eco.length; turn++) {
     setStrandEcoEnabled(db, 's-anth', eco[turn])
-    script.push(res => anthropicSse(res, [{ tool: { id: `toolu_${turn}`, name: 'synthetic_shell', input: { command: 'npm test' } } }]))
+    script.push(res => anthropicSse(res, [{ tool: { id: `toolu_${turn}`, name: 'shell', input: { command: 'npm test' } } }]))
     for (let page = 0; page < recallPages && eco[turn]; page++) {
       // worst case: the model pages through the WHOLE original via recall_message;
       // the id is read from the projection the model just received
@@ -224,7 +224,7 @@ describe('real Eco on the Anthropic Messages serializer (fake HTTP)', () => {
     expect(toolResults(requests[1])[0]).toContain('src/m599.test.ts')
     expect(toolResults(requests[1])[0]).not.toContain('[eco:')
     const ecoFirst = toolResults(requests[3])[1]
-    expect(ecoFirst).toContain('[eco: synthetic_shell result compacted once')
+    expect(ecoFirst).toContain('[eco: shell result compacted once')
     expect(ecoFirst).toContain(MIDDLE_MARK) // error line kept by the shell profile
     expect(ecoFirst.length).toBeLessThan(toolResults(requests[1])[0].length * 0.5)
     // off again: the NEW result is full, the earlier projection stays pinned
@@ -232,7 +232,7 @@ describe('real Eco on the Anthropic Messages serializer (fake HTTP)', () => {
     expect(toolResults(requests[5])[1]).toBe(ecoFirst)
     // owner recall of the projected row returns the verbatim original
     const rowId = Number(/recall_message\(message_id=(\d+)\)/.exec(ecoFirst)![1])
-    const owner = await createRecallMessageTool({ db, getCurrentUserId: () => 1, getCurrentAgentId: () => 'main', maxChars: 200000 }).execute('r', { message_id: rowId })
+    const owner = await createRecallMessageTool({ db, getCurrentUserId: () => 1, getCurrentAgentId: () => 'main', getCurrentSessionId: () => 's-anth', maxChars: 200000 }).execute('r', { message_id: rowId })
     const ownerText = (owner.content as Array<{ text: string }>).map(c => c.text).join('')
     expect(ownerText).toContain('src/m450.test.ts')
   })
@@ -302,7 +302,7 @@ describe('real Eco in the TaskRunner (real pi-agent loop, fake HTTP)', () => {
         onTaskComplete: () => { done() },
         sessionManager: new SessionManager({ db }),
       })
-      script.push(res => openaiSse(res, { tool: { id: 'tc-task-1', name: 'synthetic_shell' } }))
+      script.push(res => openaiSse(res, { tool: { id: 'tc-task-1', name: 'shell' } }))
       const task = store.create({ name: 'eco synthetic', prompt: 'run the synthetic tests', triggerType: 'user', agentId: 'main' })
       await runner.startTask(task, provider, undefined, STRAND)
       await Promise.race([finished, new Promise((_, rej) => setTimeout(() => rej(new Error('task timeout')), 15000))])
@@ -321,7 +321,7 @@ describe('real Eco in the TaskRunner (real pi-agent loop, fake HTTP)', () => {
     expect(eco.status).toBe('completed')
     expect(normal.toolText).not.toContain('[eco:')
     expect(normal.toolText).toContain('src/m599.test.ts')
-    expect(eco.toolText).toContain('[eco: synthetic_shell result compacted once')
+    expect(eco.toolText).toContain('[eco: shell result compacted once')
     expect(eco.toolText).toContain(MIDDLE_MARK)
     expect(eco.toolText.length).toBeLessThan(normal.toolText.length * 0.5)
     expect(eco.row?.eco_original).toContain('src/m450.test.ts')

@@ -67,6 +67,12 @@ export interface BaseAgentToolsOptions {
    * and callers that omit this stay unscoped (orchestrator behavior).
    */
   getCurrentAgentId?: () => string | undefined
+  /**
+   * Session of the calling turn (interactive runtime). recall_message resolves
+   * the caller's trusted owner from it before handing out a raw Eco original.
+   * Background task tools omit it and use the per-task execution context.
+   */
+  getCurrentSessionId?: () => string | undefined
   quotaService?: QuotaServiceLike
 }
 
@@ -87,6 +93,7 @@ export function createBaseAgentTools(options: BaseAgentToolsOptions): AgentTool[
       db: options.db,
       getCurrentAgentId: options.getCurrentAgentId,
       getCurrentUserId: options.getCurrentUserId,
+      getCurrentSessionId: options.getCurrentSessionId,
     }),
     createSearchMemoriesTool({
       db: options.db,
@@ -816,6 +823,9 @@ class PiAgentRuntime implements AgentRuntimeBoundary, AgentRuntimePiAgentAccess 
         // Each runtime is permanently bound to one persona — scope its
         // history/memory tools to that persona (main stays unscoped).
         getCurrentAgentId: () => this.agentId,
+        // A strand runtime serves one session at a time; recall_message
+        // checks raw Eco originals against this session's trusted owner.
+        getCurrentSessionId: () => this.currentSessionId ?? undefined,
         quotaService: options.quotaService,
       }),
       ...askAgentTools,

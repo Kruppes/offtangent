@@ -2732,7 +2732,7 @@
     "saveError": "Could not switch eco mode.",
     "turnedOn": "Eco mode on",
     "turnedOff": "Eco mode off",
-    "hint": "Shrinks NEW large tool results once when they are created (original stays available via recall_message); context already sent stays unchanged. Applies to the next new results.",
+    "hint": "Shortens only NEW large build, test and log outputs of clear shell commands, and plain search hit lists, once when they are created (original stays available via recall_message). Files, diffs, web pages and emails always stay complete; context already sent stays unchanged.",
     "budget": "Context budget {tokens} (estimate, display only)",
     "fallback": "context window unknown, conservative",
     "observed": "runner limit {limit} tokens (below the declared window)",

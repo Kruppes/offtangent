@@ -5,6 +5,7 @@ import { resolveAgentReadScope } from './agent-read-scope.js'
 import { RECALLED_MARKER } from './message-digest.js'
 import { toolResultText } from './eco-tool-projection.js'
 import { resolveEcoOwner } from './eco-tool-freeze.js'
+import { getCurrentTaskExecutionContext } from './task-execution-context.js'
 
 const isHigh = (c: number): boolean => c >= 0xd800 && c <= 0xdbff
 const isLow = (c: number): boolean => c >= 0xdc00 && c <= 0xdfff
@@ -36,6 +37,13 @@ export interface RecallMessageToolOptions {
   getCurrentAgentId?: () => string | undefined
   /** Numeric user of the calling turn. When set, rows of other users are invisible. */
   getCurrentUserId?: () => number | undefined
+  /**
+   * Session of the calling turn (interactive runtime: the strand the turn runs
+   * in). Used to resolve the caller's trusted owner for raw Eco originals.
+   * Background task tools omit it; their session comes from the task
+   * execution context (AsyncLocalStorage, per task — no shared mutable bind).
+   */
+  getCurrentSessionId?: () => string | undefined
   /** Hard cap on returned characters (the caller can page with `offset`). */
   maxChars?: number
 }
@@ -54,6 +62,67 @@ interface RecallRow {
 }
 
 const DEFAULT_MAX_CHARS = 16000
+
+/**
+ * Trusted owner of the CALLER of recall_message, or undefined (fail closed).
+ *
+ * - Interactive runtime: the turn's session (getCurrentSessionId) resolved via
+ *   the session tree; a turn user (getCurrentUserId) must agree with it.
+ * - Background task (shared tool instance, no session getter): the task
+ *   execution context bound per task run (AsyncLocalStorage). The task's own
+ *   session (chain task -> parent task -> strand) and the origin strand must
+ *   agree with each other and with the origin user. A cron/heartbeat task
+ *   without any owner on its chain gets undefined.
+ *
+ * `getCurrentUserId` alone is never enough (it is unset in background tasks
+ * and must not turn into "unscoped" for raw originals).
+ */
+export function resolveRecallCallerOwner(options: Pick<RecallMessageToolOptions, 'db' | 'getCurrentSessionId' | 'getCurrentUserId'>): number | undefined {
+  const candidates: (number | undefined)[] = []
+  let dbResolved = false
+  const fromSession = (sessionId: string | null | undefined): void => {
+    if (!sessionId) return
+    const owner = resolveEcoOwner(options.db, sessionId)
+    candidates.push(owner)
+    if (owner !== undefined) dbResolved = true
+  }
+  const sessionId = options.getCurrentSessionId?.()
+  if (sessionId) {
+    fromSession(sessionId)
+  } else {
+    const task = getCurrentTaskExecutionContext()
+    if (!task) return undefined
+    let taskSessionId = task.taskSessionId ?? null
+    if (!taskSessionId && task.taskId) {
+      try {
+        const r = options.db.prepare('SELECT session_id FROM tasks WHERE id = ?').get(task.taskId) as { session_id: string | null } | undefined
+        taskSessionId = r?.session_id ?? null
+      } catch { /* fail closed below */ }
+    }
+    if (!taskSessionId) return undefined
+    fromSession(taskSessionId)
+    if (task.sessionId) fromSession(task.sessionId)
+    if (typeof task.userId === 'number') candidates.push(task.userId)
+  }
+  const turnUser = options.getCurrentUserId?.()
+  if (typeof turnUser === 'number') candidates.push(turnUser)
+  if (!dbResolved || candidates.some(c => c === undefined)) return undefined
+  const first = candidates[0]
+  return candidates.every(c => c === first) ? first : undefined
+}
+
+function ecoOriginalVisible(options: RecallMessageToolOptions, row: RecallRow): boolean {
+  const rowOwner = resolveEcoOwner(options.db, row.session_id)
+  if (rowOwner === undefined) return false
+  if (row.user_id !== null && row.user_id !== rowOwner) return false
+  const callerOwner = resolveRecallCallerOwner(options)
+  if (callerOwner === undefined || callerOwner !== rowOwner) return false
+  // Persona: a background task's tools carry no persona getter; the task's
+  // persona (execution context) then scopes its raw originals.
+  const callerAgent = options.getCurrentAgentId?.() ?? getCurrentTaskExecutionContext()?.agentId ?? undefined
+  if (callerAgent && callerAgent !== 'main' && row.agent_id !== callerAgent && row.agent_id !== 'shared') return false
+  return true
+}
 
 /**
  * `recall_message`: reload the verbatim content of one chat message by id.
@@ -101,15 +170,15 @@ export function createRecallMessageTool(options: RecallMessageToolOptions): Agen
       }
 
       const currentUserId = options.getCurrentUserId?.()
+      const isEcoRaw = !!row && typeof row.eco_original === 'string'
       const visible = row
         && (scope.agentId === undefined || row.agent_id === scope.agentId || row.agent_id === 'shared')
-        && (currentUserId === undefined || row.user_id === currentUserId
-          // Rows without a user (task sessions write user_id NULL) stay visible
-          // as before — EXCEPT a raw Eco original: its owner is resolved from
-          // the session tree and the original is denied (fail closed) to any
-          // other user or when no owner can be resolved.
-          || (row.user_id === null && (typeof row.eco_original !== 'string'
-            || resolveEcoOwner(options.db, row.session_id) === currentUserId)))
+        && (isEcoRaw
+          // A raw Eco original is never governed by the legacy "no current user
+          // = unscoped" rule: it needs a trusted caller owner that equals the
+          // row's trusted owner (fail closed on anything missing).
+          ? ecoOriginalVisible(options, row)
+          : (currentUserId === undefined || row.user_id === currentUserId || row.user_id === null))
       if (!row || !visible) {
         return { content: [{ type: 'text' as const, text: `Error: message ${id} not found.` }], details: { error: true, notFound: true } }
       }

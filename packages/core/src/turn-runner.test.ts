@@ -812,16 +812,16 @@ describe('TurnRunner', () => {
     it('real Eco: an auto-retry discard keeps the row frozen at tool birth (the retried attempt continues from its projection)', async () => {
       vi.useFakeTimers()
       const db = freshDb()
-      const big = Array.from({ length: 400 }, (_, i) => `row ${i} synthetic payload`).join('\n') + '\nSYNTHETIC-RETRY-MIDDLE-FACT'
+      const big = Array.from({ length: 400 }, (_, i) => ` ✓ src/row-${i}.test.ts (3 tests) ${i}ms`).join('\n') + '\nSYNTHETIC-RETRY-MIDDLE-FACT'
       const frozen = freezeEcoToolResult({
         db, sessionId: SESSION_ID, userId: USER_ID, ownerUserId: USER_ID, agentId: 'main', toolName: 'shell', toolCallId: 'tc-retry',
-        args: { command: 'dump' }, content: [{ type: 'text', text: big }], details: undefined, isError: false,
+        args: { command: 'npm test' }, content: [{ type: 'text', text: big }], details: undefined, isError: false,
       })!
       expect(frozen).not.toBeNull()
       const toolResult = { content: frozen.content, details: frozen.details }
       const { agent, calls } = sequenceAgent([
         [
-          { type: 'tool_call_start', toolCallId: 'tc-retry', toolName: 'shell', toolArgs: { command: 'dump' } },
+          { type: 'tool_call_start', toolCallId: 'tc-retry', toolName: 'shell', toolArgs: { command: 'npm test' } },
           { type: 'tool_call_end', toolCallId: 'tc-retry', toolName: 'shell', toolResult },
           { type: 'error', error: '503 Service Unavailable' }, { type: 'done' },
         ],

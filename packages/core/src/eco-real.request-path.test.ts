@@ -10,12 +10,11 @@ import os from 'node:os'
 import path from 'node:path'
 import type { AddressInfo } from 'node:net'
 import { describe, it, expect, beforeEach, afterEach } from 'vitest'
-import { createAgentRuntime } from './agent-runtime.js'
+import { createAgentRuntime, createYoloTools } from './agent-runtime.js'
 import type { ResponseChunk } from './agent-runtime-types.js'
 import { initDatabase } from './database.js'
 import type { Database } from './database.js'
 import type { AgentTool } from '@earendil-works/pi-agent-core'
-import { Type } from '@earendil-works/pi-ai'
 import { setStrandEcoEnabled, lastEcoViewForStrand } from './eco-mode-store.js'
 import { frozenEcoRowId } from './eco-tool-freeze.js'
 import { createRecallMessageTool } from './recall-message-tool.js'
@@ -32,13 +31,15 @@ let received: Received[] = []
 let script: Array<(res: http.ServerResponse) => void> = []
 
 /** One streamed assistant turn that calls `name` once per id (parallel tool calls). */
+const REAL_SHELL = (({ name, label, description, parameters }) => ({ name, label, description, parameters }))(createYoloTools().find(t => t.name === 'shell')!)
+
 function sseToolCalls(res: http.ServerResponse, name: string, ids: string[]) {
   res.writeHead(200, { 'content-type': 'text/event-stream', 'cache-control': 'no-cache' })
   const frame = (delta: Record<string, unknown>, finish: string | null) => `data: ${JSON.stringify({
     id: 'fake-tc', object: 'chat.completion.chunk', created: 1, model: 'local-test',
     choices: [{ index: 0, delta, finish_reason: finish }],
   })}\n\n`
-  res.write(frame({ role: 'assistant', content: null, tool_calls: ids.map((id, index) => ({ index, id, type: 'function', function: { name, arguments: JSON.stringify({ part: index }) } })) }, null))
+  res.write(frame({ role: 'assistant', content: null, tool_calls: ids.map((id, index) => ({ index, id, type: 'function', function: { name, arguments: JSON.stringify(name === 'shell' ? { command: 'npm test' } : { part: index }) } })) }, null))
   res.write(frame({}, 'tool_calls'))
   res.end('data: [DONE]\n\n')
 }
@@ -90,12 +91,13 @@ afterEach(async () => {
 const MIDDLE_MARK = 'SYNTHETIC-MIDDLE-ID-4711 /srv/synthetic/deep/path 98765'
 function syntheticDumpTool(): AgentTool {
   return {
-    name: 'synthetic_dump',
-    label: 'Synthetic dump',
-    description: 'Returns a large synthetic text block (test only).',
-    parameters: Type.Object({ part: Type.Optional(Type.Number()) }),
+    // Realistic allowlisted path (F1): a `shell` tool running `npm test` whose
+    // output is a long test log; only such runs are projected.
+    // Same definition as the built-in shell (name/description/schema), only
+    // execute is a double: the request's tool list stays byte-identical.
+    ...REAL_SHELL,
     execute: async (toolCallId: string) => {
-      const filler = `row ${toolCallId} 0123456789 abcdefghij\n`.repeat(300)
+      const filler = ` ✓ src/row-${toolCallId}.test.ts (3 tests) 4ms\n`.repeat(300)
       return { content: [{ type: 'text' as const, text: `HEAD-${toolCallId}\n${filler}${MIDDLE_MARK}\n${filler}TAIL-${toolCallId}` }], details: {} }
     },
   }
@@ -151,7 +153,7 @@ async function scenario(eco: boolean[]) {
   const { db, runtime } = boot({ tools: [syntheticDumpTool()], contextWindow: 200000, maxTokens: 2048 })
   for (let turn = 0; turn < eco.length; turn++) {
     setStrandEcoEnabled(db, 's-eco', eco[turn])
-    script.push(res => sseToolCalls(res, 'synthetic_dump', [`call-${turn}`]))
+    script.push(res => sseToolCalls(res, 'shell', [`call-${turn}`]))
     script.push(res => sse(res, `done ${turn}`))
     await collect(runtime.streamPrompt(`synthetic turn ${turn}`, 's-eco'), db)
   }
@@ -181,13 +183,13 @@ describe('real Eco: freeze NEW tool results at creation (real request path)', ()
     expect(meta.toolResult.content[0].text).toBe(text)
     expect(meta.toolResult.details.eco.rowId).toBe(row.id)
     // recall: same persona scope returns the original, paged, middle fact retrievable
-    const recall = createRecallMessageTool({ db, getCurrentAgentId: () => 'main', maxChars: 200000 })
+    const recall = createRecallMessageTool({ db, getCurrentAgentId: () => 'main', getCurrentSessionId: () => 's-eco', maxChars: 200000 })
     const out = await recall.execute('r1', { message_id: row.id })
     const recalled = (out.content[0] as { text: string }).text
     expect(recalled).toContain(MIDDLE_MARK)
     expect(recalled).toContain(original.slice(0, 2000))
     // other persona cannot read it
-    const foreign = createRecallMessageTool({ db, getCurrentAgentId: () => 'other' })
+    const foreign = createRecallMessageTool({ db, getCurrentAgentId: () => 'other', getCurrentSessionId: () => 's-eco' })
     const denied = await foreign.execute('r2', { message_id: row.id })
     expect((denied.content[0] as { text: string }).text).toContain('not found')
   })
@@ -229,7 +231,7 @@ describe('real Eco: freeze NEW tool results at creation (real request path)', ()
     const { db } = await scenario([true, true, true])
     // the model recalls one original in a 4th turn: counts the recall request + result
     const rowId = (db.prepare("SELECT id FROM chat_messages WHERE eco_original IS NOT NULL ORDER BY id LIMIT 1").get() as { id: number }).id
-    const recall = createRecallMessageTool({ db, getCurrentAgentId: () => 'main', maxChars: 200000 })
+    const recall = createRecallMessageTool({ db, getCurrentAgentId: () => 'main', getCurrentSessionId: () => 's-eco', maxChars: 200000 })
     const recalledChars = ((await recall.execute('r', { message_id: rowId })).content[0] as { text: string }).text.length
     const lastLen = JSON.stringify(received[received.length - 1].body.messages).length
     const eco = received.reduce((s, r) => s + JSON.stringify(r.body.messages).length, 0) + lastLen + recalledChars
@@ -241,13 +243,13 @@ describe('real Eco: freeze NEW tool results at creation (real request path)', ()
     setStrandEcoEnabled(db, 's-eco', false)
     const { runtime: restarted } = boot({ tools: [syntheticDumpTool()], contextWindow: 200000, maxTokens: 2048, db })
     received = []
-    script.push(res => sseToolCalls(res, 'synthetic_dump', ['call-after-restart']))
+    script.push(res => sseToolCalls(res, 'shell', ['call-after-restart']))
     script.push(res => sse(res, 'done'))
     await collect(restarted.streamPrompt('synthetic turn after restart', 's-eco'), db)
     const after = db.prepare('SELECT metadata, eco_original FROM chat_messages WHERE id = ?').get(before.id) as { metadata: string; eco_original: string }
     expect(after).toEqual({ metadata: before.metadata, eco_original: before.eco_original })
     expect(contentText(toolMsgs(received[1])[0])).toContain(MIDDLE_MARK)
-    const recall = createRecallMessageTool({ db, getCurrentAgentId: () => 'main', maxChars: 200000 })
+    const recall = createRecallMessageTool({ db, getCurrentAgentId: () => 'main', getCurrentSessionId: () => 's-eco', maxChars: 200000 })
     expect(((await recall.execute('r', { message_id: before.id })).content[0] as { text: string }).text).toContain(MIDDLE_MARK)
     expect(lastEcoViewForStrand(db, 's-eco')).toMatchObject({ compactedResults: 1, refused: false, droppedMessages: 0 })
   })
