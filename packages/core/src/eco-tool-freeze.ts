@@ -112,19 +112,45 @@ export function isEcoPassthrough(toolName: string, args: unknown): boolean {
   return false
 }
 
+/**
+ * Bounded reason set for the Eco freeze/skip observability line (plan
+ * 2026-10-05-native-ollama-prefill-fix, goal 3). Only the tool NAME, the
+ * reason and the char count are logged — never args, content or paths.
+ */
+export type EcoFreezeReason =
+  | 'frozen' | 'passthrough' | 'no_owner' | 'owner_mismatch' | 'no_text' | 'below_threshold'
+  | 'duplicate_call' | 'not_projectable' | 'error'
+
+function logEcoDecision(input: EcoFreezeInput, reason: EcoFreezeReason, chars: number | null): void {
+  if (reason === 'below_threshold' || reason === 'passthrough') return // the common, uninteresting cases stay silent
+  try {
+    const tool = /^[A-Za-z0-9_.:-]{1,64}$/.test(input.toolName) ? input.toolName : 'other'
+    console.log(`[eco] decision=${reason} tool=${tool} session=${input.sessionId} chars=${chars ?? '-'}`)
+  } catch { /* observability must never break the tool loop */ }
+}
+
 export function freezeEcoToolResult(input: EcoFreezeInput): EcoFreezeResult | null {
-  if (isEcoPassthrough(input.toolName, input.args)) return null
+  let chars: number | null = null
+  let reason: EcoFreezeReason = 'error'
+  const result = freezeEcoToolResultInner(input, (r, c) => { reason = r; chars = c })
+  logEcoDecision(input, reason, chars)
+  return result
+}
+
+function freezeEcoToolResultInner(input: EcoFreezeInput, note: (reason: EcoFreezeReason, chars: number | null) => void): EcoFreezeResult | null {
+  if (isEcoPassthrough(input.toolName, input.args)) { note('passthrough', null); return null }
   // Fail closed on ownership: a raw original is only stored for a trusted
   // owner (see resolveEcoOwner). Without one the result stays as is.
-  if (typeof input.ownerUserId !== 'number') return null
-  if (input.userId !== null && input.userId !== input.ownerUserId) return null
+  if (typeof input.ownerUserId !== 'number') { note('no_owner', null); return null }
+  if (input.userId !== null && input.userId !== input.ownerUserId) { note('owner_mismatch', null); return null }
   try {
     // Inside the try: odd tool content (a throwing getter, a non-JSON-able
     // value) must keep the original, never break the tool loop.
     const text = toolResultText(input.content)
-    if (text === null || !input.sessionId || !input.toolCallId) return null
+    if (text === null || !input.sessionId || !input.toolCallId) { note('no_text', null); return null }
     // Cheap pre-check so tiny results never touch the DB.
-    if (text.length <= (input.options?.minChars ?? 6000)) return null
+    if (text.length <= (input.options?.minChars ?? 6000)) { note('below_threshold', text.length); return null }
+    note('error', text.length)
     return input.db.transaction((): EcoFreezeResult => {
       const existing = input.db.prepare(
         `SELECT id FROM chat_messages WHERE session_id = ? AND role = 'tool' AND json_valid(metadata)
@@ -132,7 +158,7 @@ export function freezeEcoToolResult(input: EcoFreezeInput): EcoFreezeResult | nu
       ).get(input.sessionId, input.toolCallId)
       // A row for this call already exists (replay/duplicate event): never
       // create a second reference, keep the original path.
-      if (existing) throw new KeepOriginal()
+      if (existing) { note('duplicate_call', text.length); throw new KeepOriginal() }
       const original = JSON.stringify({ content: input.content, details: input.details ?? null })
       const inserted = input.db.prepare(
         'INSERT INTO chat_messages (session_id, user_id, role, content, metadata, agent_id, eco_original) VALUES (?, ?, ?, ?, ?, ?, ?)',
@@ -143,7 +169,7 @@ export function freezeEcoToolResult(input: EcoFreezeInput): EcoFreezeResult | nu
         exitCode: input.details && typeof input.details === 'object' && typeof (input.details as { exitCode?: unknown }).exitCode === 'number'
           ? (input.details as { exitCode: number }).exitCode : undefined,
       }, input.options)
-      if (!projection) throw new KeepOriginal()
+      if (!projection) { note('not_projectable', text.length); throw new KeepOriginal() }
       const eco: EcoFrozenDetails = { rowId, originalChars: projection.originalChars, projectedChars: projection.projectedChars }
       const baseDetails = input.details && typeof input.details === 'object' && !Array.isArray(input.details)
         ? input.details as Record<string, unknown> : {}
@@ -156,6 +182,7 @@ export function freezeEcoToolResult(input: EcoFreezeInput): EcoFreezeResult | nu
         toolResult: { content, details },
         toolIsError: input.isError,
       }), rowId)
+      note('frozen', text.length)
       return { content, details, eco }
     })()
   } catch (err) {

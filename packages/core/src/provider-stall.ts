@@ -26,6 +26,10 @@ export interface ProviderStallMetadata {
   resolvedAt: string | null
   durationMs: number
   outcome: StallOutcome | null
+  /** Present only for a native first-token wait (see {@link StallInfo.phase}). */
+  phase?: 'first_token'
+  budgetMs?: number
+  estimatedInputTokens?: number
 }
 
 export function buildProviderStallMetadata(stall: StallInfo): ProviderStallMetadata {
@@ -35,6 +39,13 @@ export function buildProviderStallMetadata(stall: StallInfo): ProviderStallMetad
     resolvedAt: stall.resolvedAt ?? null,
     durationMs: stall.durationMs,
     outcome: stall.outcome ?? null,
+    ...(stall.phase === 'first_token'
+      ? {
+          phase: 'first_token' as const,
+          ...(typeof stall.budgetMs === 'number' ? { budgetMs: stall.budgetMs } : {}),
+          ...(typeof stall.estimatedInputTokens === 'number' ? { estimatedInputTokens: stall.estimatedInputTokens } : {}),
+        }
+      : {}),
   }
 }
 
@@ -62,6 +73,13 @@ export function parseProviderStallMetadata(raw: string | null | undefined): Prov
     resolvedAt: typeof value.resolvedAt === 'string' ? value.resolvedAt : null,
     durationMs: typeof value.durationMs === 'number' ? value.durationMs : 0,
     outcome,
+    ...(value.phase === 'first_token'
+      ? {
+          phase: 'first_token' as const,
+          ...(typeof value.budgetMs === 'number' ? { budgetMs: value.budgetMs } : {}),
+          ...(typeof value.estimatedInputTokens === 'number' ? { estimatedInputTokens: value.estimatedInputTokens } : {}),
+        }
+      : {}),
   }
 }
 
@@ -72,6 +90,13 @@ export function parseProviderStallMetadata(raw: string | null | undefined): Prov
  */
 export function formatProviderStallContent(stall: StallInfo): string {
   const seconds = Math.max(1, Math.round(stall.durationMs / 1000))
+  if (stall.phase === 'first_token') {
+    const budget = typeof stall.budgetMs === 'number' ? `${Math.round(stall.budgetMs / 1000)}s` : 'the first-token budget'
+    const est = typeof stall.estimatedInputTokens === 'number' ? ` (~${stall.estimatedInputTokens} input tokens estimated)` : ''
+    if (stall.outcome === 'recovered') return `\u2705 Local model started answering after ${seconds}s of prompt processing`
+    if (stall.outcome === 'aborted') return `\u26A0\uFE0F Local model produced no output within ${budget}${est} \u2014 aborted after ${seconds}s`
+    return `\u23F3 Local model is still processing the prompt${est}: no output yet after ${seconds}s, waiting up to ${budget} for the first token\u2026`
+  }
   if (stall.outcome === 'recovered') return `\u2705 Provider recovered after ${seconds}s of silence`
   if (stall.outcome === 'aborted') return `\u26A0\uFE0F Provider stopped responding \u2014 aborted after ${seconds}s of silence`
   return `\u23F3 Provider has not responded for ${seconds}s\u2026`

@@ -19,6 +19,15 @@ export interface StallInfo {
   /** Silence duration in ms — elapsed idle time so far while unresolved. */
   durationMs: number
   outcome?: StallOutcome
+  /**
+   * Set when the silence was the first-token wait of a native local Ollama
+   * request (prompt prefill / runner queue), not a stall of a running stream.
+   */
+  phase?: 'first_token'
+  /** First-token budget in ms that applied (phase `first_token` only). */
+  budgetMs?: number
+  /** Conservative input estimate (chars/3, not a tokenizer count). */
+  estimatedInputTokens?: number
 }
 
 /**

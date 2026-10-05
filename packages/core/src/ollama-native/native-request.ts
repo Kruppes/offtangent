@@ -27,6 +27,9 @@ import type { Api, AssistantMessage, AssistantMessageEvent, AssistantMessageEven
 import { CONTEXT_GUARD_MARKER, estimateRequest, getObservedContextLimit } from '../request-overflow-guard.js'
 import { decideNumCtx, isValidNumCtx, type ContextWindowChoice, type NumCtxDecision, type OllamaModelFacts } from './context-window.js'
 import { getOllamaShowFacts } from './show-facts.js'
+import { randomUUID } from 'node:crypto'
+import { emitProviderPhase } from '../provider-phase.js'
+import { formatNativeRequestDiagnostics, summarizeNativeRequest } from './request-diagnostics.js'
 
 type AnyModel = Model<Api>
 type Inner = (model: AnyModel, context: Context, options?: SimpleStreamOptions) => AssistantMessageEventStream
@@ -42,7 +45,23 @@ export interface NativeRequestInput {
   loadFacts?: (model: AnyModel) => Promise<OllamaModelFacts>
   /** Observer for tests/diagnostics: the single decision of this request. */
   onDecision?: (d: NumCtxDecision & { window: number | undefined }) => void
+  /**
+   * Session (strand / task session) this request belongs to. Used only to
+   * route first-token phases to that session's turn watchdog
+   * (provider-phase.ts) and as a correlation field in the diagnostics line.
+   */
+  sessionId?: string
+  /** Diagnostics sink for tests; production logs to the console. */
+  log?: (line: string) => void
 }
+
+/**
+ * Events that prove the model is producing output (thinking counts). `done` /
+ * `error` end the wait through `request_end` instead.
+ */
+const OUTPUT_EVENTS: ReadonlySet<string> = new Set([
+  'text_start', 'text_delta', 'thinking_start', 'thinking_delta', 'toolcall_start', 'toolcall_delta', 'toolcall_end',
+])
 
 /** Learned-limit identity for native: provider/model/baseUrl plus the num_ctx dimension. */
 export function nativeLimitIdentity(model: { provider?: unknown; id?: unknown; baseUrl?: unknown }, numCtx: number | undefined): { provider?: unknown; id?: unknown; baseUrl: string } {
@@ -110,8 +129,41 @@ export function streamNativeOllama(inner: Inner, model: AnyModel, context: Conte
       if (isValidNumCtx(input.modelNumCtx)) facts.modelNumCtx = input.modelNumCtx
       const decided = decideNativeRequest(model, context, options, choice, facts)
       input.onDecision?.({ ...decided.decision, window: decided.window })
-      const src = decided.kind === 'refuse' ? failStream(model, decided.message) : inner(model, context, decided.options)
-      for await (const ev of src) out.push(ev)
+      if (decided.kind === 'refuse') {
+        for await (const ev of failStream(model, decided.message)) out.push(ev)
+        out.end()
+        return
+      }
+      const requestId = randomUUID().slice(0, 8)
+      const estimatedInputTokens = estimateRequest(context).conservative
+      const log = input.log ?? ((line: string) => console.log(line))
+      try {
+        log(formatNativeRequestDiagnostics({
+          requestId, sessionId: input.sessionId, provider: model.provider, model: model.id,
+          numCtx: decided.decision.numCtx, numCtxState: decided.decision.state,
+          think: (decided.options as { reasoning?: unknown } | undefined)?.reasoning,
+          estimatedInputTokens, diag: summarizeNativeRequest(context),
+        }))
+      } catch { /* diagnostics never break a request */ }
+      const sentAt = Date.now()
+      let firstAt: number | undefined
+      emitProviderPhase(input.sessionId, { phase: 'awaiting_first_token', requestId, estimatedInputTokens })
+      try {
+        for await (const ev of inner(model, context, decided.options)) {
+          if (firstAt === undefined && OUTPUT_EVENTS.has(ev.type)) {
+            firstAt = Date.now()
+            emitProviderPhase(input.sessionId, { phase: 'first_token', requestId, elapsedMs: firstAt - sentAt })
+          }
+          if (ev.type === 'done' || ev.type === 'error') {
+            const msg = (ev.type === 'done' ? ev.message : ev.error) as { usage?: { input?: number; output?: number; cacheRead?: number }; stopReason?: string }
+            log(`[native-diag] req=${requestId} end=${ev.type} reason=${msg?.stopReason ?? '-'} first_output_ms=${firstAt === undefined ? '-' : firstAt - sentAt} `
+              + `total_ms=${Date.now() - sentAt} prompt_tokens=${msg?.usage?.input ?? '-'} output_tokens=${msg?.usage?.output ?? '-'}`)
+          }
+          out.push(ev)
+        }
+      } finally {
+        emitProviderPhase(input.sessionId, { phase: 'request_end', requestId })
+      }
       out.end()
     } catch (err) {
       const text = err instanceof Error ? err.message : String(err)

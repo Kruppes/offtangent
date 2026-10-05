@@ -762,6 +762,7 @@ export function buildStreamFn(
         providerNumCtx: provider.ollamaNumCtx,
         modelNumCtx: provider.models?.find(m => m.id === model.id)?.ollamaNumCtx,
         loadFacts: cache?.loadOllamaFacts as never,
+        sessionId: cache?.getSessionId?.(),
       }) as ReturnType<typeof streamSimple>
     }
     return guarded(model, cleanContext, withCache)

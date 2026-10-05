@@ -38,6 +38,9 @@ export function isStrandEcoEnabled(db: Database, sessionId: string | null | unde
 /** Returns false when the strand row does not exist. */
 export function setStrandEcoEnabled(db: Database, sessionId: string, enabled: boolean): boolean {
   const res = db.prepare('UPDATE sessions SET eco_mode = ? WHERE id = ?').run(enabled ? 1 : 0, sessionId)
+  // Observability (plan 2026-10-05-native-ollama-prefill-fix): the toggle
+  // moment was missing when the Qwen incident was analysed. Ids only.
+  console.log(`[eco] toggle session=${sessionId} eco=${enabled ? 'on' : 'off'} at=${new Date().toISOString()} applied=${res.changes > 0}`)
   return res.changes > 0
 }
 

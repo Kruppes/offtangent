@@ -25,6 +25,7 @@ import {
   loadStallThresholds,
 } from './provider-stall.js'
 import type { StallThresholds } from './provider-stall.js'
+import { nativeFirstTokenBudgetMs, subscribeProviderPhase } from './provider-phase.js'
 import type { ModelSelection } from './model-resolution.js'
 import {
   formatAuthRetryContent,
@@ -922,8 +923,11 @@ export class TurnRunner {
       this.db, turn.sessionId, turn.userId, turn.agentId, this.onAssistantMessage,
     )
     const agentUserId = turn.key
-    const stall: { error: string | null } = { error: null }
-    const watchdog = this.startStallWatchdog(turn, agent, thresholds, (error) => { stall.error = error })
+    const stall: { error: string | null; retryable: boolean } = { error: null, retryable: true }
+    const watchdog = this.startStallWatchdog(turn, agent, thresholds, (error, retryable = true) => {
+      stall.error = error
+      stall.retryable = retryable
+    })
     let failure: { error: string; retryable: boolean } | null = null
 
     try {
@@ -993,8 +997,10 @@ export class TurnRunner {
     }
 
     // A watchdog kill outranks whatever the stream reported on its way out: it
-    // is the reason the attempt died, and it is always retryable.
-    if (stall.error) failure = { error: stall.error, retryable: true }
+    // is the reason the attempt died. A mid-stream stall is retryable; an
+    // exceeded native first-token budget is not (an automatic retry would put
+    // the same long prefill straight back into the same local runner queue).
+    if (stall.error) failure = { error: stall.error, retryable: stall.retryable }
 
     // A user abort ends the turn even if the watchdog fired first: only the
     // watchdog's own kill counts as a retryable failure.
@@ -1167,10 +1173,45 @@ export class TurnRunner {
     turn: TurnState,
     agent: TurnAgentLike,
     thresholds: StallThresholds,
-    onAbort: (error: string) => void,
+    onAbort: (error: string, retryable?: boolean) => void,
   ) {
     let lastActivityAt = Date.now()
-    let active: { startedAt: number; messageId: number | null } | null = null
+    let active: { startedAt: number; messageId: number | null; firstToken: FirstTokenWait | null } | null = null
+    /**
+     * Set while a native local Ollama request of this session waits for its
+     * first output (prompt prefill / runner queue). Only the native stream
+     * wrapper emits it, so for every other provider this stays null and the
+     * watchdog behaves exactly as before.
+     */
+    let firstToken: FirstTokenWait | null = null
+    const unsubscribePhase = subscribeProviderPhase(turn.sessionId, (event) => {
+      const now = Date.now()
+      if (event.phase === 'awaiting_first_token') {
+        // Dispatching the request is activity; from here the budget applies.
+        closeStall(now, 'recovered')
+        lastActivityAt = now
+        firstToken = {
+          requestId: event.requestId,
+          estimatedInputTokens: event.estimatedInputTokens,
+          budgetMs: nativeFirstTokenBudgetMs(event.estimatedInputTokens, thresholds.abortMs),
+        }
+        console.log(
+          `[turn-runner] native first-token wait req=${event.requestId} session=${turn.sessionId} `
+          + `est_input_tokens=${event.estimatedInputTokens} budget_ms=${firstToken.budgetMs} `
+          + `(regular abort ${thresholds.abortMs}ms)`,
+        )
+        return
+      }
+      if (firstToken?.requestId !== event.requestId) return
+      if (event.phase === 'first_token') {
+        console.log(`[turn-runner] native first token req=${event.requestId} session=${turn.sessionId} after_ms=${event.elapsedMs}`)
+      }
+      // First output or end of request: back to the regular stall budget,
+      // which keeps a hang AFTER the first token bounded as before.
+      closeStall(now, 'recovered')
+      lastActivityAt = now
+      firstToken = null
+    })
     /**
      * Off while the turn only waits for the process-wide queue lock: there is
      * no provider connection yet, so silence is not a stall. Armed by default
@@ -1196,15 +1237,20 @@ export class TurnRunner {
       }
     }
 
+    const firstTokenFields = (wait: FirstTokenWait | null): Partial<StallInfo> => wait
+      ? { phase: 'first_token', budgetMs: wait.budgetMs, estimatedInputTokens: wait.estimatedInputTokens }
+      : {}
+
     const openStall = (now: number): void => {
       if (active) return
       const startedAt = lastActivityAt
       const stall: StallInfo = {
         startedAt: new Date(startedAt).toISOString(),
         durationMs: now - startedAt,
+        ...firstTokenFields(firstToken),
       }
       const messageId = persistStall(stall)
-      active = { startedAt, messageId }
+      active = { startedAt, messageId, firstToken }
       console.warn(
         `[turn-runner] Provider slow: ${stall.durationMs}ms idle (user=${turn.userId}, `
         + `session=${turn.sessionId}).`,
@@ -1220,7 +1266,7 @@ export class TurnRunner {
 
     const closeStall = (now: number, outcome: StallOutcome): void => {
       if (!active) return
-      const { startedAt, messageId } = active
+      const { startedAt, messageId, firstToken: wait } = active
       active = null
 
       const stall: StallInfo = {
@@ -1229,6 +1275,7 @@ export class TurnRunner {
         resolvedAt: new Date(now).toISOString(),
         durationMs: now - startedAt,
         outcome,
+        ...firstTokenFields(wait),
       }
 
       if (messageId !== null && db) {
@@ -1256,8 +1303,28 @@ export class TurnRunner {
       if (this.isAttemptAborted(turn)) return
       const now = Date.now()
       const idleMs = now - lastActivityAt
+      const wait = firstToken
 
-      if (idleMs >= thresholds.abortMs) {
+      if (wait && idleMs >= wait.budgetMs) {
+        console.error(
+          `[turn-runner] Native first-token budget exceeded req=${wait.requestId} idle_ms=${idleMs} `
+          + `budget_ms=${wait.budgetMs} est_input_tokens=${wait.estimatedInputTokens} `
+          + `(user=${turn.userId}, session=${turn.sessionId}). Aborting request, no auto-retry.`,
+        )
+        openStall(now)
+        closeStall(now, 'aborted')
+        onAbort(
+          `Local model produced no output within its first-token budget of ${Math.round(wait.budgetMs / 1000)}s `
+          + `(~${wait.estimatedInputTokens} input tokens estimated; the prompt may still be processing or the local runner is busy). `
+          + `Request aborted and not retried automatically — retry manually, shorten the conversation or start a new strand.`,
+          false,
+        )
+        turn.attemptController.abort()
+        agent.abort({ sessionId: turn.sessionId, agentId: turn.agentId })
+        return
+      }
+
+      if (!wait && idleMs >= thresholds.abortMs) {
         console.error(
           `[turn-runner] Provider stalled ${idleMs}ms (user=${turn.userId}, `
           + `session=${turn.sessionId}). Aborting stream.`,
@@ -1306,10 +1373,18 @@ export class TurnRunner {
        */
       stop: () => {
         clearInterval(timer)
+        unsubscribePhase()
         closeStall(Date.now(), 'aborted')
       },
     }
   }
+}
+
+/** A native local request waiting for its first output (see provider-phase.ts). */
+interface FirstTokenWait {
+  requestId: string
+  estimatedInputTokens: number
+  budgetMs: number
 }
 
 /**
