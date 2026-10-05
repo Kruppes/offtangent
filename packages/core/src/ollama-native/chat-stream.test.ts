@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import { normalizeContext, Type } from '@earendil-works/pi-ai'
 import type { AssistantMessageEvent, Context, Model, Tool } from '@earendil-works/pi-ai'
-import { buildOllamaChatBody, OLLAMA_CHAT_API, streamOllamaChat } from './chat-stream.js'
+import { buildOllamaChatBody, buildOllamaHeaders, OLLAMA_CHAT_API, resolveThink, streamOllamaChat } from './chat-stream.js'
 
 /* Synthetic fixtures only: no real model, no network. */
 
@@ -81,7 +81,8 @@ describe('buildOllamaChatBody', () => {
     expect(body.tools?.[0]?.function.name).toBe('get_weather')
     expect(body.tools?.[0]?.type).toBe('function')
     expect('options' in body).toBe(false)
-    expect('think' in body).toBe(false)
+    // Reasoning model with reasoning OFF: explicit false (steer: a chosen OFF must stay off).
+    expect(body.think).toBe(false)
   })
 
   it('sends options.num_ctx exactly when given, and num_predict from maxTokens', () => {
@@ -239,5 +240,101 @@ describe('streamOllamaChat', () => {
     const b = fakeFetch([done()])
     await collect(streamOllamaChat(model, ctx(), { fetch: b.fetchFn, ollamaNumCtx: 49152 }))
     expect((b.calls[0]?.body as { options: { num_ctx: number } }).options.num_ctx).toBe(49152)
+  })
+})
+
+describe('M1 review fixes (S1 body cancel, S2 duplicate ids, S3 single Authorization, think)', () => {
+  function heldOpen(chunks: string[]) {
+    const state = { cancelled: false, cancelReason: undefined as unknown }
+    const enc = new TextEncoder()
+    const fetchFn = (async () => new Response(new ReadableStream<Uint8Array>({
+      start(controller) { for (const c of chunks) controller.enqueue(enc.encode(c)) /* never closed */ },
+      cancel(reason) { state.cancelled = true; state.cancelReason = reason },
+    }), { status: 200 })) as unknown as typeof fetch
+    return { fetchFn, state }
+  }
+
+  for (const [label, tail] of [['malformed line', '{bad\n'], ['mid-stream error', line({ error: 'boom' })]] as const) {
+    it(`cancels the held-open body on ${label}, one terminal error event`, async () => {
+      const { fetchFn, state } = heldOpen([msg('ab'), tail])
+      const events = await collect(streamOllamaChat(model, ctx(), { fetch: fetchFn }))
+      expect(events.filter(e => e.type === 'error' || e.type === 'done')).toHaveLength(1)
+      expect(events.at(-1)?.type).toBe('error')
+      await new Promise(r => setTimeout(r, 0))
+      expect(state.cancelled).toBe(true)
+    })
+  }
+
+  it('stops reading at done:true even when the server keeps the body open (no hang)', async () => {
+    const { fetchFn, state } = heldOpen([msg('ok'), done()])
+    const events = await collect(streamOllamaChat(model, ctx(), { fetch: fetchFn }))
+    expect(events.at(-1)?.type).toBe('done')
+    expect(events.filter(e => e.type === 'error' || e.type === 'done')).toHaveLength(1)
+    await new Promise(r => setTimeout(r, 0))
+    expect(state.cancelled).toBe(true)
+  })
+
+  it('a throwing cancel neither replaces the original error nor adds events', async () => {
+    const enc = new TextEncoder()
+    const fetchFn = (async () => new Response(new ReadableStream<Uint8Array>({
+      start(controller) { controller.enqueue(enc.encode(msg('x') + '{bad\n')) },
+      cancel() { throw new Error('cancel exploded') },
+    }), { status: 200 })) as unknown as typeof fetch
+    const events = await collect(streamOllamaChat(model, ctx(), { fetch: fetchFn }))
+    const last = events.at(-1) as Extract<AssistantMessageEvent, { type: 'error' }>
+    expect(last.type).toBe('error')
+    expect(last.error.errorMessage).toContain('malformed line')
+    expect(events.filter(e => e.type === 'error' || e.type === 'done')).toHaveLength(1)
+  })
+
+  it('makes duplicate server tool-call ids unique without dropping a call', async () => {
+    const call = (city: string) => ({ id: 'call_x', function: { name: 'get_weather', arguments: { city } } })
+    const { fetchFn } = fakeFetch([msg('', { tool_calls: [call('A')] }), msg('', { tool_calls: [call('B')] }), done()])
+    const events = await collect(streamOllamaChat(model, ctx(), { fetch: fetchFn }))
+    const last = events.at(-1) as Extract<AssistantMessageEvent, { type: 'done' }>
+    const calls = last.message.content.filter(c => c.type === 'toolCall') as unknown as Array<{ id: string; arguments: { city: string } }>
+    expect(calls.map(c => c.arguments.city)).toEqual(['A', 'B'])
+    expect(calls[0]!.id).toBe('call_x')
+    expect(calls[1]!.id).not.toBe('call_x')
+    expect(new Set(calls.map(c => c.id)).size).toBe(2)
+  })
+
+  it('sends exactly one Authorization header; a real key wins case-insensitively; no-key sends none', () => {
+    const h = buildOllamaHeaders({ Authorization: 'Bearer model-static', 'X-A': '1' }, { AUTHORIZATION: 'Bearer opt' }, 'synthetic-key')
+    expect(Object.keys(h).filter(k => k.toLowerCase() === 'authorization')).toEqual(['authorization'])
+    expect(h.authorization).toBe('Bearer synthetic-key')
+    expect(h['x-a']).toBe('1')
+    const keyless = buildOllamaHeaders({ Authorization: 'Bearer model-static' }, undefined, 'no-key')
+    expect(keyless.authorization).toBe('Bearer model-static')
+    expect('authorization' in buildOllamaHeaders(undefined, undefined, 'no-key')).toBe(false)
+  })
+
+  it('the HTTP request carries a single combined-free authorization value', async () => {
+    let seen: Headers | undefined
+    const fetchFn = (async (_u: string, req?: RequestInit) => { seen = new Headers(req?.headers); return new Response(msg('k') + done(), { status: 200 }) }) as unknown as typeof fetch
+    const m = { ...model, headers: { Authorization: 'Bearer model-static' } } as Model<string>
+    await collect(streamOllamaChat(m, ctx(), { fetch: fetchFn, apiKey: 'synthetic-key' }))
+    expect(seen?.get('authorization')).toBe('Bearer synthetic-key')
+  })
+
+  it('think: explicit false for reasoning OFF, true for on, omitted for non-reasoning, gpt-oss string efforts', () => {
+    const r = { id: 'qwen3:8b', reasoning: true }
+    expect(resolveThink(r, undefined)).toBe(false)
+    expect(resolveThink(r, 'off')).toBe(false)
+    expect(resolveThink(r, 'low')).toBe(true)
+    expect(resolveThink({ id: 'llama3:8b', reasoning: false }, 'high')).toBeUndefined()
+    const g = { id: 'gpt-oss:20b', reasoning: true }
+    expect(resolveThink(g, 'minimal')).toBe('low')
+    expect(resolveThink(g, 'medium')).toBe('medium')
+    expect(resolveThink(g, 'xhigh')).toBe('high')
+    expect(resolveThink(g, undefined)).toBeUndefined()
+    expect(buildOllamaChatBody(model, ctx(), {}).think).toBe(false)
+  })
+
+  it('thinking output stays visible even when reasoning was requested OFF', async () => {
+    const { fetchFn } = fakeFetch([msg('', { thinking: 'still thinking' }), msg('A'), done()])
+    const events = await collect(streamOllamaChat(model, ctx(), { fetch: fetchFn }))
+    const last = events.at(-1) as Extract<AssistantMessageEvent, { type: 'done' }>
+    expect(last.message.content).toEqual([{ type: 'thinking', thinking: 'still thinking' }, { type: 'text', text: 'A' }])
   })
 })

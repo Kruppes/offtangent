@@ -62,7 +62,7 @@ export interface OllamaChatBody {
   model: string
   messages: OllamaMessage[]
   tools?: Array<{ type: 'function'; function: { name: string; description: string; parameters: unknown } }>
-  think?: boolean
+  think?: boolean | 'low' | 'medium' | 'high'
   options?: { num_ctx?: number; num_predict?: number; temperature?: number }
   stream: true
 }
@@ -81,6 +81,44 @@ function convertTool(tool: Tool) {
     // JSON round-trip drops TypeBox symbol keys; schema stays logically identical.
     function: { name: tool.name, description: tool.description, parameters: JSON.parse(JSON.stringify(tool.parameters)) as unknown },
   }
+}
+
+/**
+ * `think` (M1 review N1 + orchestrator steer): non-reasoning models never get
+ * the field. Reasoning models get an explicit boolean so a deliberately chosen
+ * OFF stays off (Qwen3 & co. think by default when the field is absent):
+ * level set → `true`, off/undefined → `false`. Only the gpt-oss family takes
+ * the documented string efforts low|medium|high (minimal→low, xhigh→high);
+ * gpt-oss cannot switch thinking off, so OFF omits the field there instead of
+ * sending a value the model ignores.
+ */
+export function resolveThink(model: { id: string; reasoning?: boolean }, reasoning: string | undefined): OllamaChatBody['think'] | undefined {
+  if (!model.reasoning) return undefined
+  const on = typeof reasoning === 'string' && reasoning.length > 0 && reasoning !== 'off'
+  if (/^gpt-oss(?:[:-]|$)/i.test(model.id)) {
+    if (!on) return undefined
+    return reasoning === 'minimal' || reasoning === 'low' ? 'low' : reasoning === 'medium' ? 'medium' : 'high'
+  }
+  return on
+}
+
+/**
+ * One canonical header set (M1 review S3): keys lower-cased, later sources win
+ * case-insensitively — content-type < model.headers < options.headers < API
+ * key. A real API key (not the keyless `'no-key'` placeholder) therefore
+ * replaces any static Authorization header; exactly one `authorization` is sent.
+ */
+export function buildOllamaHeaders(modelHeaders: Record<string, string | null | undefined> | undefined, optionHeaders: Record<string, string | null | undefined> | undefined, apiKey: string | undefined): Record<string, string> {
+  const headers: Record<string, string> = { 'content-type': 'application/json' }
+  for (const src of [modelHeaders, optionHeaders]) {
+    if (!src) continue
+    for (const [k, v] of Object.entries(src)) {
+      if (typeof v === 'string') headers[k.toLowerCase()] = v
+      else if (v === null) delete headers[k.toLowerCase()]
+    }
+  }
+  if (apiKey && apiKey !== 'no-key') headers.authorization = `Bearer ${apiKey}`
+  return headers
 }
 
 export function buildOllamaChatBody(model: Model<string>, context: TranscriptContext, options: OllamaChatOptions): OllamaChatBody {
@@ -115,7 +153,8 @@ export function buildOllamaChatBody(model: Model<string>, context: TranscriptCon
   }
   const body: OllamaChatBody = { model: model.id, messages, stream: true }
   if (tools.length > 0) body.tools = tools.map(convertTool)
-  if (model.reasoning && options.reasoning) body.think = true
+  const think = resolveThink(model, options.reasoning)
+  if (think !== undefined) body.think = think
   const opts: NonNullable<OllamaChatBody['options']> = {}
   if (options.ollamaNumCtx !== undefined) {
     if (!isValidNumCtx(options.ollamaNumCtx)) throw new Error(`invalid num_ctx ${String(options.ollamaNumCtx)}`)
@@ -155,6 +194,8 @@ export function streamOllamaChat(model: Model<string>, context: TranscriptContex
   return stream
 
   async function run(): Promise<void> {
+    let reader: ReadableStreamDefaultReader<Uint8Array> | undefined
+    let drained = false
     let open: { kind: 'text' | 'thinking'; index: number } | undefined
     const closeOpen = () => {
       if (!open) return
@@ -178,6 +219,7 @@ export function streamOllamaChat(model: Model<string>, context: TranscriptContex
     }
     const callPrefix = `ollama_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 8)}`
     let callCount = 0
+    const seenIds = new Set<string>()
     const addToolCalls = (calls: OllamaToolCall[]) => {
       closeOpen()
       for (const call of calls) {
@@ -192,8 +234,9 @@ export function streamOllamaChat(model: Model<string>, context: TranscriptContex
           }
         }
         if (!args || typeof args !== 'object' || Array.isArray(args)) throw new StreamFailure(`Ollama returned non-object arguments for tool call "${name}"`)
-        const toolCall: ToolCall = { type: 'toolCall', id: typeof call.id === 'string' && call.id ? call.id : `${callPrefix}_${callCount}`, name, arguments: args as JsonObject }
+        const toolCall: ToolCall = { type: 'toolCall', id: typeof call.id === 'string' && call.id && !seenIds.has(call.id) ? call.id : `${callPrefix}_${callCount}`, name, arguments: args as JsonObject }
         callCount += 1
+        seenIds.add(toolCall.id)
         output.content.push(toolCall)
         const index = output.content.length - 1
         stream.push({ type: 'toolcall_start', contentIndex: index, partial: output })
@@ -209,9 +252,8 @@ export function streamOllamaChat(model: Model<string>, context: TranscriptContex
         if (replaced !== undefined) body = replaced
       }
       const fetchFn = options.fetch ?? fetch
-      const headers: Record<string, string> = { 'content-type': 'application/json', ...(model.headers ?? {}), ...(options.headers ?? {}) }
+      const headers = buildOllamaHeaders(model.headers, options.headers, options.apiKey)
       // 'no-key' is Offtangent's dummy for keyless providers; never forward it.
-      if (options.apiKey && options.apiKey !== 'no-key') headers.authorization = `Bearer ${options.apiKey}`
       const response = await (fetchFn as typeof fetch)(chatUrl(model.baseUrl), { method: 'POST', headers, body: JSON.stringify(body), signal: options.signal })
       if (!response.ok) {
         const text = await response.text().catch(() => '')
@@ -225,7 +267,7 @@ export function streamOllamaChat(model: Model<string>, context: TranscriptContex
       if (!response.body) throw new StreamFailure('Ollama response has no body')
       stream.push({ type: 'start', partial: output })
 
-      const reader = response.body.getReader()
+      reader = response.body.getReader()
       const decoder = new TextDecoder('utf-8')
       let buffer = ''
       let finished = false
@@ -261,19 +303,24 @@ export function streamOllamaChat(model: Model<string>, context: TranscriptContex
           output.stopReason = chunk.done_reason === 'length' ? 'length' : hasCalls ? 'toolUse' : 'stop'
         }
       }
-      for (;;) {
+      // Stop reading at `done:true` (M1 review S1): a server that keeps the
+      // body open afterwards must not hang the consumer.
+      read: for (;;) {
         const { value, done } = await reader.read()
-        if (done) break
+        if (done) { drained = true; break }
         buffer += decoder.decode(value, { stream: true })
         let nl = buffer.indexOf('\n')
         while (nl >= 0) {
           handleLine(buffer.slice(0, nl))
           buffer = buffer.slice(nl + 1)
+          if (finished) break read
           nl = buffer.indexOf('\n')
         }
       }
-      buffer += decoder.decode()
-      handleLine(buffer)
+      if (!finished) {
+        buffer += decoder.decode()
+        handleLine(buffer)
+      }
       if (!finished) throw new StreamFailure('Ollama stream ended before done:true (truncated response)')
       closeOpen()
       const reason = output.stopReason as 'stop' | 'length' | 'toolUse'
@@ -286,6 +333,15 @@ export function streamOllamaChat(model: Model<string>, context: TranscriptContex
       output.errorMessage = aborted ? 'Request aborted' : err instanceof Error ? err.message : String(err)
       stream.push({ type: 'error', reason: aborted ? 'aborted' : 'error', error: output })
       stream.end(output)
+    } finally {
+      // Release the HTTP body whenever it was not read to its end (error,
+      // malformed line, abort, early break after done:true) so the connection
+      // and the server-side generation do not stay alive (M1 review S1).
+      // Fire-and-forget: a throwing or hanging cancel can neither replace the
+      // original error nor emit a second terminal event.
+      if (reader && !drained) {
+        try { void reader.cancel().catch(() => undefined) } catch { /* ignore */ }
+      }
     }
   }
 }
