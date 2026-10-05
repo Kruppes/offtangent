@@ -1390,6 +1390,11 @@
     "triggerModelDefaultTooltip": "Standard-Provider und -Modell aus den Task-Einstellungen.",
     "triggerModelThinking": "{value} · Thinking {level}",
     "routingTooltip": "Profil {profile}, Thinking {thinking}: {reason}",
+    "cachedInput": {
+      "label": "Gecachter Input {rate}",
+      "detail": "Cache {rate} · {read} gelesen · {write} geschrieben",
+      "formula": "Gecachter Input = Cache gelesen ÷ (Input + Cache gelesen + Cache geschrieben), nur der eigene Lauf dieses Tasks. Cache-Schreibvorgänge zählen als Input, nie als Treffer. Ein Strich heißt: keine Nutzung erfasst."
+    },
     "tokensTooltip": {
       "input": "Input",
       "output": "Output",

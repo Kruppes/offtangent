@@ -254,8 +254,9 @@
                       <div class="flex flex-col items-end">
                         <span>{{ formatNumber(task.promptTokens + task.completionTokens) }}</span>
                         <span
-                          v-if="hasCacheTokens(task)"
                           class="text-xs text-muted-foreground"
+                          data-testid="task-cache-rate"
+                          :aria-label="$t('tasks.cachedInput.label', { rate: formatCachePercent(cachedInputPercent(task)) })"
                         >
                           {{ cacheSummary(task) }}
                         </span>
@@ -271,11 +272,10 @@
                         <span class="text-right">{{ formatNumber(task.cacheRead) }}</span>
                         <span>{{ $t('tasks.tokensTooltip.cacheWrite') }}</span>
                         <span class="text-right">{{ formatNumber(task.cacheWrite) }}</span>
-                        <template v-if="cacheHitRate(task) !== null">
-                          <span class="col-span-2 my-1 border-t border-background" />
-                          <span>{{ $t('tasks.tokensTooltip.cacheHitRate') }}</span>
-                          <span class="text-right">{{ cacheHitRate(task)!.toFixed(1) }}%</span>
-                        </template>
+                        <span class="col-span-2 my-1 border-t border-background" />
+                        <span>{{ $t('tasks.tokensTooltip.cacheHitRate') }}</span>
+                        <span class="text-right" data-testid="task-cache-rate-tooltip">{{ formatCachePercent(cachedInputPercent(task)) }}</span>
+                        <span class="col-span-2 max-w-64 text-2xs opacity-80">{{ $t('tasks.cachedInput.formula') }}</span>
                       </div>
                     </TooltipContent>
                   </Tooltip>
@@ -380,12 +380,12 @@ import type { Task } from '~/api/tasks'
 import TaskFilterFields from '~/features/tasks/components/TaskFilterFields.vue'
 import TaskListCard from '~/features/tasks/components/TaskListCard.vue'
 import {
-  cacheHitRate,
+  cachedInputPercent,
+  formatCachePercent,
   cacheSummary,
   formatTaskDuration,
   formatTaskTriggerModel,
   formatTaskRoutingTooltip,
-  hasCacheTokens,
   taskDisplayStatus,
   taskStatusVariant,
 } from '~/features/tasks/utils/taskFormat'

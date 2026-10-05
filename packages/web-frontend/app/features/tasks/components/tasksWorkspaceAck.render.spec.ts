@@ -103,3 +103,21 @@ describe('Global task list: acknowledge finished tasks', () => {
     expect(all(root).some(n => n.props.role === 'status' && text(n).includes('dismissConflict'))).toBe(true)
   })
 })
+
+describe('Global task list: cached-input share next to the tokens', () => {
+  it('shows the real share, a real 0 % and a dash for unknown, never a fake 0', async () => {
+    list = [
+      // 50 of 1000 input tokens from the cache (pi-ai: promptTokens excludes cache read/write)
+      task('five', { promptTokens: 900, cacheRead: 50, cacheWrite: 50, completionTokens: 40000 }),
+      task('zero', { promptTokens: 1200, cacheRead: 0, cacheWrite: 0 }),
+      task('none', { promptTokens: 0, cacheRead: 0, cacheWrite: 0 }),
+    ]
+    const root = mountNode(Workspace, {}, stubs)
+    await flush()
+    const cells = byTestId(root, 'task-cache-rate').map(node => text(node).trim())
+    expect(cells).toEqual(['CH 5.0%', 'CH 0.0%', 'CH —'])
+    // the tooltip repeats the share below the existing cache-read/-write token rows
+    const tooltip = byTestId(root, 'task-cache-rate-tooltip').map(node => text(node).trim())
+    expect(tooltip).toEqual(['5.0%', '0.0%', '—'])
+  })
+})

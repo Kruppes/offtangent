@@ -78,6 +78,7 @@
     <div v-if="taskInfo" class="flex flex-wrap gap-x-4 gap-y-1 border-b border-border px-5 py-2 text-xs tabular-nums text-muted-foreground">
       <span>{{ [taskInfo.provider, taskInfo.model].filter(Boolean).join(' · ') }}</span>
       <span :title="$t('tasks.columns.tokens')">↑ {{ taskInfo.promptTokens ?? 0 }} · ↓ {{ taskInfo.completionTokens ?? 0 }}</span>
+      <span :title="$t('tasks.cachedInput.formula')" data-testid="task-cache-rate">{{ $t('tasks.cachedInput.detail', { rate: formatCachePercent(cachedInputPercent(taskInfo)), read: taskInfo.cacheRead ?? '—', write: taskInfo.cacheWrite ?? '—' }) }}</span>
       <span :title="$t('tasks.columns.cost')">${{ (taskInfo.estimatedCost ?? 0).toFixed(4) }}</span>
     </div>
 
@@ -346,7 +347,7 @@ import { useTasksApi } from '~/api/tasks'
 import TaskControls from './TaskControls.vue'
 import { formatToolName, getToolCallSummary } from '~/utils/toolNameFormat'
 import { useProviders } from '~/composables/useProviders'
-import { taskStatusVariant } from '~/features/tasks/utils/taskFormat'
+import { cachedInputPercent, formatCachePercent, taskStatusVariant } from '~/features/tasks/utils/taskFormat'
 
 const props = defineProps<{
   taskId: string

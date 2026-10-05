@@ -55,7 +55,7 @@
         </dt>
         <dd class="truncate tabular-nums text-foreground">
           {{ cell.value }}
-          <span v-if="cell.hint" class="text-muted-foreground">{{ cell.hint }}</span>
+          <span v-if="cell.hint" class="text-muted-foreground" :title="cell.title">{{ cell.hint }}</span>
         </dd>
       </div>
     </dl>
@@ -69,7 +69,6 @@ import {
   formatTaskDuration,
   formatTaskTriggerModel,
   formatTaskRoutingTooltip,
-  hasCacheTokens,
   taskDisplayStatus,
   taskStatusVariant,
 } from '~/features/tasks/utils/taskFormat'
@@ -109,7 +108,8 @@ const statCells = computed(() => [
   {
     label: t('tasks.columns.tokens'),
     value: `↑ ${formatNumber(props.task.promptTokens)} · ↓ ${formatNumber(props.task.completionTokens)}`,
-    hint: hasCacheTokens(props.task) ? `(${cacheSummary(props.task)})` : undefined,
+    hint: `(${cacheSummary(props.task)})`,
+    title: t('tasks.cachedInput.formula'),
   },
   { label: t('tasks.columns.cost'), value: formatCurrency(props.task.estimatedCost) },
   { label: t('tasks.columns.created'), value: formatTimestamp(props.task.createdAt) },

@@ -61,16 +61,56 @@ export function hasCacheTokens(task: Pick<Task, 'cacheRead' | 'cacheWrite'>): bo
   return task.cacheRead > 0 || task.cacheWrite > 0
 }
 
-export function cacheHitRate(task: Pick<Task, 'promptTokens' | 'cacheRead' | 'cacheWrite'>): number | null {
-  const denominator = task.promptTokens + task.cacheRead + task.cacheWrite
-  if (denominator <= 0) return null
-  return (task.cacheRead / denominator) * 100
+type CacheUsage = {
+  promptTokens?: number | null
+  cacheRead?: number | null
+  cacheWrite?: number | null
 }
 
-export function cacheSummary(task: Pick<Task, 'promptTokens' | 'cacheRead' | 'cacheWrite'>): string {
-  const rate = cacheHitRate(task)
-  if (rate === null) return ''
-  return `CH ${rate.toFixed(1)}%`
+function usageCount(value: number | null | undefined): number | null {
+  return typeof value === 'number' && Number.isFinite(value) && value >= 0 ? value : null
+}
+
+/**
+ * Share of the input tokens that was served from the provider's prompt cache,
+ * in percent (0..100), or null when it is unknown.
+ *
+ *   cacheRead / (promptTokens + cacheRead + cacheWrite) * 100
+ *
+ * pi-ai normalizes every provider's usage so that `input` (stored as
+ * `promptTokens`) EXCLUDES cached reads and cache writes (OpenAI subtracts
+ * `cached_tokens`, Anthropic reports `cache_read_input_tokens` /
+ * `cache_creation_input_tokens` separately). The full input of the requests
+ * is therefore the sum of all three. Cache writes are input, but never a hit.
+ * Output tokens are not part of the denominator. Numerator and denominator
+ * always come from the same usage record, so the scope (one task's own run)
+ * is identical.
+ *
+ * Null (rendered as a dash, never as 0 %) when a field is missing, negative or
+ * not finite, or when no input was recorded at all.
+ */
+export function cachedInputPercent(usage: CacheUsage): number | null {
+  const prompt = usageCount(usage.promptTokens)
+  const read = usageCount(usage.cacheRead)
+  const write = usageCount(usage.cacheWrite)
+  if (prompt === null || read === null || write === null) return null
+  const denominator = prompt + read + write
+  if (denominator <= 0) return null
+  return Math.min(100, (read / denominator) * 100)
+}
+
+/** Kept for existing callers: same formula as `cachedInputPercent`. */
+export function cacheHitRate(task: Pick<Task, 'promptTokens' | 'cacheRead' | 'cacheWrite'>): number | null {
+  return cachedInputPercent(task)
+}
+
+/** "5.0%" or "—" when the rate is unknown. */
+export function formatCachePercent(rate: number | null): string {
+  return rate === null ? '—' : `${rate.toFixed(1)}%`
+}
+
+export function cacheSummary(task: CacheUsage): string {
+  return `CH ${formatCachePercent(cachedInputPercent(task))}`
 }
 
 export function formatTaskTriggerModel(
