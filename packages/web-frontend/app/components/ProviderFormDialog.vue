@@ -60,7 +60,7 @@
             :placeholder="isOpenAiCompatibleProvider ? openAiCompatibleBaseUrlPlaceholder : 'https://...'"
             :required="isOpenAiCompatibleProvider"
           />
-          <p v-if="selectedPreset?.type === 'ollama'" class="text-xs text-muted-foreground">
+          <p v-if="isOllamaType(selectedPreset?.type)" class="text-xs text-muted-foreground">
             {{ $t('providers.ollamaUrlHint') }}
           </p>
           <p v-else-if="isOpenAiCompatibleProvider" class="text-xs text-muted-foreground">
@@ -481,15 +481,22 @@ const ollamaPullStatus = ref('')
 const ollamaPullProgress = ref(0)
 const ollamaPullResult = ref<{ success: boolean; message: string } | null>(null)
 
+// Both Ollama provider types (the OpenAI-compatible `/v1` preset and the
+// native `/api/chat` one, plan 2026-10-05-ollama-native-context) share the
+// local model discovery, URL hint and cold-start timeout.
+function isOllamaType(type: string | null | undefined): boolean {
+  return type === 'ollama' || type === 'ollama-native'
+}
+
 const isOllamaProvider = computed(() => {
-  return form.providerType === 'ollama'
+  return isOllamaType(form.providerType)
 })
 
 // Mirrors the backend creation defaults (getDefaultHealthCheckTimeoutMs):
 // local Ollama providers get a 60 s cold-start-tolerant timeout, everything
 // else keeps the regular 15 s. Shown as placeholder when the field is empty.
 const healthCheckTimeoutPlaceholder = computed(() => {
-  return form.providerType === 'ollama' ? '60000' : '15000'
+  return isOllamaType(form.providerType) ? '60000' : '15000'
 })
 
 const selectedPreset = computed(() => {
@@ -619,7 +626,7 @@ watch(() => [props.open, props.provider] as const, ([isOpen, entry]) => {
     form.extraFields = { ...(entry.extraFields ?? {}) }
     // Reset Ollama state
     resetOllamaState()
-    if (entry.providerType === 'ollama') {
+    if (isOllamaType(entry.providerType)) {
       loadOllamaModels()
     }
     // Models for non-Ollama providers are managed via the "Add Model" dialog

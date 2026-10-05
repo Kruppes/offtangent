@@ -102,6 +102,28 @@ What the code does differently for local providers:
 - **Slim prompt profile.** A provider can be set to `promptProfile: "slim"`. Slim keeps the core knowledge (SOUL, AGENTS, MEMORY, user profile, tools overview) but injects one recent daily file instead of the configured `heuristics.recentMemory.days`, and drops the wiki page listing and the docs discovery block. It exists for exactly this case: a server whose prompt evaluation runs at a few hundred tokens per second, where the system prompt alone costs real wall-clock time. Absent field means `full`, the unchanged prompt.
 - **No prompt caching.** The Anthropic cache-control machinery is a no-op for non-Anthropic APIs, so an Ollama server receives plain requests.
 
+### Native Ollama provider (`ollama-native`) and the per-strand context window
+
+Besides the OpenAI-compatible `ollama` preset (`/v1`, unchanged) there is a second, additive type **`ollama-native`**: api `ollama-chat`, base URL `http://localhost:11434` (no `/v1`; a mistakenly appended `/v1` is stripped), no API key, editable URL, the same local timeouts and the same model panel in the provider form. Only this type can carry a context-window request; the `/v1` path sends byte-identical requests whether or not a strand has a choice.
+
+**What the choice is.** The Eco switch of a strand offers *Unverändert* (no choice) or 32k / 48k / 64k / 128k (`PATCH /api/strands/:id/eco` with `{"contextWindow": 32768 | 49152 | 65536 | 131072 | null}`; any other value is a `400 invalid_context_window`, a value above a known model maximum a `400 context_window_exceeds_supported`, a foreign strand a `404` like every other strand route). It is a *request*, not a guarantee: a larger `num_ctx` makes Ollama allocate more memory (KV cache), can reload the model, and a reload affects every other client that shares that Ollama server. Nothing is measured here — no RAM, speed or cache claims.
+
+**How a request is decided (once per request, from a fixed snapshot):**
+
+1. Facts come only from the read-only `POST /api/show` (never load/unload/generate), cached 5 min per base URL + model, a failure cached 30 s as *unknown*, 5 s timeout.
+2. **Baseline** = the explicit provider field `ollamaNumCtx` (config file `providers.json` only, validated positive integer; there is no UI or API to edit it) if set, else the `num_ctx` line of the Modelfile `parameters`. If neither exists the baseline is **unknown** — Ollama's own server default is never guessed.
+3. **Supported maximum** = `model_info["<arch>.context_length"]` from `/api/show`.
+4. `options.num_ctx` is sent **only** when the choice is larger than a known baseline and not larger than a known maximum (`applied`). Otherwise nothing is sent and the state says why: `unchanged`, `baseline_kept` (choice ≤ baseline — the baseline is never lowered), `baseline_unknown`, `supported_unknown`, `exceeds_supported`, `provider_unsupported` (strand not on `ollama-native`), `invalid_choice`. `GET /api/strands/:id/context` shows `choice`, `supported`, `state`, `effective` and `facts` (`known` / `pending` / `failed`), re-checked against the strand's current model on every read.
+5. **Model change.** A stored choice is kept, never silently cleared; the next request and the status re-decide against the new model (e.g. `exceeds_supported` or `provider_unsupported`) and nothing unsupported is sent or shown as applied.
+
+**Tasks.** A background task copies the strand's choice onto its own session row when it is created. Every request of the task reads that row, so a later change on the parent strand never reaches a running, paused, resumed or restart-recovered task. A sub-task created inside a task (no interactive strand) snapshots the choice of its parent task's session; scheduled runs and restarted tasks start with *Unverändert*.
+
+**Native guard.** Before sending, a native-only guard estimates the request (character-based estimate, *not* a tokenizer) against the effective window (the applied `num_ctx`, else the known baseline; a window learned from an Ollama overflow error is filed per model **and** `num_ctx`). An explicit output budget (`maxTokens` → `num_predict`) is **never shrunk**: if input plus `num_predict` does not fit, the request is refused with a `[context-guard]` message instead. With an unknown baseline the guard has no window and does not invent one.
+
+**Thinking.** For reasoning models the native body carries `think`: `false` when reasoning is off, `true` when any level is set. The `gpt-oss` family only accepts the documented strings `"low"`, `"medium"`, `"high"` (minimal → low, xhigh → high) and cannot switch thinking off, so for gpt-oss "off" omits the field. Non-reasoning models never get `think`.
+
+Negative cases worth knowing: an unreachable `/api/show` leaves the baseline unknown and sends no `num_ctx`; a Modelfile without a `num_ctx` line and no `ollamaNumCtx` gives `baseline_unknown`; a 128k choice on a model whose `context_length` is 32768 gives `exceeds_supported` and nothing is sent.
+
 ### What actually works locally
 
 Be realistic about the split:
