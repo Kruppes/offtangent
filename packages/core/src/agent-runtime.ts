@@ -1,6 +1,6 @@
 import { spawn } from 'node:child_process'
 import { readStrandEcoMode } from './eco-mode-store.js'
-import { freezeEcoToolResult } from './eco-tool-freeze.js'
+import { resolveTurnEcoOwner, freezeEcoToolResult } from './eco-tool-freeze.js'
 import type { AfterToolCallContext, AfterToolCallResult } from '@earendil-works/pi-agent-core'
 import fs from 'node:fs'
 import nodePath from 'node:path'
@@ -884,10 +884,15 @@ class PiAgentRuntime implements AgentRuntimeBoundary, AgentRuntimePiAgentAccess 
     const sessionId = this.currentSessionId
     if (!sessionId || readStrandEcoMode(this.db, sessionId) !== 'on') return undefined
     if ((ctx.result as { structuredContent?: unknown }).structuredContent !== undefined) return undefined
+    // Fail closed: a raw original is stored only for a trusted owner (the
+    // turn's user agreeing with the session owner in the DB).
+    const owner = resolveTurnEcoOwner(this.db, sessionId, this.getCurrentToolUserId())
+    if (owner === undefined) return undefined
     const frozen = freezeEcoToolResult({
       db: this.db,
       sessionId,
-      userId: this.getCurrentToolUserId() ?? null,
+      userId: owner,
+      ownerUserId: owner,
       agentId: this.agentId,
       toolName: ctx.toolCall.name,
       toolCallId: ctx.toolCall.id,

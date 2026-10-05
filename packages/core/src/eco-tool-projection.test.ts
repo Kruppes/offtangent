@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { projectToolResult, projectToolResultSafe, toolResultText } from './eco-tool-projection.js'
+import { ecoToolFamily, projectToolResult, projectToolResultSafe, toolResultText } from './eco-tool-projection.js'
 
 const filler = (n: number, tag: string) => Array.from({ length: n }, (_, i) => `${tag} line ${i} lorem ipsum dolor sit amet 0123456789`).join('\n')
 
@@ -44,5 +44,58 @@ describe('eco tool projection (pure, deterministic)', () => {
     expect(toolResultText([{ type: 'text', text: 'a' }, { type: 'text', text: 'b' }])).toBe('a\nb')
     expect(toolResultText([{ type: 'image', data: 'x', mimeType: 'image/png' }])).toBeNull()
     expect(toolResultText([])).toBeNull()
+  })
+})
+
+describe('eco tool families (representative productive paths, synthetic fixtures)', () => {
+  it('classifies by generic name families only', () => {
+    expect(ecoToolFamily('shell')).toBe('shell')
+    expect(ecoToolFamily('bash')).toBe('shell')
+    expect(ecoToolFamily('read_file')).toBe('file')
+    expect(ecoToolFamily('list_files')).toBe('search')
+    expect(ecoToolFamily('grep')).toBe('search')
+    expect(ecoToolFamily('web_search')).toBe('search')
+    expect(ecoToolFamily('publish_board')).toBe('generic')
+  })
+
+  it('shell: a failing test run keeps the failing line, its 3 trace frames, the summary and the exit code; > 70 % smaller', () => {
+    const lines: string[] = []
+    for (let i = 0; i < 1500; i++) lines.push(` ✓ src/mod${i}.test.ts (4 tests) ${i % 50}ms`)
+    lines.splice(700, 0, ' FAIL src/payment.test.ts > rounds totals', 'AssertionError: expected 10.05 to be 10.04', '  at src/payment.ts:88:13', '  at src/payment.test.ts:21:5')
+    lines.push(' Test Files  1 failed | 1500 passed', '      Tests  1 failed | 6000 passed', 'npm ERR! code 1', 'exit status 1')
+    const text = lines.join('\n')
+    const p = projectToolResult({ toolName: 'shell', args: { command: 'npm test' }, text, isError: true, refId: 11 })!
+    expect(p).not.toBeNull()
+    for (const must of ['FAIL src/payment.test.ts', 'expected 10.05 to be 10.04', 'src/payment.ts:88:13', 'src/payment.test.ts:21:5', '1 failed | 6000 passed', 'exit status 1', 'Status: error', 'Profile shell']) {
+      expect(p.text).toContain(must)
+    }
+    expect(p.projectedChars).toBeLessThan(text.length * 0.3)
+  })
+
+  it('search: grep over 40 files keeps exact source count and the first hits of EVERY file; middle hits are recoverable by offset', () => {
+    const lines: string[] = []
+    for (let f = 0; f < 40; f++) for (let h = 0; h < 40; h++) lines.push(`src/area${f}/file${f}.ts:${h * 7 + 1}:  const value${h} = computeTotal(order, ${h}) // padding text`)
+    const text = lines.join('\n')
+    const p = projectToolResult({ toolName: 'grep', args: { pattern: 'computeTotal' }, text, isError: false, refId: 12 }, { maxSignalLines: 200 })!
+    expect(p.text).toContain('40 distinct sources')
+    for (let f = 0; f < 40; f++) expect(p.text).toContain(`src/area${f}/file${f}.ts:1:`)
+    expect(p.text).not.toContain('src/area20/file20.ts:211:')
+    const gap = /recall_message offset ≈ (\d+)/.exec(p.text.slice(p.text.indexOf('src/area20/file20.ts:8:')))!
+    expect(text.slice(Number(gap[1])).startsWith('src/area20/file20.ts:15:')).toBe(true)
+    expect(p.projectedChars).toBeLessThan(text.length * 0.3)
+  })
+
+  it('file: a large source file keeps a structural outline (the declaration in the middle) plus recall offsets', () => {
+    const lines: string[] = []
+    for (let i = 0; i < 1200; i++) {
+      if (i % 100 === 0) lines.push(`export function section${i}(input: Order): number {`)
+      else lines.push(`  const step${i} = input.amount * ${i} + offset // arithmetic filler line`)
+    }
+    const text = lines.join('\n')
+    const p = projectToolResult({ toolName: 'read_file', args: { path: '/workspace/app/orders.ts' }, text, isError: false, refId: 13 })!
+    expect(p.text).toContain('Profile file')
+    expect(p.text).toContain('601| export function section600(input: Order): number {')
+    expect(p.text).not.toContain('step650')
+    expect(p.projectedChars).toBeLessThan(text.length * 0.3)
   })
 })

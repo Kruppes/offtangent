@@ -1,5 +1,5 @@
 import { inheritEcoMode, readStrandEcoMode } from './eco-mode-store.js'
-import { freezeEcoToolResult, frozenEcoRowId } from './eco-tool-freeze.js'
+import { freezeEcoToolResult, frozenEcoRowId, resolveEcoOwner } from './eco-tool-freeze.js'
 import { Agent as PiAgent } from '@earendil-works/pi-agent-core'
 import type { AgentEvent, AgentMessage, AgentTool } from '@earendil-works/pi-agent-core'
 import type { AssistantMessage, Message, Model, Api } from '@earendil-works/pi-ai'
@@ -912,6 +912,9 @@ export class TaskRunner {
             db: this.db,
             sessionId,
             userId: null,
+            // Task rows keep user_id NULL; the owner is inherited from the
+            // strand the task belongs to. No owner -> nothing frozen.
+            ownerUserId: resolveEcoOwner(this.db, sessionId),
             agentId: this.store.getById(taskId)?.agentId ?? 'main',
             toolName: ctx.toolCall.name,
             toolCallId: ctx.toolCall.id,

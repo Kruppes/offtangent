@@ -4,10 +4,27 @@ import type { Database } from './database.js'
 import { resolveAgentReadScope } from './agent-read-scope.js'
 import { RECALLED_MARKER } from './message-digest.js'
 import { toolResultText } from './eco-tool-projection.js'
+import { resolveEcoOwner } from './eco-tool-freeze.js'
 
+const isHigh = (c: number): boolean => c >= 0xd800 && c <= 0xdbff
+const isLow = (c: number): boolean => c >= 0xdc00 && c <= 0xdfff
+
+/**
+ * One page of `body`. Offsets are UTF-16 indices (what the Eco projection
+ * names), but a page never starts or ends inside a surrogate pair: a lone
+ * surrogate would be persisted into the transcript and replayed forever.
+ * An offset that points at the low half moves back one unit (reported), an
+ * end that would cut a pair stops before it (the "next offset" stays exact).
+ */
 function recallPage(body: string, rawOffset: number | undefined, maxChars: number): { slice: string; offset: number; remaining: number; note: string } {
-  const offset = Math.max(0, Math.floor(rawOffset ?? 0))
-  const slice = body.slice(offset, offset + maxChars)
+  let offset = Math.min(Math.max(0, Math.floor(rawOffset ?? 0)), body.length)
+  if (offset > 0 && offset < body.length && isLow(body.charCodeAt(offset)) && isHigh(body.charCodeAt(offset - 1))) offset--
+  let end = Math.min(body.length, offset + Math.max(1, maxChars))
+  if (end < body.length && end > offset && isHigh(body.charCodeAt(end - 1)) && isLow(body.charCodeAt(end))) {
+    // Never return an empty page (offset would never advance): keep the pair whole instead.
+    end = end - 1 > offset ? end - 1 : end + 1
+  }
+  const slice = body.slice(offset, end)
   const remaining = Math.max(0, body.length - offset - slice.length)
   const note = `${offset > 0 ? `, from offset ${offset}` : ''}${remaining > 0 ? `; ${remaining} more chars — call again with offset ${offset + slice.length}` : ''}`
   return { slice, offset, remaining, note }
@@ -86,7 +103,13 @@ export function createRecallMessageTool(options: RecallMessageToolOptions): Agen
       const currentUserId = options.getCurrentUserId?.()
       const visible = row
         && (scope.agentId === undefined || row.agent_id === scope.agentId || row.agent_id === 'shared')
-        && (currentUserId === undefined || row.user_id === null || row.user_id === currentUserId)
+        && (currentUserId === undefined || row.user_id === currentUserId
+          // Rows without a user (task sessions write user_id NULL) stay visible
+          // as before — EXCEPT a raw Eco original: its owner is resolved from
+          // the session tree and the original is denied (fail closed) to any
+          // other user or when no owner can be resolved.
+          || (row.user_id === null && (typeof row.eco_original !== 'string'
+            || resolveEcoOwner(options.db, row.session_id) === currentUserId)))
       if (!row || !visible) {
         return { content: [{ type: 'text' as const, text: `Error: message ${id} not found.` }], details: { error: true, notFound: true } }
       }
@@ -104,13 +127,22 @@ export function createRecallMessageTool(options: RecallMessageToolOptions): Agen
           // projection names ("recall_message offset ≈ N") hit exactly.
           if (typeof row.eco_original === 'string') {
             let originalText: string | null = null
+            let ecoCapNote = ''
             try {
-              originalText = toolResultText((JSON.parse(row.eco_original) as { content?: unknown }).content)
+              const parsed = JSON.parse(row.eco_original) as { content?: unknown; details?: { truncated?: unknown; totalChars?: unknown; fullOutputPath?: unknown } | null }
+              originalText = toolResultText(parsed.content)
+              // The original may itself be tool-capped (shell spill): say so,
+              // exactly like the non-Eco path, so "verbatim" is not misread as "complete".
+              const d = parsed.details
+              if (d && typeof d === 'object' && d.truncated === true) {
+                ecoCapNote = `, tool-capped before storage${typeof d.totalChars === 'number' ? ` (tool output was ${d.totalChars} chars)` : ''}` +
+                  (typeof d.fullOutputPath === 'string' ? `; full output file: ${d.fullOutputPath}` : '')
+              }
             } catch { /* fall through to the stored row */ }
             if (originalText !== null) {
               const page = recallPage(originalText, rawOffset, maxChars)
               return {
-                content: [{ type: 'text' as const, text: `${RECALLED_MARKER} message ${row.id} (tool ${meta.toolName ?? 'unknown'}, verbatim original of an Eco-compacted result, ${originalText.length} chars${page.note})\n${page.slice}` }],
+                content: [{ type: 'text' as const, text: `${RECALLED_MARKER} message ${row.id} (tool ${meta.toolName ?? 'unknown'}, verbatim original of an Eco-compacted result, ${originalText.length} chars${ecoCapNote}${page.note})\n${page.slice}` }],
                 details: { messageId: row.id, role: row.role, totalChars: originalText.length, offset: page.offset, returnedChars: page.slice.length, remainingChars: page.remaining, ecoOriginal: true },
               }
             }
@@ -128,9 +160,8 @@ export function createRecallMessageTool(options: RecallMessageToolOptions): Agen
         }
       }
 
-      const offset = Math.max(0, Math.floor(rawOffset ?? 0))
-      const slice = body.slice(offset, offset + maxChars)
-      const remaining = Math.max(0, body.length - offset - slice.length)
+      // Same surrogate-safe paging as the Eco original (no lone surrogate half).
+      const { offset, slice, remaining } = recallPage(body, rawOffset, maxChars)
       const header = `${RECALLED_MARKER} message ${row.id} (${row.role}, ${row.timestamp}, ${body.length} chars` +
         toolCapNote +
         (offset > 0 ? `, from ${offset}` : '') + `)`

@@ -4,6 +4,7 @@ import path from 'node:path'
 import { describe, it, expect, vi, afterEach } from 'vitest'
 import { initDatabase } from './database.js'
 import { TurnRunner } from './turn-runner.js'
+import { freezeEcoToolResult } from './eco-tool-freeze.js'
 import type { TurnAgentLike, TurnEvent, TurnInfo } from './turn-runner.js'
 import type { ResponseChunk, TurnErrorInfo } from './agent-runtime-types.js'
 import { PROVIDER_STALL_KIND } from './provider-stall.js'
@@ -806,6 +807,39 @@ describe('TurnRunner', () => {
       expect(rows(db).map(r => ({ role: r.role, content: r.content }))).toEqual([
         { role: 'assistant', content: 'Finally.' },
       ])
+    })
+
+    it('real Eco: an auto-retry discard keeps the row frozen at tool birth (the retried attempt continues from its projection)', async () => {
+      vi.useFakeTimers()
+      const db = freshDb()
+      const big = Array.from({ length: 400 }, (_, i) => `row ${i} synthetic payload`).join('\n') + '\nSYNTHETIC-RETRY-MIDDLE-FACT'
+      const frozen = freezeEcoToolResult({
+        db, sessionId: SESSION_ID, userId: USER_ID, ownerUserId: USER_ID, agentId: 'main', toolName: 'shell', toolCallId: 'tc-retry',
+        args: { command: 'dump' }, content: [{ type: 'text', text: big }], details: undefined, isError: false,
+      })!
+      expect(frozen).not.toBeNull()
+      const toolResult = { content: frozen.content, details: frozen.details }
+      const { agent, calls } = sequenceAgent([
+        [
+          { type: 'tool_call_start', toolCallId: 'tc-retry', toolName: 'shell', toolArgs: { command: 'dump' } },
+          { type: 'tool_call_end', toolCallId: 'tc-retry', toolName: 'shell', toolResult },
+          { type: 'error', error: '503 Service Unavailable' }, { type: 'done' },
+        ],
+        [{ type: 'text', text: 'Done after retry.' }, { type: 'done' }],
+      ])
+      const runner = startRunner(db, agent, { retryPolicy: { enabled: true, maxRetries: 2, baseDelayMs: 1_000 } })
+      runner.startTurn({ userId: USER_ID, sessionId: SESSION_ID, text: 'hi' })
+      await vi.advanceTimersByTimeAsync(0)
+      await vi.advanceTimersByTimeAsync(1_100)
+      await waitFor(() => !runner.hasActiveTurn(USER_ID))
+      expect(calls).toEqual(['sendMessage', 'retryTurn'])
+      // The frozen row (projection + raw original) survives the discard, exactly once.
+      const toolRows = db.prepare("SELECT id, eco_original FROM chat_messages WHERE role = 'tool' AND json_extract(metadata, '$.toolCallId') = 'tc-retry'").all() as { id: number; eco_original: string | null }[]
+      expect(toolRows).toHaveLength(1)
+      expect(toolRows[0]!.id).toBe(frozen.eco.rowId)
+      expect(toolRows[0]!.eco_original).toContain('SYNTHETIC-RETRY-MIDDLE-FACT')
+      // Non-frozen rows of the failed attempt are still discarded as before.
+      expect(rows(db).filter(r => r.role === 'assistant').map(r => r.content)).toEqual(['Done after retry.'])
     })
 
     it('waits the Retry-After the provider stated on a rate limit, capped at 60s', async () => {

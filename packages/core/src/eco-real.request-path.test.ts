@@ -103,7 +103,11 @@ function syntheticDumpTool(): AgentTool {
 
 function boot(opts: { reasoning?: boolean; maxTokens?: number; contextWindow?: number; tools?: AgentTool[]; db?: Database } = {}) {
   const db = opts.db ?? initDatabase(':memory:')
-  if (!opts.db) db.prepare("INSERT INTO sessions (id, agent_id) VALUES ('s-eco', 'main')").run()
+  if (!opts.db) {
+    // Production strands always have an owner; Eco freezes only for a trusted owner (fail closed).
+    db.prepare("INSERT INTO users (id, username, password_hash, role) VALUES (1, 'u1', 'h', 'admin')").run()
+    db.prepare("INSERT INTO sessions (id, user_id, agent_id) VALUES ('s-eco', 1, 'main')").run()
+  }
   const runtime = createAgentRuntime({
     model: {
       id: 'local-test', name: 'Local test', api: 'openai-completions' as const, provider: 'ollama',

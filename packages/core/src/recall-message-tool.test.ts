@@ -4,6 +4,7 @@ import { initDatabase } from './database.js'
 import type { Database } from './database.js'
 import type { AgentTool } from '@earendil-works/pi-agent-core'
 import { createYoloTools } from './agent-runtime.js'
+import { freezeEcoToolResult } from './eco-tool-freeze.js'
 
 function text(result: Awaited<ReturnType<AgentTool['execute']>>): string {
   const content = (result as { content: { type: string; text?: string }[] }).content
@@ -70,6 +71,23 @@ describe('recall_message tool', () => {
     expect(details(r2).notFound).toBe(true)
     const r3 = await coder.execute('c1', { message_id: 12 })
     expect(text(r3)).toContain('coder only')
+  })
+
+  it('Eco original (eco_original): only the owning user AND persona get the verbatim original back', async () => {
+    const big = Array.from({ length: 400 }, (_, i) => `row ${i} synthetic payload text ${i}`).join('\n') + '\nSECRET-MIDDLE-FACT-USER1'
+    const frozen = freezeEcoToolResult({
+      db, sessionId: 's1', userId: 1, ownerUserId: 1, agentId: 'main', toolName: 'shell', toolCallId: 'tc-user-scope',
+      args: { command: 'dump' }, content: [{ type: 'text', text: big }], details: undefined, isError: false,
+    })!
+    expect(frozen).not.toBeNull()
+    const rowId = (frozen.details as { eco: { rowId: number } }).eco.rowId
+    const owner = await createRecallMessageTool({ db, getCurrentUserId: () => 1, getCurrentAgentId: () => 'main', maxChars: 100000 }).execute('c', { message_id: rowId })
+    expect(text(owner)).toContain('SECRET-MIDDLE-FACT-USER1')
+    const otherUser = await createRecallMessageTool({ db, getCurrentUserId: () => 2, getCurrentAgentId: () => 'main', maxChars: 100000 }).execute('c', { message_id: rowId })
+    expect(details(otherUser).notFound).toBe(true)
+    expect(text(otherUser)).not.toContain('SECRET-MIDDLE-FACT-USER1')
+    const otherPersona = await createRecallMessageTool({ db, getCurrentUserId: () => 1, getCurrentAgentId: () => 'coder', maxChars: 100000 }).execute('c', { message_id: rowId })
+    expect(details(otherPersona).notFound).toBe(true)
   })
 
   it('rejects a non numeric id', async () => {

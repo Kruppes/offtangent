@@ -1376,7 +1376,11 @@ class TurnTranscript {
       // Real Eco: a result frozen at creation already owns its row (written
       // before the model could see it) — reuse it, never insert a duplicate.
       const frozenRowId = (this.db && frozenEcoRowId(this.db, this.sessionId, chunk.toolCallId, chunk.toolResult)) || undefined
-      this.remember(frozenRowId ?? saveChatMessage(this.db, this.sessionId, this.userId, 'tool', `Tool: ${toolName}`, JSON.stringify({
+      // A frozen row is NOT rolled back by discard(): the tool really ran, its
+      // projection stays in the live agent state that the retried attempt
+      // continues from, and that projection names this row id. Deleting it
+      // would destroy the original while the transcript still points at it.
+      if (frozenRowId === undefined) this.remember(saveChatMessage(this.db, this.sessionId, this.userId, 'tool', `Tool: ${toolName}`, JSON.stringify({
         toolName,
         toolCallId: chunk.toolCallId,
         toolArgs: pending?.toolArgs ?? null,
