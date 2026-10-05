@@ -53,6 +53,7 @@ Resolved by `getConfigDir()` in `packages/core/src/config.ts`. Default templates
 | `HEARTBEAT.md` | `HEARTBEAT_TEMPLATE` in `memory.ts` | User; read pre-flight by `agent-heartbeat.ts` (skipped if empty) | [Settings → Agent Heartbeat](../settings/agent-heartbeat) |
 | `CONSOLIDATION.md` | `CONSOLIDATION_TEMPLATE` in `memory.ts` | User; read by `memory-consolidation.ts` for nightly consolidation rules | [Settings → Memory](../settings/memory) |
 | `TASKS.md` | `TASKS_TEMPLATE` in `memory.ts` | User; read on every background task start by `task-runner.ts` and injected as `<task_guidelines>` | [Web UI → Instructions](../web-ui/instructions) |
+| `observed-context-limits.json` | `request-overflow-guard.ts` (`{ version: 1, limits: { <sha256(provider\|id\|baseUrl)[0:32]>: { tokens, source, at } } }`) | Context-overflow guard, when a provider reports a smaller context window than declared (lower-only, entries > 7 days ignored) | [Guide → Models](../guide/models) |
 
 **Important — historical migrations** (handled in `ensureConfigStructure()`): `AGENTS.md` and `HEARTBEAT.md` used to live under `/data/memory/`; on first start they are moved to `/data/config/`. Do not write back to the legacy paths.
 

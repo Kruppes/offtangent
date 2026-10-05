@@ -2,6 +2,7 @@
  * M4 universal context-overflow guard (plan 2026-10-05-real-eco).
  * Real pi-ai serializers over a fake HTTP server; synthetic data only.
  */
+import fs from 'node:fs'
 import http from 'node:http'
 import type { AddressInfo } from 'node:net'
 import { describe, it, expect, beforeEach, afterEach } from 'vitest'
@@ -10,6 +11,7 @@ import { buildStreamFn } from './provider-config.js'
 import {
   CONTEXT_GUARD_MARKER, decideRequest, getObservedContextLimit, guardStream, learnContextLimit,
   parseProviderOverflow, resetObservedContextLimits, sdkRequestShape,
+  observedLimitsFilePath, reloadObservedContextLimitsForTest, OBSERVED_LIMIT_TTL_MS,
 } from './request-overflow-guard.js'
 import { isRetryableTurnError } from './turn-retry.js'
 
@@ -190,6 +192,44 @@ describe('guard: learned window, one retry, fail-fast', () => {
     expect(getObservedContextLimit(oaModel({ baseUrl: 'http://127.0.0.2/v1' }))).toBeUndefined()
     learnContextLimit(oaModel(), 30000, 'higher never raises')
     expect(getObservedContextLimit(oaModel())?.tokens).toBe(8192)
+  })
+})
+
+describe('guard: learned windows survive a restart (persisted store)', () => {
+  it('a window learned from a provider 400 is persisted and applied after a simulated restart without a new HTTP 400', async () => {
+    script.push(res => jsonError(res, 400, "This model's maximum context length is 4096 tokens. However, you requested 12000 tokens (9000 in the messages, 3000 in the completion)."))
+    await run(oaModel(), ctx(20000))
+    expect(received).toHaveLength(1)
+    const file = observedLimitsFilePath()
+    expect(fs.existsSync(file)).toBe(true)
+    const stored = JSON.parse(fs.readFileSync(file, 'utf-8')) as { version: number; limits: Record<string, { tokens: number; source: string }> }
+    expect(stored.version).toBe(1)
+    expect(Object.values(stored.limits).map(v => v.tokens)).toEqual([4096])
+    // the key is a hash of provider|id|baseUrl: no URL or prompt text in the file
+    expect(JSON.stringify(stored)).not.toContain('127.0.0.1')
+    expect(JSON.stringify(stored)).not.toContain('xxxx')
+    reloadObservedContextLimitsForTest()            // process restart: memory gone, file stays
+    expect(getObservedContextLimit(oaModel())?.tokens).toBe(4096)
+    const r = await run(oaModel(), ctx(20000))
+    expect(received).toHaveLength(1)                // refused locally, no repeated HTTP 400
+    expect(r.errorMessage).toContain('Request not sent')
+  })
+
+  it('stale (older than TTL) or corrupt persisted entries are ignored: declared window applies again', () => {
+    const file = observedLimitsFilePath()
+    learnContextLimit(oaModel(), 8192, 'synthetic')
+    const stored = JSON.parse(fs.readFileSync(file, 'utf-8')) as { limits: Record<string, { at: number }> }
+    for (const v of Object.values(stored.limits)) v.at = Date.now() - OBSERVED_LIMIT_TTL_MS - 1000
+    fs.writeFileSync(file, JSON.stringify(stored))
+    reloadObservedContextLimitsForTest()
+    expect(getObservedContextLimit(oaModel())).toBeUndefined()
+    fs.writeFileSync(file, '{not json')
+    reloadObservedContextLimitsForTest()
+    expect(getObservedContextLimit(oaModel())).toBeUndefined()
+    // learning again rewrites a valid file
+    learnContextLimit(oaModel(), 9000, 'synthetic')
+    reloadObservedContextLimitsForTest()
+    expect(getObservedContextLimit(oaModel())?.tokens).toBe(9000)
   })
 })
 

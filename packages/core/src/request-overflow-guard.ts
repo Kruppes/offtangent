@@ -22,6 +22,8 @@
  *   history changed) and only when the learned window changes the request.
  */
 import { createHash } from 'node:crypto'
+import fs from 'node:fs'
+import path from 'node:path'
 import { createAssistantMessageEventStream, isContextOverflow } from '@earendil-works/pi-ai'
 import type { AssistantMessage, AssistantMessageEvent, AssistantMessageEventStream, Context, Model, Api, SimpleStreamOptions } from '@earendil-works/pi-ai'
 import { adjustMaxTokensForThinking, clampMaxTokensToContext, clampReasoning, clampThinkingBudgetToAnswerRoom, thinkingBudgetForLevel } from '@earendil-works/pi-ai/api/simple-options'
@@ -41,29 +43,88 @@ type StreamFn = (model: AnyModel, context: Context, options?: SimpleStreamOption
 
 export interface ObservedLimit { tokens: number; source: string; at: number }
 
-/** Learned windows, keyed by sha256(provider|modelId|baseUrl). Process-wide (cross-session), lower-only. */
+/**
+ * Learned windows, keyed by sha256(provider|modelId|baseUrl). Process-wide
+ * (cross-session), lower-only, and PERSISTED to
+ * `<DATA_DIR>/config/observed-context-limits.json` so a restart does not
+ * forget them (otherwise every restart would pay one more HTTP 400 per model
+ * before the guard is effective again). Entries older than
+ * OBSERVED_LIMIT_TTL_MS are ignored on load: a local server may be restarted
+ * with a larger `-c`/`--max-model-len` under the same id+url, and a stale
+ * lower value must not refuse valid requests forever.
+ */
+export const OBSERVED_LIMIT_TTL_MS = 7 * 24 * 60 * 60 * 1000
 const observedLimits = new Map<string, ObservedLimit>()
+let observedLoadedFrom: string | null = null
+
+export function observedLimitsFilePath(): string {
+  return path.join(process.env.DATA_DIR ?? '/data', 'config', 'observed-context-limits.json')
+}
+
+/** Lazily (re)loads the persisted store whenever DATA_DIR points to a new file. Never throws. */
+function ensureObservedLoaded(): void {
+  const file = observedLimitsFilePath()
+  if (observedLoadedFrom === file) return
+  observedLoadedFrom = file
+  observedLimits.clear()
+  try {
+    const raw = JSON.parse(fs.readFileSync(file, 'utf-8')) as { version?: number; limits?: Record<string, ObservedLimit> }
+    const now = Date.now()
+    for (const [k, v] of Object.entries(raw?.limits ?? {})) {
+      if (!v || typeof v.tokens !== 'number' || !Number.isFinite(v.tokens) || v.tokens <= 0) continue
+      if (typeof v.at !== 'number' || now - v.at > OBSERVED_LIMIT_TTL_MS) continue
+      observedLimits.set(k, { tokens: Math.floor(v.tokens), source: String(v.source ?? '').slice(0, 300), at: v.at })
+    }
+  } catch { /* missing or unreadable file: start empty (declared windows still apply) */ }
+}
+
+function persistObserved(): void {
+  const file = observedLimitsFilePath()
+  try {
+    fs.mkdirSync(path.dirname(file), { recursive: true })
+    const tmp = `${file}.${process.pid}.tmp`
+    fs.writeFileSync(tmp, JSON.stringify({ version: 1, limits: Object.fromEntries(observedLimits) }, null, 2) + '\n', 'utf-8')
+    fs.renameSync(tmp, file)
+  } catch { /* persistence is best effort; the in-memory value still applies */ }
+}
 
 export function modelLimitKey(model: { provider?: unknown; id?: unknown; baseUrl?: unknown }): string {
   return createHash('sha256').update(`${String(model.provider ?? '')}|${String(model.id ?? '')}|${String(model.baseUrl ?? '')}`).digest('hex').slice(0, 32)
 }
 
 export function getObservedContextLimit(model: { provider?: unknown; id?: unknown; baseUrl?: unknown }): ObservedLimit | undefined {
-  return observedLimits.get(modelLimitKey(model))
+  ensureObservedLoaded()
+  const v = observedLimits.get(modelLimitKey(model))
+  if (v && Date.now() - v.at > OBSERVED_LIMIT_TTL_MS) return undefined
+  return v
 }
 
 /** Records a provider-reported window. Only ever lowers a known value. Returns the effective value. */
 export function learnContextLimit(model: { provider?: unknown; id?: unknown; baseUrl?: unknown }, tokens: number, source: string): number {
+  ensureObservedLoaded()
   const key = modelLimitKey(model)
-  const prev = observedLimits.get(key)
+  const prev = getObservedContextLimit(model)
   if (!Number.isFinite(tokens) || tokens <= 0) return prev?.tokens ?? 0
   const t = Math.floor(tokens)
-  if (!prev || t < prev.tokens) observedLimits.set(key, { tokens: t, source: source.slice(0, 300), at: Date.now() })
+  if (!prev || t < prev.tokens) {
+    observedLimits.set(key, { tokens: t, source: source.slice(0, 300), at: Date.now() })
+    persistObserved()
+  }
   return observedLimits.get(key)!.tokens
 }
 
-/** Test hook. */
-export function resetObservedContextLimits(): void { observedLimits.clear() }
+/** Test hook: clears memory AND the persisted file. */
+export function resetObservedContextLimits(): void {
+  observedLimits.clear()
+  observedLoadedFrom = observedLimitsFilePath()
+  try { fs.rmSync(observedLimitsFilePath(), { force: true }) } catch { /* ignore */ }
+}
+
+/** Test hook: simulates a process restart (drops memory only; next access reloads the file). */
+export function reloadObservedContextLimitsForTest(): void {
+  observedLimits.clear()
+  observedLoadedFrom = null
+}
 
 // ---------------------------------------------------------------- provider error parser
 
