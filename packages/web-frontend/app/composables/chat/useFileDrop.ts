@@ -30,17 +30,31 @@ export function filesFromTransfer(transfer: TransferLike | null | undefined): Fi
 }
 
 /**
- * What a paste into the composer does (W6c). Text wins whenever the clipboard
- * carries text: an office app puts a rendered picture next to the copied cells,
- * and the user meant the text. Files are attached only when there is no text
- * (a screenshot, an image copied from a page or a file copied in the file
- * manager); then the default insertion has to be stopped.
+ * A file manager may provide both a real file and the filename as plain text;
+ * that filename is not the user's intended message. Conversely, Office often
+ * provides meaningful text alongside a rendered image: preserve that text.
+ * HTML with an image and an accompanying file is an image copy, not text.
  */
 export function pasteIntent(transfer: TransferLike | null | undefined): { kind: 'text' } | { kind: 'files'; files: File[] } {
-  const text = transfer?.getData?.('text/plain') ?? ''
-  if (text.trim().length > 0) return { kind: 'text' }
+  // Read files synchronously inside the paste handler: Chromium's clipboard
+  // items can lose their getAsFile() payload after the event returns.
   const files = filesFromTransfer(transfer)
-  return files.length > 0 ? { kind: 'files', files } : { kind: 'text' }
+  if (files.length === 0) return { kind: 'text' }
+  const text = (transfer?.getData?.('text/plain') ?? '').trim()
+  const html = transfer?.getData?.('text/html') ?? ''
+  const names = files.map(file => file.name).filter(Boolean)
+  const copiedNames = text.split(/\r?\n/).map(line => {
+    const value = line.trim().replace(/^file:\/\//i, '')
+    const basename = value.split(/[\\/]/).pop() ?? ''
+    try { return decodeURIComponent(basename) } catch { return basename }
+  })
+  const textIsFilenames = copiedNames.length > 0 && copiedNames.every(name => names.includes(name))
+  // In a web image copy Chromium can offer a plain URL/alt text as well as
+  // text/html + image/png. A table copied from Office must still paste as text.
+  const htmlIsImage = files.every(file => file.type.startsWith('image/'))
+    && /<img\b/i.test(html) && !/<table\b/i.test(html)
+  if (text && !textIsFilenames && !htmlIsImage) return { kind: 'text' }
+  return { kind: 'files', files }
 }
 
 /**

@@ -41,6 +41,14 @@ describe('transfer helpers', () => {
     expect(img.kind === 'files' && img.files[0]!.name).toBe('synthetic.png')
     expect(pasteIntent(transfer({ text: 'cell A1', files: [png()] }))).toEqual({ kind: 'text' })
     expect(pasteIntent(transfer({ text: '   ', files: [png()] })).kind).toBe('files')
+    expect(pasteIntent(transfer({ text: 'synthetic.png', files: [png()] })).kind).toBe('files')
+    expect(pasteIntent(transfer({ text: '/Users/example/Desktop/synthetic.png', files: [png()] })).kind).toBe('files')
+    expect(pasteIntent(transfer({ text: 'file:///Users/example/Desktop/synthetic.png', files: [png()] })).kind).toBe('files')
+    const pageImage = transfer({ text: 'Image alt text', files: [png()] })
+    pageImage.getData = (format: string) => format === 'text/html' ? '<img src="https://example.invalid/p.png">' : 'Image alt text'
+    expect(pasteIntent(pageImage).kind).toBe('files')
+    pageImage.getData = (format: string) => format === 'text/html' ? '<table><tr><td><img src="x"></td></tr></table>' : 'Cell A1'
+    expect(pasteIntent(pageImage)).toEqual({ kind: 'text' })
     expect(pasteIntent(null)).toEqual({ kind: 'text' })
   })
 })

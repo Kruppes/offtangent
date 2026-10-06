@@ -147,6 +147,9 @@
     "micTooShort": "Recording too short — hold longer",
     "dropFilesHere": "Drop files to attach",
     "filesAttached": "{count} file attached | {count} files attached",
+    "removeFile": "Remove {name}",
+    "fileTooLarge": "The file is too large to upload. Your draft is still here; remove the file or choose a smaller one.",
+    "fileUploadFailed": "The attachment could not be uploaded. Your draft is still here; try sending again.",
     "skillAutocomplete": {
       "label": "Load a skill",
       "installed": "installed",

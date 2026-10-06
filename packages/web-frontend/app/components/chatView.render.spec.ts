@@ -807,6 +807,43 @@ describe('ChatView: composer', () => {
     expect(sentFrames().filter(f => f.type === 'message')).toHaveLength(0)
   })
 
+  it('pastes a copied file even when clipboard text contains its filename, then uploads it', async () => {
+    const file = new File(['synthetic bytes'], 'screenshot.png', { type: 'image/png' })
+    apiResponder = path => path === '/api/chat/message'
+      ? { message: { session_id: 'strand-a', role: 'user', content: '', metadata: JSON.stringify({ files: [{ kind: 'image', originalName: 'screenshot.png', relativePath: 'uploads/screenshot.png', mimeType: 'image/png', size: 15 }] }), timestamp: '2026-01-01T00:00:00.000Z' } }
+      : {}
+    const { root } = await mountChat()
+    let prevented = false
+    ;(textarea(root).props.onPaste as (event: unknown) => void)({
+      clipboardData: { types: ['Files', 'text/plain'], files: [file], items: [], getData: () => 'screenshot.png' },
+      preventDefault: () => { prevented = true },
+    })
+    await nextTick()
+    expect(prevented).toBe(true)
+    expect(textOf(root)).toContain('screenshot.png')
+    await submit(root)
+    expect(apiCalls.some(call => call.path === '/api/chat/message' && (call.options?.body as FormData).getAll('files').length === 1)).toBe(true)
+  })
+
+  it('names an unnamed pasted screenshot and retains its chip after a failed upload', async () => {
+    const { root } = await mountChat()
+    const file = new File(['synthetic'], '', { type: 'image/png' })
+    ;(textarea(root).props.onPaste as (event: unknown) => void)({
+      clipboardData: { files: [], items: [{ kind: 'file', getAsFile: () => file }], getData: () => '' },
+      preventDefault: () => {},
+    })
+    await nextTick()
+    expect(textOf(root)).toMatch(/paste-\d{4}-.*\.png/)
+    expect(textOf(root)).toContain('chat.filesAttached')
+    const chip = byTag(root, 'button').find(n => String(n.props['aria-label'] ?? '').includes('chat.removeFile'))
+    expect(chip).toBeDefined()
+    apiResponder = path => { if (path === '/api/chat/message') throw new Error('synthetic offline upload'); return {} }
+    await submit(root)
+    expect(textOf(root)).toContain('chat.fileUploadFailed')
+    expect(textOf(root)).toMatch(/paste-\d{4}-.*\.png/)
+    expect(byTag(root, 'p').some(n => n.props.role === 'alert')).toBe(true)
+  })
+
   it('adds dropped files as pending chips', async () => {
     const { root } = await mountChat()
     const surface = all(root).find(n => typeof n.props.onDrop === 'function')!

@@ -147,6 +147,9 @@
     "micTooShort": "Aufnahme zu kurz — länger halten",
     "dropFilesHere": "Dateien zum Anhängen hier ablegen",
     "filesAttached": "{count} Datei angehängt | {count} Dateien angehängt",
+    "removeFile": "{name} entfernen",
+    "fileTooLarge": "Die Datei ist zu groß zum Hochladen. Dein Entwurf bleibt erhalten; entferne die Datei oder wähle eine kleinere.",
+    "fileUploadFailed": "Der Anhang konnte nicht hochgeladen werden. Dein Entwurf bleibt erhalten; versuche es erneut.",
     "skillAutocomplete": {
       "label": "Skill laden",
       "installed": "installiert",

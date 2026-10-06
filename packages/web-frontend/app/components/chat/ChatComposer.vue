@@ -40,6 +40,8 @@
           @remove="removePendingAudio(index)"
         />
       </div>
+      <p class="sr-only" aria-live="polite">{{ fileAnnouncement }}</p>
+      <p v-if="uploadError" role="alert" class="rounded-lg border border-destructive/40 bg-destructive/10 px-3 py-2 text-sm text-destructive">{{ uploadError }}</p>
       <!-- Pending files row -->
       <div v-if="pendingFiles.length" class="flex flex-wrap gap-2">
         <div
@@ -49,7 +51,7 @@
           class="inline-flex items-center gap-2 rounded-full border border-border bg-muted px-3 py-1 text-xs"
         >
           <span>{{ file.name }}</span>
-          <button type="button" class="text-muted-foreground hover:text-foreground" @click="removePendingFile(index)">×</button>
+          <button type="button" :aria-label="$t('chat.removeFile', { name: file.name })" class="text-muted-foreground hover:text-foreground focus-visible:outline-2 focus-visible:outline-primary" @click="removePendingFile(index)">×</button>
         </div>
       </div>
 
@@ -129,7 +131,7 @@
           <Button
             type="submit"
             :aria-label="$t('chat.send')"
-            :disabled="!hasText || connectionStatus !== 'connected'"
+            :disabled="!hasText || isSending || connectionStatus !== 'connected'"
             class="h-11 w-11 shrink-0 rounded-xl p-0 sm:w-auto sm:px-4"
             :class="(!hasText && sttEnabled) ? 'hidden sm:inline-flex' : 'inline-flex'"
           >
@@ -143,7 +145,8 @@
 </template>
 
 <script setup lang="ts">
-import { useId } from 'vue'
+import { ref, useId } from 'vue'
+import { ApiError } from '~/composables/useApi'
 import type { LoadableSkill } from '~/composables/useSkillAutocomplete'
 import { useChatView } from '~/composables/chat/chatViewContext'
 import { pasteIntent } from '~/composables/chat/useFileDrop'
@@ -158,6 +161,9 @@ import ChatThinkingLevelPicker from './ChatThinkingLevelPicker.vue'
  */
 const { t } = useI18n()
 const inputId = useId()
+const fileAnnouncement = ref('')
+const uploadError = ref('')
+const isSending = ref(false)
 const { draft, stt, isAdmin, connectionStatus, queuePosition, sendMessage } = useChatView()
 const { inputText, pendingFiles, pendingAudio, inputRef, hasText, removePendingFile, removePendingAudio, autoResize } = draft
 const {
@@ -190,18 +196,41 @@ async function handleSend() {
   const files = [...pendingFiles.value]
   const stored = pendingAudio.value.map(item => item.attachment)
   const text = inputText.value
-  if ((!text.trim() && files.length === 0 && stored.length === 0) || connectionStatus.value !== 'connected') return
-  await sendMessage(text, files, stored)
-  draft.clear()
+  if ((!text.trim() && files.length === 0 && stored.length === 0) || isSending.value || connectionStatus.value !== 'connected') return
+  isSending.value = true
+  uploadError.value = ''
+  try {
+    await sendMessage(text, files, stored)
+    draft.clear()
+    fileAnnouncement.value = ''
+  } catch (error) {
+    // An upload failure must not destroy the draft or silently eat the paste.
+    uploadError.value = error instanceof ApiError && error.status === 413
+      ? t('chat.fileTooLarge')
+      : t('chat.fileUploadFailed')
+  } finally {
+    isSending.value = false
+  }
 }
 
-// W6c: a pasted screenshot or file is attached like one picked with the
-// paperclip; text (also when a picture rides along) stays a normal paste.
+// Clipboard files sometimes have no filename. Give them a stable extension
+// before sending so the chip and the saved attachment are both identifiable.
+function namedPasteFile(file: File): File {
+  if (file.name.trim()) return file
+  const extension = ({ 'image/png': 'png', 'image/jpeg': 'jpg', 'image/webp': 'webp', 'image/gif': 'gif', 'application/pdf': 'pdf' } as Record<string, string>)[file.type] ?? 'bin'
+  return new File([file], `paste-${new Date().toISOString().replace(/[:.]/g, '-')}.${extension}`, {
+    type: file.type, lastModified: file.lastModified,
+  })
+}
+
 function handlePaste(event: ClipboardEvent) {
   const intent = pasteIntent(event.clipboardData)
   if (intent.kind !== 'files') return
   event.preventDefault()
-  draft.addFiles(intent.files)
+  const files = intent.files.map(namedPasteFile)
+  draft.addFiles(files)
+  uploadError.value = ''
+  fileAnnouncement.value = t('chat.filesAttached', { count: files.length })
 }
 
 function handleFileSelection(event: Event) {
