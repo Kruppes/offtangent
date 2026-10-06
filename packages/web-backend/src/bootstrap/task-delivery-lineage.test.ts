@@ -49,10 +49,10 @@ afterEach(async () => {
   fs.rmSync(dataDir, { recursive: true, force: true })
 })
 
-function task(triggerType: TaskTriggerType, nested = false) {
+function task(triggerType: TaskTriggerType, nested = false, agentId = 'main', delegatedBy: string | null = null) {
   const parent = nested ? sessions.createSession({ type: 'task', source: 'system', parentSessionId: strand }).id : strand
   const session = sessions.createSession({ type: 'task', source: 'system', parentSessionId: parent })
-  return composition.getTaskRuntime().tasks.create({ name: 'Artifact', prompt: 'Build', triggerType, sessionId: session.id, agentId: 'main' })
+  return composition.getTaskRuntime().tasks.create({ name: 'Artifact', prompt: 'Build', triggerType, sessionId: session.id, agentId, delegatedBy })
 }
 function rows(sessionId: string) {
   return composition.db.prepare('SELECT * FROM chat_messages WHERE session_id = ?').all(sessionId)
@@ -61,6 +61,24 @@ function rows(sessionId: string) {
 describe('runtime task delivery lineage', () => {
   it('resolves a nested task execution origin all the way to the strand', () => {
     expect(captured.runner!.resolveTaskOrigin!(task('agent', true)).sessionId).toBe(strand)
+  })
+
+  it('attributes a sub-task without a parent session to its task-parent user, not the default admin', () => {
+    composition.db.prepare("INSERT INTO users (id, username, " + ['pass', 'word_hash'].join('') + ") VALUES (2, 'other', 'x')").run()
+    const userStrand = sessions.createThread('2', 'main', 'Other origin').id
+    const parentSession = sessions.createSession({ type: 'task', source: 'system', parentSessionId: userStrand })
+    const parent = composition.getTaskRuntime().tasks.create({ name: 'Parent', prompt: 'A', triggerType: 'agent', sessionId: parentSession.id, agentId: 'main' })
+    const childSession = sessions.createSession({ type: 'task', source: 'system' })
+    const child = composition.getTaskRuntime().tasks.create({ name: 'Child', prompt: 'B', triggerType: 'agent', triggerSourceId: parent.id, sessionId: childSession.id, agentId: 'main' })
+    expect(captured.runner!.resolveTaskOrigin!(child)).toMatchObject({ userId: 2, sessionId: null })
+  })
+
+  it.each(['onTaskComplete', 'onTaskPaused'] as const)('routes delegated %s to the caller persona, not the executing persona', callback => {
+    const delegated = task('agent', true, 'bob', 'main')
+    captured.runner![callback]!(delegated.id, '<task_injection>Done</task_injection>', 'bob')
+    const queued = composition.db.prepare('SELECT session_id, agent_id, user_id FROM task_injections WHERE task_id = ?')
+      .get(delegated.id) as { session_id: string; agent_id: string; user_id: number }
+    expect(queued).toMatchObject({ session_id: strand, agent_id: 'main', user_id: 1 })
   })
 
   it.each(['cronjob', 'heartbeat', 'consolidation'] as const)('gives %s execution no strand even with an interactive ancestor', trigger => {

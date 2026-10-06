@@ -643,7 +643,7 @@ export {
 export type { ProviderStallMetadata, StallStats, StallStatsQueryOptions, StallThresholds } from './provider-stall.js'
 export { ProviderManager } from './provider-manager.js'
 export type { OperatingMode, ProviderManagerEvents } from './provider-manager.js'
-export { TaskStore, initTasksTable, buildTaskFilterClause } from './task-store.js'
+export { TaskStore, initTasksTable, buildTaskFilterClause, taskOwnerAgentId } from './task-store.js'
 export type {
   Task,
   TaskStatus,

@@ -18,6 +18,7 @@ import type { ProviderConfig } from './provider-config.js'
 import { runWithTaskExecutionContext } from './task-execution-context.js'
 import { logToolCall } from './token-logger.js'
 import { createCancelTaskTool, createGetTaskTool, createSteerTaskTool } from './task-control-tools.js'
+import { createResumeTaskTool } from './task-tools.js'
 import type { TaskControlToolsOptions } from './task-control-tools.js'
 import type { Task } from './task-store.js'
 
@@ -108,9 +109,9 @@ describe('task control tools (get_task / steer_task / cancel_task)', () => {
   let sessionManager: SessionManager
   let limit: number
   let alice: number
-  let bob: number
+  let builder: number
   let aliceStrand: string
-  let bobStrand: string
+  let builderStrand: string
   let currentUser: number | undefined
   let currentAgent: string | undefined
   const completed: Array<{ taskId: string; injection: string }> = []
@@ -129,13 +130,14 @@ describe('task control tools (get_task / steer_task / cancel_task)', () => {
     return Number(info.lastInsertRowid)
   }
 
-  async function startTask(name: string, opts: { strand?: string | null; parentTaskId?: string; agentId?: string } = {}): Promise<Task> {
+  async function startTask(name: string, opts: { strand?: string | null; parentTaskId?: string; agentId?: string; delegatedBy?: string } = {}): Promise<Task> {
     const task = runtime.tasks.create({
       name,
       prompt: `Work on ${name}`,
       triggerType: 'agent',
       triggerSourceId: opts.parentTaskId,
       agentId: opts.agentId,
+      delegatedBy: opts.delegatedBy,
     })
     await runtime.tasks.start(task, provider, undefined, opts.strand === undefined ? aliceStrand : opts.strand)
     await flush()
@@ -161,9 +163,9 @@ describe('task control tools (get_task / steer_task / cancel_task)', () => {
     db = initDatabase(p)
     sessionManager = new SessionManager({ db })
     alice = addUser('alice', 'user')
-    bob = addUser('bob', 'user')
+    builder = addUser('builder', 'user')
     aliceStrand = sessionManager.getOrCreateSession(String(alice), 'web', 'main').id
-    bobStrand = sessionManager.getOrCreateSession(String(bob), 'web', 'main').id
+    builderStrand = sessionManager.getOrCreateSession(String(builder), 'web', 'main').id
     currentUser = alice
     currentAgent = 'main'
     const runnerOptions: Omit<TaskRunnerOptions, 'db'> = {
@@ -313,8 +315,42 @@ describe('task control tools (get_task / steer_task / cancel_task)', () => {
   })
 
   describe('access control', () => {
+    it('resume_task checks user and persona and lets the delegating persona answer', async () => {
+      const delegated = await startTask('DelegatedQuestion', { agentId: 'analyst', delegatedBy: 'main' })
+      agentFor('DelegatedQuestion').ask()
+      await flush()
+      expect(runtime.tasks.isPaused(delegated.id)).toBe(true)
+      const resume = createResumeTaskTool({ ...toolOptions(), getDefaultProvider: () => provider, resolveProvider: () => provider, defaultMaxDurationMinutes: 30, maxDurationMinutesCap: 60 })
+      const answer = { task_id: delegated.id, message: 'Use Postgres.' }
+
+      currentAgent = 'quant'
+      expect(text(await resume.execute('r1', answer))).toMatch(/not found or not manageable/)
+      currentAgent = 'main'
+      currentUser = builder
+      expect(text(await resume.execute('r2', answer))).toMatch(/not found or not manageable/)
+      expect(runtime.tasks.isPaused(delegated.id)).toBe(true)
+      currentUser = alice
+      expect(text(await resume.execute('r3', answer))).toContain('has been resumed')
+      expect(agentFor('DelegatedQuestion').promptCalls.at(-1)).toContain('Use Postgres.')
+    })
+
+    it('resume_task inside a background task only answers its descendants', async () => {
+      const parent = await startTask('ParentQuestion')
+      const child = await startTask('ChildQuestion', { strand: null, parentTaskId: parent.id })
+      const stranger = await startTask('StrangerQuestion')
+      for (const name of ['ChildQuestion', 'StrangerQuestion']) agentFor(name).ask()
+      await flush()
+      const resume = createResumeTaskTool({ ...toolOptions(), getDefaultProvider: () => provider, resolveProvider: () => provider, defaultMaxDurationMinutes: 30, maxDurationMinutesCap: 60 })
+      const denied = await asTask(parent.id, () => resume.execute('r1', { task_id: stranger.id, message: 'No' }))
+      expect(text(denied)).toMatch(/not found or not manageable/)
+      expect(runtime.tasks.isPaused(stranger.id)).toBe(true)
+      const allowed = await asTask(parent.id, () => resume.execute('r2', { task_id: child.id, message: 'Yes' }))
+      expect(text(allowed)).toContain('has been resumed')
+      expect(agentFor('ChildQuestion').promptCalls.at(-1)).toContain('Yes')
+    })
+
     it('denies another user\'s task with the same answer as an unknown id', async () => {
-      const foreign = await startTask('Foreign', { strand: bobStrand })
+      const foreign = await startTask('Foreign', { strand: builderStrand })
       for (const tool of [createCancelTaskTool, createSteerTaskTool, createGetTaskTool]) {
         const result = await tool(toolOptions()).execute('c1', { task_id: foreign.id, reason: 'x', message: 'y' })
         expect(text(result)).toMatch(/not found or not manageable/)
@@ -325,7 +361,7 @@ describe('task control tools (get_task / steer_task / cancel_task)', () => {
       expect(agentFor('Foreign').steerCalls).toHaveLength(0)
 
       // The owner can.
-      currentUser = bob
+      currentUser = builder
       const own = await createGetTaskTool(toolOptions()).execute('c1', { task_id: foreign.id })
       expect(text(own)).toContain('Task "Foreign"')
     })
@@ -333,11 +369,11 @@ describe('task control tools (get_task / steer_task / cancel_task)', () => {
     it('denies a queued task of another user (owner resolved from the pending parent strand)', async () => {
       limit = 1
       await startTask('Busy')
-      const foreign = await startTask('ForeignQueued', { strand: bobStrand })
+      const foreign = await startTask('ForeignQueued', { strand: builderStrand })
       expect(runtime.tasks.queueInfo?.(foreign.id)?.queued).toBe(true)
       const denied = await createCancelTaskTool(toolOptions()).execute('c1', { task_id: foreign.id, reason: 'x' })
       expect(text(denied)).toMatch(/not found or not manageable/)
-      currentUser = bob
+      currentUser = builder
       const allowed = await createCancelTaskTool(toolOptions()).execute('c1', { task_id: foreign.id, reason: 'mine' })
       expect(text(allowed)).toContain('cancelled')
     })
@@ -356,6 +392,16 @@ describe('task control tools (get_task / steer_task / cancel_task)', () => {
       currentAgent = 'analyst'
       expect(text(await createGetTaskTool(toolOptions()).execute('c1', { task_id: mainTask.id }))).toMatch(/not found or not manageable/)
       expect(text(await createGetTaskTool(toolOptions()).execute('c1', { task_id: analystTask.id }))).toContain('AnalystOwned')
+    })
+
+    it('a persona manages the tasks it delegated, the target persona keeps its own (persona-architektur 1c)', async () => {
+      const delegated = await startTask('DelegatedToBuilder', { agentId: 'builder', delegatedBy: 'analyst' })
+      currentAgent = 'analyst'
+      expect(text(await createGetTaskTool(toolOptions()).execute('c1', { task_id: delegated.id }))).toContain('DelegatedToBuilder')
+      currentAgent = 'builder'
+      expect(text(await createGetTaskTool(toolOptions()).execute('c1', { task_id: delegated.id }))).toContain('DelegatedToBuilder')
+      currentAgent = 'quant'
+      expect(text(await createGetTaskTool(toolOptions()).execute('c1', { task_id: delegated.id }))).toMatch(/not found or not manageable/)
     })
 
     it('ownerless system tasks are admin-only', async () => {

@@ -102,7 +102,7 @@ export function buildTaskFeedItem(task: Task, options: TaskFeedItemOptions): Ins
     kind: feedKindForTask(task),
     title: feedTitleForTask(task),
     body: task.resultSummary ?? task.errorMessage ?? null,
-    agentId: options.agentId ?? task.agentId ?? null,
+    agentId: options.agentId ?? (task.delegatedBy || task.agentId) ?? null,
     taskId: task.id,
     strandId: options.strandId ?? null,
   }

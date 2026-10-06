@@ -1,5 +1,6 @@
 import type { Database } from './database.js'
 import type { Task } from './task-store.js'
+import { taskOwnerAgentId } from './task-store.js'
 import {
   buildTaskResultContent,
   buildTaskResultPreview,
@@ -173,7 +174,7 @@ export function persistTaskResultMessage(
 
   db.prepare(
     'INSERT INTO chat_messages (session_id, user_id, role, content, metadata, agent_id) VALUES (?, ?, ?, ?, ?, ?)'
-  ).run(resolvedSessionId, userId, 'system', content, metadata, task.agentId ?? 'main')
+  ).run(resolvedSessionId, userId, 'system', content, metadata, taskOwnerAgentId(task))
 }
 
 export type TelegramDeliveryMode = 'auto' | 'always'
@@ -275,7 +276,7 @@ export function persistTaskStatusUpdateMessage(
 
   db.prepare(
     'INSERT INTO chat_messages (session_id, user_id, role, content, metadata, agent_id) VALUES (?, ?, ?, ?, ?, ?)'
-  ).run(resolvedSessionId, userId, 'system', content, metadata, task.agentId ?? 'main')
+  ).run(resolvedSessionId, userId, 'system', content, metadata, taskOwnerAgentId(task))
 }
 
 export interface TaskStatusUpdateEvent {

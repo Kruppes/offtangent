@@ -12,6 +12,7 @@ import { ensureArtifactTables } from './artifact-store.js'
 import { ensureUserSettingsTable } from './user-settings.js'
 import { ensureMemoryPageEmbeddingTables } from './memory-page-embeddings.js'
 import { ensurePersonaTable } from './persona-store.js'
+import { ensurePersonaDelegationTable } from './persona-delegation-log.js'
 
 export type Database = BetterSqlite3.Database
 
@@ -598,6 +599,14 @@ export function initDatabase(dbPath?: string): Database {
     db.exec('ALTER TABLE tasks ADD COLUMN routing TEXT DEFAULT NULL')
   }
 
+  // Migration (persona delegation, plan persona-architektur 1c): the persona
+  // that started this task for another persona (`create_task` with
+  // `persona`). NULL = not delegated, the legacy behaviour. Also done in
+  // initTasksTable for store-level callers.
+  if (!taskColsForCache.find(c => c.name === 'delegated_by')) {
+    db.exec('ALTER TABLE tasks ADD COLUMN delegated_by TEXT DEFAULT NULL')
+  }
+
   // Migration (W5/P3): bookkeeping for outcomes that never reach a strand
   // (cronjob results). Existing rows are backfilled as "already announced",
   // so the deploy that adds the column does not replay a day of cronjobs
@@ -911,6 +920,10 @@ export function initDatabase(dbPath?: string): Database {
   // `is_default` and `archived`. Additive; an install that upgrades gets one
   // seeded row for its historical default persona.
   ensurePersonaTable(db)
+
+  // Persona delegation protocol (plan persona-architektur 1c): one row per
+  // ask_agent call / foreign-persona task. Additive, no backfill.
+  ensurePersonaDelegationTable(db)
 
   // Backfill token counts from token_usage only when the columns are first added
   if (needsTokenBackfill) {

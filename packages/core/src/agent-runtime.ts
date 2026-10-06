@@ -806,6 +806,7 @@ class PiAgentRuntime implements AgentRuntimeBoundary, AgentRuntimePiAgentAccess 
           getCurrentAgentId: () => runtimeAgentId,
           getModel: () => this.model,
           getApiKey: () => this.resolveApiKey('ask_agent'),
+          db: this.db,
         })]
       : []
 
@@ -1252,7 +1253,7 @@ class PiAgentRuntime implements AgentRuntimeBoundary, AgentRuntimePiAgentAccess 
 
     // Append cross-persona hint when ask_agent is available.
     if (loadMultiPersonaSettings().enabled) {
-      const hint = buildAskAgentPromptHint(agentId ?? 'main')
+      const hint = buildAskAgentPromptHint(agentId ?? 'main', undefined, this.db)
       if (hint) {
         prompt += hint
       }

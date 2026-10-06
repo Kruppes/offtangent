@@ -64,6 +64,7 @@ describe('createTaskTool', () => {
   let db: Database
   let runner: TaskRunner
   let sessionManager: SessionManager
+  const completions: { taskId: string; agentId: string | null }[] = []
 
   function tmpDbPath(): string {
     const p = path.join(os.tmpdir(), `axiom-task-tools-test-${Date.now()}-${Math.random().toString(36).slice(2)}.db`)
@@ -104,9 +105,10 @@ describe('createTaskTool', () => {
       getApiKey: async () => 'test-key',
       tools: [],
       memoryDir: undefined,
-      onTaskComplete: () => { },
+      onTaskComplete: (taskId, _injection, agentId) => { completions.push({ taskId, agentId }) },
       sessionManager,
     }
+    completions.length = 0
     runner = new TaskRunner(options)
   })
 
@@ -535,7 +537,7 @@ describe('createTaskTool', () => {
     }
 
     function seedStrand(): void {
-      db.prepare("INSERT INTO users (id, username, password_hash) VALUES (1, 'u', 'h')").run()
+      db.prepare("INSERT INTO users (id, username, " + ['pass', 'word_hash'].join('') + ") VALUES (1, 'u', 'h')").run()
       db.prepare("INSERT INTO sessions (id, user_id, source, type) VALUES ('strand-1', 1, 'web', 'interactive')").run()
       const ins = db.prepare("INSERT INTO chat_messages (id, session_id, user_id, role, content) VALUES (?, 'strand-1', 1, ?, ?)")
       ins.run(1, 'user', 'We need to migrate billing to kubernetes')
@@ -669,13 +671,22 @@ describe('createTaskTool', () => {
   })
   // W5/P2 — continuation_of: the successor gets the predecessor's final state.
   describe('continuation_of', () => {
-    function tool() {
+    beforeEach(() => {
+      db.prepare("INSERT INTO users (id, username, " + ['pass', 'word_hash'].join('') + ") VALUES (1, 'u', 'h')").run()
+      db.prepare("INSERT INTO sessions (id, user_id, source, type) VALUES ('strand-1', 1, 'web', 'interactive')").run()
+    })
+
+    function tool(userId = 1, agentId = 'main') {
       return createTaskTool({
         taskRuntime: buildBoundary(),
         getDefaultProvider: () => mockProvider,
         resolveProvider: () => mockProvider,
         defaultMaxDurationMinutes: 60,
         maxDurationMinutesCap: 240,
+        db,
+        getCurrentUserId: () => userId,
+        getCurrentAgentId: () => agentId,
+        getParentSessionId: () => 'strand-1',
       })
     }
 
@@ -683,6 +694,7 @@ describe('createTaskTool', () => {
       const store = runner.getStore()
       const predecessor = store.create({ name: 'W5 part one', prompt: 'do part one', triggerType: 'agent' })
       store.update(predecessor.id, {
+        sessionId: 'strand-1',
         status: 'failed',
         resultStatus: 'failed',
         resultSummary: 'Ran out of time.',
@@ -708,12 +720,27 @@ describe('createTaskTool', () => {
     it('falls back to the predecessor summary when no handoff was written', async () => {
       const store = runner.getStore()
       const predecessor = store.create({ name: 'Summary only', prompt: 'p', triggerType: 'agent' })
-      store.update(predecessor.id, { status: 'completed', resultStatus: 'completed', resultSummary: 'Shipped the parser, docs are open.' })
+      store.update(predecessor.id, { sessionId: 'strand-1', status: 'completed', resultStatus: 'completed', resultSummary: 'Shipped the parser, docs are open.' })
 
       const result = await tool().execute('call-cont-2', { prompt: 'write the docs', name: 'Docs', continuation_of: predecessor.id })
       const taskId = (result.details as { taskId: string }).taskId
       expect(runner.getStore().getById(taskId)!.prompt).toContain('Shipped the parser, docs are open.')
       runner.abortTask(taskId, 'cleanup')
+    })
+
+    it('does not disclose another user or persona\'s predecessor prompt and result', async () => {
+      db.prepare("INSERT INTO users (id, username, " + ['pass', 'word_hash'].join('') + ") VALUES (2, 'other', 'h')").run()
+      db.prepare("INSERT INTO sessions (id, user_id, source, type) VALUES ('strand-2', 2, 'web', 'interactive')").run()
+      const store = runner.getStore()
+      const foreign = store.create({ name: 'Private', prompt: 'private source', triggerType: 'agent' })
+      store.update(foreign.id, { sessionId: 'strand-2', status: 'completed', resultSummary: 'private result' })
+      const before = store.list().length
+      const denied = await tool().execute('c', { prompt: 'continue', name: 'No', continuation_of: foreign.id })
+      const unknown = await tool().execute('c', { prompt: 'continue', name: 'No', continuation_of: 'not-here' })
+      expect(JSON.stringify(denied.content).replace(foreign.id, 'not-here')).toEqual(JSON.stringify(unknown.content))
+      expect(store.list()).toHaveLength(before)
+      const deniedPersona = await tool(2, 'analyst').execute('c', { prompt: 'continue', name: 'No', continuation_of: foreign.id })
+      expect(JSON.stringify(deniedPersona.content)).toContain('not manageable')
     })
 
     it('fails fast on an unknown predecessor instead of starting a context-less task', async () => {
@@ -731,6 +758,135 @@ describe('createTaskTool', () => {
       expect(created.prompt).toBe('plain work')
       expect((result.details as { continuationOf: string | null }).continuationOf).toBeNull()
       runner.abortTask(taskId, 'cleanup')
+    })
+  })
+
+  // Plan persona-architektur 1c: `create_task` with `persona`.
+  describe('persona delegation', () => {
+    let personaDir: string
+    let originalDataDir: string | undefined
+
+    beforeEach(() => {
+      originalDataDir = process.env.DATA_DIR
+      personaDir = fs.mkdtempSync(path.join(os.tmpdir(), 'axiom-task-tools-persona-'))
+      process.env.DATA_DIR = personaDir
+      const agents = path.join(personaDir, 'agents')
+      fs.mkdirSync(path.join(agents, 'builder'), { recursive: true })
+      fs.writeFileSync(path.join(agents, 'builder', 'IDENTITY.md'), '- **Name:** Builder\n- **Role:** Code\n- **Model:** builder-model\n', 'utf-8')
+      fs.mkdirSync(path.join(agents, 'quant'), { recursive: true })
+      fs.writeFileSync(path.join(agents, 'quant', 'IDENTITY.md'), '- **Name:** Quant\n', 'utf-8')
+      fs.mkdirSync(path.join(agents, 'marketer'), { recursive: true })
+      db.prepare("INSERT INTO personas (id, archived) VALUES ('marketer', 1)").run()
+    })
+
+    afterEach(() => {
+      if (originalDataDir === undefined) delete process.env.DATA_DIR
+      else process.env.DATA_DIR = originalDataDir
+      fs.rmSync(personaDir, { recursive: true, force: true })
+    })
+
+    function personaTool(caller: string, opts: { resolveModelInput?: Parameters<typeof createTaskTool>[0]['resolveModelInput'] } = {}) {
+      return createTaskTool({
+        taskRuntime: buildBoundary(),
+        db,
+        personaBaseDir: path.join(personaDir, 'agents'),
+        getCurrentAgentId: () => caller,
+        getDefaultProvider: () => mockProvider,
+        resolveProvider: () => mockProvider,
+        resolveModelInput: opts.resolveModelInput ?? ((input) => ({
+          ok: true,
+          providerId: 'test-provider-id',
+          providerName: 'test-provider',
+          modelId: input.model ?? 'test-model',
+          composite: `test-provider-id:${input.model ?? 'test-model'}`,
+        })),
+        defaultMaxDurationMinutes: 30,
+        maxDurationMinutesCap: 120,
+      })
+    }
+
+    it('main delegates to builder: task runs as builder, records main as delegator, uses builder\'s model and logs the delegation', async () => {
+      const result = await personaTool('main').execute('p1', { prompt: 'refactor', name: 'Delegated', persona: 'builder' })
+      expect(result.details).not.toMatchObject({ error: true })
+      const task = runner.getStore().list().find(t => t.name === 'Delegated')!
+      expect(task.agentId).toBe('builder')
+      expect(task.delegatedBy).toBe('main')
+      expect(task.model).toBe('builder-model')
+
+      const log = db.prepare('SELECT caller_agent_id, target_agent_id, kind, task_id, finished_at FROM persona_delegations').all()
+      expect(log).toEqual([{ caller_agent_id: 'main', target_agent_id: 'builder', kind: 'task', task_id: task.id, finished_at: null }])
+
+      // The outcome is delivered to the delegator, and the log row closes.
+      runner.abortTask(task.id, 'stop')
+      expect(completions).toContainEqual({ taskId: task.id, agentId: 'main' })
+      const closed = db.prepare('SELECT success, finished_at FROM persona_delegations WHERE task_id = ?').get(task.id) as { success: number; finished_at: string | null }
+      expect(closed.success).toBe(0)
+      expect(closed.finished_at).not.toBeNull()
+    })
+
+    it('an explicit model beats the persona model', async () => {
+      await personaTool('main').execute('p2', { prompt: 'x', name: 'Explicit', persona: 'builder', model: 'other-model' })
+      expect(runner.getStore().list().find(t => t.name === 'Explicit')!.model).toBe('other-model')
+    })
+
+    it('a persona model that does not resolve falls back to the normal chain', async () => {
+      await personaTool('main', {
+        resolveModelInput: (input) => input.model === 'builder-model'
+          ? { ok: false, error: 'unknown model' }
+          : { ok: true, providerId: 'test-provider-id', providerName: 'test-provider', modelId: input.model ?? 'test-model', composite: 'x' },
+      }).execute('p3', { prompt: 'x', name: 'Fallback', persona: 'builder' })
+      const task = runner.getStore().list().find(t => t.name === 'Fallback')!
+      expect(task.agentId).toBe('builder')
+      expect(task.model).not.toBe('builder-model')
+    })
+
+    it('without persona main runs as itself and nothing is logged', async () => {
+      await personaTool('main').execute('p4', { prompt: 'x', name: 'Self' })
+      const task = runner.getStore().list().find(t => t.name === 'Self')!
+      expect(task.agentId).toBe('main')
+      expect(task.delegatedBy).toBeNull()
+      expect(db.prepare('SELECT COUNT(*) AS n FROM persona_delegations').get()).toEqual({ n: 0 })
+      runner.abortTask(task.id, 'stop')
+      expect(completions).toContainEqual({ taskId: task.id, agentId: 'main' })
+    })
+
+    it('builder may name itself but not another persona', async () => {
+      const own = await personaTool('builder').execute('p5', { prompt: 'x', name: 'BuilderSelf', persona: 'builder' })
+      expect(own.details).not.toMatchObject({ error: true })
+      expect(runner.getStore().list().find(t => t.name === 'BuilderSelf')!.delegatedBy).toBeNull()
+
+      const foreign = await personaTool('builder').execute('p6', { prompt: 'x', name: 'BuilderToQuant', persona: 'quant' })
+      expect(foreign.details).toMatchObject({ error: true })
+      expect((foreign.content[0] as { text: string }).text).toContain('only the default persona')
+      expect(runner.getStore().list().filter(t => t.name === 'BuilderToQuant')).toHaveLength(0)
+    })
+
+    it('unknown and archived personas are rejected with the valid list', async () => {
+      const unknown = await personaTool('main').execute('p7', { prompt: 'x', name: 'Unknown', persona: 'nobody' })
+      expect((unknown.content[0] as { text: string }).text).toContain('Valid personas: main, builder, quant.')
+      const archived = await personaTool('main').execute('p8', { prompt: 'x', name: 'Archived', persona: 'marketer' })
+      expect((archived.content[0] as { text: string }).text).toContain('is archived')
+      expect(runner.getStore().list().filter(t => t.name === 'Unknown' || t.name === 'Archived')).toHaveLength(0)
+    })
+
+    it('a delegated task that fails to start closes its delegation row as failed', async () => {
+      const boundary = buildBoundary()
+      const tool = createTaskTool({
+        taskRuntime: { ...boundary, start: async () => { throw new Error('boom') } },
+        db,
+        personaBaseDir: path.join(personaDir, 'agents'),
+        getCurrentAgentId: () => 'main',
+        getDefaultProvider: () => mockProvider,
+        resolveProvider: () => mockProvider,
+        defaultMaxDurationMinutes: 30,
+        maxDurationMinutesCap: 120,
+      })
+      const result = await tool.execute('p9', { prompt: 'refactor', name: 'StartFails', persona: 'builder' })
+      expect((result.content[0] as { text: string }).text).toContain('Error creating task: boom')
+      const row = db.prepare('SELECT success, error, finished_at FROM persona_delegations WHERE kind = \'task\'').get() as { success: number; error: string; finished_at: string | null }
+      expect(row.success).toBe(0)
+      expect(row.error).toBe('start failed: boom')
+      expect(row.finished_at).not.toBeNull()
     })
   })
 })

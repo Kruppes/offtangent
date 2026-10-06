@@ -86,7 +86,14 @@ export function canCallerManageTask(
 
     if (caller.userId === null) return false
     const callerPersona = caller.agentId ?? 'main'
-    if (callerPersona !== 'main' && (task.agentId ?? 'main') !== callerPersona) return false
+    // A persona manages the tasks it runs as AND the tasks it delegated to
+    // another persona (`create_task` with `persona`). `main` keeps managing
+    // everything of its user, delegated tasks included.
+    if (
+      callerPersona !== 'main'
+      && (task.agentId ?? 'main') !== callerPersona
+      && (task.delegatedBy ?? null) !== callerPersona
+    ) return false
 
     const owner = resolveOwner(db, runtime, task)
     if (owner === null) return isAdminUser(db, caller.userId)

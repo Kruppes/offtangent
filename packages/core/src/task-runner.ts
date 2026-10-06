@@ -17,7 +17,8 @@ import { formatTaskRouting } from './task-policy.js'
 import { readBackgroundThinkingLevelFromConfig, resolveBackgroundReasoning, toPiAiReasoning } from './thinking-level.js'
 import { parseOutputSchema, checkOutputAgainstSchema, buildSchemaCorrectionPrompt, buildOutputSchemaInstruction } from './task-output-schema.js'
 import { withTimeout } from './promise-utils.js'
-import { TaskStore } from './task-store.js'
+import { TaskStore, taskOwnerAgentId } from './task-store.js'
+import { finishTaskDelegation } from './persona-delegation-log.js'
 import type { Task, TaskResultStatus, TaskTriggerType } from './task-store.js'
 import type { SessionManager, SessionType } from './session-manager.js'
 import { logTokenUsage, logToolCall } from './token-logger.js'
@@ -1316,7 +1317,7 @@ export class TaskRunner {
       const startedAt = taskStartedAtMs(task.startedAt)
       const durationMinutes = Math.round((Date.now() - startedAt) / 60000)
       const injection = formatTaskInjection(task, durationMinutes)
-      this.notifyTaskComplete(taskId, injection, 'failed', errorMessage, task.agentId)
+      this.notifyTaskComplete(taskId, injection, 'failed', errorMessage, taskOwnerAgentId(task))
     }
   }
 
@@ -1431,7 +1432,7 @@ export class TaskRunner {
         const startedAt = taskStartedAtMs(task.startedAt)
         const durationMinutes = Math.round((Date.now() - startedAt) / 60000)
         const injection = formatTaskInjection(task, durationMinutes)
-        this.notifyTaskPaused(taskId, injection, summary, task.agentId)
+        this.notifyTaskPaused(taskId, injection, summary, taskOwnerAgentId(task))
         unsubscribe()
         return
       }
@@ -1482,7 +1483,7 @@ export class TaskRunner {
         const startedAt = taskStartedAtMs(task.startedAt)
         const durationMinutes = Math.round((Date.now() - startedAt) / 60000)
         const injection = formatTaskInjection(task, durationMinutes)
-        this.notifyTaskComplete(taskId, injection, task.status, task.resultSummary ?? undefined, task.agentId)
+        this.notifyTaskComplete(taskId, injection, task.status, task.resultSummary ?? undefined, taskOwnerAgentId(task))
       }
     } catch (err) {
       // Task failed
@@ -1518,7 +1519,7 @@ export class TaskRunner {
         const startedAt = taskStartedAtMs(task.startedAt)
         const durationMinutes = Math.round((Date.now() - startedAt) / 60000)
         const injection = formatTaskInjection(task, durationMinutes)
-        this.notifyTaskComplete(taskId, injection, "failed", errorMessage, task.agentId)
+        this.notifyTaskComplete(taskId, injection, "failed", errorMessage, taskOwnerAgentId(task))
       }
     }
   }
@@ -1881,7 +1882,7 @@ export class TaskRunner {
 ${reason}
 Hint: Inspect it with get_task (task_id ${task.id}); use cancel_task if anything still needs to be cleaned up.
 </task_injection>`
-      this.notifyTaskComplete(taskId, injection, "failed", reason, task.agentId)
+      this.notifyTaskComplete(taskId, injection, "failed", reason, taskOwnerAgentId(task))
     }
   }
 
@@ -1973,7 +1974,7 @@ Hint: Inspect it with get_task (task_id ${task.id}); use cancel_task if anything
       const startedAt = taskStartedAtMs(task.startedAt)
       const durationMinutes = Math.round((Date.now() - startedAt) / 60000)
       const injection = formatTaskInjection(task, durationMinutes)
-      this.notifyTaskComplete(taskId, injection, 'failed', trip.message, task.agentId)
+      this.notifyTaskComplete(taskId, injection, 'failed', trip.message, taskOwnerAgentId(task))
     }
   }
 
@@ -2122,6 +2123,9 @@ Hint: Inspect it with get_task (task_id ${task.id}); use cancel_task if anything
   private notifyTaskComplete(taskId: string, injection: string, status: string, message?: string, agentId?: string | null): void {
     this.emitStatusChange(taskId, status, message)
     this.emitLifecycle('finished', taskId)
+    // Delegation protocol: close the row of a task delegated to another
+    // persona from the final task row (no-op for every other task).
+    finishTaskDelegation(this.db, taskId)
     this.options.onTaskComplete(taskId, injection, agentId ?? null)
   }
 
@@ -2203,7 +2207,7 @@ Hint: Inspect it with get_task (task_id ${task.id}); use cancel_task if anything
         const startedAt = taskStartedAtMs(task.startedAt)
         const durationMinutes = Math.round((Date.now() - startedAt) / 60000)
         const injection = formatTaskInjection(task, durationMinutes)
-        this.notifyTaskComplete(taskId, injection, 'failed', reason, task.agentId)
+        this.notifyTaskComplete(taskId, injection, 'failed', reason, taskOwnerAgentId(task))
       }
       return
     }
@@ -2238,7 +2242,7 @@ Hint: Inspect it with get_task (task_id ${task.id}); use cancel_task if anything
       const startedAt = taskStartedAtMs(task.startedAt)
       const durationMinutes = Math.round((Date.now() - startedAt) / 60000)
       const injection = formatTaskInjection(task, durationMinutes)
-      this.notifyTaskComplete(taskId, injection, "failed", reason, task.agentId)
+      this.notifyTaskComplete(taskId, injection, "failed", reason, taskOwnerAgentId(task))
     }
   }
 
@@ -2274,7 +2278,7 @@ Hint: Inspect it with get_task (task_id ${task.id}); use cancel_task if anything
     if (task) {
       const startedAt = taskStartedAtMs(task.startedAt)
       const durationMinutes = Math.round((Date.now() - startedAt) / 60000)
-      this.notifyTaskComplete(taskId, formatTaskInjection(task, durationMinutes), 'failed', reason, task.agentId)
+      this.notifyTaskComplete(taskId, formatTaskInjection(task, durationMinutes), 'failed', reason, taskOwnerAgentId(task))
     }
   }
 
@@ -2805,7 +2809,7 @@ Hint: Inspect it with get_task (task_id ${task.id}); use cancel_task if anything
         const startedAt = taskStartedAtMs(task.startedAt)
         const durationMinutes = Math.round((Date.now() - startedAt) / 60000)
         const injection = formatTaskInjection(task, durationMinutes)
-        this.notifyTaskPaused(taskId, injection, summary, task.agentId)
+        this.notifyTaskPaused(taskId, injection, summary, taskOwnerAgentId(task))
         return
       }
 
@@ -2844,7 +2848,7 @@ Hint: Inspect it with get_task (task_id ${task.id}); use cancel_task if anything
       const startedAt = taskStartedAtMs(task.startedAt)
       const durationMinutes = Math.round((Date.now() - startedAt) / 60000)
       const injection = formatTaskInjection(task, durationMinutes)
-      this.notifyTaskComplete(taskId, injection, task.status, task.resultSummary ?? undefined, task.agentId)
+      this.notifyTaskComplete(taskId, injection, task.status, task.resultSummary ?? undefined, taskOwnerAgentId(task))
     } catch (err) {
       unsubscribe()
       this.cleanupRunningTask(taskId)
@@ -2872,7 +2876,7 @@ Hint: Inspect it with get_task (task_id ${task.id}); use cancel_task if anything
       const startedAt = taskStartedAtMs(task.startedAt)
       const durationMinutes = Math.round((Date.now() - startedAt) / 60000)
       const injection = formatTaskInjection(task, durationMinutes)
-      this.notifyTaskComplete(taskId, injection, "failed", errorMessage, task.agentId)
+      this.notifyTaskComplete(taskId, injection, "failed", errorMessage, taskOwnerAgentId(task))
     }
   }
 
@@ -2942,7 +2946,7 @@ Hint: Inspect it with get_task (task_id ${task.id}); use cancel_task if anything
         const startedAt = taskStartedAtMs(updated.startedAt)
         const durationMinutes = Math.round((Date.now() - startedAt) / 60000)
         const injection = formatTaskInjection(updated, durationMinutes)
-        this.notifyTaskComplete(taskId, injection, 'failed', reason, updated.agentId)
+        this.notifyTaskComplete(taskId, injection, 'failed', reason, taskOwnerAgentId(updated))
       }
 
       cleanedCount++
@@ -3051,6 +3055,8 @@ Hint: Inspect it with get_task (task_id ${task.id}); use cancel_task if anything
         // restarted analyst/coder/advisor task to main — wrong memory root, wrong
         // per-agent model and wrong result routing (multi-persona bleeding).
         agentId: task.agentId ?? undefined,
+        // Persona delegation: the recovered run still reports to its delegator.
+        delegatedBy: task.delegatedBy ?? undefined,
         // Task policy: the recovered run (same provider and model, checked
         // above) thinks exactly like the original.
         thinkingLevel: task.thinkingLevel ?? undefined,

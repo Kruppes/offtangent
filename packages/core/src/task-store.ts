@@ -65,6 +65,26 @@ export interface Task {
   thinkingLevel: SettingsThinkingLevel | null
   /** Why this provider/model/thinking was chosen (task-policy.ts), or null. */
   routing: TaskRouting | null
+  /**
+   * Persona delegation (plan persona-architektur 1c): the persona that started
+   * this task FOR another persona (`create_task` with `persona`). The task runs
+   * as `agentId` (memory root, persona files), but its outcome, progress and
+   * control belong to the delegating persona. `null`/absent = not delegated.
+   */
+  delegatedBy?: string | null
+}
+
+/**
+ * The persona a task's outcome, progress and control belong to: the
+ * delegating persona for a delegated task (`create_task` with `persona`),
+ * otherwise the persona the task runs as, otherwise `main`. Deterministic
+ * data from the task row — every delivery path (result injection, status
+ * updates, system rows in the strand) routes through this, never through an
+ * LLM guess, so a task Main delegated to Bob reports back to Main's strand
+ * as Main.
+ */
+export function taskOwnerAgentId(task: Pick<Task, 'agentId' | 'delegatedBy'>): string {
+  return task.delegatedBy || task.agentId || 'main'
 }
 
 export type TaskContextMode = 'clean' | 'selected' | 'fork'
@@ -92,6 +112,8 @@ export interface CreateTaskInput {
   thinkingLevel?: SettingsThinkingLevel | null
   /** Routing record of the task policy; omit for legacy paths. */
   routing?: TaskRouting | null
+  /** Delegating persona when the task runs as another persona (see Task.delegatedBy). */
+  delegatedBy?: string | null
 }
 
 export interface UpdateTaskInput {
@@ -209,6 +231,7 @@ interface TaskRow {
   agent_notified_at?: string | null
   thinking_level?: string | null
   routing?: string | null
+  delegated_by?: string | null
 }
 
 function rowToTask(row: TaskRow): Task {
@@ -246,6 +269,7 @@ function rowToTask(row: TaskRow): Task {
     agentNotifiedAt: row.agent_notified_at ?? null,
     thinkingLevel: normalizeThinkingLevel(row.thinking_level) ?? null,
     routing: parseTaskRouting(row.routing),
+    delegatedBy: row.delegated_by ?? null,
   }
 }
 
@@ -311,6 +335,8 @@ export function initTasksTable(db: Database): void {
     // Task policy (plan 2026-10-01): per-task thinking level + routing record.
     'ALTER TABLE tasks ADD COLUMN thinking_level TEXT DEFAULT NULL',
     'ALTER TABLE tasks ADD COLUMN routing TEXT DEFAULT NULL',
+    // Persona delegation (plan persona-architektur 1c): who delegated the task.
+    'ALTER TABLE tasks ADD COLUMN delegated_by TEXT DEFAULT NULL',
   ]) {
     try {
       db.exec(stmt)
@@ -353,8 +379,8 @@ export class TaskStore {
     const now = new Date().toISOString().replace('T', ' ').slice(0, 19)
 
     this.db.prepare(`
-      INSERT INTO tasks (id, name, prompt, status, trigger_type, trigger_source_id, provider, model, is_default_model, max_duration_minutes, session_id, agent_id, output_schema, context_mode, thinking_level, routing, created_at)
-      VALUES (?, ?, ?, 'running', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      INSERT INTO tasks (id, name, prompt, status, trigger_type, trigger_source_id, provider, model, is_default_model, max_duration_minutes, session_id, agent_id, output_schema, context_mode, thinking_level, routing, delegated_by, created_at)
+      VALUES (?, ?, ?, 'running', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `).run(
       id,
       input.name,
@@ -371,6 +397,7 @@ export class TaskStore {
       input.contextMode ?? null,
       normalizeThinkingLevel(input.thinkingLevel) ?? null,
       input.routing ? serializeTaskRouting(input.routing) : null,
+      input.delegatedBy ?? null,
       now,
     )
 

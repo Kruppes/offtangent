@@ -10,17 +10,22 @@ import { parseOutputSchema } from './task-output-schema.js'
 import { buildDelegationContext, briefTooThin } from './delegation-context.js'
 import type { DelegationContextSelection } from './delegation-context.js'
 import { getCurrentTaskExecutionContext } from './task-execution-context.js'
+import { getManageableTask } from './task-control.js'
+import type { TaskControlCaller } from './task-control.js'
 import { checkAutomaticModelFor } from './data-policy.js'
 import {
   TASK_POLICY_DIFFICULTIES,
   TASK_POLICY_KINDS,
   formatTaskRouting,
+  isTaskPolicyExceptionModel,
   parseExplicitThinking,
   parseTaskProfile,
   resolveTaskPolicy,
 } from './task-policy.js'
 import type { StrandModelPinRef } from './task-policy.js'
 import { formatContinuationContext } from './task-handoff.js'
+import { readPersonaDirectoryEntry, resolveDelegationTarget } from './persona-directory.js'
+import { failPersonaDelegation, recordPersonaDelegation } from './persona-delegation-log.js'
 import { getSubtreeCostForTasks } from './task-cost.js'
 import type { TaskCostSummary } from './task-cost.js'
 import { loadHeuristics } from './heuristics.js'
@@ -56,6 +61,19 @@ export interface TaskToolsOptions {
    * the same persona. Undefined when invoked from a background context.
    */
   getCurrentAgentId?: () => string | undefined
+  /** User of the interactive caller; background tasks use their ALS origin. */
+  getCurrentUserId?: () => number | undefined
+  /**
+   * Persona folders root (`<DATA_DIR>/agents`) for the `persona` parameter;
+   * tests point it at a temp dir. Defaults to `$DATA_DIR/agents`.
+   */
+  personaBaseDir?: string
+  /**
+   * Resolve a provider/model input (explicit `model`/`provider`, and the
+   * `Model:` line of a delegated persona). Defaults to
+   * `resolveProviderModelInput` over the configured providers; tests inject.
+   */
+  resolveModelInput?: typeof resolveProviderModelInput
   /**
    * Database for `context_mode` selected/fork (SPEC 11.6). Without it every
    * delegation is `clean`, which is today's behaviour.
@@ -122,11 +140,18 @@ export function createResumeTaskTool(options: TaskToolsOptions): AgentTool {
       const { task_id, message } = params as { task_id: string; message: string }
 
       try {
-        // Check task exists
-        const task = options.taskRuntime.getById(task_id)
+        // The same owner/persona/descendant guard as steer_task and cancel_task.
+        // Fail closed without a DB, and do not disclose whether a foreign id exists.
+        const ctx = getCurrentTaskExecutionContext()
+        const caller: TaskControlCaller = ctx?.taskId
+          ? { kind: 'task', taskId: ctx.taskId, userId: ctx.userId ?? null, agentId: ctx.agentId ?? null }
+          : { kind: 'strand', userId: options.getCurrentUserId?.() ?? null, agentId: options.getCurrentAgentId?.() ?? null }
+        const task = options.db
+          ? getManageableTask(options.db, options.taskRuntime, caller, task_id)
+          : null
         if (!task) {
           return {
-            content: [{ type: 'text' as const, text: `Error: Task "${task_id}" not found.` }],
+            content: [{ type: 'text' as const, text: `Error: Task "${task_id}" not found or not manageable from here.` }],
             details: { error: true },
           }
         }
@@ -224,6 +249,11 @@ export function createTaskTool(options: TaskToolsOptions): AgentTool {
           description: 'Optional explicit thinking level (off | minimal | low | medium | high | xhigh). Normally leave it out — task_kind/difficulty choose it. "xhigh" is never automatic and requires model_reason.',
         })
       ),
+      persona: Type.Optional(
+        Type.String({
+          description: 'Optional persona id the task runs AS (its memory, persona files and model default), e.g. "bob". Only the default persona may name another persona; every other persona may only name itself. The result still comes back to YOU, in this strand. Omit to run the task as yourself.',
+        })
+      ),
       model_reason: Type.Optional(
         Type.String({
           description: 'Short justification, REQUIRED for an exception model (the astra/fable lines) — pinned directly, as the default of an explicit provider, or as the configured default task model — and for thinking "xhigh". Shown in the task routing record.',
@@ -263,8 +293,9 @@ export function createTaskTool(options: TaskToolsOptions): AgentTool {
       ),
     }),
     execute: async (_toolCallId, params) => {
-      const { prompt, name, provider: providerName, model: modelName, max_duration_minutes, attached_skills, output_schema, context_mode, context, continuation_of, task_kind, difficulty, thinking, model_reason } = params as {
+      const { prompt, name, provider: providerName, model: modelName, max_duration_minutes, attached_skills, output_schema, context_mode, context, continuation_of, task_kind, difficulty, thinking, model_reason, persona } = params as {
         prompt: string
+        persona?: string
         name: string
         provider?: string
         model?: string
@@ -280,6 +311,8 @@ export function createTaskTool(options: TaskToolsOptions): AgentTool {
         context?: { strand_summary?: boolean; message_ids?: number[]; memory_query?: string }
       }
 
+      // Id of the persona_delegations row, closed as failed if the start throws.
+      let delegationLogId: number | null = null
       try {
         // Output contract (SPEC 11.6): validated here so a broken schema is
         // the caller's error, not a failed task an hour later.
@@ -317,7 +350,24 @@ export function createTaskTool(options: TaskToolsOptions): AgentTool {
         // is used for (a) the persona-default lookup in the model inheritance
         // chain and (b) the agentId stored on the task row — deterministic
         // data pass-through, never re-inferred later.
-        const taskAgentId = options.getCurrentAgentId?.() ?? undefined
+        //
+        // `persona` (plan persona-architektur 1c): the default persona may run
+        // the task AS another persona. The task then carries that persona's
+        // id (memory root, persona files, persona model default in the chain
+        // below) and records the caller in `delegatedBy`, which every delivery
+        // path uses to route the outcome back to the caller's strand.
+        const callerAgentId = options.getCurrentAgentId?.() ?? undefined
+        const target = resolveDelegationTarget({
+          requested: persona,
+          callerAgentId,
+          baseDir: options.personaBaseDir,
+          db: options.db,
+        })
+        if (!target.ok) {
+          return { content: [{ type: 'text' as const, text: `Error: ${target.error}` }], details: { error: true } }
+        }
+        const delegatedBy = target.foreign ? (callerAgentId ?? 'main') : null
+        const taskAgentId = target.foreign ? target.personaId : callerAgentId
 
         // Task policy (plan 2026-10-01): resolve provider, model and thinking
         // level deterministically from the structured profile — no second
@@ -336,6 +386,23 @@ export function createTaskTool(options: TaskToolsOptions): AgentTool {
           return { content: [{ type: 'text' as const, text: `Error: ${explicitThinking.error}` }], details: { error: true } }
         }
         const noExplicitPin = !providerName && !modelName
+        const resolveModelInput = options.resolveModelInput ?? resolveProviderModelInput
+        // Delegated persona model (1c): the `Model:` line of the target
+        // persona's IDENTITY.md is the default of a delegated task, but only
+        // when the caller set neither `model` nor `provider`, and only if it
+        // resolves to exactly one enabled model. Otherwise the regular chain
+        // below applies unchanged (parent task > strand pin > persona
+        // provider setting > task defaults).
+        let personaModel: string | undefined
+        if (target.foreign && noExplicitPin) {
+          const spec = readPersonaDirectoryEntry(target.personaId, options.personaBaseDir).model?.trim()
+          const resolved = spec ? resolveModelInput({ model: spec }) : null
+          // An exception model needs an explicit model_reason; a persona file
+          // is not one, so such a persona default falls back to the chain.
+          if (spec && resolved?.ok && (!isTaskPolicyExceptionModel(resolved.modelId) || model_reason?.trim())) {
+            personaModel = spec
+          }
+        }
         // Bound to the session of THIS turn (AsyncLocalStorage in AgentCore),
         // not to whatever strand is active elsewhere; null inside tasks.
         const turnSessionId = options.getParentSessionId?.() ?? null
@@ -345,14 +412,14 @@ export function createTaskTool(options: TaskToolsOptions): AgentTool {
           : null
         const policy = resolveTaskPolicy({
           explicitProvider: providerName?.trim() || undefined,
-          explicitModel: modelName?.trim() || undefined,
+          explicitModel: modelName?.trim() || personaModel,
           explicitThinking: explicitThinking.value,
           modelReason: model_reason,
           profile: profile.value,
           parentProvider,
           strandPin,
           resolveProvider: options.resolveProvider,
-          resolveExplicit: (input) => resolveProviderModelInput(input),
+          resolveExplicit: (input) => resolveModelInput(input),
           getDefaultProvider: () => options.getDefaultProvider(taskAgentId),
           checkAutomatic: options.checkAutomaticModel ?? defaultCheckAutomaticModel,
         })
@@ -405,10 +472,19 @@ export function createTaskTool(options: TaskToolsOptions): AgentTool {
         let continuationOfId: string | null = null
         if (continuation_of !== undefined && String(continuation_of).trim() !== '') {
           const predecessorId = String(continuation_of).trim()
-          const predecessor = options.taskRuntime.getById(predecessorId)
+          // A continuation contains the predecessor's prompt and result. Apply
+          // the same user/persona/descendant boundary as get_task, including
+          // identical errors for unknown and inaccessible ids.
+          const ctx = getCurrentTaskExecutionContext()
+          const caller: TaskControlCaller = ctx?.taskId
+            ? { kind: 'task', taskId: ctx.taskId, userId: ctx.userId ?? null, agentId: ctx.agentId ?? null }
+            : { kind: 'strand', userId: options.getCurrentUserId?.() ?? null, agentId: options.getCurrentAgentId?.() ?? null }
+          const predecessor = options.db
+            ? getManageableTask(options.db, options.taskRuntime, caller, predecessorId)
+            : null
           if (!predecessor) {
             return {
-              content: [{ type: 'text' as const, text: `Error: continuation_of task "${predecessorId}" not found.` }],
+              content: [{ type: 'text' as const, text: `Error: continuation_of task "${predecessorId}" not found or not manageable from here.` }],
               details: { error: true },
             }
           }
@@ -440,11 +516,22 @@ export function createTaskTool(options: TaskToolsOptions): AgentTool {
           isDefaultModel,
           maxDurationMinutes: maxDuration,
           agentId: taskAgentId,
+          delegatedBy,
           outputSchema,
           contextMode: effectiveMode,
           thinkingLevel: policy.thinking,
           routing: policy.routing,
         })
+
+        if (delegatedBy && taskAgentId) {
+          delegationLogId = recordPersonaDelegation(options.db, {
+            callerAgentId: delegatedBy,
+            targetAgentId: taskAgentId,
+            kind: 'task',
+            taskId: task.id,
+            sessionId: parentSessionId,
+          })
+        }
 
         // Start the task, linking its session to the current interactive session
         const attachedSkills = normalizeAttachedSkills(attached_skills)
@@ -457,6 +544,9 @@ export function createTaskTool(options: TaskToolsOptions): AgentTool {
           ? `Context mode: ${effectiveMode}${droppedMessageIds.length ? ` (dropped message ids: ${droppedMessageIds.join(', ')})` : ''}${outputSchema ? '; output_schema enforced' : ''}\n`
           : ''
         const continuationLine = continuationOfId ? `Continuation of: ${continuationOfId}\n` : ''
+        const personaLine = delegatedBy
+          ? `Persona: ${taskAgentId} (delegated by ${delegatedBy}; the result comes back to you)${personaModel ? `; model from persona: ${personaModel}` : ''}\n`
+          : ''
         const routingLine = `Model: ${formatTaskRouting(policy.routing)}\n`
 
         // The per-provider limit (`tasks.maxConcurrentPerProvider`) or the
@@ -481,7 +571,7 @@ export function createTaskTool(options: TaskToolsOptions): AgentTool {
         return {
           content: [{
             type: 'text' as const,
-            text: `${headline}\n\nTask ID: ${task.id}\nName: ${name}\nProvider: ${provider.name}\n${routingLine}Max Duration: ${maxDuration} minutes\n${attachedSkillsLine}${contextLine}${continuationLine}\n${closing}`,
+            text: `${headline}\n\nTask ID: ${task.id}\nName: ${name}\nProvider: ${provider.name}\n${routingLine}Max Duration: ${maxDuration} minutes\n${attachedSkillsLine}${contextLine}${continuationLine}${personaLine}\n${closing}`,
           }],
           details: {
             taskId: task.id,
@@ -496,6 +586,7 @@ export function createTaskTool(options: TaskToolsOptions): AgentTool {
             droppedMessageIds,
             outputSchema: Boolean(outputSchema),
             continuationOf: continuationOfId,
+            ...(delegatedBy ? { persona: taskAgentId, delegatedBy } : {}),
             queued,
             ...(queued
               ? {
@@ -515,6 +606,8 @@ export function createTaskTool(options: TaskToolsOptions): AgentTool {
         }
       } catch (err) {
         const errorMsg = err instanceof Error ? err.message : String(err)
+        // A delegation whose task never started must not stay open forever.
+        failPersonaDelegation(options.db, delegationLogId, `start failed: ${errorMsg}`)
         return {
           content: [{ type: 'text' as const, text: `Error creating task: ${errorMsg}` }],
           details: { error: true },

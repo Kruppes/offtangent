@@ -20,7 +20,9 @@ import {
   loadSttSettings,
   deliverTaskStatusUpdate,
   resolveTaskStrandOrigin,
+  taskOwnerAgentId,
   resolveTaskOwnerUserId,
+  resolveTaskOwnerUserIdForTask,
   parseStrictUserId,
   editCronjobTool,
   ensureConfigStructure,
@@ -873,7 +875,9 @@ export async function createRuntimeComposition(options: RuntimeCompositionOption
    * or null for tasks without a strand origin.
    */
   function resolveTaskOrigin(task: Task): TaskOrigin & { userId: number } {
-    const resolvedUserId = resolveTargetUserIdForTask(task.sessionId)
+    // A sub-task has a task-parent edge but no parent session. Walk both
+    // kinds of lineage before falling back to the provisioned admin user.
+    const resolvedUserId = resolveTaskOwnerUserIdForTask(db, task)
     if (resolvedUserId == null && task.sessionId) {
       logger.warn(
         `[axiom] Task ${task.id}: could not resolve target user from session lineage (sessionId=${task.sessionId}); falling back to default user`,
@@ -894,7 +898,7 @@ export async function createRuntimeComposition(options: RuntimeCompositionOption
   const taskActivityDeps = {
     db,
     chatEventBus,
-    resolveUserId: (task: Task) => resolveTargetUserIdForTask(task.sessionId) ?? getFallbackUserId(),
+    resolveUserId: (task: Task) => resolveTaskOwnerUserIdForTask(db, task) ?? getFallbackUserId(),
     logger: { warn: (msg: string, ...args: unknown[]) => logger.warn(msg, ...args) },
   }
 
@@ -942,14 +946,14 @@ export async function createRuntimeComposition(options: RuntimeCompositionOption
     return true
   }
 
-  function handleTaskNotification(taskId: string, injection: string, taskRuntime: TaskRuntimeTaskBoundary, agentIdFromTask: string | null): void {
+  function handleTaskNotification(taskId: string, injection: string, taskRuntime: TaskRuntimeTaskBoundary, _agentIdFromTask: string | null): void {
     const task = taskRuntime.getById(taskId)
     if (!task) return
 
-    // Persona routing: prefer the agentId handed through the task-runner
-    // callback, fall back to the task row. Deterministic data, never
-    // LLM-inferred.
-    const effectiveAgentId = agentIdFromTask ?? task.agentId ?? 'main'
+    // The runner reports the EXECUTION persona in its callback. Delivery must
+    // use the delegated caller from the persisted row instead, otherwise a
+    // Bob task injects Bob's response into Main's originating strand.
+    const effectiveAgentId = taskOwnerAgentId(task)
 
     const startMs = task.startedAt ? new Date(task.startedAt.replace(' ', 'T') + 'Z').getTime() : Date.now()
     const endMs = task.completedAt ? new Date(task.completedAt.replace(' ', 'T') + 'Z').getTime() : Date.now()
@@ -1044,7 +1048,7 @@ export async function createRuntimeComposition(options: RuntimeCompositionOption
     if (!task) return
 
     const { userId } = resolveTaskOrigin(task)
-    const statusAgentId = task.agentId ?? 'main'
+    const statusAgentId = taskOwnerAgentId(task)
     // Progress stays on the lineage strand, or the task's own transcript
     // for feed-only work. Never consult or create an active chat session.
     const targetSessionId = resolveTaskStrandOrigin(db, task) ?? task.sessionId ?? undefined
@@ -1099,8 +1103,9 @@ export async function createRuntimeComposition(options: RuntimeCompositionOption
     getCurrentInteractiveSessionId: () => getCurrentTaskExecutionContext()?.sessionId ?? null,
     deliverFile: (delivery: SendFileDelivery) => {
       const ctx = getCurrentTaskExecutionContext()
-      const agentId = ctx?.agentId ?? 'main'
       const task = ctx?.taskId ? taskRuntime.tasks.getById(ctx.taskId) : null
+      // A delegated task's file lands in the delegator's strand, as the delegator.
+      const agentId = task ? taskOwnerAgentId(task) : (ctx?.agentId ?? 'main')
       // Resolve from the task row, not a cached turn or tool-supplied session.
       // Feed-only artifacts remain in the task transcript, never in a strand.
       // No fallback to `delivery.sessionId`: a task whose row cannot be
@@ -1351,6 +1356,7 @@ export async function createRuntimeComposition(options: RuntimeCompositionOption
     // Attribute new tasks to the persona whose runtime invoked the tool so
     // their results route back to the same persona (runtime + Telegram bot).
     getCurrentAgentId: () => agentCore?.getCurrentToolAgentId(),
+    getCurrentUserId: () => agentCore?.getCurrentToolUserId(),
     // SPEC 11.6: context_mode selected/fork read the strand from the DB.
     db,
     contextBudgetTokens: taskSettings.contextBudgetTokens,
@@ -1368,6 +1374,7 @@ export async function createRuntimeComposition(options: RuntimeCompositionOption
     // turn happens to run concurrently and could attribute the sub-task (and
     // its memory root + result routing) to the wrong persona.
     getCurrentAgentId: () => getCurrentTaskAgentId() ?? undefined,
+    getCurrentUserId: () => getCurrentTaskExecutionContext()?.userId ?? undefined,
   }
 
   /**
@@ -2724,8 +2731,8 @@ export async function createRuntimeComposition(options: RuntimeCompositionOption
           taskId: task.id,
           name: task.name,
           sessionId: resolveTaskStrandOrigin(db, task),
-          agentId: task.agentId ?? 'main',
-          userId: resolveTargetUserIdForTask(task.sessionId) ?? getFallbackUserId(),
+          agentId: taskOwnerAgentId(task),
+          userId: resolveTaskOwnerUserIdForTask(db, task) ?? getFallbackUserId(),
           triggerType: task.triggerType,
           // `recoverTasks` names its replacement row "<name> (resumed)";
           // this only decorates the notice text, never a decision.

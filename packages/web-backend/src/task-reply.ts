@@ -19,7 +19,7 @@
  * {@link TaskReplyNotResumableError} (the runtime refused the resume).
  */
 import type { ProviderConfig, TaskRuntimeTaskBoundary } from '@axiom/core'
-import { getProviderDefaultModel, sealText } from '@axiom/core'
+import { getProviderDefaultModel, sealText, taskOwnerAgentId } from '@axiom/core'
 
 export type TaskReplyOutcome = 'resumed' | 'running' | 'follow_up'
 
@@ -132,7 +132,13 @@ export function createTaskReply(deps: TaskReplyDeps): ReplyToTask {
     const previewText = text.length > 50 ? `${text.slice(0, 50)}…` : text
     // The reply never changes persona: an HTTP caller sends no agentId and
     // inherits the one of the task it answers.
-    const agentId = input.agentId ?? task.agentId ?? 'main'
+    // A delegated task (Main → Bob) keeps both sides: when the delegator (or
+    // an HTTP caller) answers, the follow-up runs as the same persona and
+    // still reports to the delegator's strand.
+    const ownerAgentId = input.agentId ?? taskOwnerAgentId(task)
+    const agentId = input.agentId && input.agentId !== taskOwnerAgentId(task)
+      ? input.agentId
+      : task.agentId ?? input.agentId ?? 'main'
     const followUp = deps.tasks.create({
       name: `Follow-up: ${previewText}`,
       prompt: followUpPrompt,
@@ -142,6 +148,7 @@ export function createTaskReply(deps: TaskReplyDeps): ReplyToTask {
       isDefaultModel: !task.provider,
       maxDurationMinutes: deps.getMaxDurationMinutes(),
       agentId,
+      delegatedBy: ownerAgentId !== agentId ? ownerAgentId : null,
       // Same model as the answered task → same thinking level (task policy);
       // NULL keeps the background setting, as before.
       thinkingLevel: baseProvider && task.model ? task.thinkingLevel ?? null : null,
@@ -151,7 +158,7 @@ export function createTaskReply(deps: TaskReplyDeps): ReplyToTask {
     })
 
     const parentSessionId = input.userId
-      ? deps.getParentSessionId(input.userId, input.source, agentId)
+      ? deps.getParentSessionId(input.userId, input.source, ownerAgentId)
       : null
     await deps.tasks.start(followUp, provider, undefined, parentSessionId)
 
