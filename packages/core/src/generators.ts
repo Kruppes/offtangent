@@ -4,6 +4,7 @@ import path from 'node:path'
 import crypto from 'node:crypto'
 import { execFile } from 'node:child_process'
 import { promisify } from 'node:util'
+import { setTimeout as sleep } from 'node:timers/promises'
 import yaml from 'js-yaml'
 import { getDataDir } from './uploads.js'
 import { getApiKeyForProvider, loadProvidersDecrypted } from './provider-config.js'
@@ -66,6 +67,11 @@ export interface GenerateInput {
   seed?: number; count?: number; background?: 'auto' | 'opaque' | 'transparent'; enhance?: boolean
 }
 export interface GeneratedImage { path: string; sidecar: string; width: number; height: number; seed: number; seconds: number; cost_eur: number }
+export interface GenerateOptions {
+  signal?: AbortSignal
+  /** Synchronous accounting hook: called once for each persisted image, even if a later image fails. */
+  onImage?: (image: GeneratedImage, route: GeneratorRoute) => void
+}
 
 function imageDims(b: Buffer): { width: number; height: number } {
   if (b.length >= 24 && b.subarray(0, 8).equals(Buffer.from('89504e470d0a1a0a', 'hex'))) return { width: b.readUInt32BE(16), height: b.readUInt32BE(20) }
@@ -78,29 +84,31 @@ function fill(node: unknown, values: Record<string, unknown>): unknown {
   return node
 }
 async function request(url: string, init: RequestInit = {}, timeout = 120000): Promise<Response> {
-  const res = await fetch(url, { ...init, signal: AbortSignal.timeout(timeout) })
+  const deadline = AbortSignal.timeout(timeout)
+  const signal = init.signal ? AbortSignal.any([init.signal, deadline]) : deadline
+  signal.throwIfAborted()
+  const res = await fetch(url, { ...init, signal })
   if (!res.ok) throw new Error(`Image backend HTTP ${res.status}`) // never print response body or credentials
   return res
 }
-async function json(url: string, body?: unknown, headers?: Record<string, string>, timeout?: number): Promise<Record<string, unknown>> {
-  return await (await request(url, body === undefined ? {} : { method: 'POST', headers: { 'content-type': 'application/json', ...headers }, body: JSON.stringify(body) }, timeout)).json() as Record<string, unknown>
+async function json(url: string, body?: unknown, headers?: Record<string, string>, timeout?: number, signal?: AbortSignal): Promise<Record<string, unknown>> {
+  return await (await request(url, body === undefined ? { signal } : { method: 'POST', headers: { 'content-type': 'application/json', ...headers }, body: JSON.stringify(body), signal }, timeout)).json() as Record<string, unknown>
 }
-const sleep = (ms: number) => new Promise(resolve => setTimeout(resolve, ms))
-async function comfy(route: GeneratorRoute, config: GeneratorConfig, prompt: string, dims: { width: number; height: number }, seed: number, steps: number, cfg: number): Promise<Buffer> {
+async function comfy(route: GeneratorRoute, config: GeneratorConfig, prompt: string, dims: { width: number; height: number }, seed: number, steps: number, cfg: number, signal?: AbortSignal): Promise<Buffer> {
   const ep = route.endpoint!.replace(/\/$/, '')
-  await json(`${ep}/system_stats`)
+  await json(`${ep}/system_stats`, undefined, undefined, undefined, signal)
   // Fail closed unless an operator-supplied executable has checked that mflux is idle.
   // Exit zero means idle; every other exit (including SSH failure) blocks generation.
   const guard = process.env.GENERATORS_MFLUX_GUARD
   if (!guard) throw new Error('GENERATORS_MFLUX_GUARD is required for ComfyUI')
-  try { await promisify(execFile)(guard, [], { timeout: 20000 }) }
+  try { await promisify(execFile)(guard, [], { timeout: 20000, signal }) }
   catch { throw new Error('mflux guard failed or mflux is busy; ComfyUI generation blocked') }
   const waiting = Date.now()
   while (true) {
-    const q = await json(`${ep}/queue`) as {queue_running?: unknown[]; queue_pending?: unknown[]}
+    const q = await json(`${ep}/queue`, undefined, undefined, undefined, signal) as {queue_running?: unknown[]; queue_pending?: unknown[]}
     if (!q.queue_running?.length && !q.queue_pending?.length) break
     if (Date.now() - waiting > 300000) throw new Error('ComfyUI queue occupied for 300 seconds')
-    await sleep(5000)
+    await sleep(5000, undefined, { signal })
   }
   const root = path.resolve(process.env.GENERATORS_WORKFLOW_DIR || path.dirname(config.configPath))
   const wfPath = path.resolve(root, route.workflow!)
@@ -111,20 +119,20 @@ async function comfy(route: GeneratorRoute, config: GeneratorConfig, prompt: str
   // Workflow files may already contain the ComfyUI API envelope { prompt: { ...nodes } }.
   const payload = workflow && typeof workflow === 'object' && 'prompt' in workflow
     && typeof workflow.prompt === 'object' ? workflow : { prompt: workflow }
-  const submitted = await json(`${ep}/prompt`, { ...payload, client_id: crypto.randomUUID() }, undefined, 30000)
+  const submitted = await json(`${ep}/prompt`, { ...payload, client_id: crypto.randomUUID() }, undefined, 30000, signal)
   if (!submitted.prompt_id || typeof submitted.prompt_id !== 'string') throw new Error('ComfyUI rejected workflow')
   for (let delay = 1000, start = Date.now(); Date.now() - start < 900000; delay = Math.min(delay * 1.3, 5000)) {
-    const history = await json(`${ep}/history/${encodeURIComponent(submitted.prompt_id)}`)
+    const history = await json(`${ep}/history/${encodeURIComponent(submitted.prompt_id)}`, undefined, undefined, undefined, signal)
     const entry = history[submitted.prompt_id] as {status?: {status_str?: string}; outputs?: Record<string, unknown>} | undefined
     if (entry?.status?.status_str === 'error') throw new Error('ComfyUI workflow failed')
     for (const output of Object.values(entry?.outputs || {}) as Array<{images?: Array<{filename: string; subfolder?: string; type?: string}>}>) {
       if (output.images?.length) {
         const image = output.images[0]
         const params = new URLSearchParams({ filename: image.filename, subfolder: image.subfolder || '', type: image.type || 'output' })
-        return Buffer.from(await (await request(`${ep}/view?${params}`, {}, 120000)).arrayBuffer())
+        return Buffer.from(await (await request(`${ep}/view?${params}`, { signal }, 120000)).arrayBuffer())
       }
     }
-    await sleep(delay)
+    await sleep(delay, undefined, { signal })
   }
   throw new Error('ComfyUI generation timed out')
 }
@@ -137,20 +145,22 @@ function falKey(route: GeneratorRoute): string {
   if (!match) throw new Error('FAL_KEY missing in key file')
   return match[1]
 }
-async function fal(route: GeneratorRoute, prompt: string, dims: { width: number; height: number }, seed: number, steps: number): Promise<Buffer> {
+async function fal(route: GeneratorRoute, prompt: string, dims: { width: number; height: number }, seed: number, steps: number, signal?: AbortSignal): Promise<Buffer> {
   const result = await json(route.endpoint!, {
     prompt, image_size: dims, num_inference_steps: steps, seed, num_images: 1, output_format: 'png', enable_safety_checker: true,
-  }, { Authorization: `Key ${falKey(route)}` }, 180000)
+  }, { Authorization: `Key ${falKey(route)}` }, 180000, signal)
   const url = (result.images as Array<{url?: string}> | undefined)?.[0]?.url
   if (typeof url !== 'string' || !url.startsWith('https://')) throw new Error('fal returned no secure image URL')
-  return Buffer.from(await (await request(url)).arrayBuffer())
+  return Buffer.from(await (await request(url, { signal })).arrayBuffer())
 }
-async function codex(route: GeneratorRoute, prompt: string, background?: string): Promise<Buffer> {
+async function codex(route: GeneratorRoute, prompt: string, background?: string, signal?: AbortSignal): Promise<Buffer> {
   const provider = loadProvidersDecrypted().providers.find(p => p.provider === 'openai-codex' && p.authMethod === 'oauth')
   if (!provider?.oauthCredentials) throw new Error('No openai-codex login configured')
   // The provider's existing serialized OAuth refresh handles expired credentials.
   // Re-read the store after refresh: the access token may have rotated.
+  signal?.throwIfAborted()
   await getApiKeyForProvider(provider)
+  signal?.throwIfAborted()
   const access = loadProvidersDecrypted().providers.find(p => p.id === provider.id)?.oauthCredentials?.access
   if (!access) throw new Error('No openai-codex access token configured')
   let claims: {exp?: number; 'https://api.openai.com/auth'?: {chatgpt_account_id?: string}}
@@ -166,13 +176,15 @@ async function codex(route: GeneratorRoute, prompt: string, background?: string)
   const endpoint = target.toString()
   const result = await json(endpoint, {
     model: route.model, prompt, ...(background ? { background } : {}),
-  }, { Authorization: `Bearer ${access}`, 'ChatGPT-Account-ID': account, originator: 'pi' }, 180000)
+  }, { Authorization: `Bearer ${access}`, 'ChatGPT-Account-ID': account, originator: 'pi' }, 180000, signal)
   const encoded = (result.data as Array<{b64_json?: string}> | undefined)?.[0]?.b64_json
   if (!encoded) throw new Error('Codex returned no image')
   return Buffer.from(encoded, 'base64')
 }
 
-export async function generateImages(config: GeneratorConfig, input: GenerateInput): Promise<{ route: GeneratorRoute; images: GeneratedImage[] }> {
+export async function generateImages(config: GeneratorConfig, input: GenerateInput, options: GenerateOptions = {}): Promise<{ route: GeneratorRoute; images: GeneratedImage[] }> {
+  const { signal } = options
+  signal?.throwIfAborted()
   if (!input.prompt?.trim() || input.prompt.length > 12000) throw new Error('Prompt must have 1–12000 characters')
   const routeId = input.route || config.routes.find(r => r.status === 'ok' && r.triggers.some(t => t && input.prompt.toLowerCase().includes(t.toLowerCase())))?.id || config.default_route
   const route = config.routes.find(r => r.id === routeId)
@@ -204,11 +216,12 @@ export async function generateImages(config: GeneratorConfig, input: GenerateInp
   fs.mkdirSync(outdir, { recursive: true })
   const images: GeneratedImage[] = []
   for (let i = 0; i < count; i++) {
+    signal?.throwIfAborted()
     const currentSeed = (seed + i) % (2 ** 32), started = Date.now()
     const used = route.backend.startsWith('openai-codex') ? codexPrompt(input.prompt, input.ratio) : input.prompt
-    const buffer = route.backend === 'comfyui' ? await comfy(route, config, used, dims, currentSeed, steps, cfg)
-      : route.backend === 'fal' ? await fal(route, used, dims, currentSeed, steps)
-        : await codex(route, used, input.background)
+    const buffer = route.backend === 'comfyui' ? await comfy(route, config, used, dims, currentSeed, steps, cfg, signal)
+      : route.backend === 'fal' ? await fal(route, used, dims, currentSeed, steps, signal)
+        : await codex(route, used, input.background, signal)
     const actual = imageDims(buffer)
     const cost = generatorCost(route, dims.width, dims.height)
     const file = path.join(outdir, `${route.id}-${Date.now()}-${currentSeed}.png`)
@@ -218,7 +231,10 @@ export async function generateImages(config: GeneratorConfig, input: GenerateInp
     fs.writeFileSync(sidecar, JSON.stringify({ prompt: input.prompt, prompt_used: used, route: route.id, backend: route.backend,
       model: route.model, workflow: route.workflow, params: { ratio, size, steps, cfg, background: input.background },
       seed: currentSeed, ...actual, seconds, cost_eur: cost, created_at: new Date().toISOString() }, null, 2), { flag: 'wx' })
-    images.push({ path: file, sidecar, ...actual, seed: currentSeed, seconds, cost_eur: cost })
+    const image = { path: file, sidecar, ...actual, seed: currentSeed, seconds, cost_eur: cost }
+    images.push(image)
+    options.onImage?.(image, route)
+    signal?.throwIfAborted()
   }
   return { route, images }
 }

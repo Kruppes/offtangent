@@ -104,6 +104,41 @@ describe('generator routes', () => {
     expect(JSON.parse(fs.readFileSync(result.images[0].sidecar, 'utf8')).prompt_used).toContain('Image format: 16:9')
     vi.restoreAllMocks()
   })
+  it('does not start requests for an already stopped turn', async () => {
+    const dir = temp(), controller = new AbortController()
+    controller.abort()
+    const config = { configPath: path.join(dir, 'routes.yaml'), default_route: 'test', output_dir: dir,
+      routes: [route], ratios: ['1:1'], size_presets: { s: 512 }, errors: [] }
+    const fetchMock = vi.fn()
+    vi.stubGlobal('fetch', fetchMock)
+    await expect(generateImages(config, { prompt: 'Synthetic scene' }, { signal: controller.signal })).rejects.toThrow()
+    expect(fetchMock).not.toHaveBeenCalled()
+  })
+  it('propagates turn cancellation into an in-flight backend request', async () => {
+    const dir = temp(), controller = new AbortController()
+    const config = { configPath: path.join(dir, 'routes.yaml'), default_route: 'test', output_dir: dir,
+      routes: [route], ratios: ['1:1'], size_presets: { s: 512 }, errors: [] }
+    process.env.FAL_KEY = 'unit-test-key'
+    vi.stubGlobal('fetch', vi.fn((_url: string, init: RequestInit) => new Promise((_resolve, reject) => {
+      init.signal!.addEventListener('abort', () => reject(init.signal!.reason), { once: true })
+      controller.abort()
+    })))
+    await expect(generateImages(config, { prompt: 'Synthetic scene' }, { signal: controller.signal })).rejects.toThrow()
+  })
+  it('reports each completed image before a later image fails', async () => {
+    const dir = temp()
+    const config = { configPath: path.join(dir, 'routes.yaml'), default_route: 'test', output_dir: dir,
+      routes: [route], ratios: ['1:1'], size_presets: { s: 512 }, errors: [] }
+    process.env.FAL_KEY = 'unit-test-key'
+    let generation = 0
+    vi.stubGlobal('fetch', vi.fn(async (url: string) => url === route.endpoint
+      ? ++generation === 1 ? Response.json({ images: [{ url: 'https://sample.test/image.png' }] }) : new Response('', { status: 503 })
+      : new Response(png)))
+    const completed = vi.fn()
+    await expect(generateImages(config, { prompt: 'Synthetic scene', count: 2 }, { onImage: completed })).rejects.toThrow('HTTP 503')
+    expect(completed).toHaveBeenCalledOnce()
+    expect(completed.mock.calls[0][0]).toMatchObject({ width: 512, cost_eur: 0.00122 })
+  })
   it('rejects explicit size, quality and steps on subscription route before any request', async () => {
     const dir = temp()
     const codexRoute: GeneratorRoute = { ...route, backend: 'openai-codex',

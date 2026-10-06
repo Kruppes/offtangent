@@ -25,15 +25,18 @@ export function createGenerateTool(options: SendFileToolOptions & { db: Database
     execute: async (id, params, signal, onUpdate) => {
       if (!options.getCurrentToolUserId()) return { content: [{ type: 'text', text: 'Error: no active user for image delivery' }], details: { error: true } }
       try {
-        const { route, images } = await generateImages(loadGeneratorConfig(), params as Parameters<typeof generateImages>[1])
+        const { route, images } = await generateImages(loadGeneratorConfig(), params as Parameters<typeof generateImages>[1], {
+          signal,
+          // Book each completed image immediately, before any later generation or delivery can fail.
+          // token_usage.estimated_cost is USD; sidecars and tool results use EUR.
+          onImage: (image, generatedRoute) => logTokenUsage(options.db, { provider: 'image-generation', model: generatedRoute.id, kind: 'image_generation',
+            promptTokens: 0, completionTokens: 0, cacheRead: 0, cacheWrite: 0,
+            estimatedCost: image.cost_eur / (generatedRoute.cost.eur_per_usd ?? 0.93),
+            sessionId: options.getCurrentInteractiveSessionId?.() || undefined }),
+        })
         const delivered = []
         for (const image of images) {
-          // Book every generated image, even when its subsequent delivery fails.
-          // token_usage.estimated_cost is USD; sidecars and tool results use EUR.
-          logTokenUsage(options.db, { provider: 'image-generation', model: route.id, kind: 'image_generation',
-            promptTokens: 0, completionTokens: 0, cacheRead: 0, cacheWrite: 0,
-            estimatedCost: image.cost_eur / (route.cost.eur_per_usd ?? 0.93),
-            sessionId: options.getCurrentInteractiveSessionId?.() || undefined })
+          signal?.throwIfAborted()
           // Reuse the established upload/delivery path and transcript details.
           const result = await send.execute(id, { path: image.path }, signal, onUpdate)
           if ((result.details as { error?: boolean } | undefined)?.error) throw new Error('Image generated but delivery failed')
