@@ -1989,6 +1989,7 @@
     "empty": "All sorted. New thoughts are welcome.",
     "more": "Load more",
     "sendError": "Capture could not be confirmed. Your draft is kept; retry to check or send it.",
+    "filesAttached": "{count} file attached | {count} files attached",
     "uploadTooLarge": "A file exceeds the server’s size limit. Choose a smaller file.",
     "uploadStorage": "The server has insufficient free disk space.",
     "uploadLimit": "The server rejected these files. Try fewer files in one upload.",

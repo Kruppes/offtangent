@@ -7,6 +7,7 @@ import * as now from '~/api/now'
 import * as models from '~/api/models'
 import * as personas from '~/api/personas'
 import * as composerHandoff from '~/composables/useComposerHandoff'
+import * as fileDrop from '~/composables/chat/useFileDrop'
 import * as resurfaceApi from '~/api/resurface'
 import * as captureParts from '../captureParts'
 import * as captureDictation from '../captureDictation'
@@ -20,7 +21,7 @@ function loadComponent(path: string): Component {
  const script = compileScript(descriptor, { id: path, inlineTemplate: true })
  const { outputText } = transpileModule(script.content, { compilerOptions: { module: ModuleKind.CommonJS, target: ScriptTarget.ES2022 } })
  const exports: { default?: Component } = {}
- const modules: Record<string, unknown> = { vue: { ...Vue, vModelText: { mounted: (el: Node, binding: { value: unknown }) => { el.props.value = binding.value }, updated: (el: Node, binding: { value: unknown }) => { el.props.value = binding.value } }, vModelSelect: {} }, '~/api/captures': captures, '~/api/now': now, '~/api/models': models, '~/api/personas': personas, '~/composables/useComposerHandoff': composerHandoff, '~/api/resurface': resurfaceApi, '../captureParts': captureParts, '../captureDictation': captureDictation, '../useCaptureDictation': captureDictationUse, '~/utils/dictation': dictationUtils }
+ const modules: Record<string, unknown> = { vue: { ...Vue, vModelText: { mounted: (el: Node, binding: { value: unknown }) => { el.props.value = binding.value }, updated: (el: Node, binding: { value: unknown }) => { el.props.value = binding.value } }, vModelSelect: {} }, '~/api/captures': captures, '~/api/now': now, '~/api/models': models, '~/api/personas': personas, '~/composables/useComposerHandoff': composerHandoff, '~/composables/chat/useFileDrop': fileDrop, '~/api/resurface': resurfaceApi, '../captureParts': captureParts, '../captureDictation': captureDictation, '../useCaptureDictation': captureDictationUse, '~/utils/dictation': dictationUtils }
  new Function('require', 'exports', outputText)((name: string) => name === './CaptureDecision.vue' || name === './CaptureParts.vue' ? { default: loadComponent(name) } : modules[name], exports)
  return exports.default!
 }
@@ -301,6 +302,48 @@ describe('Capture Home rendered', () => {
   expect(text(root)).toContain('a.txt'); expect(text(root)).toContain('b.txt')
   await draft(root); await send(root)
   expect(JSON.parse(request.mock.calls.find(([url]) => url === 'https://test.example/api/captures')![1].body).attachments).toHaveLength(2)
+ })
+ async function paste(root: Node, files: File[], plain = '', html = '') {
+  const preventDefault = vi.fn()
+  const field = all(root).find(n => n.tag === 'textarea')!
+  await (field.props.onPaste as (e: unknown) => void)({ clipboardData: {
+   files, types: ['Files'], getData: (type: string) => type === 'text/plain' ? plain : type === 'text/html' ? html : '',
+  }, preventDefault })
+  await flush()
+  return preventDefault
+ }
+ it('pastes a nameless screenshot as a chip and submits its descriptor with the draft', async () => {
+  const original = request.getMockImplementation()!
+  request.mockImplementation(async (url: string, options?: RequestInit) => {
+   if (!url.endsWith('/api/uploads')) return original(url, options)
+   const file = (options?.body as FormData).get('files') as File
+   expect(file.name).toMatch(/^paste-.*\.png$/)
+   return new Response(JSON.stringify({ uploads: [{ originalName: file.name, relativePath: 'synthetic-paste', storedName: 'synthetic-paste', urlPath: '/uploads/synthetic-paste' }] }))
+  })
+  const { root } = mount(Home); await flush(); await draft(root, 'Keep this screenshot')
+  const preventDefault = await paste(root, [new File(['synthetic pixels'], '', { type: 'image/png' })])
+  expect(preventDefault).toHaveBeenCalledOnce()
+  expect(request.mock.calls.filter(([url]) => url.endsWith('/api/uploads'))).toHaveLength(1)
+  expect(text(root)).toMatch(/paste-.*\.png/)
+  expect(text(root)).toContain('capture.filesAttached:1')
+  await send(root)
+  const capture = JSON.parse(request.mock.calls.find(([url]) => url.endsWith('/api/captures'))![1].body)
+  expect(capture).toMatchObject({ text: 'Keep this screenshot', attachments: [{ originalName: expect.stringMatching(/^paste-.*\.png$/), relativePath: 'synthetic-paste' }] })
+ })
+ it('leaves a meaningful text paste to the browser without uploading a clipboard image', async () => {
+  const { root } = mount(Home); await flush()
+  const prevented = await paste(root, [new File(['pixels'], 'synthetic.png', { type: 'image/png' })], 'Meaningful words')
+  expect(prevented).not.toHaveBeenCalled()
+  expect(request.mock.calls.filter(([url]) => url.endsWith('/api/uploads'))).toHaveLength(0)
+ })
+ it('shows the 413 upload error while retaining typed text after a screenshot paste', async () => {
+  const original = request.getMockImplementation()!
+  request.mockImplementation(async (url: string, options?: RequestInit) => url.endsWith('/api/uploads')
+   ? new Response(JSON.stringify({ error: 'Synthetic large upload' }), { status: 413 }) : original(url, options))
+  const { root } = mount(Home); await flush(); await draft(root, 'Important typed text')
+  await paste(root, [new File(['pixels'], 'synthetic.png', { type: 'image/png' })])
+  expect(text(root)).toContain('capture.uploadTooLarge')
+  expect(all(root).find(n => n.tag === 'textarea')?.props.value).toBe('Important typed text')
  })
  it('retains the draft and idempotency key on a failed send and retries', async () => {
   const original = request.getMockImplementation()!

@@ -57,6 +57,15 @@ export function pasteIntent(transfer: TransferLike | null | undefined): { kind: 
   return { kind: 'files', files }
 }
 
+/** Give nameless clipboard files a stable extension for their upload and chip. */
+export function namedPasteFile(file: File): File {
+  if (file.name.trim()) return file
+  const extension = ({ 'image/png': 'png', 'image/jpeg': 'jpg', 'image/webp': 'webp', 'image/gif': 'gif', 'application/pdf': 'pdf' } as Record<string, string>)[file.type] ?? 'bin'
+  return new File([file], `paste-${new Date().toISOString().replace(/[:.]/g, '-')}.${extension}`, {
+    type: file.type, lastModified: file.lastModified,
+  })
+}
+
 /**
  * Drag & drop file upload onto the chat column; dropped files go to `onFiles`.
  * A counter tracks dragenter/dragleave because those events bubble up through

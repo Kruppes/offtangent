@@ -1989,6 +1989,7 @@
     "empty": "Alles sortiert. Platz für neue Gedanken.",
     "more": "Mehr laden",
     "sendError": "Capture konnte nicht bestätigt werden. Dein Entwurf bleibt erhalten; versuche es erneut.",
+    "filesAttached": "{count} Datei angehängt | {count} Dateien angehängt",
     "uploadTooLarge": "Eine Datei überschreitet das Größenlimit des Servers. Wähle eine kleinere Datei.",
     "uploadStorage": "Auf dem Server ist nicht genügend Speicherplatz frei.",
     "uploadLimit": "Der Server hat die Dateien abgelehnt. Versuche weniger Dateien pro Upload.",

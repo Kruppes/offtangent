@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed, nextTick, onMounted, ref } from 'vue'
 import { takeComposerHandoff } from '~/composables/useComposerHandoff'
+import { namedPasteFile, pasteIntent } from '~/composables/chat/useFileDrop'
 import { useCapturesApi, type CaptureResult, type CaptureInput, type ApplyCaptureInput, type UploadDescriptor, type ClientPersona, initialCapturePersona, captureClientKey } from '~/api/captures'
 import { useNowApi, type NowSet, type NowStrand } from '~/api/now'
 import { useModelsApi, type SelectableModel } from '~/api/models'
@@ -20,6 +21,7 @@ const text = ref('')
 const textarea = ref<HTMLTextAreaElement | null>(null)
 const attachments = ref<UploadDescriptor[]>([])
 const uploading = ref(false)
+const fileAnnouncement = ref(0)
 const busy = ref(false)
 const error = ref('')
 const errorDetail = ref('')
@@ -149,25 +151,37 @@ async function send() {
     if (pending?.signature !== signature) pending = { signature, key: captureClientKey() }
     latest.value = await api.create({ ...draft, clientMessageId: pending.key } satisfies CaptureInput)
     sending.value = false; refreshing.value = true
-    text.value = ''; attachments.value = []; pending = null; handoffTarget.value = null
+    text.value = ''; attachments.value = []; fileAnnouncement.value = 0; pending = null; handoffTarget.value = null
     if (latest.value?.code === 'routing_pending') notice.value = 'capture.routingPending'
     await load()
     await resolveTitles()
   } catch { error.value = 'capture.sendError' }
   finally { busy.value = false; sending.value = false; refreshing.value = false }
 }
-async function upload(event: Event) {
-  const input = event.target as HTMLInputElement
-  const files = Array.from(input.files ?? [])
-  input.value = ''
-  if (!files.length) return
-  uploading.value = true; error.value = ''; errorDetail.value = ''
-  try { attachments.value.push(...await api.upload(files)) }
-  catch (e) {
+async function uploadFiles(files: File[], pasted = false) {
+  if (!files.length || busy.value || uploading.value) return
+  uploading.value = true; error.value = ''; errorDetail.value = ''; fileAnnouncement.value = 0
+  try {
+    attachments.value.push(...await api.upload(files))
+    if (pasted) fileAnnouncement.value = files.length
+  } catch (e) {
     errorDetail.value = e instanceof Error ? e.message : ''
     const status = (e as { status?: number }).status
     error.value = status === 413 ? 'capture.uploadTooLarge' : status === 507 ? 'capture.uploadStorage' : status === 400 ? 'capture.uploadLimit' : 'capture.uploadError'
   } finally { uploading.value = false }
+}
+function upload(event: Event) {
+  const input = event.target as HTMLInputElement
+  const files = Array.from(input.files ?? [])
+  input.value = ''
+  return uploadFiles(files)
+}
+function handlePaste(event: ClipboardEvent) {
+  const intent = pasteIntent(event.clipboardData)
+  if (intent.kind !== 'files') return
+  event.preventDefault()
+  if (busy.value || uploading.value) return
+  void uploadFiles(intent.files.map(namedPasteFile), true)
 }
 async function act(result: CaptureResult, body?: ApplyCaptureInput) {
   if (busy.value) return
@@ -255,7 +269,7 @@ onMounted(() => {
     <header><h1 class="text-2xl font-semibold">{{ $t('capture.title') }}</h1><p class="measure mt-1 text-muted-foreground">{{ $t('capture.subtitle') }}</p></header>
     <form class="space-y-3 rounded-xl border bg-card p-4" @submit.prevent="send" @keydown="handleDictationKeydown">
       <label for="capture-text" class="block font-medium">{{ $t('capture.prompt') }}</label>
-      <textarea id="capture-text" ref="textarea" v-model="text" :disabled="busy" rows="4" class="focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 w-full resize-y rounded-md border border-input bg-background p-3" :placeholder="$t('capture.placeholder')" @keydown="(e: KeyboardEvent) => { if (e.key === 'Enter' && (e.ctrlKey || e.metaKey) && !e.isComposing) { e.preventDefault(); send() } }" />
+      <textarea id="capture-text" ref="textarea" v-model="text" :disabled="busy" rows="4" class="focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 w-full resize-y rounded-md border border-input bg-background p-3" :placeholder="$t('capture.placeholder')" @paste="handlePaste" @keydown="(e: KeyboardEvent) => { if (e.key === 'Enter' && (e.ctrlKey || e.metaKey) && !e.isComposing) { e.preventDefault(); send() } }" />
       <DictationBar
         v-if="sttEnabled && dictationPhase !== 'idle'"
         :phase="dictationPhase"
@@ -271,6 +285,7 @@ onMounted(() => {
       />
       <p class="sr-only" aria-live="polite" data-testid="capture-dictation-announcement">{{ dictationAnnouncement ? $t(dictationAnnouncement) : '' }}</p>
       <p v-if="dictated" data-testid="capture-dictated" class="measure flex items-start gap-2 text-sm text-muted-foreground"><AppIcon name="mic" class="mt-1 shrink-0" aria-hidden="true" /><span>{{ $t('capture.dictation.marked') }}</span></p>
+      <p class="sr-only" aria-live="polite">{{ fileAnnouncement ? $t('capture.filesAttached', { count: fileAnnouncement }) : '' }}</p>
       <p class="measure text-sm text-muted-foreground">{{ $t('capture.textLimit', { count: text.length }) }}</p>
       <div class="flex flex-wrap gap-3">
         <label class="flex min-w-0 flex-1 flex-col gap-1">{{ $t('capture.persona') }}<select v-model="agentId" :disabled="busy" class="focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 min-h-11 max-w-full rounded-md border border-input bg-background px-2"><option value="">{{ $t('capture.automatic') }}</option><option v-for="p in personas" :key="p.id" :value="p.id">{{ p.displayName }}</option></select></label>

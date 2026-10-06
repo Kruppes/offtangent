@@ -149,7 +149,7 @@ import { ref, useId } from 'vue'
 import { ApiError } from '~/composables/useApi'
 import type { LoadableSkill } from '~/composables/useSkillAutocomplete'
 import { useChatView } from '~/composables/chat/chatViewContext'
-import { pasteIntent } from '~/composables/chat/useFileDrop'
+import { namedPasteFile, pasteIntent } from '~/composables/chat/useFileDrop'
 import { DICTATION_LEVEL_BARS, useComposerDictation } from '~/composables/chat/useComposerDictation'
 import { provideCommand } from '~/composables/useShellCommands'
 import ChatThinkingLevelPicker from './ChatThinkingLevelPicker.vue'
@@ -211,16 +211,6 @@ async function handleSend() {
   } finally {
     isSending.value = false
   }
-}
-
-// Clipboard files sometimes have no filename. Give them a stable extension
-// before sending so the chip and the saved attachment are both identifiable.
-function namedPasteFile(file: File): File {
-  if (file.name.trim()) return file
-  const extension = ({ 'image/png': 'png', 'image/jpeg': 'jpg', 'image/webp': 'webp', 'image/gif': 'gif', 'application/pdf': 'pdf' } as Record<string, string>)[file.type] ?? 'bin'
-  return new File([file], `paste-${new Date().toISOString().replace(/[:.]/g, '-')}.${extension}`, {
-    type: file.type, lastModified: file.lastModified,
-  })
 }
 
 function handlePaste(event: ClipboardEvent) {
