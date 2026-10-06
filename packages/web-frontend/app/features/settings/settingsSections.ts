@@ -89,6 +89,11 @@ export const SETTINGS_SECTIONS: ReadonlyArray<SettingsSection> = [
     fieldKeys: ['settings.sessionTimeout', 'settings.sessionSection', 'settings.factExtractionSection', 'settings.consolidationSection'],
   },
   {
+    id: 'generators', group: 'system', icon: 'image', save: 'instant',
+    labelKey: 'settings.sections.generators', descriptionKey: 'settings.sections.generatorsDescription',
+    fieldKeys: [],
+  },
+  {
     id: 'agentHeartbeat', group: 'system', icon: 'activity', save: 'form',
     labelKey: 'settings.tabs.agentHeartbeat', descriptionKey: 'settings.tabs.agentHeartbeatDescription',
     fieldKeys: ['settings.agentHeartbeatEnabled', 'settings.agentHeartbeatInterval', 'settings.agentHeartbeatNightMode', 'settings.heartbeatTasksTitle'],

@@ -11,6 +11,7 @@ import {
   createReminderTool,
   createCanvasWriteTool,
   createSendFileTool,
+  createGenerateTool,
   createVoiceMessageTool,
   createResumeTaskTool,
   createTaskRuntime,
@@ -1500,6 +1501,7 @@ export async function createRuntimeComposition(options: RuntimeCompositionOption
       // OWN descendants (task-control.ts), never to siblings or the parent.
       ...createTaskControlTools({ taskRuntime: taskRuntime.tasks, db }),
       createSendFileTool(backgroundSendFileToolOptions),
+      createGenerateTool({ ...backgroundSendFileToolOptions, db }),
       // The canvas of the strand: a task writing an iterative result updates
       // ONE view instead of posting a card per round.
       createCanvasWriteTool(backgroundSendFileToolOptions),
@@ -1588,6 +1590,20 @@ export async function createRuntimeComposition(options: RuntimeCompositionOption
     // delivery sink here: the channel that streams the turn (ws-chat,
     // Telegram) delivers the file from the tool's chunk. Background tasks
     // use `backgroundSendFileToolOptions` instead.
+    createGenerateTool({
+      db,
+      getCurrentToolUserId: () => agentCore?.getCurrentToolUserId(),
+      getCurrentInteractiveSessionId: () => agentCore?.getCurrentInteractiveSessionId() ?? null,
+      isCarriedByCurrentTurn: () => strandHasLiveWriter(agentCore?.getCurrentInteractiveSessionId() ?? null, {
+        hasPersistingTurn: (sessionId) => turnRunner.hasPersistingTurnInSession(sessionId),
+        hasLiveInjection: (sessionId) => liveInjectionsByStrand.has(sessionId),
+      }),
+      deliverFile: (delivery: SendFileDelivery) => deliverTaskFile({ db, chatEventBus }, {
+        userId: delivery.userId, sessionId: delivery.sessionId,
+        agentId: agentCore?.getCurrentToolAgentId?.() ?? 'main',
+        upload: delivery.upload, caption: delivery.caption,
+      }),
+    }),
     createSendFileTool({
       getCurrentToolUserId: () => agentCore?.getCurrentToolUserId(),
       getCurrentInteractiveSessionId: () => agentCore?.getCurrentInteractiveSessionId() ?? null,

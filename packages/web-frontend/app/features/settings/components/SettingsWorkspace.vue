@@ -98,6 +98,8 @@
             </Button>
           </div>
 
+          <SettingsGenerators v-else-if="activeSection === 'generators'" />
+
           <!-- Appearance is a browser preference and needs no server data -->
           <SettingsAppearance v-else-if="activeSection === 'appearance'" />
 
@@ -2402,6 +2404,7 @@ import ModelPolicyPanel from './ModelPolicyPanel.vue'
 import SecretHandlesPanel from './SecretHandlesPanel.vue'
 import VoiceNotePanel from './VoiceNotePanel.vue'
 import SettingsAppearance from './SettingsAppearance.vue'
+import SettingsGenerators from './SettingsGenerators.vue'
 import SettingsOverview from './SettingsOverview.vue'
 import SettingsSectionNav from './SettingsSectionNav.vue'
 import SettingsVoiceReplies from './SettingsVoiceReplies.vue'

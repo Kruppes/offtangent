@@ -1,0 +1,53 @@
+# Copy to <DATA_DIR>/config/generators.yaml and adjust paths/endpoints locally.
+version: 1
+default_route: local-image
+output_dir: /path/to/image-output
+size_presets: {s: 512, m: 768, l: 1024}
+ratios: ['1:1', '16:9', '9:16', '4:3', '3:4', '3:2', '2:3', '21:9']
+routes:
+  - id: local-image
+    label: Local image
+    triggers: [local]
+    backend: comfyui
+    model: local-model
+    endpoint: http://<comfyui-address>:8188
+    workflow: workflows/zimage.json
+    defaults: {ratio: '1:1', size: s, steps: 8, cfg: 1, seed: random, count: 1, sampler: res_multistep, scheduler: simple}
+    params_allowed: [ratio, size, steps, cfg, seed, count]
+    cost: {type: local, eur_per_image: 0}
+    status: ok
+  - id: cloud-image
+    label: fal image
+    triggers: [cloud]
+    backend: fal
+    model: fal-ai/z-image/turbo
+    endpoint: https://<fal-api-address>/fal-ai/z-image/turbo
+    # Set FAL_KEY in the environment, or set key_file to a local FAL_KEY=... file.
+    defaults: {ratio: '1:1', size: l, steps: 8, seed: random, count: 1}
+    params_allowed: [ratio, size, steps, seed, count]
+    cost: {type: paid, usd_per_megapixel: 0.005, eur_per_usd: 0.93}
+    status: ok
+  - id: subscription-image
+    label: Subscription image
+    triggers: [subscription]
+    backend: openai-codex-images
+    model: gpt-image-2
+    endpoint: https://<codex-image-api-address>/backend-api/codex/images/generations
+    defaults: {count: 1}
+    params_allowed: [ratio, count, background]
+    cost: {type: subscription, eur_per_image: 0}
+    status: ok
+# For local ComfyUI routes also set GENERATORS_MFLUX_GUARD to an executable
+# that exits zero only when mflux is idle. SSH errors must return nonzero.
+# Workflows are resolved from <DATA_DIR>/config by default; override with
+# GENERATORS_WORKFLOW_DIR if stored elsewhere.
+
+# Future example only — openai-api is NOT implemented or enabled by this tool.
+# A separate OpenAI Images API route could use gpt-image-2.5-flare with
+# controllable size/quality; measured high quality ~0.062 USD for 1.5 MP.
+# - id: openai-api
+#   backend: openai-api
+#   model: gpt-image-2.5-flare
+#   defaults: {size: 1536x1024, quality: high, count: 1}
+#   params_allowed: [size, quality, count]
+#   status: untested

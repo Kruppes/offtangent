@@ -1058,7 +1058,9 @@
       "logsDescription": "Server- und Agent-Logs.",
       "usage": "Nutzung",
       "usageDescription": "Token-Verbrauch und Abo-Kontingente.",
-      "opensPage": "Öffnet eine eigene Seite"
+      "opensPage": "Öffnet eine eigene Seite",
+      "generators": "Generatoren",
+      "generatorsDescription": "Verfügbare Bildrouten und Konfigurationsfehler"
     },
     "overview": {
       "title": "Alle Einstellungen",

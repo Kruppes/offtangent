@@ -11,7 +11,7 @@ import type { Database } from './database.js'
  * conversation's context. Readers that answer "how full is this strand?" MUST
  * restrict themselves to `request`.
  */
-export type TokenUsageKind = 'request' | 'voice_note'
+export type TokenUsageKind = 'request' | 'voice_note' | 'image_generation'
 
 export interface TokenUsageRecord {
   provider: string

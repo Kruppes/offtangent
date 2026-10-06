@@ -35,7 +35,7 @@ describe('settings sections: grouping', () => {
     expect(groups.map(group => group.id)).toEqual(['everyday', 'system'])
     expect(groups[0]!.sections.map(s => s.id)).toEqual(['appearance', 'now', 'capture', 'tts', 'stt'])
     expect(groups[1]!.sections.map(s => s.id)).toEqual([
-      'agent', 'models', 'memory', 'agentHeartbeat', 'healthMonitor', 'tasks', 'telegram', 'email', 'secrets', 'secretHandles', 'logs', 'usage',
+      'agent', 'models', 'memory', 'generators', 'agentHeartbeat', 'healthMonitor', 'tasks', 'telegram', 'email', 'secrets', 'secretHandles', 'logs', 'usage',
     ])
   })
 

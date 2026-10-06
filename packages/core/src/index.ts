@@ -1701,3 +1701,6 @@ export { getOllamaShowFacts, peekOllamaShowFacts, ollamaRootUrl, resetShowFactsC
 export { streamNativeOllama, decideNativeRequest, nativeLimitIdentity } from './ollama-native/native-request.js'
 export { isStrandEcoEnabled, setStrandEcoEnabled, lastEcoViewForStrand, observedEcoContextLimit, ECO_METRIC_TOOL_NAME } from './eco-mode-store.js'
 export type { EcoViewMetric } from './eco-mode-store.js'
+
+export { createGenerateTool } from './generate-tool.js'
+export { loadGeneratorConfig, generateImages, codexPrompt, generatorCost } from './generators.js'

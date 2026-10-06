@@ -1058,7 +1058,9 @@
       "logsDescription": "Server and agent logs.",
       "usage": "Usage",
       "usageDescription": "Token usage and subscription quotas.",
-      "opensPage": "Opens its own page"
+      "opensPage": "Opens its own page",
+      "generators": "Generators",
+      "generatorsDescription": "Available image generation routes and configuration errors"
     },
     "overview": {
       "title": "All settings",
