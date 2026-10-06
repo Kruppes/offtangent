@@ -2140,7 +2140,8 @@
     "aborted": "Abbruch angefordert",
     "error": "Fehlgeschlagen",
     "disconnected": "Verbindung unterbrochen",
-    "stopAll": "Meine laufenden Turns abbrechen"
+    "stopStrand": "Diesen Strand stoppen",
+    "stopStrandHint": "Stoppt nur die Antwort, die in diesem Strand läuft. Andere Strands und Hintergrund-Tasks laufen weiter."
   },
   "boards": {
     "title": "Boards",

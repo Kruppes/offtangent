@@ -530,6 +530,19 @@ describe('WebSocket chat', () => {
     ws.send(JSON.stringify({ type: 'command', content: '/stop' }))
     const msg = await waitForMessage()
     expect(msg.type).toBe('system')
+    // Legacy frame without sessionId: strand-local, never the global abort.
+    expect(msg.text).toBe('Nothing to stop in this strand.')
+    ws.close()
+  })
+
+  it('/kill command reports when there is nothing to abort', async () => {
+    const token = generateAccessToken({ userId: 1, username: 'admin', role: 'admin' })
+    const { ws, waitForMessage } = await connectWs(token)
+    await waitForMessage() // auth
+
+    ws.send(JSON.stringify({ type: 'command', content: '/kill' }))
+    const msg = await waitForMessage()
+    expect(msg.type).toBe('system')
     expect(msg.text).toBe('Nothing to stop.')
     ws.close()
   })

@@ -12,7 +12,7 @@ The product owner requested a readable strand transcript without weakening sessi
 - Task result notifications currently can lack both identifiers. They are intentionally not guessed into an open strand. Persisted history and the session-bound task tree provide catch-up.
 - History requests cannot overwrite the transcript after navigation to another strand.
 - Progress follows existing `queued`, `thinking`, `tool_call_start`, `tool_call_end`, `text`, `done`, `error`, and replay frames. The initial waiting state starts on local send; timestamps measure client-observed elapsed time, not server CPU time.
-- The existing `/stop` command stops all of the current user's turns. The button explicitly names that scope. A local stop request freezes the clock even without an attributed acknowledgement or terminal frame; it is labelled **Stop requested**, not falsely confirmed by the server. Disconnect also freezes the clock without claiming completion. No new protocol or endpoint was introduced.
+- The stop button sends `/stop` with the open strand's `sessionId`; the backend checks access to that strand and stops only its turns (other strands keep running). The global emergency stop is the `/kill` slash command, which has no button. A local stop request freezes the clock even without an attributed acknowledgement or terminal frame; it is labelled **Stop requested**, not falsely confirmed by the server. Disconnect also freezes the clock without claiming completion. No new protocol or endpoint was introduced.
 
 ## Presentation
 

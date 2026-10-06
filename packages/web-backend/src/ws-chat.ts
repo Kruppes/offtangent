@@ -661,13 +661,36 @@ export function setupWebSocketChat(
           return
         }
 
-        if (command === 'stop' || command === 'kill') {
+        if (command === 'kill') {
+          // Global emergency stop: every queued/streaming turn of this user,
+          // in every strand and persona. Only reachable as an explicit slash
+          // command, never through the strand's visible stop button.
           if (!turnRunner.abortTurn(currentUser.userId)) {
             sendMessage(ws, { type: 'system', text: 'Nothing to stop.' })
             return
           }
 
-          sendMessage(ws, { type: 'system', text: 'Task aborted. No queued messages.' })
+          sendMessage(ws, { type: 'system', text: 'All of your running turns were stopped.' })
+          return
+        }
+
+        if (command === 'stop') {
+          // Strand-local stop: never falls back to the global abort.
+          const target = resolveStopTarget(resolveAgentCore(), String(currentUser.userId), explicitSessionId, agentId)
+          if (!target.ok) {
+            sendMessage(ws, target.error)
+            return
+          }
+          if (target.sessionId === null || !turnRunner.abortTurnInSession(currentUser.userId, target.sessionId)) {
+            sendMessage(ws, {
+              type: 'system',
+              text: 'Nothing to stop in this strand.',
+              ...(target.sessionId !== null ? { sessionId: target.sessionId, agentId } : {}),
+            })
+            return
+          }
+
+          sendMessage(ws, { type: 'system', text: 'Stopped this strand.', sessionId: target.sessionId, agentId })
           return
         }
       }
@@ -1114,6 +1137,43 @@ export function setupWebSocketChat(
       return !!clients && clients.size > 0
     },
   }
+}
+
+type StopTarget =
+  | { ok: true; sessionId: string | null }
+  | { ok: false; error: ChatResponse }
+
+/**
+ * The strand a `/stop` frame is allowed to stop. An explicit (already
+ * normalized) sessionId is checked for ownership, persona and archive state
+ * BEFORE anything is aborted, with the same guard a message into that strand
+ * passes. A legacy frame without sessionId only resolves the persona's ACTIVE
+ * session (never creates one); `null` means "nothing to stop". There is
+ * deliberately no path to the user-wide abort here — that is `/kill`.
+ */
+function resolveStopTarget(
+  agentCore: AgentCore | null | undefined,
+  userId: string,
+  explicitSessionId: string | undefined,
+  agentId: string,
+): StopTarget {
+  if (!agentCore) {
+    // Nothing to validate an explicit strand against: refuse it, like the
+    // message flow does, instead of guessing.
+    if (explicitSessionId) return { ok: false, error: { type: 'error', error: 'Agent core not available' } }
+    return { ok: true, sessionId: null }
+  }
+  const sessionManager = agentCore.getSessionManager()
+  if (explicitSessionId) {
+    try {
+      sessionManager.assertSessionAccess(userId, explicitSessionId, agentId)
+    } catch (err) {
+      if (isSessionAccessError(err)) return { ok: false, error: { type: 'error', code: err.code, error: err.message } }
+      throw err
+    }
+    return { ok: true, sessionId: explicitSessionId }
+  }
+  return { ok: true, sessionId: sessionManager.getSession?.(userId, agentId)?.id ?? null }
 }
 
 /**

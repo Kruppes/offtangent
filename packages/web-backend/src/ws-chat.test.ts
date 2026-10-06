@@ -69,7 +69,7 @@ function connectWs(port: number, token: string): Promise<BufferedWs> {
 }
 
 describe('setupWebSocketChat kill switch', () => {
-  it('aborts the active agent task when /stop is sent from web chat', async () => {
+  it('aborts the active strand turn when a legacy /stop without sessionId is sent from web chat', async () => {
     const db = initDatabase(':memory:')
     let releaseTask!: () => void
     const blocked = new Promise<void>((resolve) => {
@@ -78,6 +78,8 @@ describe('setupWebSocketChat kill switch', () => {
 
     const mockSessionManager = {
       getOrCreateSession: vi.fn(() => ({ id: 'session-1-mock', userId: '1', source: 'web', startedAt: Date.now(), lastActivity: Date.now(), messageCount: 0, summaryWritten: false, restored: false })),
+      // A legacy /stop (no sessionId) resolves the persona's ACTIVE session.
+      getSession: vi.fn(() => ({ id: 'session-1-mock' })),
     }
     const agentCore = {
       sendMessage: vi.fn(async function* (): AsyncGenerator<ResponseChunk> {
@@ -110,8 +112,10 @@ describe('setupWebSocketChat kill switch', () => {
       ws.send(JSON.stringify({ type: 'command', content: '/stop' }))
       const stopMessage = await waitForMessage()
       expect(stopMessage.type).toBe('system')
-      expect(stopMessage.text).toBe('Task aborted. No queued messages.')
+      expect(stopMessage.text).toBe('Stopped this strand.')
+      expect(stopMessage.sessionId).toBe('session-1-mock')
       expect(agentCore.abort).toHaveBeenCalledTimes(1)
+      expect(agentCore.abort).toHaveBeenCalledWith({ sessionId: 'session-1-mock', agentId: 'main' })
 
       releaseTask()
       ws.close()

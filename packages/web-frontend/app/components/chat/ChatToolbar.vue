@@ -23,9 +23,9 @@
         <span class="hidden sm:inline">{{ chatStatusText }}</span>
       </div>
       <template #actions>
-        <Button variant="outline" size="sm" class="min-h-11 min-w-11 gap-2 hover:border-destructive hover:text-destructive" :aria-label="$t('turnProgress.stopAll')" :disabled="!isStreaming" @click="$emit('stop')">
+        <Button variant="outline" size="sm" class="min-h-11 min-w-11 gap-2 hover:border-destructive hover:text-destructive" :aria-label="$t('turnProgress.stopStrand')" :title="$t('turnProgress.stopStrandHint')" :disabled="!isStreaming" @click="$emit('stop')">
           <AppIcon name="square" class="h-4 w-4" />
-          <span class="hidden sm:inline">{{ $t('turnProgress.stopAll') }}</span>
+          <span class="hidden sm:inline">{{ $t('turnProgress.stopStrand') }}</span>
         </Button>
         <!-- /new starts a fresh session in the (user, persona) slot, which is
              meaningless inside a named thread: threads replace that flow. -->
@@ -73,8 +73,9 @@
 import { useChatView } from '~/composables/chat/chatViewContext'
 
 /**
- * The chat toolbar: connection dot, stop, new session and the display
- * filters. Rendered through the shared <PageHeader>, so on mobile the
+ * The chat toolbar: connection dot, the strand-local stop (the global
+ * emergency stop is only the `/kill` slash command), new session and the
+ * display filters. Rendered through the shared <PageHeader>, so on mobile the
  * actions move into the layout header.
  */
 defineProps<{ boundToThread: boolean; sessionResetting: boolean }>()

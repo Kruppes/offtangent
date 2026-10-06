@@ -713,25 +713,48 @@ export class TurnRunner {
   }
 
   /**
-   * Abort every queued/streaming turn of a user (the `/stop` command, `/new`,
-   * or an explicit kill). Returns true when something was actually aborted.
+   * Abort every queued/streaming turn of a user in EVERY session: the global
+   * emergency stop (`/kill`, Telegram `/stop`). Returns true when something
+   * was actually aborted. The visible stop button of a strand must use
+   * {@link abortTurnInSession} instead — this one also ends turns running in
+   * the user's other strands.
    */
   // Consumed cross-workspace (web-backend, telegram); Fallow cannot resolve the
   // @axiom/core exports map, so it sees no caller outside this class.
   // fallow-ignore-next-line unused-class-member
   abortTurn(user: number | string): boolean {
-    const turns = this.liveTurns.get(String(user))
+    return this.abortMatching(String(user), () => true)
+  }
+
+  /**
+   * Abort the queued/streaming turns of a user IN ONE SESSION only (the
+   * strand-local `/stop`). Turns of the same user in other sessions keep
+   * running. The caller must have verified that the user owns `sessionId`;
+   * the runner only matches it against the user's own live turns, so a
+   * foreign session id can never reach another user's turns. Returns true
+   * when something was actually aborted.
+   */
+  // Consumed cross-workspace (web-backend); Fallow cannot resolve the
+  // @axiom/core exports map.
+  // fallow-ignore-next-line unused-class-member
+  abortTurnInSession(user: number | string, sessionId: string): boolean {
+    if (!sessionId) return false
+    return this.abortMatching(String(user), turn => turn.sessionId === sessionId)
+  }
+
+  private abortMatching(key: string, match: (turn: TurnState) => boolean): boolean {
+    const turns = this.liveTurns.get(key)
     if (!turns) return false
 
     let aborted = false
     const agent = this.getAgent()
     for (const turn of turns) {
-      if (turn.ended) continue
+      if (turn.ended || !match(turn)) continue
       aborted = true
       turn.abortController.abort()
       turn.attemptController.abort()
       // Scoped per turn: a user's /stop must not tear down runs of other
-      // users/personas that happen to share this process.
+      // users/personas/strands that happen to share this process.
       agent?.abort({ sessionId: turn.sessionId, agentId: turn.agentId })
     }
 

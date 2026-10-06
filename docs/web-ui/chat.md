@@ -20,7 +20,7 @@ The top of the page has a slim toolbar (`PageHeader`). On mobile its action butt
 
 **Right side — actions:**
 
-- **Stop** — aborts whatever the agent is currently doing (only enabled while a response is streaming). Equivalent to typing `/stop` in chat or hitting the Kill button on the parent task.
+- **Stop this strand** — aborts the running or queued answer of the open strand only (enabled while a response is streaming). Turns in your other strands and background tasks keep running. Equivalent to typing `/stop` in that strand. The global emergency stop is the separate `/kill` command; it has no button.
 - **New Session** — closes the current chat session and starts a fresh one. The divider appears immediately; a *Session Summary* card may fill in shortly after once background generation completes (see [Memory System → session summaries](../concepts/memory) for how that works). The next message you send opens a new session.
 - **Settings (gear icon)** — display filters, see below.
 
@@ -118,7 +118,8 @@ carries between surfaces.
 |-------------|-----------------------------------------------------------------------------|
 | `/help`     | List all available slash commands.                                          |
 | `/new`      | Summarize the current session, persist it, and start a fresh conversation.  |
-| `/stop`     | Abort the current agent turn and clear queued work. (alias `/kill`)         |
+| `/stop`     | Stop the running and queued turns of this strand only.                      |
+| `/kill`     | Emergency stop: abort all of your running and queued turns in every strand. |
 | `/tasks`    | Show running and recent background tasks (read-only).                       |
 | `/cronjobs` | Show configured cronjobs and their next run time. (alias `/cron`)           |
 | `/model`    | Show or switch the active provider and model. (alias `/provider`)           |

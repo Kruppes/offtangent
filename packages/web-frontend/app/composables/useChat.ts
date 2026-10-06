@@ -1985,12 +1985,19 @@ export function useChat() {
   function stopTask() {
     if (!ws || ws.readyState !== WebSocket.OPEN) return
     sendCommand('stop')
-    // Existing backend /stop aborts this user's turns, not just the open
-    // strand. The UI labels this scope explicitly. No done frame is required.
-    for (const sid of Object.keys(turnProgress.value)) {
-      if (turnProgress.value[sid]?.endedAt === undefined) updateProgress(sid, 'stop')
+    // `/stop` is strand-local: the backend only ends the turns of the open
+    // strand (the global emergency stop is the `/kill` slash command). So the
+    // optimistic update touches this strand alone; turns running in other
+    // strands keep their progress and activity. No done frame is required.
+    const sid = boundSessionId.value ?? sessionId.value
+    if (sid) {
+      if (turnProgress.value[sid] && turnProgress.value[sid].endedAt === undefined) updateProgress(sid, 'stop')
+      if (sessionActivity.value[sid]) {
+        const next = { ...sessionActivity.value }
+        delete next[sid]
+        sessionActivity.value = next
+      }
     }
-    sessionActivity.value = {}
     queuePosition.value = null
     isStreaming.value = false
     messages.value = messages.value.map(m => m.streaming ? { ...m, streaming: false } : m)

@@ -459,16 +459,21 @@ describe('ChatView: streaming', () => {
     expect(textOf(line)).toContain('Considering options')
   })
 
-  it('enables Stop while a turn streams and sends the stop command', async () => {
+  it('enables the strand-local Stop while a turn streams and sends /stop for the open strand only', async () => {
     const { root } = await mountChat()
-    const stop = () => byTag(root, 'stub-button').find(n => attr(n, 'aria-label') === 'turnProgress.stopAll')!
+    const stop = () => byTag(root, 'stub-button').find(n => attr(n, 'aria-label') === 'turnProgress.stopStrand')!
     expect(attr(stop(), 'disabled')).toBe(true)
     receive({ type: 'text', text: 'Working' })
     await flush()
     expect(attr(stop(), 'disabled')).toBe(false)
     click(stop())
     await flush()
-    expect(sentFrames().some(f => f.type === 'command' && f.content === '/stop')).toBe(true)
+    expect(attr(stop(), 'title')).toBe('turnProgress.stopStrandHint')
+    expect(sentFrames().filter(f => f.type === 'command' && f.content === '/stop')).toEqual([
+      { type: 'command', content: '/stop', sessionId: 'strand-a', agentId: 'helper' },
+    ])
+    // The global emergency stop is a slash command only, never this button.
+    expect(sentFrames().some(f => f.content === '/kill')).toBe(false)
     expect(attr(stop(), 'disabled')).toBe(true)
   })
 })

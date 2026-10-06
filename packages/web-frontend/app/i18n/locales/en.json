@@ -2140,7 +2140,8 @@
     "aborted": "Stop requested",
     "error": "Failed",
     "disconnected": "Disconnected",
-    "stopAll": "Stop my running turns"
+    "stopStrand": "Stop this strand",
+    "stopStrandHint": "Stops the answer running in this strand only. Other strands and background tasks keep running."
   },
   "boards": {
     "title": "Boards",

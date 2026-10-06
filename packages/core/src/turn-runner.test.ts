@@ -1323,3 +1323,178 @@ describe('TurnRunner', () => {
     expect(late).toEqual([])
   })
 })
+
+
+/**
+ * An agent with one manually driven stream PER SESSION. `abort(scope)` ends
+ * only the stream of `scope.sessionId`, mirroring the runtime's session check,
+ * so a test can see whether a stop leaked into another strand.
+ */
+function perSessionAgent() {
+  interface Stream { queue: ResponseChunk[]; waiters: Array<() => void>; done: boolean }
+  const streams = new Map<string, Stream>()
+  const stream = (sessionId: string): Stream => {
+    let s = streams.get(sessionId)
+    if (!s) {
+      s = { queue: [], waiters: [], done: false }
+      streams.set(sessionId, s)
+    }
+    return s
+  }
+  const wake = (s: Stream) => { while (s.waiters.length) s.waiters.shift()!() }
+  const started: string[] = []
+
+  const agent: TurnAgentLike = {
+    sendMessage: async function* (_userId, _text, _source, _attachments, _agentId, sessionId) {
+      const s = stream(sessionId!)
+      started.push(sessionId!)
+      for (;;) {
+        while (s.queue.length > 0) yield s.queue.shift()!
+        if (s.done) return
+        await new Promise<void>((resolve) => { s.waiters.push(resolve) })
+      }
+    },
+    abort: vi.fn((scope?: { sessionId?: string }) => {
+      for (const [id, s] of streams) {
+        if (scope?.sessionId !== undefined && scope.sessionId !== id) continue
+        s.done = true
+        wake(s)
+      }
+    }),
+  }
+
+  return {
+    agent,
+    started,
+    push: (sessionId: string, chunk: ResponseChunk) => { const s = stream(sessionId); s.queue.push(chunk); wake(s) },
+    finish: (sessionId: string) => { const s = stream(sessionId); s.done = true; wake(s) },
+  }
+}
+
+describe('TurnRunner strand-scoped abort', () => {
+  const SESSION_A = 'session-strand-a'
+  const SESSION_B = 'session-strand-b'
+  const OTHER_USER = 8
+
+  function sessionChunks(events: TurnEvent[], sessionId: string): string[] {
+    return chunkTypes(events.filter(e => e.sessionId === sessionId))
+  }
+
+  it('stops only the turn of session A and leaves the same user\'s turn in session B running', async () => {
+    const db = freshDb()
+    const { agent, push, finish } = perSessionAgent()
+    const runner = startRunner(db, agent)
+    const events: TurnEvent[] = []
+    runner.subscribe(USER_ID, collect(events))
+
+    // Different personas, so both turns stream at the same time.
+    runner.startTurn({ userId: USER_ID, sessionId: SESSION_A, explicitSessionId: SESSION_A, agentId: 'main', text: 'a' })
+    runner.startTurn({ userId: USER_ID, sessionId: SESSION_B, explicitSessionId: SESSION_B, agentId: 'coder', text: 'b' })
+    push(SESSION_A, { type: 'text', text: 'A1' })
+    push(SESSION_B, { type: 'text', text: 'B1' })
+    await waitFor(() => sessionChunks(events, SESSION_A).length === 1 && sessionChunks(events, SESSION_B).length === 1)
+
+    expect(runner.abortTurnInSession(USER_ID, SESSION_A)).toBe(true)
+    expect(agent.abort).toHaveBeenCalledTimes(1)
+    expect(agent.abort).toHaveBeenCalledWith({ sessionId: SESSION_A, agentId: 'main' })
+    await waitFor(() => !runner.hasActiveTurnInSession(USER_ID, SESSION_A))
+
+    expect(sessionChunks(events, SESSION_A)).toEqual(['text', 'done'])
+    expect(runner.hasActiveTurnInSession(USER_ID, SESSION_B)).toBe(true)
+
+    // B keeps streaming and ends normally, not as an abort.
+    push(SESSION_B, { type: 'text', text: 'B2' })
+    finish(SESSION_B)
+    await waitFor(() => !runner.hasActiveTurn(USER_ID))
+    expect(sessionChunks(events, SESSION_B)).toEqual(['text', 'text', 'done'])
+
+    // Nothing left to stop in A.
+    expect(runner.abortTurnInSession(USER_ID, SESSION_A)).toBe(false)
+  })
+
+  it('stopping a streaming turn in A lets the queued turn of the same persona in B start', async () => {
+    const db = freshDb()
+    const { agent, push, finish, started } = perSessionAgent()
+    const runner = startRunner(db, agent)
+    const events: TurnEvent[] = []
+    runner.subscribe(USER_ID, collect(events))
+
+    runner.startTurn({ userId: USER_ID, sessionId: SESSION_A, explicitSessionId: SESSION_A, text: 'a' })
+    runner.startTurn({ userId: USER_ID, sessionId: SESSION_B, explicitSessionId: SESSION_B, text: 'b' })
+    push(SESSION_A, { type: 'text', text: 'A1' })
+    await waitFor(() => sessionChunks(events, SESSION_A).length === 1)
+    expect(started).toEqual([SESSION_A])
+    expect(runner.hasActiveTurnInSession(USER_ID, SESSION_B)).toBe(true)
+
+    expect(runner.abortTurnInSession(USER_ID, SESSION_A)).toBe(true)
+    await waitFor(() => started.includes(SESSION_B))
+    push(SESSION_B, { type: 'text', text: 'B1' })
+    finish(SESSION_B)
+    await waitFor(() => !runner.hasActiveTurn(USER_ID))
+
+    expect(sessionChunks(events, SESSION_B)).toEqual(['text', 'done'])
+  })
+
+  it('stopping the queued turn of B does not touch the streaming turn of A', async () => {
+    const db = freshDb()
+    const { agent, push, finish, started } = perSessionAgent()
+    const runner = startRunner(db, agent)
+    const events: TurnEvent[] = []
+    runner.subscribe(USER_ID, collect(events))
+
+    runner.startTurn({ userId: USER_ID, sessionId: SESSION_A, explicitSessionId: SESSION_A, text: 'a' })
+    runner.startTurn({ userId: USER_ID, sessionId: SESSION_B, explicitSessionId: SESSION_B, text: 'b' })
+    push(SESSION_A, { type: 'text', text: 'A1' })
+    await waitFor(() => sessionChunks(events, SESSION_A).length === 1)
+
+    expect(runner.abortTurnInSession(USER_ID, SESSION_B)).toBe(true)
+    // The queued B turn never reached the agent, so no runtime abort was due
+    // for A's session.
+    expect(agent.abort).not.toHaveBeenCalledWith(expect.objectContaining({ sessionId: SESSION_A }))
+    expect(runner.hasActiveTurnInSession(USER_ID, SESSION_A)).toBe(true)
+
+    push(SESSION_A, { type: 'text', text: 'A2' })
+    finish(SESSION_A)
+    await waitFor(() => !runner.hasActiveTurn(USER_ID))
+    expect(sessionChunks(events, SESSION_A)).toEqual(['text', 'text', 'done'])
+    expect(started).toEqual([SESSION_A])
+  })
+
+  it('never reaches the turns of another user, even with that user\'s session id', async () => {
+    const db = freshDb()
+    db.prepare('INSERT INTO users (id, username, password_hash) VALUES (?, ?, ?)').run(OTHER_USER, 'other', 'x')
+    const { agent, push, finish } = perSessionAgent()
+    const runner = startRunner(db, agent)
+
+    runner.startTurn({ userId: OTHER_USER, sessionId: SESSION_B, explicitSessionId: SESSION_B, text: 'b' })
+    push(SESSION_B, { type: 'text', text: 'B1' })
+    await waitFor(() => runner.hasActiveTurnInSession(OTHER_USER, SESSION_B))
+
+    expect(runner.abortTurnInSession(USER_ID, SESSION_B)).toBe(false)
+    expect(runner.abortTurnInSession(USER_ID, '')).toBe(false)
+    expect(agent.abort).not.toHaveBeenCalled()
+    expect(runner.hasActiveTurnInSession(OTHER_USER, SESSION_B)).toBe(true)
+
+    finish(SESSION_B)
+    await waitFor(() => !runner.hasActiveTurn(OTHER_USER))
+  })
+
+  it('abortTurn stays the global emergency stop and ends the turns of A and B', async () => {
+    const db = freshDb()
+    const { agent, push } = perSessionAgent()
+    const runner = startRunner(db, agent)
+    const events: TurnEvent[] = []
+    runner.subscribe(USER_ID, collect(events))
+
+    runner.startTurn({ userId: USER_ID, sessionId: SESSION_A, explicitSessionId: SESSION_A, agentId: 'main', text: 'a' })
+    runner.startTurn({ userId: USER_ID, sessionId: SESSION_B, explicitSessionId: SESSION_B, agentId: 'coder', text: 'b' })
+    push(SESSION_A, { type: 'text', text: 'A1' })
+    push(SESSION_B, { type: 'text', text: 'B1' })
+    await waitFor(() => sessionChunks(events, SESSION_A).length === 1 && sessionChunks(events, SESSION_B).length === 1)
+
+    expect(runner.abortTurn(USER_ID)).toBe(true)
+    await waitFor(() => !runner.hasActiveTurn(USER_ID))
+    expect(sessionChunks(events, SESSION_A)).toEqual(['text', 'done'])
+    expect(sessionChunks(events, SESSION_B)).toEqual(['text', 'done'])
+  })
+})

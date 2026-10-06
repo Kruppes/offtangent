@@ -857,6 +857,38 @@ describe('useChat thread binding', () => {
     expect(chat.messages.value.map(m => m.content)).toEqual(['hello'])
   })
 
+  it('stops only the open strand and keeps the progress of a sister strand', async () => {
+    const chat = useChat()
+    await chat.openThread('sess-b', 'coder')
+    chat.connect()
+    await chat.sendMessage('long job in B')
+    receive({ type: 'text', text: 'B is working', sessionId: 'sess-b', agentId: 'coder' })
+    await chat.openThread('sess-a', 'coder')
+    await chat.sendMessage('hello A')
+    receive({ type: 'queued', position: 2, sessionId: 'sess-a', agentId: 'coder' })
+    expect(chat.sessionActivity.value['sess-a']).toEqual({ state: 'queued', position: 2 })
+    const progressB = chat.turnProgress.value['sess-b']
+    expect(progressB?.endedAt).toBeUndefined()
+
+    chat.stopTask()
+
+    // The command names the open strand, so the backend stops A alone.
+    expect(sentFrames().at(-1)).toEqual({ type: 'command', content: '/stop', sessionId: 'sess-a', agentId: 'coder' })
+    expect(sentFrames().some(f => f.content === '/kill')).toBe(false)
+    expect(chat.turnProgress.value['sess-a']?.phase).toBe('aborted')
+    expect(chat.sessionActivity.value['sess-a']).toBeUndefined()
+    expect(chat.queuePosition.value).toBeNull()
+    expect(chat.isStreaming.value).toBe(false)
+    // Strand B keeps running: its progress and activity are untouched.
+    expect(chat.turnProgress.value['sess-b']).toBe(progressB)
+    expect(chat.sessionActivity.value['sess-b']).toEqual({ state: 'running' })
+
+    // B's turn still streams into its own state after the stop of A.
+    receive({ type: 'done', sessionId: 'sess-b', agentId: 'coder' })
+    expect(chat.turnProgress.value['sess-b']?.phase).toBe('done')
+    expect(chat.sessionActivity.value['sess-b']).toBeUndefined()
+  })
+
   it('does not install stale history after switching strands during a fetch', async () => {
     let release!: (value: unknown) => void
     apiResponder = (path) => path.includes('session_id=sess-a')
