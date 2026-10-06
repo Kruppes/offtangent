@@ -56,7 +56,7 @@ import {
 } from '@axiom/core'
 import type { EcoViewMetric, RecalledMessage, StrandFork } from '@axiom/core'
 import type { ChatEventBus } from '../../../chat-event-bus.js'
-import { configureNowSetResolver, resolveNowSetMax, resolveNowSetMode } from '../../../now-set-limit.js'
+import { resolveNowSetMax, resolveNowSetMode } from '../../../now-set-limit.js'
 import { describePendingTurn } from '../../../turn-queue.js'
 import { searchStrands } from './search.js'
 import type { DeleteStrandQuery, ListStrandsQuery, PatchStrandBody, PatchStrandModelBody, PatchStrandEcoBody, StrandActivityIdsBody, StrandTasksQuery } from './schema.js'
@@ -319,9 +319,7 @@ export function createStrandsService(options: StrandsServiceOptions) {
   function manager() {
     const core = options.getAgentCore()
     if (!core) throw new StrandServiceError(503, 'agent_unavailable', 'Agent core not available')
-    const sessions = core.getSessionManager()
-    configureNowSetResolver(sessions, db, nowSetModeOf, nowSetMaxOf)
-    return sessions
+    return core.getSessionManager()
   }
 
   function requireStrand(userId: number, strandId: string): Thread {

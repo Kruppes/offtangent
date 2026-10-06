@@ -1,4 +1,5 @@
 import { effectiveModelForStrand, parseTurnModelSelection } from '../model-selection.js'
+import { configureNowSetResolver } from '../now-set-limit.js'
 import {
   AgentCore,
   backfillMemoryEmbeddings,
@@ -2532,6 +2533,10 @@ export async function createRuntimeComposition(options: RuntimeCompositionOption
           }
         },
       })
+
+      // Install once on this core's manager before tools, routers, Telegram or init can read it.
+      // The resolver itself reads mode and maximum afresh on every call.
+      configureNowSetResolver(agentCore.getSessionManager(), db)
 
       // Which model an OLD strand is pinned to: persona pin, else the model
       // named in `modelPolicy.roles.strandBackfill`, else the global default.

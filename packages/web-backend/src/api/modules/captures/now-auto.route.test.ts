@@ -16,6 +16,7 @@ import { initDatabase, saveProviders, SessionManager } from '@axiom/core'
 import type { AgentCore, Database, NowSetMode, ResolvedRouterModel } from '@axiom/core'
 import { createCapturesRouters } from './route.js'
 import { generateAccessToken } from '../../../auth.js'
+import { configureNowSetResolver } from '../../../now-set-limit.js'
 import { ChatEventBus } from '../../../chat-event-bus.js'
 import type { ChatEvent } from '../../../chat-event-bus.js'
 
@@ -42,6 +43,7 @@ beforeAll(async () => {
   db = initDatabase(':memory:')
   db.prepare('INSERT INTO users (id, username, password_hash, role) VALUES (?, ?, ?, ?)').run(1, 'admin', 'x', 'admin')
   sessionManager = new SessionManager({ db, memoryDir: path.join(tempDataDir, 'memory'), timeoutMinutes: 0 })
+  configureNowSetResolver(sessionManager, db, () => mode, () => 3)
   const agentCore = { getSessionManager: () => sessionManager } as unknown as AgentCore
   const bus = new ChatEventBus()
   bus.subscribe(e => events.push(e))

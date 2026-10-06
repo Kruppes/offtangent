@@ -14,6 +14,7 @@ import path from 'node:path'
 import { initDatabase, SessionManager, setNowSet } from '@axiom/core'
 import type { AgentCore, Database } from '@axiom/core'
 import { createApp } from '../app.js'
+import { configureNowSetResolver } from '../now-set-limit.js'
 import { generateAccessToken } from '../auth.js'
 
 let db: Database
@@ -35,6 +36,7 @@ beforeAll(async () => {
   db.prepare('INSERT INTO users (id, username, password_hash, role) VALUES (?, ?, ?, ?)').run(2, 'other', 'x', 'user')
 
   sessionManager = new SessionManager({ db, memoryDir: path.join(tempDataDir, 'memory'), timeoutMinutes: 0 })
+  configureNowSetResolver(sessionManager, db)
   const agentCore = { getSessionManager: () => sessionManager } as unknown as AgentCore
 
   const app = createApp({ db, getAgentCore: () => agentCore })

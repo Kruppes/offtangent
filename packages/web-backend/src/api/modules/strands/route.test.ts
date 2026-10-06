@@ -11,6 +11,7 @@ import express from 'express'
 import { initDatabase, saveProviders, SessionManager, insertSessionSummary, putStrandProjectSuggestion } from '@axiom/core'
 import type { AgentCore, Database, Tag, Thread } from '@axiom/core'
 import { createStrandsRouters } from './route.js'
+import { configureNowSetResolver } from '../../../now-set-limit.js'
 import { ChatEventBus } from '../../../chat-event-bus.js'
 import type { ChatEvent } from '../../../chat-event-bus.js'
 import { generateAccessToken } from '../../../auth.js'
@@ -42,6 +43,7 @@ beforeAll(async () => {
   db.prepare('INSERT INTO users (id, username, password_hash, role) VALUES (?, ?, ?, ?)').run(2, 'other', 'x', 'user')
 
   sessionManager = new SessionManager({ db, memoryDir: path.join(tempDataDir, 'memory'), timeoutMinutes: 0 })
+  configureNowSetResolver(sessionManager, db, () => 'manual', () => nowSetMax)
   const agentCore = {
     getSessionManager: () => sessionManager,
     evictSessionTranscript: (userId: string, agentId: string, sessionId: string) => {

@@ -20,7 +20,7 @@ import {
   TurnRunner,
   toIsoUtc,
 } from '@axiom/core'
-import { configureNowSetResolver, resolveNowSetMax, resolveNowSetMode } from './now-set-limit.js'
+import { resolveNowSetMode } from './now-set-limit.js'
 import { buildWebChatSlashCommandRegistry } from './slash-commands.js'
 import { verifyAccessToken } from './auth.js'
 import type { JwtPayload } from './auth.js'
@@ -387,18 +387,9 @@ export function setupWebSocketChat(
    */
   nowSet?: { getNowSetMax?: () => number; getNowSetMode?: () => NowSetMode },
 ): WebSocketChatResult {
-  const nowSetMax = nowSet?.getNowSetMax ?? (() => resolveNowSetMax())
   const nowSetMode = nowSet?.getNowSetMode ?? (() => resolveNowSetMode())
   // Support both getter function and direct reference (backward compat)
-  const rawResolveAgentCore = typeof getAgentCore === 'function' ? getAgentCore : () => getAgentCore
-  const resolveAgentCore = () => {
-    const core = rawResolveAgentCore()
-    const sessions = core?.getSessionManager?.()
-    if (sessions && typeof sessions.setNowSetResolver === 'function') {
-      configureNowSetResolver(sessions, db, nowSetMode, nowSetMax)
-    }
-    return core
-  }
+  const resolveAgentCore = typeof getAgentCore === 'function' ? getAgentCore : () => getAgentCore
   const wss = new WebSocketServer({ noServer: true })
 
   // The runner owns the turn lifecycle (streaming, persistence, abort). This

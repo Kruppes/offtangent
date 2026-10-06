@@ -16,6 +16,7 @@ import { initDatabase, SessionManager, setNowSet } from '@axiom/core'
 import type { AgentCore, Database, NowSetMode, Thread } from '@axiom/core'
 import { createStrandsRouters } from './route.js'
 import { generateAccessToken } from '../../../auth.js'
+import { configureNowSetResolver } from '../../../now-set-limit.js'
 import { ChatEventBus } from '../../../chat-event-bus.js'
 import type { ChatEvent } from '../../../chat-event-bus.js'
 
@@ -37,6 +38,7 @@ beforeAll(async () => {
   db = initDatabase(':memory:')
   db.prepare('INSERT INTO users (id, username, password_hash, role) VALUES (?, ?, ?, ?)').run(1, 'admin', 'x', 'admin')
   sessionManager = new SessionManager({ db, memoryDir: path.join(tempDataDir, 'memory'), timeoutMinutes: 0 })
+  configureNowSetResolver(sessionManager, db, () => mode, () => 3)
   const agentCore = { getSessionManager: () => sessionManager } as unknown as AgentCore
   const bus = new ChatEventBus()
   bus.subscribe(e => events.push(e))
@@ -95,6 +97,18 @@ function userMessage(strandId: string, daysAgo: number): void {
 }
 
 describe('GET/PUT /api/now in auto mode', () => {
+  it('ranks direct SessionManager reads before any router getter runs', () => {
+    const stale = sessionManager.createThread('1', 'main', 'Stale').id
+    const active = sessionManager.createThread('1', 'main', 'Active').id
+    userMessage(active, 0)
+    setNowSet(db, '1', [stale], 3)
+
+    // Neither createApp nor a router getter has been invoked for these reads.
+    expect(sessionManager.listThreads('1').find(thread => thread.id === active)?.nowRank).toBe(1)
+    expect(sessionManager.getThread('1', active)?.nowRank).toBe(1)
+    expect(sessionManager.getThread('1', stale)?.nowRank).toBe(null)
+  })
+
   it('computes the set from activity, reports mode and ranks pinned first', async () => {
     const quiet = sessionManager.createThread('1', 'main', 'Quiet').id
     const busy = sessionManager.createThread('1', 'main', 'Busy').id

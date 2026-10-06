@@ -17,6 +17,7 @@ import type { AgentCore, Database, NowSetMode, ResponseChunk } from '@axiom/core
 import { createApp } from './app.js'
 import { generateAccessToken } from './auth.js'
 import { setupWebSocketChat } from './ws-chat.js'
+import { configureNowSetResolver } from './now-set-limit.js'
 import { ChatEventBus } from './chat-event-bus.js'
 import type { ChatEvent } from './chat-event-bus.js'
 
@@ -39,6 +40,7 @@ beforeAll(async () => {
   db = initDatabase(':memory:')
   db.prepare('INSERT INTO users (id, username, password_hash, role) VALUES (?, ?, ?, ?)').run(1, 'admin', 'x', 'admin')
   sessionManager = new SessionManager({ db, memoryDir: path.join(tempDataDir, 'memory'), timeoutMinutes: 0 })
+  configureNowSetResolver(sessionManager, db, () => mode, () => 3)
   const agentCore = {
     sendMessage: vi.fn(async function* (): AsyncGenerator<ResponseChunk> {
       yield { type: 'text', text: 'ok' }

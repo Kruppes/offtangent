@@ -42,7 +42,6 @@ import type { CaptureTurnStarter } from './api/modules/captures/service.js'
 import type { StrandTurnGuard } from './api/modules/strands/service.js'
 import type { PersonaTurnGuard } from './api/modules/personas/service.js'
 import { createStrandsRouters } from './api/modules/strands/route.js'
-import { configureNowSetResolver } from './now-set-limit.js'
 import { createSearchRouter } from './api/modules/search/route.js'
 import { createPushRouter } from './api/modules/push/route.js'
 import type { PushSender } from './push/sender.js'
@@ -181,16 +180,7 @@ export function createApp(options?: AppOptions): express.Express {
   })
 
   // Build dynamic agentCore getter: prefer explicit getter, fall back to static reference
-  const rawGetAgentCore = options?.getAgentCore ?? (() => options?.agentCore ?? null)
-  const getAgentCore = () => {
-    const core = rawGetAgentCore()
-    // Some route-only consumers inject a partial AgentCore without sessions.
-    const sessions = core?.getSessionManager?.()
-    if (sessions && typeof sessions.setNowSetResolver === 'function' && options?.db) {
-      configureNowSetResolver(sessions, options.db)
-    }
-    return core
-  }
+  const getAgentCore = options?.getAgentCore ?? (() => options?.agentCore ?? null)
 
   if (options?.db) {
     ensureAdminUser(options.db)
