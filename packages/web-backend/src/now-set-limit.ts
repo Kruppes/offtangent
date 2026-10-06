@@ -1,3 +1,5 @@
+import { rankStrandsByActivity } from '@axiom/core'
+import type { Database, SessionManager } from '@axiom/core'
 /**
  * The effective now-set size (SPEC 2.8 / 6.2). The limit used to be the
  * constant `NOW_SET_MAX`; it is now the setting `offtangent.nowSetMax` in
@@ -52,4 +54,16 @@ export function resolveNowSetMode(loadSettings: LoadNowSetLimitSettings = defaul
     return DEFAULT_NOW_SET_MODE
   }
   return parseNowSetMode(raw) ?? DEFAULT_NOW_SET_MODE
+}
+
+/** One mode-aware rank policy for every SessionManager DTO and now-set reader. */
+export function configureNowSetResolver(
+  manager: SessionManager,
+  db: Database,
+  getMode: () => NowSetMode = () => resolveNowSetMode(),
+  getMax: () => number = () => resolveNowSetMax(),
+): void {
+  manager.setNowSetResolver(userId => getMode() === 'auto'
+    ? rankStrandsByActivity(db, userId, { max: getMax() })
+    : null)
 }

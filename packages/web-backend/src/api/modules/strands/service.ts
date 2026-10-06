@@ -21,7 +21,6 @@ import {
   undismissStrandTasks,
   getStrandProjectSuggestion,
   deleteStrand,
-  getNowSet,
   hasLiveTaskForStrand,
   listChildStrandIds,
   getStrandForkLineage,
@@ -44,7 +43,6 @@ import {
   lastRequestUsageForStrand,
   lastTranscriptWindowForStrand,
   previewStrandDelete,
-  rankStrandsByActivity,
   removeFromNowSet,
   setNowSet,
   setStrandTags,
@@ -58,7 +56,7 @@ import {
 } from '@axiom/core'
 import type { EcoViewMetric, RecalledMessage, StrandFork } from '@axiom/core'
 import type { ChatEventBus } from '../../../chat-event-bus.js'
-import { resolveNowSetMax, resolveNowSetMode } from '../../../now-set-limit.js'
+import { configureNowSetResolver, resolveNowSetMax, resolveNowSetMode } from '../../../now-set-limit.js'
 import { describePendingTurn } from '../../../turn-queue.js'
 import { searchStrands } from './search.js'
 import type { DeleteStrandQuery, ListStrandsQuery, PatchStrandBody, PatchStrandModelBody, PatchStrandEcoBody, StrandActivityIdsBody, StrandTasksQuery } from './schema.js'
@@ -321,7 +319,9 @@ export function createStrandsService(options: StrandsServiceOptions) {
   function manager() {
     const core = options.getAgentCore()
     if (!core) throw new StrandServiceError(503, 'agent_unavailable', 'Agent core not available')
-    return core.getSessionManager()
+    const sessions = core.getSessionManager()
+    configureNowSetResolver(sessions, db, nowSetModeOf, nowSetMaxOf)
+    return sessions
   }
 
   function requireStrand(userId: number, strandId: string): Thread {
@@ -363,9 +363,7 @@ export function createStrandsService(options: StrandsServiceOptions) {
    * the stored set in manual mode.
    */
   function currentNowSetIds(userId: number): string[] {
-    return nowSetModeOf() === 'auto'
-      ? rankStrandsByActivity(db, String(userId), { max: nowSetMax() })
-      : getNowSet(db, String(userId))
+    return manager().getNowSetIds(String(userId))
   }
 
   function broadcastNowSet(userId: number): void {
@@ -1052,32 +1050,9 @@ export function createStrandsService(options: StrandsServiceOptions) {
     return nowSetModeOf()
   }
 
-  /**
-   * The set can be larger than the current limit when the size setting was
-   * lowered under it, so the list limit is the larger of the two — lowering
-   * the setting must never hide a strand that is in the set.
-   *
-   * In auto mode the list is computed from the user's activity instead
-   * (`rankStrandsByActivity`), hydrated through the same `listThreads` path so
-   * tags, links and read state are attached exactly as before. `nowRank` is
-   * overwritten with the position in the computed list, because the `now_set`
-   * table the session manager reads is not what is shown here.
-   */
+  /** The same rank authority serves /api/now and all other thread DTOs. */
   function nowSet(userId: number): Thread[] {
-    if (nowSetMode() === 'auto') {
-      const ranked = rankStrandsByActivity(db, String(userId), { max: nowSetMax() })
-      if (ranked.length === 0) return []
-      const hydrated = manager().listThreads(String(userId), { ids: ranked, limit: ranked.length })
-      const byId = new Map(hydrated.map(strand => [strand.id, strand]))
-      return ranked.flatMap((id, index) => {
-        const strand = byId.get(id)
-        return strand ? [{ ...strand, nowRank: index + 1 }] : []
-      })
-    }
-    const ids = getNowSet(db, String(userId))
-    if (ids.length === 0) return []
-    const limit = Math.max(nowSetMax(), ids.length)
-    return manager().listThreads(String(userId), { nowOnly: true, includeArchived: true, limit })
+    return manager().listThreads(String(userId), { nowOnly: true, includeArchived: true, limit: 200 })
   }
 
   function replaceNowSet(userId: number, strandIds: string[]): Thread[] {

@@ -18,10 +18,9 @@ import {
   TaskStore,
   ScheduledTaskStore,
   TurnRunner,
-  rankStrandsByActivity,
   toIsoUtc,
 } from '@axiom/core'
-import { resolveNowSetMax, resolveNowSetMode } from './now-set-limit.js'
+import { configureNowSetResolver, resolveNowSetMax, resolveNowSetMode } from './now-set-limit.js'
 import { buildWebChatSlashCommandRegistry } from './slash-commands.js'
 import { verifyAccessToken } from './auth.js'
 import type { JwtPayload } from './auth.js'
@@ -391,7 +390,15 @@ export function setupWebSocketChat(
   const nowSetMax = nowSet?.getNowSetMax ?? (() => resolveNowSetMax())
   const nowSetMode = nowSet?.getNowSetMode ?? (() => resolveNowSetMode())
   // Support both getter function and direct reference (backward compat)
-  const resolveAgentCore = typeof getAgentCore === 'function' ? getAgentCore : () => getAgentCore
+  const rawResolveAgentCore = typeof getAgentCore === 'function' ? getAgentCore : () => getAgentCore
+  const resolveAgentCore = () => {
+    const core = rawResolveAgentCore()
+    const sessions = core?.getSessionManager?.()
+    if (sessions && typeof sessions.setNowSetResolver === 'function') {
+      configureNowSetResolver(sessions, db, nowSetMode, nowSetMax)
+    }
+    return core
+  }
   const wss = new WebSocketServer({ noServer: true })
 
   // The runner owns the turn lifecycle (streaming, persistence, abort). This
@@ -754,9 +761,9 @@ export function setupWebSocketChat(
       // Auto now set: the ranking before this message is written. One SQL
       // statement, so it is cheap enough to run on every message; the
       // comparison below decides whether anything is broadcast at all.
-      const nowSetAuto = nowSetMode() === 'auto'
+      const nowSetAuto = !!agentCore && nowSetMode() === 'auto'
       const nowSetBefore = nowSetAuto
-        ? rankStrandsByActivity(db, String(currentUser.userId), { max: nowSetMax() })
+        ? agentCore?.getSessionManager().getNowSetIds?.(String(currentUser.userId)) ?? []
         : null
 
       let savedMessageId: number | undefined
@@ -808,7 +815,7 @@ export function setupWebSocketChat(
       // now set (or moved it up). Only a real change is announced, so a second
       // message in the same strand on the same day stays silent.
       if (nowSetBefore) {
-        const nowSetAfter = rankStrandsByActivity(db, String(currentUser.userId), { max: nowSetMax() })
+        const nowSetAfter = agentCore?.getSessionManager().getNowSetIds?.(String(currentUser.userId)) ?? []
         if (nowSetAfter.join('\u0000') !== nowSetBefore.join('\u0000')) {
           chatEventBus?.broadcast({
             type: 'now_set_changed',

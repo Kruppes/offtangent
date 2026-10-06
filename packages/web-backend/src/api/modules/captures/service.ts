@@ -37,7 +37,6 @@ import {
   singlePartSplit,
   withCapturePartPrefix,
   isFillerCapture,
-  rankStrandsByActivity,
   isSessionAccessError,
   isSilenceTranscript,
   listCaptures,
@@ -59,7 +58,7 @@ import { parseTurnModelSelection } from '../../../model-selection.js'
 import type { ChatEvent, ChatEventBus } from '../../../chat-event-bus.js'
 import { describeQueuedTurn, emitTurnQueued } from '../../../turn-queue.js'
 import type { QueuedTurnInfo } from '../../../turn-queue.js'
-import { resolveNowSetMax, resolveNowSetMode } from '../../../now-set-limit.js'
+import { configureNowSetResolver, resolveNowSetMax, resolveNowSetMode } from '../../../now-set-limit.js'
 import type { CaptureMode, CreateCaptureBody, ApplyCaptureBody, UndoCaptureBody, RouterPreviewBody } from './schema.js'
 import { CAPTURE_STRAND_TITLE_MAX } from './schema.js'
 
@@ -499,7 +498,9 @@ export function createCapturesService(options: CapturesServiceOptions) {
   function manager() {
     const core = options.getAgentCore()
     if (!core) throw new CaptureServiceError(503, 'agent_unavailable', 'Agent core not available')
-    return core.getSessionManager()
+    const sessions = core.getSessionManager()
+    configureNowSetResolver(sessions, db, nowSetMode, nowSetMax)
+    return sessions
   }
 
   function requireCapture(userId: number, id: string): Capture {
@@ -1000,7 +1001,7 @@ export function createCapturesService(options: CapturesServiceOptions) {
     selectionFor(capture)
     // Auto mode: the ranking BEFORE this filing writes its user message, so
     // the broadcast below only fires when the filing actually moved the set.
-    const rankedBefore = nowSetMode() === 'auto' ? rankedNowIds(userId) : null
+    const rankedBefore = nowSetMode() === 'auto' ? nowSetIds(userId) : null
     if (proposal.action !== 'new_strand') {
       ownStrand(userId, proposal.strandId!)
       if (onBusy === 'refuse') requireIdle(userId, proposal.strandId!)
@@ -1034,7 +1035,7 @@ export function createCapturesService(options: CapturesServiceOptions) {
     if (rankedBefore) {
       // Computed set: never write `now_set` (manual mode and the rollback keep
       // their table), only tell the clients when the order or content changed.
-      const rankedAfter = rankedNowIds(userId)
+      const rankedAfter = nowSetIds(userId)
       if (rankedAfter.join('\u0000') !== rankedBefore.join('\u0000')) {
         broadcast(userId, { type: 'now_set_changed', source: 'web', strandIds: rankedAfter })
       }
@@ -1047,15 +1048,9 @@ export function createCapturesService(options: CapturesServiceOptions) {
     return getCapture(db, String(userId), capture.id)!
   }
 
-  /** The computed now set (auto mode), same ranking the API returns. */
-  function rankedNowIds(userId: number): string[] {
-    return rankStrandsByActivity(db, String(userId), { max: nowSetMax() })
-  }
-
+  /** The same mode-aware set used by every thread DTO and /api/now. */
   function nowSetIds(userId: number): string[] {
-    // The set can exceed the current limit when the size setting was lowered
-    // under it; the broadcast must still carry every id in it.
-    return manager().listThreads(String(userId), { nowOnly: true, limit: Math.max(nowSetMax(), 10) }).map(t => t.id)
+    return manager().getNowSetIds(String(userId))
   }
 
   function proposalFromDecision(decision: Decision, override: Partial<RouterProposal> = {}): RouterProposal {

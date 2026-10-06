@@ -159,6 +159,25 @@ describe('GET/PUT /api/now in auto mode', () => {
     expect(((await api('GET', '/api/now')).body.strands as Thread[]).map(s => s.id)).toEqual([keep])
   })
 
+  it('uses the computed ranks in list, now filter and detail, not stale manual ranks', async () => {
+    const stale = sessionManager.createThread('1', 'main', 'Stale').id
+    const active = sessionManager.createThread('1', 'main', 'Active').id
+    userMessage(active, 0)
+    setNowSet(db, '1', [stale], 3)
+
+    const listed = await api('GET', '/api/strands')
+    expect(listed.status).toBe(200)
+    const strands = listed.body.strands as Thread[]
+    expect(strands.find(s => s.id === stale)?.nowRank).toBe(null)
+    expect(strands.find(s => s.id === active)?.nowRank).toBe(1)
+    const filtered = await api('GET', '/api/strands?now=1')
+    expect((filtered.body.strands as Thread[]).map(s => [s.id, s.nowRank])).toEqual([[active, 1]])
+    const detail = await api('GET', `/api/strands/${stale}`)
+    expect((detail.body.strand as Thread).nowRank).toBe(null)
+    expect((await api('GET', `/api/strands/${active}`)).body.strand).toMatchObject({ nowRank: 1 })
+    expect(db.prepare('SELECT strand_id FROM now_set WHERE user_id = ?').all('1')).toEqual([{ strand_id: stale }])
+  })
+
   it('manual mode is unchanged and reports mode: manual', async () => {
     mode = 'manual'
     const a = sessionManager.createThread('1', 'main', 'A').id
@@ -170,6 +189,10 @@ describe('GET/PUT /api/now in auto mode', () => {
     const res = await api('GET', '/api/now')
     expect(res.body.mode).toBe('manual')
     expect((res.body.strands as Thread[]).map(s => s.id)).toEqual([a])
+    const listed = (await api('GET', '/api/strands')).body.strands as Thread[]
+    expect(listed.find(s => s.id === a)?.nowRank).toBe(1)
+    expect(listed.find(s => s.id === b)?.nowRank).toBe(null)
+    expect(((await api('GET', '/api/strands?now=1')).body.strands as Thread[]).map(s => s.id)).toEqual([a])
 
     const put = await api('PUT', '/api/now', { strandIds: [b, a] })
     expect(put.status).toBe(200)

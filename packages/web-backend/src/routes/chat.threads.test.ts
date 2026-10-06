@@ -11,7 +11,7 @@ import http from 'node:http'
 import fs from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
-import { initDatabase, SessionManager } from '@axiom/core'
+import { initDatabase, SessionManager, setNowSet } from '@axiom/core'
 import type { AgentCore, Database } from '@axiom/core'
 import { createApp } from '../app.js'
 import { generateAccessToken } from '../auth.js'
@@ -53,7 +53,7 @@ afterAll(async () => {
 })
 
 beforeEach(() => {
-  db.exec('DELETE FROM chat_messages; DELETE FROM sessions;')
+  db.exec('DELETE FROM now_set; DELETE FROM chat_messages; DELETE FROM sessions;')
 })
 
 async function postMessage(fields: Record<string, string>): Promise<{ status: number; body: Record<string, unknown> }> {
@@ -130,5 +130,19 @@ describe('GET /api/chat/history for ended threads', () => {
     expect(body.messages.map(m => m.content).sort()).toEqual(['answer from last week', 'question from last week'])
     expect(body.messages[0].session_type).toBe('interactive')
     expect(body.messages[0].source).toBe('web')
+  })
+})
+
+describe('GET /api/threads in automatic now-set mode', () => {
+  it('does not leak old manual ranks into the thread list', async () => {
+    const stale = sessionManager.createThread('1', 'main', 'Stale').id
+    const active = sessionManager.createThread('1', 'main', 'Active').id
+    setNowSet(db, '1', [stale], 4)
+    db.prepare("INSERT INTO chat_messages (session_id, user_id, role, content, timestamp, agent_id) VALUES (?, 1, 'user', 'x', datetime('now'), 'main')")
+      .run(active)
+    const headers = { Authorization: `Bearer ${token}` }
+    const list = await (await fetch(`${baseUrl}/api/threads`, { headers })).json() as { threads: { id: string; nowRank: number | null }[] }
+    expect(list.threads.find(thread => thread.id === stale)?.nowRank).toBe(null)
+    expect(list.threads.find(thread => thread.id === active)?.nowRank).toBe(1)
   })
 })

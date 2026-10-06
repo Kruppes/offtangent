@@ -22,7 +22,7 @@ import {
 import { resolveAssignableProjectId } from './project-manager.js'
 import { clearStrandProjectSuggestion, getStrandProjectSuggestion } from './project-assignment-store.js'
 import type { StrandProjectSuggestion } from './project-assignment-store.js'
-import { countStrandLinks, getNowRank, getNowSet, getStrandTags, strandIdsWithTag } from './strand-store.js'
+import { countStrandLinks, getStrandTags, strandIdsWithTag } from './strand-store.js'
 import { deriveStrandTitle } from './strand-title.js'
 import { loadHeuristics } from './heuristics.js'
 import { toIsoUtc } from './timestamps.js'
@@ -317,6 +317,8 @@ export class SessionManager {
   private sessions: Map<string, SessionInfo> = new Map() // sessionKey (userId:agentId) -> session
   private timers: Map<string, ReturnType<typeof setTimeout>> = new Map() // sessionKey -> timeout timer
   private db: Database
+  /** Optional mode-aware ranking provider; null delegates to the curated table. */
+  private nowSetResolver?: (userId: string) => string[] | null
   private timeoutMs: number
   /** Idle budget of a parked thread before the sweep closes it (0 = disabled). */
   private parkedTimeoutMs: number
@@ -1592,6 +1594,24 @@ export class SessionManager {
   // sessions (task, heartbeat, ...) are never listed or activatable.
   // ---------------------------------------------------------------------
 
+  /** Install the backend's dynamic now-set policy; read afresh for each operation. */
+  setNowSetResolver(resolver: (userId: string) => string[] | null): void {
+    this.nowSetResolver = resolver
+  }
+
+  /** The sole rank/membership authority for lists, detail, events and /api/now. */
+  private nowSetRanks(userId: string): Map<string, number> {
+    const computed = this.nowSetResolver?.(userId)
+    if (computed != null) return new Map(computed.map((id, index) => [id, index + 1]))
+    const rows = this.db.prepare('SELECT strand_id, rank FROM now_set WHERE user_id = ? ORDER BY rank ASC')
+      .all(userId) as { strand_id: string; rank: number }[]
+    return new Map(rows.map(row => [row.strand_id, row.rank]))
+  }
+
+  getNowSetIds(userId: string): string[] {
+    return [...this.nowSetRanks(userId).keys()]
+  }
+
   /**
    * List a user's threads: pinned first, then newest activity first.
    *
@@ -1605,6 +1625,7 @@ export class SessionManager {
    * thread, truncated to 200 characters.
    */
   listThreads(userId: string, options: ListThreadsOptions = {}): Thread[] {
+    const nowRanks = this.nowSetRanks(userId)
     const limit = Math.min(200, Math.max(1, Math.trunc(options.limit ?? 50)))
     const offset = Math.max(0, Math.trunc(options.offset ?? 0))
 
@@ -1631,8 +1652,8 @@ export class SessionManager {
       idFilter = strandIdsWithTag(this.db, userId, options.tag)
     }
     if (options.nowOnly) {
-      const now = getNowSet(this.db, userId)
-      idFilter = idFilter ? idFilter.filter(id => now.includes(id)) : now
+      const now = [...nowRanks.keys()]
+      idFilter = idFilter ? idFilter.filter(id => nowRanks.has(id)) : now
     }
     if (options.ids) {
       const wanted = options.ids
@@ -1652,7 +1673,7 @@ export class SessionManager {
        LIMIT ? OFFSET ?`
     ).all(...params, limit, offset) as ThreadRow[]
 
-    const threads = rows.map(row => this.toThread(userId, row))
+    const threads = rows.map(row => this.toThread(userId, row, nowRanks))
     if (options.nowOnly) threads.sort((a, b) => (a.nowRank ?? 99) - (b.nowRank ?? 99))
     return threads
   }
@@ -1714,7 +1735,7 @@ export class SessionManager {
        FROM sessions
        WHERE id = ? AND type = 'interactive' AND (session_user = ? OR CAST(user_id AS TEXT) = ?)`
     ).get(sessionId, userId, userId) as ThreadRow | undefined
-    return row ? this.toThread(userId, row) : null
+    return row ? this.toThread(userId, row, this.nowSetRanks(userId)) : null
   }
 
   /**
@@ -1967,7 +1988,7 @@ export class SessionManager {
   }
 
   /** Map a `sessions` row onto the `Thread` wire shape. */
-  private toThread(userId: string, row: ThreadRow): Thread {
+  private toThread(userId: string, row: ThreadRow, nowRanks: ReadonlyMap<string, number>): Thread {
     const last = this.db.prepare(
       `SELECT role, content, timestamp FROM chat_messages
        WHERE session_id = ? AND role IN ('user','assistant')
@@ -1990,7 +2011,7 @@ export class SessionManager {
       parentStrandId: row.parent_strand_id ?? null,
       forkedAt: row.forked_at ? toIsoUtc(row.forked_at) : null,
       tags: getStrandTags(this.db, row.id),
-      nowRank: getNowRank(this.db, userId, row.id),
+      nowRank: nowRanks.get(row.id) ?? null,
       links: countStrandLinks(this.db, row.id),
       lastMessage: last
         ? {
