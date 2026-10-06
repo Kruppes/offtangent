@@ -21,7 +21,6 @@ import {
   deliverTaskStatusUpdate,
   resolveTaskStrandOrigin,
   taskOwnerAgentId,
-  resolveTaskOwnerUserId,
   resolveTaskOwnerUserIdForTask,
   parseStrictUserId,
   editCronjobTool,
@@ -836,21 +835,6 @@ export async function createRuntimeComposition(options: RuntimeCompositionOption
   }
 
   /**
-   * Resolve the target user for a task result notification by walking the
-   * task's session lineage back to the triggering interactive session.
-   * Returns null when the task has no interactive parent (cronjob,
-   * heartbeat, consolidation) — callers fall back to a default user.
-   *
-   * The walk itself lives in `@axiom/core` (`resolveTaskOwnerUserId`)
-   * because the tasks API asks the same question for authorization: the
-   * user who receives a task's result is the user allowed to read and kill
-   * it. One implementation, one answer.
-   */
-  function resolveTargetUserIdForTask(taskSessionId: string | null | undefined): number | null {
-    return resolveTaskOwnerUserId(db, taskSessionId)
-  }
-
-  /**
    * Fallback user when a task has no interactive lineage (cronjob,
    * heartbeat). Uses the lowest-id user in the `users` table. Throws if
    * the query fails or no user exists — an empty users table means the
@@ -973,6 +957,14 @@ export async function createRuntimeComposition(options: RuntimeCompositionOption
       logger: { warn: (msg, ...args) => logger.warn(msg, ...args), error: (msg, ...args) => logger.error(msg, ...args) },
       telegramDeliveryMode: (taskSettings.telegramDelivery as 'auto' | 'always') ?? 'auto',
       hasActiveWebSocket: (uid: number) => wsChatPresenceChecker?.(uid) ?? false,
+      deliverToParent: async ({ parentTask, injection: payload }) => {
+        const text = `<subtask_result task_id="${task.id}">\n${payload}\n</subtask_result>\nThis is the result of your sub-task. Continue your task with it.`
+        if (parentTask.status === 'paused') {
+          if (!taskRuntime.isPaused(parentTask.id)) return false
+          return taskRuntime.resume(parentTask.id, text)
+        }
+        return taskRuntime.steer?.(parentTask.id, text).delivered ?? false
+      },
       injectIntoStrand: ({ injection: payload, userId: targetUserId, agentId, strandId }) => {
         // Persist first, deliver second (W4). The row — not the Map — is what
         // survives a container restart, and it is written even when there is
@@ -1020,7 +1012,7 @@ export async function createRuntimeComposition(options: RuntimeCompositionOption
       userId,
       agentId: effectiveAgentId,
       durationMinutes,
-    })
+    }).catch(err => logger.error(`[axiom] Failed to route task ${taskId} outcome:`, err))
   }
 
   /**

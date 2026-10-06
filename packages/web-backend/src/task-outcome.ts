@@ -8,12 +8,14 @@
  * rows, flooded the strand list and were offered to the capture router as
  * candidates.
  *
- * Two paths now, decided from the task's own data (see
- * `resolveTaskStrandOrigin`):
+ * Three paths now, decided from the task's own data:
  *
- *  * **Strand origin** (user/agent trigger with an interactive session in its
- *    lineage): unchanged behaviour — the injection runs, the result is
- *    persisted in that strand, the doorbell rings once. In addition a feed
+ *  * **Live task parent** (agent trigger with a task-parent edge): deliver
+ *    into that task first (steer/resume). One feed item, no separate strand
+ *    injection, Telegram message or doorbell for the same result.
+ *  * **Strand origin** (interactive session lineage, or a stopped task parent
+ *    whose own task lineage reaches a strand): the injection runs, the result
+ *    is persisted in that strand, the doorbell rings once. In addition a feed
  *    item of kind `task_result` / `task_question` carrying `strand_id` is
  *    written.
  *  * **No strand origin** (cronjob, heartbeat, consolidation): a feed item
@@ -33,6 +35,9 @@ import {
   buildTaskFeedItem,
   deliverTaskNotification,
   resolveTaskStrandOrigin,
+  resolveTaskStrandId,
+  taskOwnerAgentId,
+  TaskStore,
   type Database,
   type Task,
   type TaskNotificationEvent,
@@ -63,6 +68,13 @@ export interface TaskOutcomeDeps {
     agentId: string
     strandId: string
   }) => void
+  /** Steer a live parent (or resume a paused one). False means fall back to its origin strand. */
+  deliverToParent?: (input: {
+    parentTask: Task
+    task: Task
+    injection: string
+    agentId: string
+  }) => boolean | Promise<boolean>
   /**
    * Deliver the plain result to Telegram. Only used on the feed path, where
    * no injection response exists to carry it. Returns undefined when the user
@@ -75,7 +87,7 @@ export interface TaskOutcomeDeps {
 
 export interface TaskOutcomeInput {
   task: Task
-  /** The formatted `<task_injection>` payload (only used on the strand path). */
+  /** The formatted `<task_injection>` payload for the task parent or strand. */
   injection: string
   userId: number
   agentId: string
@@ -83,17 +95,40 @@ export interface TaskOutcomeInput {
 }
 
 export interface TaskOutcomeResult {
-  target: 'strand' | 'feed'
-  /** The session the result was delivered into, on the strand path. */
+  target: 'parent' | 'strand' | 'feed'
+  /** The origin strand if known (the parent itself receives a parent-target result). */
   strandId: string | null
-  /** The feed item that was written, on both paths. */
+  /** The feed item written for every delivery path. */
   feedItemId: string | null
 }
 
-export function routeTaskOutcome(deps: TaskOutcomeDeps, input: TaskOutcomeInput): TaskOutcomeResult {
-  const { task, userId, agentId, durationMinutes } = input
+export async function routeTaskOutcome(deps: TaskOutcomeDeps, input: TaskOutcomeInput): Promise<TaskOutcomeResult> {
+  const { task, userId, durationMinutes } = input
   const logger = deps.logger ?? console
-  const strandOrigin = resolveTaskStrandOrigin(deps.db, task)
+  // A child created inside a task records its caller as trigger_source_id, even
+  // when its session has no parent_session_id. Deliver to the caller first;
+  // only after it has stopped do we follow that task edge back to a strand.
+  const parent = task.triggerType === 'agent' && task.triggerSourceId && task.triggerSourceId !== task.id
+    ? new TaskStore(deps.db).getById(task.triggerSourceId)
+    : null
+  const agentId = parent ? taskOwnerAgentId(parent) : taskOwnerAgentId(task)
+  if (parent && (parent.status === 'running' || parent.status === 'paused') && deps.deliverToParent) {
+    let delivered = false
+    try {
+      delivered = await deps.deliverToParent({ parentTask: parent, task, injection: input.injection, agentId })
+    } catch (err) {
+      logger.error(`[task-outcome] Failed to deliver task ${task.id} to parent ${parent.id}:`, err)
+    }
+    if (delivered) {
+      const origin = resolveTaskStrandId(deps.db, parent)
+      const item = publishFeedItem(
+        { db: deps.db, chatEventBus: deps.chatEventBus, logger },
+        userId, buildTaskFeedItem(task, { userId: String(userId), strandId: origin, agentId }),
+      )
+      return { target: 'parent', strandId: origin, feedItemId: item?.id ?? null }
+    }
+  }
+  const strandOrigin = parent ? resolveTaskStrandId(deps.db, parent) : resolveTaskStrandOrigin(deps.db, task)
 
   if (strandOrigin) {
     const sessionId = strandOrigin

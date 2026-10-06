@@ -99,12 +99,97 @@ async function settle(): Promise<void> {
   await new Promise(resolve => setTimeout(resolve, 20))
 }
 
+describe('sub-task outcome without a session parent edge', () => {
+  it('delivers a child result to its running parent instead of only the feed', async () => {
+    const strand = sessionManager.createThread('1', 'main', 'Research')
+    const parent = store.create({ name: 'Parent', prompt: 'delegate', triggerType: 'user',
+      sessionId: backgroundSession('task', strand.id), agentId: 'main' })
+    const child = store.create({ name: 'Child', prompt: 'result', triggerType: 'agent',
+      triggerSourceId: parent.id, sessionId: backgroundSession('task'), agentId: 'builder', delegatedBy: 'main' })
+    const done = store.update(child.id, { status: 'completed', resultStatus: 'completed', resultSummary: 'Done' })!
+    const received: string[] = []
+    const result = await routeTaskOutcome(deps({
+      deliverToParent: ({ parentTask, injection, agentId }) => {
+        received.push(`${parentTask.id}:${injection}:${agentId}`)
+        return true
+      },
+    }), { task: done, injection: '<task_injection>Done</task_injection>', userId: 1,
+      agentId: 'main', durationMinutes: 1 })
+    await settle()
+    expect(result.target).toBe('parent')
+    expect(received).toEqual([`${parent.id}:<task_injection>Done</task_injection>:main`])
+    expect(injections).toEqual([])
+    expect(telegram).toEqual([])
+    expect(doorbells).toEqual([])
+    expect(listFeedItems(db, '1')).toHaveLength(1)
+  })
+
+  it('resumes a paused parent once with the caller persona', async () => {
+    const strand = sessionManager.createThread('1', 'main', 'Research')
+    const parent = store.create({ name: 'Paused parent', prompt: 'wait', triggerType: 'user',
+      sessionId: backgroundSession('task', strand.id), agentId: 'builder', delegatedBy: 'main' })
+    store.update(parent.id, { status: 'paused' })
+    const child = store.create({ name: 'Child', prompt: 'result', triggerType: 'agent',
+      triggerSourceId: parent.id, sessionId: backgroundSession('task'), agentId: 'builder' })
+    const done = store.update(child.id, { status: 'completed', resultStatus: 'completed' })!
+    const delivered: string[] = []
+    const result = await routeTaskOutcome(deps({ deliverToParent: async ({ parentTask, agentId }) => {
+      delivered.push(`${parentTask.id}:${agentId}`)
+      return true
+    } }), { task: done, injection: 'x', userId: 1, agentId: 'builder', durationMinutes: 1 })
+    expect(result.target).toBe('parent')
+    expect(delivered).toEqual([`${parent.id}:main`])
+    expect(injections).toEqual([])
+    expect(telegram).toEqual([])
+  })
+
+  it('recurses to the original strand after parent and grandparent have finished', async () => {
+    const strand = sessionManager.createThread('1', 'main', 'Research')
+    const grandparent = store.create({ name: 'Root', prompt: 'delegate', triggerType: 'user',
+      sessionId: backgroundSession('task', strand.id), agentId: 'main' })
+    store.update(grandparent.id, { status: 'completed' })
+    const parent = store.create({ name: 'Parent', prompt: 'delegate', triggerType: 'agent',
+      triggerSourceId: grandparent.id, sessionId: backgroundSession('task'), agentId: 'builder', delegatedBy: 'main' })
+    store.update(parent.id, { status: 'completed' })
+    const child = store.create({ name: 'Child', prompt: 'result', triggerType: 'agent',
+      triggerSourceId: parent.id, sessionId: backgroundSession('task'), agentId: 'builder' })
+    const done = store.update(child.id, { status: 'completed', resultStatus: 'completed' })!
+    const agents: string[] = []
+    const result = await routeTaskOutcome(deps({ injectIntoStrand: ({ agentId }) => { agents.push(agentId) },
+      deliverToParent: () => { throw new Error('finished parent must not be resumed') },
+    }), { task: done, injection: 'x', userId: 1, agentId: 'builder', durationMinutes: 1 })
+    await settle()
+    expect(result).toMatchObject({ target: 'strand', strandId: strand.id })
+    expect(agents).toEqual(['main'])
+    expect(messagesIn(strand.id)).toHaveLength(1)
+    expect(listFeedItems(db, '1')).toHaveLength(1)
+    expect(telegram).toEqual([])
+  })
+
+  it('falls back exactly once to the strand if a finishing parent cannot be steered', async () => {
+    const strand = sessionManager.createThread('1', 'main', 'Research')
+    const parent = store.create({ name: 'Parent', prompt: 'delegate', triggerType: 'user',
+      sessionId: backgroundSession('task', strand.id), agentId: 'main' })
+    const child = store.create({ name: 'Child', prompt: 'result', triggerType: 'agent',
+      triggerSourceId: parent.id, sessionId: backgroundSession('task'), agentId: 'builder', delegatedBy: 'main' })
+    const done = store.update(child.id, { status: 'completed', resultStatus: 'completed' })!
+    const result = await routeTaskOutcome(deps({ deliverToParent: () => false }),
+      { task: done, injection: 'x', userId: 1, agentId: 'builder', durationMinutes: 1 })
+    await settle()
+    expect(result.target).toBe('strand')
+    expect(injections).toHaveLength(1)
+    expect(messagesIn(strand.id)).toHaveLength(1)
+    expect(listFeedItems(db, '1')).toHaveLength(1)
+    expect(telegram).toEqual([])
+  })
+})
+
 describe('a task without a strand origin', () => {
   it('writes a cron report into the feed and creates NO interactive session', async () => {
     const taskSession = backgroundSession('task')
     const task = finishedTask({ triggerType: 'cronjob', sessionId: taskSession })
 
-    const result = routeTaskOutcome(deps(), {
+    const result = await routeTaskOutcome(deps(), {
       task, injection: '<task_injection/>', userId: 1, agentId: 'main', durationMinutes: 3,
     })
     await settle()
@@ -136,11 +221,11 @@ describe('a task without a strand origin', () => {
   })
 
   it('maps a heartbeat and a consolidation run to their own kinds', async () => {
-    routeTaskOutcome(deps(), {
+    await routeTaskOutcome(deps(), {
       task: finishedTask({ triggerType: 'heartbeat', sessionId: backgroundSession('heartbeat') }),
       injection: 'x', userId: 1, agentId: 'main', durationMinutes: 1,
     })
-    routeTaskOutcome(deps(), {
+    await routeTaskOutcome(deps(), {
       task: finishedTask({ triggerType: 'consolidation', sessionId: backgroundSession('consolidation') }),
       injection: 'x', userId: 1, agentId: 'main', durationMinutes: 1,
     })
@@ -152,7 +237,7 @@ describe('a task without a strand origin', () => {
   it('keeps a cronjob out of a strand even when its session has an interactive parent', async () => {
     const strand = sessionManager.createThread('1', 'main', 'Mailbox')
     const task = finishedTask({ triggerType: 'cronjob', sessionId: backgroundSession('task', strand.id) })
-    const result = routeTaskOutcome(deps(), {
+    const result = await routeTaskOutcome(deps(), {
       task, injection: 'x', userId: 1, agentId: 'main', durationMinutes: 1,
     })
     await settle()
@@ -164,7 +249,7 @@ describe('a task without a strand origin', () => {
 
   it('still writes the feed item when there is no telegram and no bus', async () => {
     const task = finishedTask({ triggerType: 'cronjob', sessionId: backgroundSession('task') })
-    const result = routeTaskOutcome(
+    const result = await routeTaskOutcome(
       deps({ chatEventBus: null, sendTelegram: () => undefined }),
       { task, injection: 'x', userId: 1, agentId: 'main', durationMinutes: 1 },
     )
@@ -184,7 +269,7 @@ describe('a task that came out of a strand', () => {
       summary: 'Deployed, all gates green',
     })
 
-    const result = routeTaskOutcome(deps(), {
+    const result = await routeTaskOutcome(deps(), {
       task, injection: '<task_injection/>', userId: 1, agentId: 'main', durationMinutes: 12,
     })
     await settle()
@@ -213,7 +298,7 @@ describe('a task that came out of a strand', () => {
     const elsewhere = sessionManager.createThread('1', 'main', 'Another conversation')
     const task = finishedTask({ triggerType: 'user', sessionId: backgroundSession('task', strand.id), resultStatus })
 
-    const result = routeTaskOutcome(
+    const result = await routeTaskOutcome(
       deps({ injectIntoStrand: ({ task: t, strandId, userId }) => {
         injections.push({ taskId: t.id, strandId, userId })
         return elsewhere.id
@@ -233,7 +318,7 @@ describe('a task that came out of a strand', () => {
   it('persists in the origin strand when no agent core can inject', async () => {
     const strand = sessionManager.createThread('1', 'main', 'Deploy')
     const task = finishedTask({ triggerType: 'user', sessionId: backgroundSession('task', strand.id) })
-    const result = routeTaskOutcome(
+    const result = await routeTaskOutcome(
       deps({ injectIntoStrand: () => null }),
       { task, injection: 'x', userId: 1, agentId: 'main', durationMinutes: 1 },
     )
@@ -251,7 +336,7 @@ describe('a task that came out of a strand', () => {
       resultStatus: 'question',
       summary: 'Which region should I deploy to?',
     })
-    routeTaskOutcome(deps(), { task, injection: 'x', userId: 1, agentId: 'main', durationMinutes: 1 })
+    await routeTaskOutcome(deps(), { task, injection: 'x', userId: 1, agentId: 'main', durationMinutes: 1 })
     await settle()
 
     const items = listFeedItems(db, '1')
@@ -267,7 +352,7 @@ describe('a task that came out of a strand', () => {
       resultStatus: 'question',
       summary: 'Which region should I deploy to?',
     })
-    const result = routeTaskOutcome(deps(), { task, injection: 'x', userId: 1, agentId: 'main', durationMinutes: 1 })
+    const result = await routeTaskOutcome(deps(), { task, injection: 'x', userId: 1, agentId: 'main', durationMinutes: 1 })
     await settle()
     expect(result.target).toBe('feed')
     expect(listFeedItems(db, '1')[0].kind).toBe('task_question')
@@ -297,7 +382,7 @@ describe('doorbell, exactly once', () => {
   it('rings once for a strand result and maps the kinds', async () => {
     const strand = sessionManager.createThread('1', 'main', 'Deploy')
     const rung: PushDoorbell[] = []
-    routeTaskOutcome(depsWithRealTrigger(rung), {
+    await routeTaskOutcome(depsWithRealTrigger(rung), {
       task: finishedTask({ triggerType: 'user', sessionId: backgroundSession('task', strand.id) }),
       injection: 'x', userId: 1, agentId: 'main', durationMinutes: 1,
     })
@@ -309,7 +394,7 @@ describe('doorbell, exactly once', () => {
 
     const question = sessionManager.createThread('1', 'main', 'Deploy 2')
     const rung2: PushDoorbell[] = []
-    routeTaskOutcome(depsWithRealTrigger(rung2), {
+    await routeTaskOutcome(depsWithRealTrigger(rung2), {
       task: finishedTask({
         triggerType: 'user', sessionId: backgroundSession('task', question.id), resultStatus: 'question',
       }),
@@ -323,7 +408,7 @@ describe('doorbell, exactly once', () => {
     sessionManager.createThread('1', 'main', 'Open conversation')
     const rung: PushDoorbell[] = []
     for (const trigger of ['cronjob', 'heartbeat', 'consolidation'] as const) {
-      routeTaskOutcome(depsWithRealTrigger(rung), {
+      await routeTaskOutcome(depsWithRealTrigger(rung), {
         task: finishedTask({ triggerType: trigger, sessionId: backgroundSession('task') }),
         injection: 'x', userId: 1, agentId: 'main', durationMinutes: 1,
       })
