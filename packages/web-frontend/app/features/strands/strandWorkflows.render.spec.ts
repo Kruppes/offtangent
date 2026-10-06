@@ -335,6 +335,24 @@ describe('eco mode switch', () => {
     await flush()
     expect(api2.mock.calls[1]).toEqual(['/api/strands/s/eco', { method: 'PATCH', body: '{"contextWindow":null}' }])
   })
+  it('does not let a delayed facts recheck undo a newer Eco write', async () => {
+    const base = { choice: null, presets: [32768], supported: true, effective: null, baseline: 32768, baselineSource: 'model_setting', state: 'unchanged', facts: 'stale' }
+    const old = { eco: { ...eco(false).eco, contextWindow: base } }
+    const api = setup().mockResolvedValueOnce(old)
+    let finish!: (value: unknown) => void
+    api.mockImplementationOnce(() => new Promise(resolve => { finish = resolve }))
+    api.mockResolvedValueOnce({ eco: { ...eco(true).eco, contextWindow: base } })
+    const { root } = mount(EcoSwitch, { strandId: 's' })
+    await flush()
+    const recheck = all(root).find(n => n.props['data-testid'] === 'eco-cw-recheck')!
+    ;(recheck.props.onClick as () => void)()
+    await flush()
+    await click(root, 'eco.label: eco.off')
+    expect(all(root).find(n => n.props['data-testid'] === 'eco-toggle')!.props['aria-checked']).toBe(true)
+    finish(old)
+    await flush()
+    expect(all(root).find(n => n.props['data-testid'] === 'eco-toggle')!.props['aria-checked']).toBe(true)
+  })
   it('context window: stale / failed model facts say so honestly and offer a re-check (no flicker on known/pending)', async () => {
     const base = { choice: null, presets: [32768, 49152, 65536, 131072], supported: true, effective: null, baseline: 262144, baselineSource: 'runner_max', state: 'unchanged' }
     const api = setup()

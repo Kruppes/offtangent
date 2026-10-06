@@ -110,9 +110,12 @@ async function recheck() {
   if (recheckBusy.value) return
   recheckBusy.value = true
   const mine = seq
+  const before = status.value
   try {
     const next = await api.get(props.strandId)
-    if (next && mine === seq) status.value = next
+    // A completed write changes the status object without starting a model read.
+    // Never let an older facts recheck undo that newer Eco/context-window choice.
+    if (next && mine === seq && status.value === before) status.value = next
   } catch { /* keep the shown state; the hint stays */ }
   finally { recheckBusy.value = false }
 }
