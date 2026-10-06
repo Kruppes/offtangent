@@ -119,7 +119,7 @@ import {
   createTaskReply,
   type ReplyToTask,
 } from '../task-reply.js'
-import { routeTaskOutcome } from '../task-outcome.js'
+import { deliverSubtaskResultToParent, routeTaskOutcome } from '../task-outcome.js'
 import {
   enqueueTaskInjection,
   abandonTaskInjection,
@@ -957,14 +957,8 @@ export async function createRuntimeComposition(options: RuntimeCompositionOption
       logger: { warn: (msg, ...args) => logger.warn(msg, ...args), error: (msg, ...args) => logger.error(msg, ...args) },
       telegramDeliveryMode: (taskSettings.telegramDelivery as 'auto' | 'always') ?? 'auto',
       hasActiveWebSocket: (uid: number) => wsChatPresenceChecker?.(uid) ?? false,
-      deliverToParent: async ({ parentTask, injection: payload }) => {
-        const text = `<subtask_result task_id="${task.id}">\n${payload}\n</subtask_result>\nThis is the result of your sub-task. Continue your task with it.`
-        if (parentTask.status === 'paused') {
-          if (!taskRuntime.isPaused(parentTask.id)) return false
-          return taskRuntime.resume(parentTask.id, text)
-        }
-        return taskRuntime.steer?.(parentTask.id, text).delivered ?? false
-      },
+      deliverToParent: ({ parentTask, injection: payload }) =>
+        deliverSubtaskResultToParent(taskRuntime, parentTask, task.id, payload),
       injectIntoStrand: ({ injection: payload, userId: targetUserId, agentId, strandId }) => {
         // Persist first, deliver second (W4). The row — not the Map — is what
         // survives a container restart, and it is written even when there is

@@ -8,7 +8,7 @@ import type { Database, Task, TaskTriggerType } from '@axiom/core'
 import { ChatEventBus, type ChatEvent } from './chat-event-bus.js'
 import { sendTaskDoorbell } from './push/triggers.js'
 import type { PushDoorbell, PushSender } from './push/sender.js'
-import { routeTaskOutcome, type TaskOutcomeDeps } from './task-outcome.js'
+import { deliverSubtaskResultToParent, routeTaskOutcome, type TaskOutcomeDeps } from './task-outcome.js'
 
 let db: Database
 let store: TaskStore
@@ -165,6 +165,65 @@ describe('sub-task outcome without a session parent edge', () => {
     expect(messagesIn(strand.id)).toHaveLength(1)
     expect(listFeedItems(db, '1')).toHaveLength(1)
     expect(telegram).toEqual([])
+  })
+
+  it('answers in the strand as the strand persona when a non-delegated middle task has stopped', async () => {
+    // main strand -> root (main) -> P1 (builder, delegated by main) -> P2 (builder, self) -> child.
+    // All ancestors finished: the result belongs in Main's strand, answered by Main,
+    // not by Bob just because the nearest stopped ancestor runs as Bob.
+    const strand = sessionManager.createThread('1', 'main', 'Research')
+    const root = store.create({ name: 'Root', prompt: 'delegate', triggerType: 'user',
+      sessionId: backgroundSession('task', strand.id), agentId: 'main' })
+    store.update(root.id, { status: 'completed' })
+    const p1 = store.create({ name: 'P1', prompt: 'delegate', triggerType: 'agent',
+      triggerSourceId: root.id, sessionId: backgroundSession('task'), agentId: 'builder', delegatedBy: 'main' })
+    store.update(p1.id, { status: 'completed' })
+    const p2 = store.create({ name: 'P2', prompt: 'delegate', triggerType: 'agent',
+      triggerSourceId: p1.id, sessionId: backgroundSession('task'), agentId: 'builder' })
+    store.update(p2.id, { status: 'completed' })
+    const child = store.create({ name: 'Child', prompt: 'result', triggerType: 'agent',
+      triggerSourceId: p2.id, sessionId: backgroundSession('task'), agentId: 'builder' })
+    const done = store.update(child.id, { status: 'completed', resultStatus: 'completed' })!
+    const agents: string[] = []
+    const rings: string[] = []
+    const result = await routeTaskOutcome(deps({
+      injectIntoStrand: ({ agentId }) => { agents.push(agentId) },
+      ringDoorbell: ({ agentId }) => { rings.push(agentId) },
+    }), { task: done, injection: 'x', userId: 1, agentId: 'builder', durationMinutes: 1 })
+    await settle()
+    expect(result).toMatchObject({ target: 'strand', strandId: strand.id })
+    expect(agents).toEqual(['main'])
+    expect(rings.every(a => a === 'main')).toBe(true)
+    const feed = listFeedItems(db, '1')
+    expect(feed).toHaveLength(1)
+    expect(feed[0].agentId).toBe('main')
+  })
+
+  it('terminates on a cyclic task-parent chain without a strand and lands in the feed once', async () => {
+    const a = store.create({ name: 'A', prompt: 'x', triggerType: 'agent', sessionId: backgroundSession('task'), agentId: 'main' })
+    const b = store.create({ name: 'B', prompt: 'x', triggerType: 'agent', triggerSourceId: a.id,
+      sessionId: backgroundSession('task'), agentId: 'main' })
+    db.prepare('UPDATE tasks SET trigger_source_id = ? WHERE id = ?').run(b.id, a.id)
+    store.update(a.id, { status: 'completed' })
+    const done = store.update(b.id, { status: 'completed', resultStatus: 'completed' })!
+    const result = await routeTaskOutcome(deps({ deliverToParent: () => { throw new Error('stopped parent') } }),
+      { task: done, injection: 'x', userId: 1, agentId: 'main', durationMinutes: 1 })
+    await settle()
+    expect(result.target).toBe('feed')
+    expect(injections).toEqual([])
+    expect(listFeedItems(db, '1')).toHaveLength(1)
+  })
+
+  it('treats a deleted parent like a task without lineage (feed, no throw)', async () => {
+    const child = store.create({ name: 'Child', prompt: 'result', triggerType: 'agent',
+      triggerSourceId: 'gone-parent-id', sessionId: backgroundSession('task'), agentId: 'main' })
+    const done = store.update(child.id, { status: 'completed', resultStatus: 'completed' })!
+    const result = await routeTaskOutcome(deps({ deliverToParent: () => { throw new Error('no parent') } }),
+      { task: done, injection: 'x', userId: 1, agentId: 'main', durationMinutes: 1 })
+    await settle()
+    expect(result.target).toBe('feed')
+    expect(injections).toEqual([])
+    expect(listFeedItems(db, '1')).toHaveLength(1)
   })
 
   it('falls back exactly once to the strand if a finishing parent cannot be steered', async () => {
@@ -429,5 +488,54 @@ describe('doorbell, exactly once', () => {
       userId: 1, sessionId: undefined, agentId: 'main', type: 'task_completed',
     })
     expect(rung).toEqual([])
+  })
+})
+
+describe('deliverSubtaskResultToParent', () => {
+  function runtime(state: { paused?: boolean; runningAfterResume?: boolean; steered?: boolean }) {
+    const calls: string[] = []
+    let running = false
+    return {
+      calls,
+      rt: {
+        isPaused: () => state.paused ?? false,
+        isRunning: () => running,
+        resume: async (id: string, text: string) => {
+          calls.push(`resume:${id}:${text.includes('<subtask_result task_id="c1">')}`)
+          running = state.runningAfterResume ?? true
+          return true
+        },
+        steer: (id: string) => {
+          calls.push(`steer:${id}`)
+          return state.steered
+            ? { delivered: true, mode: 'steered' as const }
+            : { delivered: false, mode: 'none' as const, reason: 'between runs' }
+        },
+      },
+    }
+  }
+
+  it('resumes a paused parent and counts it as delivered while it runs', async () => {
+    const { rt, calls } = runtime({ paused: true })
+    expect(await deliverSubtaskResultToParent(rt, { id: 'p', status: 'paused' }, 'c1', 'x')).toBe(true)
+    expect(calls).toEqual(['resume:p:true'])
+  })
+
+  it('reports NOT delivered when the resumed parent was aborted at once (deadline passed while paused)', async () => {
+    const { rt } = runtime({ paused: true, runningAfterResume: false })
+    expect(await deliverSubtaskResultToParent(rt, { id: 'p', status: 'paused' }, 'c1', 'x')).toBe(false)
+  })
+
+  it('does not resume a row that is paused in the DB but has no paused agent (after a restart)', async () => {
+    const { rt, calls } = runtime({ paused: false })
+    expect(await deliverSubtaskResultToParent(rt, { id: 'p', status: 'paused' }, 'c1', 'x')).toBe(false)
+    expect(calls).toEqual([])
+  })
+
+  it('steers a running parent and passes the steer verdict through', async () => {
+    const yes = runtime({ steered: true })
+    expect(await deliverSubtaskResultToParent(yes.rt, { id: 'p', status: 'running' }, 'c1', 'x')).toBe(true)
+    const no = runtime({ steered: false })
+    expect(await deliverSubtaskResultToParent(no.rt, { id: 'p', status: 'running' }, 'c1', 'x')).toBe(false)
   })
 })

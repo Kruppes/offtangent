@@ -37,10 +37,12 @@ import {
   resolveTaskStrandOrigin,
   resolveTaskStrandId,
   taskOwnerAgentId,
+  MAX_TASK_TREE_DEPTH,
   TaskStore,
   type Database,
   type Task,
   type TaskNotificationEvent,
+  type TaskRuntimeTaskBoundary,
   type TelegramDeliveryMode,
 } from '@axiom/core'
 import type { ChatEventBus } from './chat-event-bus.js'
@@ -111,7 +113,7 @@ export async function routeTaskOutcome(deps: TaskOutcomeDeps, input: TaskOutcome
   const parent = task.triggerType === 'agent' && task.triggerSourceId && task.triggerSourceId !== task.id
     ? new TaskStore(deps.db).getById(task.triggerSourceId)
     : null
-  const agentId = parent ? taskOwnerAgentId(parent) : taskOwnerAgentId(task)
+  let agentId = parent ? taskOwnerAgentId(parent) : taskOwnerAgentId(task)
   if (parent && (parent.status === 'running' || parent.status === 'paused') && deps.deliverToParent) {
     let delivered = false
     try {
@@ -125,7 +127,13 @@ export async function routeTaskOutcome(deps: TaskOutcomeDeps, input: TaskOutcome
       return { target: 'parent', strandId: resolveTaskStrandId(deps.db, parent), feedItemId: null }
     }
   }
-  const strandOrigin = parent ? resolveTaskStrandId(deps.db, parent) : resolveTaskStrandOrigin(deps.db, task)
+  // The persona that answers in the strand is the owner of the ancestor whose
+  // OWN session lineage reaches that strand, not of the nearest stopped
+  // parent: in main strand -> root(main) -> P1(bob, delegated by main) ->
+  // P2(bob) -> child, P2's owner is bob, but the strand is Main's.
+  const anchor = parent ? resolveStrandAnchor(deps.db, parent) : null
+  const strandOrigin = parent ? (anchor?.strandId ?? null) : resolveTaskStrandOrigin(deps.db, task)
+  if (anchor) agentId = taskOwnerAgentId(anchor.task)
 
   if (strandOrigin) {
     const sessionId = strandOrigin
@@ -186,6 +194,53 @@ export async function routeTaskOutcome(deps: TaskOutcomeDeps, input: TaskOutcome
   })
 
   return { target: 'feed', strandId: null, feedItemId: item?.id ?? null }
+}
+
+/**
+ * Hand a sub-task result to its live parent: steer a running one, resume a
+ * paused one. Returns false whenever the parent will NOT read the text, so
+ * the caller falls back to the origin strand instead of losing the result.
+ *
+ * `resume` answers true even when the parent's max duration already passed
+ * while it was paused — the runner then aborts it synchronously and the
+ * message is never sent to its agent. Only a parent that is actually running
+ * after the resume counts as delivered.
+ */
+export async function deliverSubtaskResultToParent(
+  runtime: Pick<TaskRuntimeTaskBoundary, 'isPaused' | 'isRunning' | 'resume' | 'steer'>,
+  parentTask: Pick<Task, 'id' | 'status'>,
+  childTaskId: string,
+  payload: string,
+): Promise<boolean> {
+  const text = `<subtask_result task_id="${childTaskId}">\n${payload}\n</subtask_result>\nThis is the result of your sub-task. Continue your task with it.`
+  if (parentTask.status === 'paused') {
+    if (!runtime.isPaused(parentTask.id)) return false
+    const resumed = await runtime.resume(parentTask.id, text)
+    return resumed && runtime.isRunning(parentTask.id)
+  }
+  return runtime.steer?.(parentTask.id, text).delivered ?? false
+}
+
+/**
+ * Same walk as `resolveTaskStrandId` (session lineage first, then the
+ * task-parent edge; cycle-safe and bounded identically), but it also returns
+ * the ancestor whose own session lineage reached the strand, so the caller
+ * can answer with that ancestor's persona.
+ */
+function resolveStrandAnchor(db: Database, start: Task): { strandId: string; task: Task } | null {
+  const store = new TaskStore(db)
+  let current: Task | null = start
+  const seen = new Set<string>()
+  for (let hop = 0; current && hop <= MAX_TASK_TREE_DEPTH + 1; hop++) {
+    if (seen.has(current.id)) return null
+    seen.add(current.id)
+    const direct = resolveTaskStrandOrigin(db, current)
+    if (direct) return { strandId: direct, task: current }
+    const parentId: string | null = current.triggerType === 'agent' ? current.triggerSourceId : null
+    if (!parentId) return null
+    current = store.getById(parentId)
+  }
+  return null
 }
 
 /** The task event as the bus carried it before the feed existed, unchanged. */
