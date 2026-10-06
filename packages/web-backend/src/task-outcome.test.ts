@@ -121,7 +121,8 @@ describe('sub-task outcome without a session parent edge', () => {
     expect(injections).toEqual([])
     expect(telegram).toEqual([])
     expect(doorbells).toEqual([])
-    expect(listFeedItems(db, '1')).toHaveLength(1)
+    expect(listFeedItems(db, '1')).toHaveLength(0)
+    expect(result.feedItemId).toBeNull()
   })
 
   it('resumes a paused parent once with the caller persona', async () => {

@@ -11,8 +11,8 @@
  * Three paths now, decided from the task's own data:
  *
  *  * **Live task parent** (agent trigger with a task-parent edge): deliver
- *    into that task first (steer/resume). One feed item, no separate strand
- *    injection, Telegram message or doorbell for the same result.
+ *    into that task first (steer/resume). No separate strand injection,
+ *    feed item, Telegram message or doorbell for the same result.
  *  * **Strand origin** (interactive session lineage, or a stopped task parent
  *    whose own task lineage reaches a strand): the injection runs, the result
  *    is persisted in that strand, the doorbell rings once. In addition a feed
@@ -98,7 +98,7 @@ export interface TaskOutcomeResult {
   target: 'parent' | 'strand' | 'feed'
   /** The origin strand if known (the parent itself receives a parent-target result). */
   strandId: string | null
-  /** The feed item written for every delivery path. */
+  /** The feed item written on a strand or feed delivery path. */
   feedItemId: string | null
 }
 
@@ -120,12 +120,9 @@ export async function routeTaskOutcome(deps: TaskOutcomeDeps, input: TaskOutcome
       logger.error(`[task-outcome] Failed to deliver task ${task.id} to parent ${parent.id}:`, err)
     }
     if (delivered) {
-      const origin = resolveTaskStrandId(deps.db, parent)
-      const item = publishFeedItem(
-        { db: deps.db, chatEventBus: deps.chatEventBus, logger },
-        userId, buildTaskFeedItem(task, { userId: String(userId), strandId: origin, agentId }),
-      )
-      return { target: 'parent', strandId: origin, feedItemId: item?.id ?? null }
+      // The caller handles the result; don't also post it as an independent
+      // completion in the strand/feed. Its own eventual result remains visible.
+      return { target: 'parent', strandId: resolveTaskStrandId(deps.db, parent), feedItemId: null }
     }
   }
   const strandOrigin = parent ? resolveTaskStrandId(deps.db, parent) : resolveTaskStrandOrigin(deps.db, task)
