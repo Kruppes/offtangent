@@ -12,13 +12,13 @@ import * as strandEco from '~/api/strandEco'
 
 // The existing render config compiles imports for SSR. Compile these four
 // SFCs for Vue's client renderer instead, so onMounted and clicks really run.
-function loadPage(path: string): Component {
+function loadPage(path: string, overrides: Record<string, unknown> = {}): Component {
   const filename = new URL(path, import.meta.url)
   const { descriptor } = parse(readFileSync(filename, 'utf8'))
   const script = compileScript(descriptor, { id: path, inlineTemplate: true })
   const { outputText } = transpileModule(script.content, { compilerOptions: { module: ModuleKind.CommonJS } })
   const exports: { default?: Component } = {}
-  const modules: Record<string, unknown> = { vue: Vue, '~/composables/useShellCommands': shellCommands, './detailApi': detailApi, '~/api/strandW5b': strandW5b, '~/api/models': { useModelsApi: () => ({ listModels: async () => [] }) }, '~/api/projects': { useProjectsApi: () => ({ list: async () => [] }) }, './StrandActions.vue': { default: defineComponent({ render: () => h('aside') }) }, './EcoModeSwitch.vue': { default: defineComponent({ render: () => h('span') }) }, '~/api/strandEco': strandEco }
+  const modules: Record<string, unknown> = { vue: Vue, '~/composables/useShellCommands': shellCommands, './detailApi': detailApi, '~/api/strandW5b': strandW5b, '~/api/models': { useModelsApi: () => ({ listModels: async () => [] }) }, '~/api/projects': { useProjectsApi: () => ({ list: async () => [] }) }, './StrandActions.vue': { default: defineComponent({ render: () => h('aside') }) }, './EcoModeSwitch.vue': { default: defineComponent({ render: () => h('span') }) }, '~/api/strandEco': strandEco, ...overrides }
   new Function('require', 'exports', outputText)((name: string) => {
     if (!(name in modules)) throw new Error(`Unexpected import: ${name}`)
     return modules[name]
@@ -69,7 +69,8 @@ function mount(component: Component, props: Record<string, unknown> = {}): { app
     app.component(name, defineComponent({ setup: (_, { slots }) => () => h(tag, slots.default?.()) }))
   }
   app.component('ConfirmDialog', defineComponent({ props: ['open', 'description'], emits: ['confirm', 'cancel'], setup: (props, { emit }) => () => props.open ? h('section', [h('p', String(props.description)), h('button', { 'data-testid': 'confirm', onClick: () => emit('confirm') }, 'Confirm')]) : null }))
-  app.component('ModelPickerDialog', defineComponent({ render: () => null }))
+  // Renders a marker node so tests can fire its `select` (attrs fall through).
+  app.component('ModelPickerDialog', defineComponent({ render: () => h('model-picker-dialog') }))
   app.mount(root)
   const result = { app, root }
   trees.push(result)
@@ -77,6 +78,13 @@ function mount(component: Component, props: Record<string, unknown> = {}): { app
 }
 function all(root: Node): Node[] { return [root, ...root.children.flatMap(all)] }
 function text(root: Node) { return all(root).map(n => n.text).join(' ') }
+/** Text a sighted user sees: skips subtrees hidden by the `hidden` utility class (closed info panels). */
+function visibleText(root: Node): string {
+  const hidden = (n: Node) => String(n.props.class ?? '').split(/\s+/).includes('hidden')
+  const walk = (n: Node): string[] => hidden(n) ? [] : [n.text, ...n.children.flatMap(walk)]
+  return walk(root).join(' ')
+}
+const byTestId = (root: Node, id: string) => all(root).find(n => n.props['data-testid'] === id)
 async function flush() {
   for (let i = 0; i < 10; i++) await new Promise(resolve => setImmediate(resolve))
   await nextTick()
@@ -297,7 +305,9 @@ describe('eco mode switch', () => {
     api.mockResolvedValueOnce({ eco: { ...eco(false).eco, contextWindow: { ...base, choice: null, state: 'unchanged' } } })
     const { root } = mount(EcoSwitch, { strandId: 's' })
     await flush()
-    expect(all(root).find(n => n.props['data-testid'] === 'eco-cw-select')!.props.disabled).toBe(true)
+    // no select without effect: a short "fixed" chip names the runner window instead
+    expect(byTestId(root, 'eco-cw-select')).toBeUndefined()
+    expect(text(byTestId(root, 'eco-cw-fixed')!)).toContain('eco.cwFixedShort{"tokens":"256k"}')
     expect(text(root)).toContain('eco.cwBaseline')
     expect(text(root)).toContain('eco.cwState.runner_fixed')
     expect(text(root)).not.toContain('eco.cwState.unchanged')
@@ -314,6 +324,8 @@ describe('eco mode switch', () => {
     expect(opts.filter(o => o.props.value !== '').map(o => o.props.disabled)).toEqual([true, true, true, true])
     expect(text(second.root)).toContain('eco.cwResetOnly')
     expect(text(second.root)).not.toContain('eco.cwNotGuaranteed')
+    // the stored choice is visibly marked as not in effect (no num_ctx promise)
+    expect(visibleText(second.root)).toContain('eco.cwInactive')
     const sel = all(second.root).find(n => n.props['data-testid'] === 'eco-cw-select')!
     ;(sel.props.onChange as (e: unknown) => void)({ target: { value: '131072' } })
     await flush()
@@ -355,14 +367,16 @@ describe('eco mode switch', () => {
       expect(all(third.root).some(n => n.props['data-testid'] === 'eco-cw-facts-problem')).toBe(false)
     }
   })
-  it('context window: disabled with a reason on a non-native provider, error keeps the old value', async () => {
+  it('context window: not offered at all on a non-native provider (no /api/chat), error keeps the old value', async () => {
     const api = setup()
-    api.mockResolvedValueOnce({ eco: { ...eco(false).eco, contextWindow: { choice: null, presets: [32768], supported: false, state: 'provider_unsupported' } } })
+    api.mockResolvedValueOnce({ eco: { ...eco(false).eco, contextWindow: { choice: 65536, presets: [32768], supported: false, state: 'provider_unsupported', effective: null } } })
     const { root } = mount(EcoSwitch, { strandId: 's' })
     await flush()
-    const select = all(root).find(n => n.props['data-testid'] === 'eco-cw-select')!
-    expect(select.props.disabled).toBe(true)
-    expect(text(root)).toContain('eco.cwState.provider_unsupported')
+    expect(byTestId(root, 'eco-context-window')).toBeUndefined()
+    expect(byTestId(root, 'eco-cw-select')).toBeUndefined()
+    expect(text(root)).not.toContain('eco.cw')
+    // Eco itself stays available
+    expect(byTestId(root, 'eco-toggle')).toBeDefined()
     const api2 = setup()
     api2.mockResolvedValueOnce({ eco: { ...eco(false).eco, contextWindow: { choice: null, presets: [32768], supported: true, state: 'unchanged' } } })
     api2.mockRejectedValueOnce(new ApiError('raw', 500, {}))
@@ -390,5 +404,153 @@ describe('eco mode switch', () => {
     expect(text(root)).toContain('eco.loadError')
     await click(root, 'strandDetail.retry')
     expect(all(root).some(n => n.props['data-testid'] === 'eco-mode')).toBe(false)
+  })
+
+  it('compact: short visible controls, the long explanations only in an accessible info panel (hover title, focus, tap)', async () => {
+    const api = setup()
+    const cw = { choice: null, presets: [32768, 65536], supported: true, state: 'unchanged', effective: null, facts: 'known', baseline: 40960, baselineSource: 'modelfile' }
+    api.mockResolvedValueOnce({ eco: { ...eco(false).eco, contextWindow: cw } })
+    const { root } = mount(EcoSwitch, { strandId: 's' })
+    await flush()
+    const seen = visibleText(root)
+    expect(seen).toContain('eco.label')
+    expect(seen).toContain('eco.off')
+    expect(seen).toContain('eco.cwShort')
+    for (const long of ['eco.hint', 'eco.cwState.unchanged', 'eco.cwBaseline', 'eco.cwEffectiveNone']) expect(seen, long).not.toContain(long)
+    // still reachable: described-by on the controls, the full text in the panel, hover title on the info button
+    const toggle = byTestId(root, 'eco-toggle')!
+    const ecoPanel = byTestId(root, 'eco-info-panel')!
+    expect(toggle.props['aria-describedby']).toBe(ecoPanel.props.id)
+    expect(text(ecoPanel)).toContain('eco.hint')
+    const ecoInfo = byTestId(root, 'eco-info')!
+    expect(ecoInfo.props.title).toBe('eco.hint')
+    expect(ecoInfo.props['aria-label']).toBe('eco.infoEco')
+    expect(ecoInfo.props['aria-controls']).toBe(ecoPanel.props.id)
+    expect(ecoInfo.props['aria-expanded']).toBe(false)
+    const select = byTestId(root, 'eco-cw-select')!
+    const cwPanel = byTestId(root, 'eco-cw-info-panel')!
+    expect(select.props['aria-describedby']).toBe(cwPanel.props.id)
+    expect(text(cwPanel)).toContain('eco.cwState.unchanged')
+    expect(text(cwPanel)).toContain('eco.cwBaseline')
+    // tap / Enter opens the panel (mobile), Escape closes it
+    ;(ecoInfo.props.onClick as () => void)()
+    await flush()
+    expect(byTestId(root, 'eco-info')!.props['aria-expanded']).toBe(true)
+    expect(visibleText(root)).toContain('eco.hint')
+    ;(byTestId(root, 'eco-info')!.props.onKeydown as (e: unknown) => void)({ key: 'Escape' })
+    await flush()
+    expect(visibleText(root)).not.toContain('eco.hint')
+    // an applied choice shows only a short visible state, the num_ctx details stay in the panel
+    const api2 = setup()
+    api2.mockResolvedValueOnce({ eco: { ...eco(true).eco, contextWindow: { ...cw, choice: 65536, state: 'applied', effective: 65536 } } })
+    const second = mount(EcoSwitch, { strandId: 's' })
+    await flush()
+    const seen2 = visibleText(second.root)
+    expect(seen2).not.toContain('eco.cwState.applied')
+    expect(seen2).not.toContain('eco.cwNotGuaranteed')
+    expect(seen2).not.toContain('eco.budget')
+    expect(seen2).not.toContain('eco.cwInactive')
+    expect(text(byTestId(second.root, 'eco-cw-info-panel')!)).toContain('eco.cwEffective')
+    expect(text(byTestId(second.root, 'eco-info-panel')!)).toContain('eco.budget')
+  })
+  it('context window: a stored choice that is not sent is visibly marked inactive; facts problems stay visible and short', async () => {
+    const api = setup()
+    api.mockResolvedValueOnce({ eco: { ...eco(false).eco, contextWindow: { choice: 65536, presets: [32768, 65536], supported: true, state: 'baseline_unknown', effective: null, facts: 'failed', baseline: null, baselineSource: null } } })
+    const { root } = mount(EcoSwitch, { strandId: 's' })
+    await flush()
+    const seen = visibleText(root)
+    expect(seen).toContain('eco.cwInactive')
+    expect(seen).toContain('eco.cwFactsShort.failed')
+    expect(seen).toContain('eco.cwRecheck')
+    expect(seen).not.toContain('eco.cwFactsFailed')
+    expect(text(byTestId(root, 'eco-cw-info-panel')!)).toContain('eco.cwFactsFailed')
+  })
+})
+
+describe('strand header: eco and context window follow the effective model', () => {
+  const ecoBody = (cw: Record<string, unknown>) => ({ eco: { enabled: false, observedContextLimitTokens: null, inputBudgetTokens: 28000, outputReserveTokens: 4096, contextFallback: false, last: null, contextWindow: { choice: null, presets: [32768, 65536], state: 'unchanged', effective: null, facts: 'known', baseline: 40960, baselineSource: 'modelfile', ...cw } } })
+  const native = ecoBody({ supported: true })
+  const v1 = ecoBody({ supported: false, state: 'provider_unsupported' })
+  const mlx = ecoBody({ supported: true, baseline: 262144, baselineSource: 'runner_max' })
+  const base = { id: 's', title: 'Model switch', tags: [], projectId: null, pinned: false, pinnedModel: null }
+  const model = (providerId: string, modelId: string, source = 'global') => ({ providerId, modelId, source })
+  function deferred<T>() { let resolve!: (v: T) => void; const promise = new Promise<T>(r => { resolve = r }); return { promise, resolve } }
+  function headerWith(setStrandModel: (id: string, sel: unknown) => Promise<unknown>) {
+    return loadPage('./StrandDetailHeader.vue', {
+      './EcoModeSwitch.vue': { default: EcoSwitch },
+      '~/api/models': { useModelsApi: () => ({ listModels: async () => [], setStrandModel }) },
+    })
+  }
+
+  it('pin native -> /v1 hides the picker (also while re-reading), unpin to a native default shows it again', async () => {
+    const api = setup()
+    let strand: Record<string, unknown> = { ...base, effectiveModel: model('ollama-native', 'qwen3:32b') }
+    const context: Array<ReturnType<typeof deferred<unknown>>> = []
+    api.mockImplementation(async (url: string) => {
+      if (url === '/api/strands/s') return { strand }
+      if (url === '/api/strands/s/context') { const d = deferred<unknown>(); context.push(d); return d.promise }
+      throw new Error(`unexpected ${url}`)
+    })
+    const setStrandModel = vi.fn(async (_id: string, sel: unknown) => {
+      strand = sel ? { ...strand, pinnedModel: sel, effectiveModel: { ...(sel as object), source: 'strand' } } : { ...strand, pinnedModel: null, effectiveModel: model('ollama-native', 'qwen3:32b') }
+      return strand
+    })
+    const { root } = mount(headerWith(setStrandModel), { strandId: 's' }); await flush()
+    context[0]!.resolve(native); await flush()
+    expect(byTestId(root, 'eco-cw-select')).toBeDefined()
+    // in the top row, right next to the model (the switch's wrapper is `display: contents`)
+    const wrapper = byTestId(root, 'eco-mode')!
+    expect(String(wrapper.props.class).split(' ')).toContain('contents')
+    expect(byTestId(wrapper, 'eco-context-window')).toBeDefined()
+    const row = wrapper.parent!
+    expect(row.children.some(n => text(n).includes('strandDetail.model: qwen3:32b'))).toBe(true)
+
+    const dialog = all(root).find(n => n.tag === 'model-picker-dialog')!
+    ;(dialog.props.onSelect as (s: unknown) => Promise<void>)({ providerId: 'openai-compat', modelId: 'gpt-oss' })
+    await flush()
+    expect(context).toHaveLength(2)
+    // re-read pending: the native picker of the old model must not stay visible
+    expect(byTestId(root, 'eco-context-window')).toBeUndefined()
+    // a late answer of the OLD request must not bring it back
+    context[0]!.resolve(native); await flush()
+    expect(byTestId(root, 'eco-context-window')).toBeUndefined()
+    context[1]!.resolve(v1); await flush()
+    expect(byTestId(root, 'eco-context-window')).toBeUndefined()
+    expect(byTestId(root, 'eco-toggle')).toBeDefined()
+
+    await click(root, 'strandDetail.resetModel')
+    expect(setStrandModel).toHaveBeenLastCalledWith('s', null)
+    expect(context).toHaveLength(3)
+    context[2]!.resolve(native); await flush()
+    expect(byTestId(root, 'eco-cw-select')).toBeDefined()
+  })
+
+  it('a changed default model (re-read at turn end) re-checks the provider; MLX shows the fixed window', async () => {
+    const api = setup({ s: { state: 'running' } })
+    let strand: Record<string, unknown> = { ...base, effectiveModel: model('openai-compat', 'gpt-oss') }
+    let ctx: unknown = v1
+    api.mockImplementation(async (url: string) => url === '/api/strands/s' ? { strand } : ctx)
+    const { root } = mount(headerWith(vi.fn()), { strandId: 's' }); await flush()
+    expect(byTestId(root, 'eco-context-window')).toBeUndefined()
+    strand = { ...strand, effectiveModel: model('mlx-host', 'qwen3-mlx') }
+    ctx = mlx
+    delete api.sessionActivity.value.s
+    api.sessionActivity.value = { ...api.sessionActivity.value }
+    await flush()
+    expect(api.mock.calls.map(c => c[0])).toEqual(['/api/strands/s', '/api/strands/s/context', '/api/strands/s', '/api/strands/s/context'])
+    expect(byTestId(root, 'eco-cw-select')).toBeUndefined()
+    expect(visibleText(byTestId(root, 'eco-cw-fixed')!)).toContain('eco.cwFixedShort')
+  })
+
+  it('an unchanged model does not re-read the eco status on every strand reload', async () => {
+    const api = setup({ s: { state: 'running' } })
+    const strand = { ...base, effectiveModel: model('ollama-native', 'qwen3:32b') }
+    api.mockImplementation(async (url: string) => url === '/api/strands/s' ? { strand } : native)
+    const { root } = mount(headerWith(vi.fn()), { strandId: 's' }); await flush()
+    delete api.sessionActivity.value.s
+    api.sessionActivity.value = { ...api.sessionActivity.value }
+    await flush()
+    expect(api.mock.calls.map(c => c[0])).toEqual(['/api/strands/s', '/api/strands/s/context', '/api/strands/s'])
+    expect(byTestId(root, 'eco-cw-select')).toBeDefined()
   })
 })

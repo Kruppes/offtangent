@@ -2777,8 +2777,23 @@
     "cwRecheck": "Check again",
     "cwResetOnly": "Choice saved earlier: only \"Unchanged\" can be selected.",
     "cwBaseline": "Baseline {tokens} ({source})",
-    "cwBaselineSource": { "model_setting": "model setting", "provider_setting": "provider setting", "modelfile": "modelfile", "runner_max": "MLX, fixed" },
+    "cwBaselineSource": {
+      "model_setting": "model setting",
+      "provider_setting": "provider setting",
+      "modelfile": "modelfile",
+      "runner_max": "MLX, fixed"
+    },
     "cwBaselineMissing": "Baseline window unknown: set it under Settings › Providers › Edit model, otherwise the choice has no effect.",
-    "cwNotGuaranteed": "A choice is a request to Ollama, not a guaranteed token limit; a larger window needs more RAM/VRAM."
+    "cwNotGuaranteed": "A choice is a request to Ollama, not a guaranteed token limit; a larger window needs more RAM/VRAM.",
+    "cwShort": "Context",
+    "cwFixedShort": "{tokens} · fixed",
+    "cwInactive": "not active",
+    "cwFactsShortPending": "checking…",
+    "cwFactsShort": {
+      "stale": "model facts outdated",
+      "failed": "model facts unavailable"
+    },
+    "infoEco": "What does Eco do?",
+    "infoCw": "Context window details"
   }
 }

@@ -2777,8 +2777,23 @@
     "cwRecheck": "Erneut prüfen",
     "cwResetOnly": "Gespeicherte Auswahl von früher: nur „Unverändert“ ist wählbar.",
     "cwBaseline": "Basis {tokens} ({source})",
-    "cwBaselineSource": { "model_setting": "Modell-Einstellung", "provider_setting": "Provider-Einstellung", "modelfile": "Modelfile", "runner_max": "MLX, fest" },
+    "cwBaselineSource": {
+      "model_setting": "Modell-Einstellung",
+      "provider_setting": "Provider-Einstellung",
+      "modelfile": "Modelfile",
+      "runner_max": "MLX, fest"
+    },
     "cwBaselineMissing": "Basis-Fenster unbekannt: in Einstellungen › Provider › Modell bearbeiten eintragen, sonst bleibt die Auswahl wirkungslos.",
-    "cwNotGuaranteed": "Die Auswahl ist eine Anfrage an Ollama, keine garantierte Token-Grenze; ein größeres Fenster braucht mehr RAM/VRAM."
+    "cwNotGuaranteed": "Die Auswahl ist eine Anfrage an Ollama, keine garantierte Token-Grenze; ein größeres Fenster braucht mehr RAM/VRAM.",
+    "cwShort": "Kontext",
+    "cwFixedShort": "{tokens} · fest",
+    "cwInactive": "nicht aktiv",
+    "cwFactsShortPending": "prüfe…",
+    "cwFactsShort": {
+      "stale": "Modell-Fakten veraltet",
+      "failed": "Modell-Fakten nicht abrufbar"
+    },
+    "infoEco": "Was macht Eco?",
+    "infoCw": "Details zum Kontextfenster"
   }
 }

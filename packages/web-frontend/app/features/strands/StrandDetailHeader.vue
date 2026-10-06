@@ -43,6 +43,11 @@ const { sessionActivity } = useChat()
 const turnActive = computed(() => Boolean(sessionActivity.value[props.strandId]))
 const runningModel = computed(() => strand.value?.runningTurnModel ?? null)
 const displayedModel = computed(() => runningModel.value ?? strand.value?.effectiveModel ?? null)
+/** Identity of the model the NEXT turn uses; the Eco/context-window status is read for exactly this model. */
+const effectiveModelKey = computed(() => {
+  const m = strand.value?.effectiveModel
+  return m ? `${m.providerId}\u0000${m.modelId}` : ''
+})
 /** Only worth spelling out when the running model is NOT what the header would show otherwise. */
 const modelDiffers = computed(() => {
   const running = runningModel.value
@@ -157,8 +162,9 @@ onMounted(() => { void load(); void loadProjects() })
         <Button class="min-h-11 max-w-full whitespace-normal break-all" variant="ghost" :disabled="saving" @click="openModels">{{ t('strandDetail.model') }}: {{ displayedModel?.modelId || t('strandDetail.defaultModel') }}</Button>
         <span v-if="modelDiffers" role="status" class="rounded-md bg-muted px-2 py-1 text-muted-foreground [overflow-wrap:anywhere]">{{ t('strandDetail.answeringWith', { model: runningModel!.modelId, next: strand.effectiveModel?.modelId || t('strandDetail.defaultModel') }) }}</span>
         <Button v-if="strand.pinnedModel" class="min-h-11" variant="ghost" :disabled="saving" @click="chooseModel(null)">{{ t('strandDetail.resetModel') }}</Button>
+        <!-- Context window (native Ollama only) + Eco, compact and next to the model (plan 2026-10-06-eco-header). -->
+        <EcoModeSwitch :strand-id="strandId" :disabled="loading || saving" :model-key="effectiveModelKey" />
         <Button class="min-h-11" variant="ghost" :disabled="saving" :aria-pressed="strand.pinned" @click="mutate(() => api.patch(strandId, { pinned: !strand!.pinned }))">{{ t(strand.pinned ? 'strandDetail.unpin' : 'strandDetail.pin') }}</Button>
-        <EcoModeSwitch :strand-id="strandId" :disabled="loading" />
       </div>
       <section v-if="strand.projectSuggestion && !strand.projectId" class="mt-2 flex flex-wrap items-center gap-2 rounded-lg border border-border p-2" :aria-label="t('strandDetail.suggestion')">
         <p class="text-sm">{{ t('strandDetail.suggestProject', { project: strand.projectSuggestion.projectName || strand.projectSuggestion.projectId }) }} <span class="text-muted-foreground">{{ strand.projectSuggestion.reason }}</span></p>
