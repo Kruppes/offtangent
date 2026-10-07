@@ -74,4 +74,22 @@ describe('MQTT transport with in-process mock', () => {
     expect(client.sent).toContainEqual(['homeassistant/sensor/offtangent/limit_anthropic_five_hour/config', ''])
     service.stop(); await ready()
   })
+  it('tests the broker on an isolated topic, never taking the live device offline', async () => {
+    const service = new HomeAssistantMqttService(db)
+    const settings = { ...defaults, enabled: true, host: 'example.invalid' }
+    service.apply(settings); await ready()
+    const active = mock.connects[0].client as Fake
+    active.connected = true; active.emit('connect'); await ready()
+    const promise = service.test(settings)
+    const testClient = mock.connects[1].client as Fake
+    testClient.connected = true; testClient.emit('connect')
+    expect(await promise).toBe(true)
+    expect(testClient.sent).toHaveLength(2)
+    expect(testClient.sent[0][0]).toMatch(/^offtangent\/test\/[a-z0-9]+\/status$/)
+    expect(testClient.sent[0][1]).toBe('online')
+    expect(testClient.sent[1]).toEqual([testClient.sent[0][0], ''])
+    expect(active.sent).toContainEqual(['offtangent/status', 'online'])
+    expect(testClient.sent).not.toContainEqual(['offtangent/status', 'offline'])
+    service.stop(); await ready()
+  })
 })

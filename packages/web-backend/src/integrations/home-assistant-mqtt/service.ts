@@ -162,12 +162,14 @@ export class HomeAssistantMqttService {
   async test(settings = readSettings()): Promise<boolean> {
     if (!settings.host) return false
     return new Promise(resolve => {
-      const client = mqtt.connect(url(settings), { ...connectionOptions(settings), clientId: `${settings.clientId}-test-${Math.random().toString(36).slice(2, 8)}`, reconnectPeriod: 0, connectTimeout: 4000 })
+      const suffix = Math.random().toString(36).slice(2, 10)
+      const topic = `${settings.baseTopic}/test/${suffix}/status`
+      const client = mqtt.connect(url(settings), { ...connectionOptions(settings), clientId: `${settings.clientId}-test-${suffix}`, reconnectPeriod: 0, connectTimeout: 4000 })
       const timer = setTimeout(() => finish(false), 6000)
       const finish = (ok: boolean) => { clearTimeout(timer); client.end(true); resolve(ok) }
-      client.once('connect', () => client.publish(`${settings.baseTopic}/status`, 'online', { qos: 1, retain: true }, err => {
+      client.once('connect', () => client.publish(topic, 'online', { qos: 1, retain: true }, err => {
         if (err) { finish(false); return }
-        client.publish(`${settings.baseTopic}/status`, 'offline', { qos: 1, retain: true }, () => finish(true))
+        client.publish(topic, '', { qos: 1, retain: true }, clearError => finish(!clearError))
       }))
       client.once('error', () => finish(false))
     })
