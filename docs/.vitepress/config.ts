@@ -14,6 +14,7 @@ const guideSidebar: DefaultTheme.SidebarItem[] = [
       { text: 'Models & Providers', link: '/guide/models' },
       { text: 'Secrets', link: '/guide/secrets' },
       { text: 'Telegram Bot', link: '/guide/telegram' },
+      { text: 'Home Assistant via MQTT', link: '/guide/home-assistant-mqtt' },
       { text: 'Companion App (Android)', link: '/guide/companion-app' },
     ],
   },

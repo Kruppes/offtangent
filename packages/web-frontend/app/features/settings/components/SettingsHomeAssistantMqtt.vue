@@ -126,5 +126,13 @@ async function test() {
   catch (err) { message.value = String(err) }
   finally { busy.value = false }
 }
-onMounted(() => { void load() })
+let statusTimer: ReturnType<typeof setInterval> | undefined
+onMounted(() => {
+  void load()
+  statusTimer = setInterval(async () => {
+    try { status.value = (await apiFetch<Pick<MqttForm, 'status'>>('/api/settings/mqtt')).status }
+    catch { status.value = 'error' }
+  }, 5000)
+})
+onUnmounted(() => { if (statusTimer) clearInterval(statusTimer) })
 </script>

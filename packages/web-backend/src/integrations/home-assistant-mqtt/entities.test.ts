@@ -15,9 +15,16 @@ describe('HA discovery and privacy', () => {
       'homeassistant/sensor/offtangent/limit_anthropic_five_hour_reset/config',
       'homeassistant/sensor/offtangent/limit_anthropic_five_hour_fetched/config',
     ])
-    expect(entities[0].config).toMatchObject({ state_topic: 'offtangent/limit_anthropic_five_hour/state', unique_id: 'offtangent_limit_anthropic_five_hour', availability_topic: 'offtangent/status', expire_after: 1200 })
+    expect(entities[0].config).toMatchObject({ state_topic: 'offtangent/limit_anthropic_five_hour/state', unique_id: 'offtangent_limit_anthropic_five_hour', default_entity_id: 'sensor.offtangent_limit_anthropic_five_hour', availability_topic: 'offtangent/status', expire_after: 1200, json_attributes_topic: 'offtangent/limit_anthropic_five_hour/attributes' })
+    expect(entities[0].attributesTopic).toBe('offtangent/limit_anthropic_five_hour/attributes')
+    expect(JSON.parse(entities[0].attributes!)).toEqual({ resets_at: '2026-10-07T15:00:00.000Z', fetched_at: '2026-10-07T12:00:00Z' })
+    expect(entities[1].config).toMatchObject({ device_class: 'timestamp', default_entity_id: 'sensor.offtangent_limit_anthropic_five_hour_reset' })
+    expect(entities[1].state).toBe('2026-10-07T15:00:00.000Z')
     expect(JSON.stringify(entities)).not.toContain('private-account-id')
     expect(quotaEntities(defaults, { x: { ...quota, windows: [] } })).toEqual([])
+    const noReset = quotaEntities(defaults, { x: { ...quota, windows: [{ ...quota.windows[0], resetsAt: null }] } })
+    expect(noReset).toHaveLength(2)
+    expect(JSON.parse(noReset[0].attributes!)).toMatchObject({ resets_at: null })
   })
   it('collapses multiple accounts to maximum and filters error snapshots', () => {
     const entities = quotaEntities(defaults, { a: quota, b: { ...quota, windows: [{ ...quota.windows[0], utilization: 92 }] }, c: { ...quota, error: 'secret', windows: [] } })

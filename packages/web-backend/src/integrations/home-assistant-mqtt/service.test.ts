@@ -67,6 +67,7 @@ describe('MQTT transport with in-process mock', () => {
     ] } })
     await ready()
     expect(client.sent).toContainEqual(['offtangent/limit_anthropic_five_hour/state', '75'])
+    expect(client.sent).toContainEqual(['offtangent/limit_anthropic_five_hour/attributes', JSON.stringify({ resets_at: null, fetched_at: '2026-10-07T12:00:00Z' })])
     client.emit('reconnect'); expect(client.options.reconnectPeriod).toBe(2000)
     client.emit('connect'); await ready()
     service.onQuota({}); await ready()

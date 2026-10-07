@@ -2,14 +2,14 @@ import type { ProviderQuotaContract } from '@axiom/core/contracts'
 import { applicationVersion } from './config.js'
 import type { MqttSettings } from './config.js'
 
-export interface Entity { topic: string; stateTopic: string; state: string; config: Record<string, unknown> }
+export interface Entity { topic: string; stateTopic: string; state: string; config: Record<string, unknown>; attributesTopic?: string; attributes?: string }
 const slug = (s: string) => s.toLowerCase().replace(/[^a-z0-9_-]/g, '_').slice(0, 64)
 function sensor(s: MqttSettings, key: string, name: string, state: string, opts: Record<string, unknown> = {}): Entity {
   const id = `offtangent_${key}`
   return {
     topic: `${s.discoveryPrefix}/sensor/offtangent/${key}/config`,
     stateTopic: `${s.baseTopic}/${key}/state`, state,
-    config: { name, unique_id: id, state_topic: `${s.baseTopic}/${key}/state`,
+    config: { name, unique_id: id, default_entity_id: `sensor.${id}`, state_topic: `${s.baseTopic}/${key}/state`,
       availability_topic: `${s.baseTopic}/status`, device: { identifiers: ['offtangent'], name: 'Offtangent', manufacturer: 'Offtangent', sw_version: applicationVersion }, ...opts },
   }
 }
@@ -25,14 +25,21 @@ export function quotaEntities(s: MqttSettings, snapshot: Record<string, Provider
       if (!old || window.utilization > old.utilization) windows.set(key, { kind: quota.kind, label: window.label, utilization: window.utilization, resetsAt: window.resetsAt, fetchedAt: quota.fetchedAt })
     }
   }
-  return [...windows].flatMap(([key, item]) => [
-    sensor(s, `limit_${key}`, `${item.kind} ${item.label} utilization`, String(item.utilization),
-      { unit_of_measurement: '%', state_class: 'measurement', expire_after: 1200 }),
-    sensor(s, `limit_${key}_reset`, `${item.kind} ${item.label} reset`, item.resetsAt ?? '',
-      { device_class: 'timestamp', expire_after: 1200 }),
-    sensor(s, `limit_${key}_fetched`, `${item.kind} ${item.label} fetched`, item.fetchedAt,
-      { device_class: 'timestamp', expire_after: 1200 }),
-  ])
+  return [...windows].flatMap(([key, item]) => {
+    const reset = item.resetsAt && !Number.isNaN(Date.parse(item.resetsAt)) ? new Date(item.resetsAt).toISOString() : null
+    const attributesTopic = `${s.baseTopic}/limit_${key}/attributes`
+    const percent = sensor(s, `limit_${key}`, `${item.kind} ${item.label} utilization`, String(item.utilization),
+      { unit_of_measurement: '%', state_class: 'measurement', expire_after: 1200, json_attributes_topic: attributesTopic })
+    percent.attributesTopic = attributesTopic
+    percent.attributes = JSON.stringify({ resets_at: reset, fetched_at: item.fetchedAt })
+    return [
+      percent,
+      ...(reset ? [sensor(s, `limit_${key}_reset`, `${item.kind} ${item.label} reset`, reset,
+        { device_class: 'timestamp', expire_after: 1200 })] : []),
+      sensor(s, `limit_${key}_fetched`, `${item.kind} ${item.label} fetched`, item.fetchedAt,
+        { device_class: 'timestamp', expire_after: 1200 }),
+    ]
+  })
 }
 export interface Metrics {
   usage: Record<string, { tokens: number; cost: number }>

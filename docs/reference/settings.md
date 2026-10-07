@@ -35,7 +35,7 @@ The on-disk shape is a **superset** of [`SettingsContract`](https://github.com/)
 
 ### Home Assistant MQTT (admin-only)
 
-`settings.json` optionally includes `homeAssistantMqtt`. The API is separate from the main settings form: `GET/PUT /api/settings/mqtt`, `POST /api/settings/mqtt/test`, all admin-only. The GET/PUT response omits `passwordSecret` and returns only `passwordSet`. PUT accepts `password` (nonempty to replace) or `clearPassword: true`. Default `enabled: false`; when disabled no MQTT connection is made. Full setup instructions: [Home Assistant via MQTT](../guide/home-assistant-mqtt.md).
+`settings.json` optionally includes `homeAssistantMqtt`. The API is separate from the main settings form: `GET/PUT /api/settings/mqtt`, `POST /api/settings/mqtt/test`, all admin-only. The GET/PUT response omits `passwordSecret` and returns only `passwordSet`. PUT accepts `password` (nonempty to replace) or `clearPassword: true`. Default `enabled: false`; when disabled no MQTT connection is made. Percent quota sensors expose the JSON attribute `resets_at` (UTC ISO 8601 or `null`) through `<baseTopic>/limit_<kind>_<window>/attributes`, plus a separate timestamp sensor on `<baseTopic>/limit_<kind>_<window>_reset/state`. Discovery uses `<discoveryPrefix>/sensor/offtangent/<key>/config`. Full setup instructions: [Home Assistant via MQTT](../guide/home-assistant-mqtt.md).
 
 | Field | Default | Meaning |
 |---|---|---|

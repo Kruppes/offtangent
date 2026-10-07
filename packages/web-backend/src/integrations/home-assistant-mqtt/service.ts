@@ -56,9 +56,15 @@ export class HomeAssistantMqttService {
   private published = new Set<string>()
   private status: 'off' | 'connecting' | 'connected' | 'error' = 'off'
   private generation = 0
+  private loggedError = false
+  private reportError() {
+    this.status = 'error'
+    if (!this.loggedError) console.warn('[mqtt] Connection or publish failed (details withheld)')
+    this.loggedError = true
+  }
   private publication: Promise<void> = Promise.resolve()
   private enqueuePublish(): void {
-    this.publication = this.publication.then(() => this.publishCurrent()).catch(() => { this.status = 'error' })
+    this.publication = this.publication.then(() => this.publishCurrent()).catch(() => this.reportError())
   }
   constructor(private db: Database) { this.published = this.readManifest() }
   getStatus() { return { status: this.status } }
@@ -96,23 +102,33 @@ export class HomeAssistantMqttService {
       client.on('connect', () => {
         if (gen !== this.generation) return
         this.status = 'connected'
+        this.loggedError = false
         client.publish(`${next.baseTopic}/status`, 'online', { qos: 1, retain: true })
         client.options.reconnectPeriod = 1000
         this.enqueuePublish()
       })
-      client.on('error', () => { if (gen === this.generation) this.status = 'error' }) // no raw broker errors/credentials in logs
+      client.on('error', () => { if (gen === this.generation) this.reportError() }) // no raw broker errors/credentials in logs
       client.on('offline', () => { if (gen === this.generation) this.status = 'connecting' })
       client.on('reconnect', () => { client.options.reconnectPeriod = Math.min(60_000, (client.options.reconnectPeriod ?? 1000) * 2) })
       this.timer = setInterval(() => this.enqueuePublish(), next.intervalSeconds * 1000)
       this.timer.unref?.()
-    } catch { this.status = 'error' }
+    } catch { this.reportError() }
   }
   onQuota(snapshot: Record<string, ProviderQuotaContract>) {
     this.snapshot = snapshot
     if (this.client?.connected) this.enqueuePublish()
   }
   private publish(client: MqttClient, topic: string, payload: string) {
-    return new Promise<void>((resolve, reject) => client.publish(topic, payload, { qos: 1, retain: true }, err => err ? reject(err) : resolve()))
+    return new Promise<void>((resolve, reject) => {
+      const timer = setTimeout(() => reject(new Error('MQTT publish timeout')), 5000)
+      try {
+        client.publish(topic, payload, { qos: 1, retain: true }, err => {
+          clearTimeout(timer)
+          if (err) reject(err)
+          else resolve()
+        })
+      } catch (err) { clearTimeout(timer); reject(err) }
+    })
   }
   private async clearRemoved(client: MqttClient, keep: Set<string>) {
     if (!client.connected) return
@@ -135,6 +151,7 @@ export class HomeAssistantMqttService {
       if (client !== this.client) return
       await this.publish(client, entity.topic, JSON.stringify(entity.config))
       this.published.add(entity.topic)
+      if (entity.attributesTopic && entity.attributes) await this.publish(client, entity.attributesTopic, entity.attributes)
       await this.publish(client, entity.stateTopic, entity.state)
     }
     this.saveManifest()
