@@ -19,7 +19,7 @@ export function createHomeAssistantMqttRouter(service: HomeAssistantMqttService)
       saveSettings(next, body)
       service.apply(next)
       res.json({ ...publicSettings(next), ...service.getStatus() })
-    } catch (err) { res.status(400).json({ error: err instanceof Error ? err.message : 'Invalid MQTT settings' }) }
+    } catch { res.status(400).json({ error: 'Invalid MQTT settings' }) }
   })
   router.post('/test', async (_req, res) => {
     try { res.json({ connected: await service.test(readSettings()) }) }

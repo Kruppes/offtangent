@@ -8,17 +8,17 @@ import { defaults } from './config.js'
 
 const mock = vi.hoisted(() => ({ connects: [] as Array<{ url: string; options: unknown; client: unknown }> }))
 vi.mock('mqtt', () => ({ default: { connect: (url: string, options: unknown) => {
-  const client = new EventEmitter() as EventEmitter & { connected: boolean; options: { reconnectPeriod: number }; publish: (topic: string, payload: string, opts: unknown, cb?: (err?: Error) => void) => void; end: () => void; sent: Array<[string, string]> }
+  const client = new EventEmitter() as EventEmitter & { connected: boolean; options: { reconnectPeriod: number }; publish: (topic: string, payload: string, opts: unknown, cb?: (err?: Error) => void) => void; end: (force?: boolean, callback?: () => void) => void; sent: Array<[string, string]> }
   client.connected = false
   client.options = { reconnectPeriod: 1000 }
   client.sent = []
   client.publish = (topic, payload, _opts, cb) => { client.sent.push([topic, payload]); cb?.() }
-  client.end = () => { client.connected = false }
+  client.end = (_force, callback) => { client.connected = false; callback?.() }
   mock.connects.push({ url, options, client })
   return client
 } } }))
 import { HomeAssistantMqttService } from './service.js'
-type Fake = EventEmitter & { connected: boolean; sent: Array<[string, string]>; options: { reconnectPeriod: number } }
+type Fake = EventEmitter & { end: (force?: boolean, callback?: () => void) => void; connected: boolean; sent: Array<[string, string]>; options: { reconnectPeriod: number } }
 let dir: string
 let db: Database
 const old = process.env.DATA_DIR
@@ -40,7 +40,7 @@ describe('MQTT transport with in-process mock', () => {
     service.start()
     expect(mock.connects).toHaveLength(0)
     service.apply({ ...defaults, enabled: true, host: 'example.invalid' })
-    await Promise.resolve()
+    await ready()
     expect(mock.connects).toHaveLength(1)
     const client = mock.connects[0].client as Fake
     client.connected = true
@@ -54,7 +54,7 @@ describe('MQTT transport with in-process mock', () => {
     expect(client.sent).toContainEqual(['homeassistant/sensor/offtangent/version/config', ''])
     expect(client.sent).toContainEqual(['offtangent/status', 'offline'])
     expect(service.getStatus()).toEqual({ status: 'off' })
-    service.stop()
+    await service.stop()
   })
   it('publishes limits on quota event, removes missing windows and reacts to reconnect', async () => {
     const service = new HomeAssistantMqttService(db)
@@ -72,7 +72,7 @@ describe('MQTT transport with in-process mock', () => {
     client.emit('connect'); await ready()
     service.onQuota({}); await ready()
     expect(client.sent).toContainEqual(['homeassistant/sensor/offtangent/limit_anthropic_five_hour/config', ''])
-    service.stop(); await ready()
+    await service.stop()
   })
   it('tests the broker on an isolated topic, never taking the live device offline', async () => {
     const service = new HomeAssistantMqttService(db)
@@ -90,6 +90,93 @@ describe('MQTT transport with in-process mock', () => {
     expect(testClient.sent[1]).toEqual([testClient.sent[0][0], ''])
     expect(active.sent).toContainEqual(['offtangent/status', 'online'])
     expect(testClient.sent).not.toContainEqual(['offtangent/status', 'offline'])
-    service.stop(); await ready()
+    await service.stop()
   })
+  it('keeps discovery on shutdown and on saving unchanged settings', async () => {
+    const service = new HomeAssistantMqttService(db)
+    const settings = { ...defaults, enabled: true, host: 'example.invalid' }
+    service.apply(settings); await ready()
+    const first = mock.connects[0].client as Fake
+    first.connected = true; first.emit('connect'); await ready()
+    service.apply({ ...settings }); await ready()
+    expect(first.sent.filter(([topic, payload]) => topic.endsWith('/config') && payload === '')).toEqual([])
+    const second = mock.connects[1].client as Fake
+    second.connected = true; second.emit('connect'); await ready()
+    await service.stop()
+    expect(second.sent).toContainEqual(['offtangent/status', 'offline'])
+    expect(second.sent.filter(([topic, payload]) => topic.endsWith('/config') && payload === '')).toEqual([])
+    expect(service.getStatus()).toEqual({ status: 'off' })
+  })
+  it('does not remove retained limit discovery before receiving a quota snapshot', async () => {
+    const settings = { ...defaults, enabled: true, host: 'example.invalid', groups: { limits: true, usage: false, activity: false, status: false } }
+    const first = new HomeAssistantMqttService(db)
+    first.apply(settings); await ready()
+    const oldClient = mock.connects[0].client as Fake
+    oldClient.connected = true; oldClient.emit('connect')
+    first.onQuota({ account: { kind: 'anthropic', fetchedAt: '2026-10-07T12:00:00Z', windows: [
+      { key: 'five_hour', label: '5h', utilization: 75, resetsAt: null, resetDisplay: 'relative' },
+    ] } }); await ready()
+    await first.stop()
+    const restarted = new HomeAssistantMqttService(db)
+    restarted.apply(settings); await ready()
+    const client = mock.connects[1].client as Fake
+    client.connected = true; client.emit('connect'); await ready()
+    expect(client.sent.filter(([topic, payload]) => topic.includes('/limit_') && payload === '')).toEqual([])
+    restarted.onQuota({}); await ready()
+    expect(client.sent).toContainEqual(['homeassistant/sensor/offtangent/limit_anthropic_five_hour/config', ''])
+    await restarted.stop()
+  })
+  it('serializes rapid applies and never runs two clients with the same ID', async () => {
+    const service = new HomeAssistantMqttService(db)
+    const settings = { ...defaults, enabled: true, host: 'example.invalid' }
+    service.apply(settings); await ready()
+    const first = mock.connects[0].client as Fake
+    first.connected = true; first.emit('connect'); await ready()
+    let completeEnd: (() => void) | undefined
+    first.end = (_force, cb) => { completeEnd = () => { first.connected = false; cb?.() } }
+    service.apply(settings)
+    service.apply(settings)
+    await ready()
+    expect(mock.connects).toHaveLength(1)
+    expect(first.connected).toBe(true)
+    completeEnd?.()
+    await ready()
+    expect(mock.connects).toHaveLength(2)
+    expect(first.connected).toBe(false)
+    const second = mock.connects[1].client as Fake
+    second.connected = true; second.emit('connect'); await ready()
+    await service.stop()
+  })
+  it('handles repeated main-client and test-client errors without throwing', async () => {
+    const service = new HomeAssistantMqttService(db)
+    const settings = { ...defaults, enabled: true, host: 'example.invalid' }
+    service.apply(settings); await ready()
+    const active = mock.connects[0].client as Fake
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
+    try {
+      active.emit('error', new Error('broker unavailable'))
+      active.emit('error', new Error('still unavailable'))
+      expect(service.getStatus()).toEqual({ status: 'error' })
+      const promise = service.test(settings)
+      const client = mock.connects[1].client as Fake
+      client.emit('error', new Error('refused'))
+      client.emit('error', new Error('refused again'))
+      expect(await promise).toBe(false)
+      await service.stop()
+    } finally { warn.mockRestore() }
+  })
+  it('ends a timed-out test connection and ignores later repeated errors', async () => {
+    const service = new HomeAssistantMqttService(db)
+    vi.useFakeTimers()
+    try {
+      const promise = service.test({ ...defaults, host: 'example.invalid' })
+      const client = mock.connects[0].client as Fake
+      await vi.advanceTimersByTimeAsync(6001)
+      expect(await promise).toBe(false)
+      client.emit('error', new Error('late'))
+      client.emit('error', new Error('later'))
+      expect(client.connected).toBe(false)
+    } finally { vi.useRealTimers() }
+  })
+
 })

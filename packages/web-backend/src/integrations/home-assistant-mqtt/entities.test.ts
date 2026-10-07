@@ -20,6 +20,7 @@ describe('HA discovery and privacy', () => {
     expect(JSON.parse(entities[0].attributes!)).toEqual({ resets_at: '2026-10-07T15:00:00.000Z', fetched_at: '2026-10-07T12:00:00Z' })
     expect(entities[1].config).toMatchObject({ device_class: 'timestamp', default_entity_id: 'sensor.offtangent_limit_anthropic_five_hour_reset' })
     expect(entities[1].state).toBe('2026-10-07T15:00:00.000Z')
+    expect(quotaEntities({ ...defaults, intervalSeconds: 3600 }, { x: quota })[0].config.expire_after).toBe(10800)
     expect(JSON.stringify(entities)).not.toContain('private-account-id')
     expect(quotaEntities(defaults, { x: { ...quota, windows: [] } })).toEqual([])
     const noReset = quotaEntities(defaults, { x: { ...quota, windows: [{ ...quota.windows[0], resetsAt: null }] } })
@@ -38,6 +39,11 @@ describe('HA discovery and privacy', () => {
       'offtangent/tokens_today_total/state', 'offtangent/cost_today_total/state', 'offtangent/messages_today/state',
       'offtangent/running_tasks/state', 'offtangent/failed_tasks_today/state', 'offtangent/version/state',
     ])
+    const [tokens, cost] = metricEntities(defaults, { ...data, usage: { today_total: { tokens: 12, cost: 0.12345678 } } })
+    expect(tokens.config.state_class).toBe('total_increasing')
+    expect(cost.config).toMatchObject({ device_class: 'monetary' })
+    expect(cost.config).not.toHaveProperty('state_class')
+    expect(cost.state).toBe('0.1235')
     expect(metricEntities({ ...defaults, groups: { limits: false, usage: false, activity: false, status: false } }, data)).toEqual([])
   })
 })

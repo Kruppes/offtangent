@@ -2,7 +2,7 @@ import fs from 'node:fs'
 import path from 'node:path'
 import http from 'node:http'
 import express from 'express'
-import { beforeAll, afterAll, describe, expect, it } from 'vitest'
+import { beforeAll, afterAll, describe, expect, it, vi } from 'vitest'
 import { generateAccessToken } from '../../auth.js'
 import { createHomeAssistantMqttRouter } from './route.js'
 let dir: string
@@ -46,6 +46,9 @@ describe('admin-only MQTT endpoints', () => {
   })
   it('validates, saves and never returns password or handle', async () => {
     expect((await req('PUT', admin, { enabled: true })).status).toBe(400)
+    const bad = await req('PUT', admin, { host: 'bad/path' })
+    expect(bad.status).toBe(400)
+    expect(JSON.stringify(await bad.json())).toBe(JSON.stringify({ error: 'Invalid MQTT settings' }))
     expect((await req('PUT', admin, { enabled: true, host: 'example.invalid', baseTopic: 'bad/#' })).status).toBe(400)
     const response = await req('PUT', admin, { enabled: true, host: 'example.invalid', password: 'only-in-test-not-a-secret' })
     expect(response.status).toBe(200)
@@ -56,4 +59,17 @@ describe('admin-only MQTT endpoints', () => {
     expect((await req('GET', admin)).status).toBe(200)
     expect((await req('POST', admin, {}, '/test')).status).toBe(200)
   })
+  it('does not reveal filesystem paths when persisting fails', async () => {
+    const write = fs.writeFileSync
+    const spy = vi.spyOn(fs, 'writeFileSync').mockImplementation((file, ...args) => {
+      if (String(file).endsWith('/settings.json')) throw new Error('/private/example/settings.json')
+      return write(file, ...args)
+    })
+    try {
+      const response = await req('PUT', admin, { host: 'example.invalid' })
+      expect(response.status).toBe(400)
+      expect(await response.json()).toEqual({ error: 'Invalid MQTT settings' })
+    } finally { spy.mockRestore() }
+  })
+
 })

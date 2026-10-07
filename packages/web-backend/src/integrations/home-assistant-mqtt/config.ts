@@ -1,6 +1,6 @@
 import fs from 'node:fs'
 import path from 'node:path'
-import { ensureConfigTemplates, getConfigDir, loadConfig, resolveSecret, sealSecret } from '@axiom/core'
+import { ensureConfigTemplates, getConfigDir, loadConfig, resolveSecret, sealSecret, removeSecret } from '@axiom/core'
 
 export interface MqttSettings {
   enabled: boolean
@@ -71,11 +71,13 @@ export function validateUpdate(input: unknown, old = readSettings()): MqttSettin
 }
 export function saveSettings(next: MqttSettings, input: Record<string, unknown>): MqttSettings {
   // Seal before changing settings.json; never persist plaintext.
+  const previousHandle = readSettings().passwordSecret
   if (typeof input.password === 'string' && input.password) next.passwordSecret = sealSecret(input.password, 'mqtt-password', 'settings')
   else if (input.clearPassword === true) next.passwordSecret = ''
   const file = configFile()
   const raw = JSON.parse(fs.readFileSync(file, 'utf8')) as Record<string, unknown>
   raw.homeAssistantMqtt = next
   fs.writeFileSync(file, `${JSON.stringify(raw, null, 2)}\n`, { mode: 0o600 })
+  if (previousHandle && previousHandle !== next.passwordSecret) removeSecret(previousHandle)
   return next
 }

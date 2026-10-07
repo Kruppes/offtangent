@@ -29,15 +29,15 @@ export function quotaEntities(s: MqttSettings, snapshot: Record<string, Provider
     const reset = item.resetsAt && !Number.isNaN(Date.parse(item.resetsAt)) ? new Date(item.resetsAt).toISOString() : null
     const attributesTopic = `${s.baseTopic}/limit_${key}/attributes`
     const percent = sensor(s, `limit_${key}`, `${item.kind} ${item.label} utilization`, String(item.utilization),
-      { unit_of_measurement: '%', state_class: 'measurement', expire_after: 1200, json_attributes_topic: attributesTopic })
+      { unit_of_measurement: '%', state_class: 'measurement', expire_after: Math.max(1200, 3 * s.intervalSeconds), json_attributes_topic: attributesTopic })
     percent.attributesTopic = attributesTopic
     percent.attributes = JSON.stringify({ resets_at: reset, fetched_at: item.fetchedAt })
     return [
       percent,
       ...(reset ? [sensor(s, `limit_${key}_reset`, `${item.kind} ${item.label} reset`, reset,
-        { device_class: 'timestamp', expire_after: 1200 })] : []),
+        { device_class: 'timestamp', expire_after: Math.max(1200, 3 * s.intervalSeconds) })] : []),
       sensor(s, `limit_${key}_fetched`, `${item.kind} ${item.label} fetched`, item.fetchedAt,
-        { device_class: 'timestamp', expire_after: 1200 }),
+        { device_class: 'timestamp', expire_after: Math.max(1200, 3 * s.intervalSeconds) }),
     ]
   })
 }
@@ -50,8 +50,8 @@ export function metricEntities(s: MqttSettings, metrics: Metrics): Entity[] {
   const result: Entity[] = []
   if (s.groups.usage) for (const [key, item] of Object.entries(metrics.usage)) {
     const safe = slug(key)
-    result.push(sensor(s, `tokens_${safe}`, `${key} tokens`, String(item.tokens), { unit_of_measurement: 'tokens', state_class: 'measurement' }))
-    result.push(sensor(s, `cost_${safe}`, `${key} cost`, String(item.cost), { device_class: 'monetary', unit_of_measurement: 'USD', state_class: 'measurement' }))
+    result.push(sensor(s, `tokens_${safe}`, `${key} tokens`, String(item.tokens), { unit_of_measurement: 'tokens', state_class: 'total_increasing' }))
+    result.push(sensor(s, `cost_${safe}`, `${key} cost`, String(Math.round(item.cost * 10000) / 10000), { device_class: 'monetary', unit_of_measurement: 'USD' }))
   }
   if (s.groups.activity) {
     result.push(sensor(s, 'messages_today', 'Messages today', String(metrics.activity.messagesToday), { state_class: 'measurement' }))

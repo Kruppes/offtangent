@@ -28,4 +28,15 @@ describe('MQTT settings', () => {
     saveSettings(validateUpdate({ clearPassword: true }), { clearPassword: true })
     expect(publicSettings().passwordSet).toBe(false)
   })
+  it('removes superseded secret handles after replacing and clearing the password', () => {
+    const first = saveSettings(validateUpdate({ password: 'first-test-value' }), { password: 'first-test-value' })
+    const firstHandle = first.passwordSecret
+    expect(brokerPassword(first)).toBe('first-test-value')
+    const second = saveSettings(validateUpdate({ password: 'second-test-value' }), { password: 'second-test-value' })
+    expect(brokerPassword({ ...first, passwordSecret: firstHandle })).toBeUndefined()
+    expect(brokerPassword(second)).toBe('second-test-value')
+    saveSettings(validateUpdate({ clearPassword: true }), { clearPassword: true })
+    expect(brokerPassword(second)).toBeUndefined()
+  })
+
 })

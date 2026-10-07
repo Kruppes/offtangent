@@ -2842,7 +2842,7 @@ export async function createRuntimeComposition(options: RuntimeCompositionOption
     stopBackgroundServices: async () => {
       healthMonitorService.stop()
       quotaMonitorService.stop()
-      homeAssistantMqtt.stop()
+      await homeAssistantMqtt.stop()
       consolidationScheduler.stop()
       agentHeartbeatService.stop()
       uploadCleanupService.stop()

@@ -52,6 +52,8 @@ export class HomeAssistantMqttService {
   private client: MqttClient | null = null
   private settings = readSettings()
   private snapshot: Record<string, ProviderQuotaContract> = {}
+  private quotaReceived = false
+  private closing: Promise<void> = Promise.resolve()
   private timer: ReturnType<typeof setInterval> | null = null
   private published = new Set<string>()
   private status: 'off' | 'connecting' | 'connected' | 'error' = 'off'
@@ -78,22 +80,39 @@ export class HomeAssistantMqttService {
   apply(next: MqttSettings) {
     const old = this.settings
     this.settings = next
-    this.generation++
-    const gen = this.generation
+    const gen = ++this.generation
     if (this.timer) clearInterval(this.timer)
     this.timer = null
     const previous = this.client
     this.client = null
     this.status = next.enabled ? 'connecting' : 'off'
-    // Wait for in-flight messages before removing old retained topics. The next
-    // client must not publish until the old client is completely disconnected.
-    const closeOld = previous
-      ? this.publication.then(async () => {
-          await this.clearRemoved(previous, new Set())
-          if (previous.connected) await this.publish(previous, `${old.baseTopic}/status`, 'offline')
-        }).catch(() => { /* keep the manifest on broker failure */ }).finally(() => previous.end(true))
-      : Promise.resolve()
-    void closeOld.then(() => { if (next.enabled && gen === this.generation) this.connect(next, gen) })
+    // Serialize teardown and startup: a rapid second apply must not create a
+    // second connection with the same client ID before the first has ended.
+    this.closing = this.closing.then(async () => {
+      if (previous) {
+        let closed = false
+        try {
+          await this.publication
+          if (previous.connected) {
+            if ((old.enabled && !next.enabled) || old.discoveryPrefix !== next.discoveryPrefix || old.baseTopic !== next.baseTopic) {
+              await this.clearRemoved(previous, new Set())
+            }
+            await this.publish(previous, `${old.baseTopic}/status`, 'offline')
+          }
+        } catch { this.reportError() }
+        finally { closed = await this.disconnect(previous) }
+        if (!closed) { this.reportError(); return }
+      }
+      if (next.enabled && gen === this.generation) this.connect(next, gen)
+    }).catch(() => this.reportError())
+  }
+  private disconnect(client: MqttClient): Promise<boolean> {
+    return new Promise(resolve => {
+      let done = false
+      const finish = () => { if (done) return; done = true; clearTimeout(timer); resolve(!client.connected) }
+      const timer = setTimeout(finish, 5000)
+      try { client.end(true, finish) } catch { finish() }
+    })
   }
   private connect(next: MqttSettings, gen: number) {
     try {
@@ -116,6 +135,7 @@ export class HomeAssistantMqttService {
   }
   onQuota(snapshot: Record<string, ProviderQuotaContract>) {
     this.snapshot = snapshot
+    this.quotaReceived = true
     if (this.client?.connected) this.enqueuePublish()
   }
   private publish(client: MqttClient, topic: string, payload: string) {
@@ -132,7 +152,7 @@ export class HomeAssistantMqttService {
   }
   private async clearRemoved(client: MqttClient, keep: Set<string>) {
     if (!client.connected) return
-    for (const topic of this.published) {
+    for (const topic of [...this.published]) {
       if (keep.has(topic)) continue
       await this.publish(client, topic, '')
       this.published.delete(topic)
@@ -146,6 +166,11 @@ export class HomeAssistantMqttService {
     let entities: Entity[] = quotaEntities(config, this.snapshot)
     entities = entities.concat(metricEntities(config, collectMetrics(this.db)))
     const keep = new Set(entities.map(e => e.topic))
+    // No quota callback yet: a fresh process does not know which retained
+    // limit entities are still valid. Keep them until the first real snapshot.
+    if (!this.quotaReceived && config.groups.limits) for (const topic of this.published) {
+      if (topic.startsWith(`${config.discoveryPrefix}/sensor/offtangent/limit_`)) keep.add(topic)
+    }
     await this.clearRemoved(client, keep)
     for (const entity of entities) {
       if (client !== this.client) return
@@ -156,8 +181,22 @@ export class HomeAssistantMqttService {
     }
     this.saveManifest()
   }
-  stop() {
-    this.apply({ ...this.settings, enabled: false })
+  async stop() {
+    ++this.generation
+    if (this.timer) clearInterval(this.timer)
+    this.timer = null
+    const previous = this.client
+    this.client = null
+    this.status = 'off'
+    this.closing = this.closing.then(async () => {
+      if (!previous) return
+      try {
+        await this.publication
+        if (previous.connected) await this.publish(previous, `${this.settings.baseTopic}/status`, 'offline')
+      } catch { this.reportError() }
+      finally { if (!(await this.disconnect(previous))) this.reportError() }
+    }).catch(() => this.reportError())
+    await this.closing
   }
   async test(settings = readSettings()): Promise<boolean> {
     if (!settings.host) return false
@@ -166,12 +205,14 @@ export class HomeAssistantMqttService {
       const topic = `${settings.baseTopic}/test/${suffix}/status`
       const client = mqtt.connect(url(settings), { ...connectionOptions(settings), clientId: `${settings.clientId}-test-${suffix}`, reconnectPeriod: 0, connectTimeout: 4000 })
       const timer = setTimeout(() => finish(false), 6000)
-      const finish = (ok: boolean) => { clearTimeout(timer); client.end(true); resolve(ok) }
-      client.once('connect', () => client.publish(topic, 'online', { qos: 1, retain: true }, err => {
+      let done = false
+      const finish = (ok: boolean) => { if (done) return; done = true; clearTimeout(timer); client.end(true); resolve(ok) }
+      client.once('connect', () => { if (done) return; client.publish(topic, 'online', { qos: 1, retain: true }, err => {
+        if (done) return
         if (err) { finish(false); return }
         client.publish(topic, '', { qos: 1, retain: true }, clearError => finish(!clearError))
-      }))
-      client.once('error', () => finish(false))
+      }) })
+      client.on('error', () => finish(false))
     })
   }
 }
