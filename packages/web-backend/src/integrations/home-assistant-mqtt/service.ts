@@ -5,7 +5,7 @@ import type { MqttClient } from 'mqtt'
 import { getConfigDir, getUsageSummary, queryUsageStats } from '@axiom/core'
 import type { Database } from '@axiom/core'
 import type { ProviderQuotaContract } from '@axiom/core/contracts'
-import { brokerPassword, readSettings } from './config.js'
+import { applicationVersion, brokerPassword, readSettings } from './config.js'
 import type { MqttSettings } from './config.js'
 import { metricEntities, quotaEntities } from './entities.js'
 import type { Entity, Metrics } from './entities.js'
@@ -18,7 +18,7 @@ export function connectionOptions(settings: MqttSettings) {
   }
 }
 const url = (s: MqttSettings) => `${s.tls ? 'mqtts' : 'mqtt'}://${s.host}:${s.port}`
-function metrics(db: Database): Metrics {
+export function collectMetrics(db: Database): Metrics {
   const now = new Date()
   const today = new Date(now.getFullYear(), now.getMonth(), now.getDate()).toISOString()
   const month = new Date(now.getFullYear(), now.getMonth(), 1).toISOString()
@@ -44,7 +44,7 @@ function metrics(db: Database): Metrics {
     runningTasks: scalar("SELECT COUNT(*) AS n FROM tasks WHERE status = 'running'"),
     failedTasksToday: scalar("SELECT COUNT(*) AS n FROM tasks WHERE status = 'failed' AND datetime(completed_at) >= datetime(?)", today),
     lastCronRun: last.t ? new Date(last.t.replace(' ', 'T') + (/[Z+-]\d{2}:?\d{2}$/.test(last.t) || last.t.endsWith('Z') ? '' : 'Z')).toISOString() : null,
-  }, version: process.env.npm_package_version ?? '0.30.0' }
+  }, version: applicationVersion }
 }
 
 /** MQTT transport; no client is created when disabled. */
@@ -56,6 +56,10 @@ export class HomeAssistantMqttService {
   private published = new Set<string>()
   private status: 'off' | 'connecting' | 'connected' | 'error' = 'off'
   private generation = 0
+  private publication: Promise<void> = Promise.resolve()
+  private enqueuePublish(): void {
+    this.publication = this.publication.then(() => this.publishCurrent()).catch(() => { this.status = 'error' })
+  }
   constructor(private db: Database) { this.published = this.readManifest() }
   getStatus() { return { status: this.status } }
   private manifestPath() { return path.join(getConfigDir(), 'mqtt-discovery-topics.json') }
@@ -72,17 +76,20 @@ export class HomeAssistantMqttService {
     const gen = this.generation
     if (this.timer) clearInterval(this.timer)
     this.timer = null
-    if (this.client) {
-      const client = this.client
-      this.client = null
-      // Clear obsolete retained discovery before disconnect. On failure the manifest stays for next connection.
-      void this.clearRemoved(client, new Set()).finally(() => {
-        if (client.connected) client.publish(`${old.baseTopic}/status`, 'offline', { qos: 1, retain: true }, () => client.end(true))
-        else client.end(true)
-      })
-    }
+    const previous = this.client
+    this.client = null
     this.status = next.enabled ? 'connecting' : 'off'
-    if (!next.enabled) return
+    // Wait for in-flight messages before removing old retained topics. The next
+    // client must not publish until the old client is completely disconnected.
+    const closeOld = previous
+      ? this.publication.then(async () => {
+          await this.clearRemoved(previous, new Set())
+          if (previous.connected) await this.publish(previous, `${old.baseTopic}/status`, 'offline')
+        }).catch(() => { /* keep the manifest on broker failure */ }).finally(() => previous.end(true))
+      : Promise.resolve()
+    void closeOld.then(() => { if (next.enabled && gen === this.generation) this.connect(next, gen) })
+  }
+  private connect(next: MqttSettings, gen: number) {
     try {
       const client = mqtt.connect(url(next), connectionOptions(next))
       this.client = client
@@ -90,18 +97,19 @@ export class HomeAssistantMqttService {
         if (gen !== this.generation) return
         this.status = 'connected'
         client.publish(`${next.baseTopic}/status`, 'online', { qos: 1, retain: true })
-        void this.publishCurrent().catch(() => { this.status = 'error' })
+        client.options.reconnectPeriod = 1000
+        this.enqueuePublish()
       })
       client.on('error', () => { if (gen === this.generation) this.status = 'error' }) // no raw broker errors/credentials in logs
       client.on('offline', () => { if (gen === this.generation) this.status = 'connecting' })
-      client.on('reconnect', () => { client.options.reconnectPeriod = Math.min(60_000, client.options.reconnectPeriod * 2) })
-      this.timer = setInterval(() => { void this.publishCurrent().catch(() => { this.status = 'error' }) }, next.intervalSeconds * 1000)
+      client.on('reconnect', () => { client.options.reconnectPeriod = Math.min(60_000, (client.options.reconnectPeriod ?? 1000) * 2) })
+      this.timer = setInterval(() => this.enqueuePublish(), next.intervalSeconds * 1000)
       this.timer.unref?.()
     } catch { this.status = 'error' }
   }
   onQuota(snapshot: Record<string, ProviderQuotaContract>) {
     this.snapshot = snapshot
-    if (this.client?.connected) void this.publishCurrent().catch(() => { this.status = 'error' })
+    if (this.client?.connected) this.enqueuePublish()
   }
   private publish(client: MqttClient, topic: string, payload: string) {
     return new Promise<void>((resolve, reject) => client.publish(topic, payload, { qos: 1, retain: true }, err => err ? reject(err) : resolve()))
@@ -120,7 +128,7 @@ export class HomeAssistantMqttService {
     if (!client?.connected) return
     const config = this.settings
     let entities: Entity[] = quotaEntities(config, this.snapshot)
-    entities = entities.concat(metricEntities(config, metrics(this.db)))
+    entities = entities.concat(metricEntities(config, collectMetrics(this.db)))
     const keep = new Set(entities.map(e => e.topic))
     await this.clearRemoved(client, keep)
     for (const entity of entities) {

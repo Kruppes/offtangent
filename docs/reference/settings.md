@@ -33,6 +33,20 @@ The non-secret runtime config. Edited via every Settings UI panel except [Telegr
 
 The on-disk shape is a **superset** of [`SettingsContract`](https://github.com/) (`packages/core/src/contracts/settings.ts`): the contract describes what the API exchanges with the frontend; the file may also contain a few keys the UI doesn't surface (`tokenPriceTable`, `builtinTools`, `braveSearchApiKey`, `searxngUrl`, `tavilyApiKey`) plus dead fields from older versions until they get re-saved.
 
+### Home Assistant MQTT (admin-only)
+
+`settings.json` optionally includes `homeAssistantMqtt`. The API is separate from the main settings form: `GET/PUT /api/settings/mqtt`, `POST /api/settings/mqtt/test`, all admin-only. The GET/PUT response omits `passwordSecret` and returns only `passwordSet`. PUT accepts `password` (nonempty to replace) or `clearPassword: true`. Default `enabled: false`; when disabled no MQTT connection is made. Full setup instructions: [Home Assistant via MQTT](../guide/home-assistant-mqtt.md).
+
+| Field | Default | Meaning |
+|---|---|---|
+| `enabled` | `false` | Start MQTT only when on |
+| `host`, `port`, `tls` | `""`, `1883`, `false` | MQTT/mqtts broker, port 1–65535 |
+| `username`, `passwordSecret` | `""`, `""` | Authentication; `passwordSecret` is a secret-store handle, not plaintext |
+| `clientId` | `offtangent` | MQTT client ID (letters/digits/underscore/hyphen) |
+| `discoveryPrefix`, `baseTopic` | `homeassistant`, `offtangent` | Single MQTT topic segments (letters/digits/underscore/hyphen) |
+| `intervalSeconds` | `60` | Usage/activity refresh, 10–3600 seconds |
+| `groups` | all `true` | Independent switches `limits`, `usage`, `activity`, `status` (only effective while enabled) |
+
 ### Top-level keys
 
 | JSON path                          | Type                                                              | Default        | Validation                              | Controls                                                                                                          |

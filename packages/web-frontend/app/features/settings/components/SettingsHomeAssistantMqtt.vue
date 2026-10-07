@@ -1,25 +1,91 @@
 <template>
   <div class="flex flex-col gap-5">
-    <div><h2 class="text-lg font-semibold">{{ $t('settings.mqtt.title') }}</h2><p class="text-sm text-muted-foreground">{{ $t('settings.mqtt.description') }}</p></div>
-    <p v-if="form">{{ $t(`settings.mqtt.${status}`) }}</p>
-    <p v-if="message" role="status">{{ message }}</p>
-    <form v-if="form" class="flex flex-col gap-4" @submit.prevent="save">
-      <label class="flex gap-2"><input v-model="form.enabled" type="checkbox">{{ $t('settings.mqtt.enabled') }}</label>
-      <label v-for="field in fields" :key="field" class="flex flex-col gap-1 text-sm">
+    <div>
+      <h2 class="text-lg font-semibold">
+        {{ $t('settings.mqtt.title') }}
+      </h2><p class="text-sm text-muted-foreground">
+        {{ $t('settings.mqtt.description') }}
+      </p>
+    </div>
+    <p v-if="form">
+      {{ $t(`settings.mqtt.${status}`) }}
+    </p>
+    <p
+      v-if="message"
+      role="status"
+    >
+      {{ message }}
+    </p>
+    <form
+      v-if="form"
+      class="flex flex-col gap-4"
+      @submit.prevent="save"
+    >
+      <label class="flex gap-2"><input
+        v-model="form.enabled"
+        type="checkbox"
+      />{{ $t('settings.mqtt.enabled') }}</label>
+      <label
+        v-for="field in fields"
+        :key="field"
+        class="flex flex-col gap-1 text-sm"
+      >
         {{ $t(`settings.mqtt.${field}`) }}
-        <input v-model="form[field]" class="rounded-md border border-border bg-background px-3 py-2" :type="field === 'port' || field === 'intervalSeconds' ? 'number' : 'text'" :min="field === 'port' ? 1 : 10" :max="field === 'port' ? 65535 : 3600" :required="field === 'host' && form.enabled" autocomplete="off">
+        <input
+          v-model="form[field]"
+          class="rounded-md border border-border bg-background px-3 py-2"
+          :type="field === 'port' || field === 'intervalSeconds' ? 'number' : 'text'"
+          :min="field === 'port' ? 1 : 10"
+          :max="field === 'port' ? 65535 : 3600"
+          :required="field === 'host' && form.enabled"
+          autocomplete="off"
+        />
       </label>
-      <label class="flex gap-2"><input v-model="form.tls" type="checkbox">{{ $t('settings.mqtt.tls') }}</label>
+      <label class="flex gap-2"><input
+        v-model="form.tls"
+        type="checkbox"
+      />{{ $t('settings.mqtt.tls') }}</label>
       <label class="flex flex-col gap-1 text-sm">{{ $t('settings.mqtt.password') }}
-        <input v-model="password" type="password" autocomplete="new-password" class="rounded-md border border-border bg-background px-3 py-2">
+        <input
+          v-model="password"
+          type="password"
+          autocomplete="new-password"
+          class="rounded-md border border-border bg-background px-3 py-2"
+        />
         <span v-if="form.passwordSet">{{ $t('settings.mqtt.passwordSet') }}</span>
       </label>
-      <label class="flex gap-2"><input v-model="clearPassword" type="checkbox">{{ $t('settings.mqtt.clearPassword') }}</label>
-      <fieldset class="flex flex-col gap-2"><legend>{{ $t('settings.mqtt.groups') }}</legend>
-        <label v-for="group in groups" :key="group" class="flex gap-2"><input v-model="form.groups[group]" type="checkbox">{{ $t(`settings.mqtt.${group === 'status' ? 'statusGroup' : group}`) }}</label>
+      <label class="flex gap-2"><input
+        v-model="clearPassword"
+        type="checkbox"
+      />{{ $t('settings.mqtt.clearPassword') }}</label>
+      <fieldset class="flex flex-col gap-2">
+        <legend>{{ $t('settings.mqtt.groups') }}</legend>
+        <label
+          v-for="group in groups"
+          :key="group"
+          class="flex gap-2"
+        ><input
+          v-model="form.groups[group]"
+          type="checkbox"
+        />{{ $t(`settings.mqtt.${group === 'status' ? 'statusGroup' : group}`) }}</label>
       </fieldset>
-      <div class="flex gap-2"><button class="rounded-md border border-border px-4 py-2" :disabled="busy" type="submit">{{ $t('settings.mqtt.save') }}</button>
-      <button class="rounded-md border border-border px-4 py-2" :disabled="busy" type="button" @click="test">{{ $t('settings.mqtt.test') }}</button></div>
+      <div class="flex gap-2">
+        <button
+          class="rounded-md border border-border px-4 py-2"
+          :disabled="busy"
+          type="submit"
+        >
+          {{ $t('settings.mqtt.save') }}
+        </button>
+        <button
+          class="rounded-md border border-border px-4 py-2"
+          :disabled="busy"
+          type="button"
+          @click="test"
+        >
+          {{ $t('settings.mqtt.test') }}
+        </button>
+      </div>
     </form>
   </div>
 </template>

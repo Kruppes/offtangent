@@ -21,6 +21,12 @@ export const defaults: MqttSettings = {
   intervalSeconds: 60, groups: { limits: true, usage: true, activity: true, status: true },
 }
 const segment = /^[a-zA-Z0-9_-]+$/
+// No URI schemes, userinfo, paths, query strings or topic wildcards in a broker hostname.
+const hostname = /^(?:[a-zA-Z0-9][a-zA-Z0-9._-]*|\[[0-9a-fA-F:]+\])$/
+export const applicationVersion = (() => {
+  try { return (JSON.parse(fs.readFileSync(new URL('../../../package.json', import.meta.url), 'utf8')) as { version: string }).version }
+  catch { return 'unknown' }
+})()
 function configFile(): string { return path.join(getConfigDir(), 'settings.json') }
 export function readSettings(): MqttSettings {
   ensureConfigTemplates()
@@ -46,7 +52,7 @@ export function validateUpdate(input: unknown, old = readSettings()): MqttSettin
   for (const key of ['host', 'username', 'clientId', 'discoveryPrefix', 'baseTopic'] as const) {
     if (body[key] !== undefined) { if (typeof body[key] !== 'string') throw new Error(`Invalid ${key}`); next[key] = body[key].trim() }
   }
-  if (next.host.length > 253 || next.username.length > 256 || !segment.test(next.clientId) || next.clientId.length > 80 ||
+  if ((next.host && !hostname.test(next.host)) || next.host.length > 253 || next.username.length > 256 || !segment.test(next.clientId) || next.clientId.length > 80 ||
       !segment.test(next.discoveryPrefix) || !segment.test(next.baseTopic)) throw new Error('Invalid MQTT host, client ID or topic')
   for (const [key, min, max] of [['port', 1, 65535], ['intervalSeconds', 10, 3600]] as const) {
     if (body[key] !== undefined) { if (!Number.isInteger(body[key]) || (body[key] as number) < min || (body[key] as number) > max) throw new Error(`Invalid ${key}`); next[key] = body[key] as number }

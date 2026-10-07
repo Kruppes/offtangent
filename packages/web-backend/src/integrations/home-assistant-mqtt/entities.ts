@@ -1,4 +1,5 @@
 import type { ProviderQuotaContract } from '@axiom/core/contracts'
+import { applicationVersion } from './config.js'
 import type { MqttSettings } from './config.js'
 
 export interface Entity { topic: string; stateTopic: string; state: string; config: Record<string, unknown> }
@@ -9,7 +10,7 @@ function sensor(s: MqttSettings, key: string, name: string, state: string, opts:
     topic: `${s.discoveryPrefix}/sensor/offtangent/${key}/config`,
     stateTopic: `${s.baseTopic}/${key}/state`, state,
     config: { name, unique_id: id, state_topic: `${s.baseTopic}/${key}/state`,
-      availability_topic: `${s.baseTopic}/status`, device: { identifiers: ['offtangent'], name: 'Offtangent', manufacturer: 'Offtangent', sw_version: process.env.npm_package_version ?? '0.30.0' }, ...opts },
+      availability_topic: `${s.baseTopic}/status`, device: { identifiers: ['offtangent'], name: 'Offtangent', manufacturer: 'Offtangent', sw_version: applicationVersion }, ...opts },
   }
 }
 export function quotaEntities(s: MqttSettings, snapshot: Record<string, ProviderQuotaContract>): Entity[] {

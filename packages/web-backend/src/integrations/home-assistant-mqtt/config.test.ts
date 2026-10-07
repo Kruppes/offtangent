@@ -12,6 +12,8 @@ describe('MQTT settings', () => {
     expect(() => validateUpdate({ enabled: true })).toThrow('Broker host required')
     expect(() => validateUpdate({ baseTopic: 'a/b' })).toThrow()
     expect(() => validateUpdate({ port: 65536 })).toThrow()
+    expect(() => validateUpdate({ host: 'broker.invalid/path?host=bad' })).toThrow()
+    expect(() => validateUpdate({ host: 'user@broker.invalid' })).toThrow()
     expect(() => validateUpdate({ groups: { usage: 'false' } })).toThrow()
     expect(() => validateUpdate({ passwordSecret: 'forged' })).toThrow()
   })
