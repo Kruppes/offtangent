@@ -560,6 +560,7 @@
     "searchLabel": "Dateien durchsuchen"
   },
   "settings": {
+    "mqtt": {"title": "Home Assistant (MQTT)", "description": "Kennzahlen über MQTT und Home-Assistant-Discovery bereitstellen. Standardmäßig aus.", "enabled": "MQTT aktivieren", "host": "Broker-Host", "port": "Port", "tls": "TLS (mqtts)", "username": "Benutzername", "password": "Passwort (leer lassen zum Beibehalten)", "passwordSet": "Passwort ist gespeichert", "clearPassword": "Gespeichertes Passwort löschen", "clientId": "Client-ID", "discoveryPrefix": "Discovery-Präfix", "baseTopic": "Basis-Topic", "interval": "Intervall in Sekunden (Verbrauch/Aktivität)", "groups": "Datengruppen", "limits": "Limits", "usage": "Verbrauch", "activity": "Aktivität", "statusGroup": "Zustand", "save": "Speichern", "test": "Verbindung testen (publiziert online)", "connected": "Verbunden", "connecting": "Verbindung wird hergestellt", "off": "Aus", "error": "Fehler", "testSuccess": "Test erfolgreich", "testFailed": "Verbindung fehlgeschlagen", "saved": "Gespeichert"},
     "kicker": "Laufzeit-Konfiguration",
     "title": "Einstellungen",
     "subtitle": "Steuern Sie Agent-Verhalten, Sitzungsdauer und den Umgang mit Telegram-Nachrichten.",

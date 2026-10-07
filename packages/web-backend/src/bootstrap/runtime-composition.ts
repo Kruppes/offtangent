@@ -1,3 +1,4 @@
+import { HomeAssistantMqttService } from '../integrations/home-assistant-mqtt/service.js'
 import { effectiveModelForStrand, parseTurnModelSelection } from '../model-selection.js'
 import { configureNowSetResolver } from '../now-set-limit.js'
 import {
@@ -198,6 +199,7 @@ export interface RuntimeComposition {
   runtimeMetrics: RuntimeMetrics
   healthMonitorService: HealthMonitorService
   quotaMonitorService: QuotaMonitorService
+  homeAssistantMqtt: HomeAssistantMqttService
   consolidationScheduler: MemoryConsolidationScheduler
   agentHeartbeatService: AgentHeartbeatService
   uploadCleanupService: UploadCleanupService
@@ -1076,7 +1078,8 @@ export async function createRuntimeComposition(options: RuntimeCompositionOption
 
   // Background task tools live in a mutable array that is repopulated in place
   // by rebuildBackgroundTaskTools (see there).
-  const quotaMonitorService = new QuotaMonitorService()
+  const homeAssistantMqtt = new HomeAssistantMqttService(db)
+  const quotaMonitorService = new QuotaMonitorService({ onSnapshot: snapshot => homeAssistantMqtt.onQuota(snapshot) })
 
   /**
    * `send_file_to_user` for background tasks. A task has no interactive turn,
@@ -1887,6 +1890,7 @@ export async function createRuntimeComposition(options: RuntimeCompositionOption
   healthMonitorService.start()
 
   quotaMonitorService.start()
+  homeAssistantMqtt.start()
 
   const consolidationScheduler = new MemoryConsolidationScheduler({
     db,
@@ -2803,6 +2807,7 @@ export async function createRuntimeComposition(options: RuntimeCompositionOption
     runtimeMetrics,
     healthMonitorService,
     quotaMonitorService,
+    homeAssistantMqtt,
     consolidationScheduler,
     agentHeartbeatService,
     uploadCleanupService,
@@ -2837,6 +2842,7 @@ export async function createRuntimeComposition(options: RuntimeCompositionOption
     stopBackgroundServices: async () => {
       healthMonitorService.stop()
       quotaMonitorService.stop()
+      homeAssistantMqtt.stop()
       consolidationScheduler.stop()
       agentHeartbeatService.stop()
       uploadCleanupService.stop()

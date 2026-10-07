@@ -1,3 +1,5 @@
+import { createHomeAssistantMqttRouter } from './integrations/home-assistant-mqtt/route.js'
+import type { HomeAssistantMqttService } from './integrations/home-assistant-mqtt/service.js'
 import path from 'node:path'
 import { buildShaField } from './build-info.js'
 import { fileURLToPath } from 'node:url'
@@ -65,6 +67,7 @@ const startTime = Date.now()
 
 export interface AppOptions {
   db: Database
+  homeAssistantMqtt?: HomeAssistantMqttService
   agentCore?: AgentCore | null
   getAgentCore?: () => AgentCore | null
   healthMonitorService?: HealthMonitorService | null
@@ -291,6 +294,7 @@ export function createApp(options?: AppOptions): express.Express {
       consolidationScheduler: options.consolidationScheduler ?? null,
     }))
     app.use('/api/model-policy', createModelPolicyRouter())
+    if (options.homeAssistantMqtt) app.use('/api/settings/mqtt', createHomeAssistantMqttRouter(options.homeAssistantMqtt))
     app.use('/api/settings', createSettingsRouter({
       getAgentCore,
       onHealthMonitorSettingsChanged: () => {

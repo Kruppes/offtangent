@@ -20,6 +20,7 @@ export interface QuotaMonitorServiceOptions {
   fetchImpl?: typeof fetch
   now?: () => number
   logger?: Pick<typeof console, 'error'>
+  onSnapshot?: (snapshot: Record<string, ProviderQuotaContract>) => void
 }
 
 /**
@@ -38,6 +39,7 @@ export class QuotaMonitorService {
   private logger: Pick<typeof console, 'error'>
   private timer: ReturnType<typeof setTimeout> | null = null
   private running = false
+  private onSnapshot?: (snapshot: Record<string, ProviderQuotaContract>) => void
   private cache = new Map<string, ProviderQuotaContract>()
   private backoff = new Map<string, ProviderBackoff>()
 
@@ -46,6 +48,7 @@ export class QuotaMonitorService {
     this.fetchImpl = options.fetchImpl ?? fetch
     this.now = options.now ?? (() => Date.now())
     this.logger = options.logger ?? console
+    this.onSnapshot = options.onSnapshot
   }
 
   start(): void {
@@ -80,6 +83,7 @@ export class QuotaMonitorService {
     const provider = this.loadQuotaProviders().find((p) => p.id === providerId)
     if (!provider) return null
     await this.pollProvider(provider, { force: true })
+    this.onSnapshot?.(this.getSnapshot())
     return this.cache.get(providerId) ?? null
   }
 
@@ -127,6 +131,7 @@ export class QuotaMonitorService {
     }
 
     await Promise.all(providers.map((provider) => this.pollProvider(provider)))
+    this.onSnapshot?.(this.getSnapshot())
   }
 
   private async pollProvider(provider: ProviderConfig, opts: { force?: boolean } = {}): Promise<void> {

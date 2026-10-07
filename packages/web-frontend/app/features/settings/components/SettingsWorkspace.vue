@@ -102,6 +102,7 @@
 
           <!-- Appearance is a browser preference and needs no server data -->
           <SettingsAppearance v-else-if="activeSection === 'appearance'" />
+          <SettingsHomeAssistantMqtt v-else-if="activeSection === 'homeAssistantMqtt'" />
 
           <!-- Loading skeletons -->
           <div v-else-if="loading" class="flex flex-col gap-6" aria-busy="true" data-testid="settings-loading">
@@ -2405,6 +2406,7 @@ import SecretHandlesPanel from './SecretHandlesPanel.vue'
 import VoiceNotePanel from './VoiceNotePanel.vue'
 import SettingsAppearance from './SettingsAppearance.vue'
 import SettingsGenerators from './SettingsGenerators.vue'
+import SettingsHomeAssistantMqtt from './SettingsHomeAssistantMqtt.vue'
 import SettingsOverview from './SettingsOverview.vue'
 import SettingsSectionNav from './SettingsSectionNav.vue'
 import SettingsVoiceReplies from './SettingsVoiceReplies.vue'

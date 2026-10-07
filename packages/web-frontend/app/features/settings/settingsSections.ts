@@ -114,6 +114,11 @@ export const SETTINGS_SECTIONS: ReadonlyArray<SettingsSection> = [
     fieldKeys: ['settings.telegramEnabled', 'settings.telegramBotToken', 'settings.telegramUsers'],
   },
   {
+    id: 'homeAssistantMqtt', group: 'system', icon: 'radio', save: 'own',
+    labelKey: 'settings.mqtt.title', descriptionKey: 'settings.mqtt.description',
+    fieldKeys: ['settings.mqtt.host', 'settings.mqtt.groups'],
+  },
+  {
     id: 'email', group: 'system', icon: 'mail', save: 'own',
     labelKey: 'settings.tabs.email', descriptionKey: 'settings.tabs.emailDescription',
     fieldKeys: [],

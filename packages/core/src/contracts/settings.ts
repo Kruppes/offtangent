@@ -623,6 +623,21 @@ export interface TelegramSettingsContract {
   sendStallWarnings: boolean
 }
 
+/** Admin-managed instance-wide MQTT integration. Passwords are stored as secret handles. */
+export interface HomeAssistantMqttSettingsContract {
+  enabled: boolean
+  host: string
+  port: number
+  tls: boolean
+  username: string
+  passwordSecret: string
+  clientId: string
+  discoveryPrefix: string
+  baseTopic: string
+  intervalSeconds: number
+  groups: { limits: boolean; usage: boolean; activity: boolean; status: boolean }
+}
+
 export interface SettingsContract {
   sessionTimeoutMinutes: number
   sessionSummaryProviderId: string
@@ -657,6 +672,7 @@ export interface SettingsContract {
 export type SettingsUpdateContract = DeepPartial<SettingsContract>
 
 export interface SettingsStorageContract {
+  homeAssistantMqtt?: Partial<HomeAssistantMqttSettingsContract>
   sessionTimeoutMinutes?: number
   sessionSummaryProviderId?: string
   language?: string

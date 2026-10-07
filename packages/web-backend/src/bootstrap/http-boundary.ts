@@ -26,6 +26,7 @@ export async function startHttpBoundary(
 
   const app = createApp({
     db: runtimeComposition.db,
+    homeAssistantMqtt: runtimeComposition.homeAssistantMqtt,
     getAgentCore: runtimeComposition.getAgentCore,
     healthMonitorService: runtimeComposition.healthMonitorService,
     getQuotaSnapshot: () => runtimeComposition.quotaMonitorService.getSnapshot(),
