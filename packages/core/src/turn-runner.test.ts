@@ -651,7 +651,7 @@ describe('TurnRunner', () => {
 
       const persistedOnWarn = stallRows(db)
       expect(persistedOnWarn).toHaveLength(1)
-      expect(persistedOnWarn[0]!.content).toContain('Provider has not responded')
+      expect(persistedOnWarn[0]!.content).toContain('No visible output for')
       expect(persistedOnWarn[0]!.metadata.outcome).toBeNull()
       expect(persistedOnWarn[0]!.metadata.resolvedAt).toBeNull()
       expect(persistedOnWarn[0]!.metadata.durationMs).toBeGreaterThanOrEqual(30_000)
@@ -676,7 +676,7 @@ describe('TurnRunner', () => {
       expect(persistedOnResolve[0]!.id).toBe(persistedOnWarn[0]!.id)
       expect(persistedOnResolve[0]!.metadata.outcome).toBe('recovered')
       expect(persistedOnResolve[0]!.metadata.durationMs).toBeGreaterThanOrEqual(31_000)
-      expect(persistedOnResolve[0]!.content).toContain('Provider recovered')
+      expect(persistedOnResolve[0]!.content).toContain('Output resumed after')
 
       push({ type: 'done' })
       finish()
@@ -719,7 +719,7 @@ describe('TurnRunner', () => {
       expect(persisted).toHaveLength(1)
       expect(persisted[0]!.metadata.outcome).toBe('aborted')
       expect(persisted[0]!.metadata.resolvedAt).not.toBeNull()
-      expect(persisted[0]!.content).toContain('Provider stopped responding')
+      expect(persisted[0]!.content).toContain('attempt aborted by the watchdog')
     })
 
     it('takes warn/abort thresholds from the settings file when not overridden', async () => {

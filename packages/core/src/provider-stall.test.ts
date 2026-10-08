@@ -60,11 +60,22 @@ describe('provider stall metadata', () => {
 
   it('formats a distinct message per stall state', () => {
     const base = { startedAt: '2026-01-01T00:00:00.000Z', durationMs: 30_000 }
-    expect(formatProviderStallContent(base)).toContain('has not responded for 30s')
+    expect(formatProviderStallContent(base)).toContain('No visible output for 30s')
     expect(formatProviderStallContent({ ...base, durationMs: 42_000, outcome: 'recovered' }))
-      .toContain('recovered after 42s')
+      .toContain('Output resumed after a 42s pause')
     expect(formatProviderStallContent({ ...base, durationMs: 90_000, outcome: 'aborted' }))
-      .toContain('stopped responding')
+      .toContain('No output for 90s \u2014 attempt aborted by the watchdog')
+    expect(formatProviderStallContent({ ...base, durationMs: 50_000, outcome: 'error' }))
+      .toContain('Provider request failed after 50s')
+  })
+
+  it('never phrases a mere pause as a provider outage (plan 2026-10-09-provider-silence)', () => {
+    const base = { startedAt: '2026-01-01T00:00:00.000Z', durationMs: 45_000 }
+    // Only an explicit signal (watchdog abort, request error) may read as a failure.
+    for (const outcome of [undefined, 'recovered', 'canceled', 'ended'] as const) {
+      const text = formatProviderStallContent({ ...base, outcome })
+      expect(text).not.toMatch(/recovered|has not responded|stopped responding|silence|failed/i)
+    }
   })
 })
 

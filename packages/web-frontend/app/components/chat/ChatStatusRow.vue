@@ -18,26 +18,29 @@
     </div>
   </template>
 
-  <!-- Provider stall notice. Backed by a persisted chat row, so it
-       survives a reload; the same bubble flips to the resolved state
-       in place when the provider recovers or the turn is aborted. -->
-  <template v-else-if="msg.stallInfo">
+  <!-- Stall notice (no visible output for a while). Backed by a persisted
+       chat row, so it survives a reload; the same bubble flips to the
+       resolved state in place. Wording and tone come from stallInfo (see
+       utils/stallNotice.ts): a pause is neutral, only an explicit abort or
+       request error is styled as a failure. -->
+  <template v-else-if="msg.stallInfo && stallView">
     <div
       class="w-full overflow-hidden rounded-lg border px-3 py-2 text-xs"
-      :class="msg.stallInfo.outcome === 'recovered'
-        ? 'border-success/30 bg-success/5 text-muted-foreground'
-        : msg.stallInfo.outcome === 'aborted' || msg.stallInfo.outcome === 'error'
-          ? 'border-destructive/30 bg-destructive/5 text-muted-foreground'
-          : msg.stallInfo.outcome === 'canceled' || msg.stallInfo.outcome === 'ended'
-            ? 'border-border bg-muted text-muted-foreground'
-            : 'border-warning/30 bg-warning/5 text-muted-foreground'"
+      :class="stallView.tone === 'failure'
+        ? 'border-destructive/30 bg-destructive/5 text-muted-foreground'
+        : stallView.tone === 'pending'
+          ? 'border-warning/30 bg-warning/5 text-muted-foreground'
+          : 'border-border bg-muted text-muted-foreground'"
     >
       <div class="flex items-center gap-2">
         <AppIcon
-          :name="msg.stallInfo.outcome === 'recovered' ? 'check' : msg.stallInfo.outcome === 'aborted' || msg.stallInfo.outcome === 'error' ? 'warning' : msg.stallInfo.outcome === 'canceled' || msg.stallInfo.outcome === 'ended' ? 'close' : 'clock'"
+          :name="stallView.icon"
           class="h-3 w-3 shrink-0"
         />
-        <span class="min-w-0 flex-1 break-words text-foreground">{{ msg.content }}</span>
+        <span
+          class="min-w-0 flex-1 break-words"
+          :class="stallView.tone === 'neutral' ? 'text-muted-foreground' : 'text-foreground'"
+        >{{ stallView.key ? $t(stallView.key) : msg.content }}</span>
         <span class="shrink-0 text-2xs text-muted-foreground">
           {{ formatStallDuration(msg.stallInfo.durationMs) }}
         </span>
@@ -47,10 +50,14 @@
 </template>
 
 <script setup lang="ts">
+import { computed } from 'vue'
 import type { ChatMessage } from '~/composables/useChat'
+import { stallNoticePresentation } from '~/utils/stallNotice'
 
-/** One-line system rows: a running task's heartbeat, or a provider stall notice. */
-defineProps<{ msg: ChatMessage }>()
+/** One-line system rows: a running task's heartbeat, or a stall notice. */
+const props = defineProps<{ msg: ChatMessage }>()
+
+const stallView = computed(() => props.msg.stallInfo ? stallNoticePresentation(props.msg.stallInfo) : null)
 
 // Compact token count for the heartbeat row: 12345 -> "12.3k".
 function formatTokenCount(count: number): string {

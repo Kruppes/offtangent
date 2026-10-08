@@ -221,7 +221,15 @@
     "olderLoad": "Ältere Nachrichten laden",
     "olderLoading": "Ältere Nachrichten werden geladen …",
     "olderError": "Ältere Nachrichten konnten nicht geladen werden.",
-    "historySyncError": "Der Verlauf konnte nicht abgeglichen werden, Dateien oder Antworten fehlen eventuell."
+    "historySyncError": "Der Verlauf konnte nicht abgeglichen werden, Dateien oder Antworten fehlen eventuell.",
+    "stall": {
+      "waiting": "Antwortpause – noch keine sichtbare Ausgabe, wird weiter abgewartet …",
+      "recovered": "Antwortpause beendet – Ausgabe wird fortgesetzt",
+      "ended": "Anfrage ohne Ausgabe beendet",
+      "canceled": "Anfrage nach Antwortpause abgebrochen",
+      "aborted": "Keine Ausgabe – Versuch vom Watchdog abgebrochen",
+      "error": "Anbieter-Anfrage fehlgeschlagen"
+    }
   },
   "canvas": {
     "open": "Canvas öffnen",
@@ -772,9 +780,9 @@
     "retryBaseDelay": "Basis-Verzögerung",
     "retryBaseDelayHint": "Wartezeit vor dem ersten Retry, danach jeweils verdoppelt (Standard 2000 ms). Aktueller Ablauf: {schedule}.",
     "watchdogStallWarn": "Schwelle für Stall-Warnung",
-    "watchdogStallWarnHint": "Warnung im Chat anzeigen, wenn der Provider so lange nichts gesendet hat. Standard: 30000 ms.",
+    "watchdogStallWarnHint": "Warnung im Chat anzeigen, wenn der Provider so lange nichts gesendet hat. Laufende Tools zählen nicht als Stille. Standard: 30000 ms.",
     "watchdogStallAbort": "Schwelle für Stall-Abbruch",
-    "watchdogStallAbortHint": "Versuch abbrechen, wenn der Provider so lange stumm bleibt. Gilt als wiederholbarer Fehler. Standard: 90000 ms.",
+    "watchdogStallAbortHint": "Versuch abbrechen, wenn der Provider so lange stumm bleibt. Laufende Tools zählen nicht als Stille. Gilt als wiederholbarer Fehler. Standard: 90000 ms.",
     "watchdogStallAbortInvalid": "Die Abbruch-Schwelle muss größer oder gleich der Warn-Schwelle sein.",
     "days": "Tage",
     "attemptsUnit": "Versuche",
@@ -1354,17 +1362,17 @@
       "heartbeat": "Heartbeat"
     },
     "stalls": {
-      "title": "Provider-Aussetzer",
-      "description": "Turns, in denen der Provider lange genug stumm blieb, um den Watchdog auszulösen — im gewählten Zeitraum.",
-      "empty": "Keine Provider-Aussetzer in diesem Zeitraum.",
-      "total": "Aussetzer",
+      "title": "Antwortpausen",
+      "description": "Turns, in denen so lange keine Ausgabe sichtbar war, dass der Watchdog anschlug – im gewählten Zeitraum. Eine Pause ist kein Nachweis eines Anbieter-Ausfalls (z. B. verdecktes Reasoning); ältere Einträge enthalten auch Tool-Laufzeiten und gestreamte Tool-Aufrufe. Nur „Abgebrochen“ steht für einen tatsächlichen Abbruch.",
+      "empty": "Keine Antwortpausen in diesem Zeitraum.",
+      "total": "Pausen",
       "allResolved": "Alle abgeschlossen",
       "unresolved": "{count} offen",
-      "avgDuration": "Ø Stille",
-      "longest": "Längster {duration}",
-      "recovered": "Erholt",
+      "avgDuration": "Ø Pause",
+      "longest": "Längste {duration}",
+      "recovered": "Fortgesetzt",
       "aborted": "Abgebrochen",
-      "share": "{percent}% der Aussetzer",
+      "share": "{percent}% der Pausen",
       "avgShort": "ø {duration}"
     },
     "table": {

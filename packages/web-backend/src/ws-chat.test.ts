@@ -874,7 +874,7 @@ describe('setupWebSocketChat kill switch', () => {
 
       const warning = await first.waitForMessage()
       expect(warning.type).toBe('stall_warning')
-      expect(warning.text).toContain('Provider has not responded')
+      expect(warning.text).toContain('No visible output for')
       const warned = warning.stall as { messageId: number; startedAt: string; durationMs: number }
       expect(warned.messageId).toBeGreaterThan(0)
 
@@ -903,7 +903,7 @@ describe('setupWebSocketChat kill switch', () => {
       releaseTail()
       const resolved = await second.waitForMessage()
       expect(resolved.type).toBe('stall_resolved')
-      expect(resolved.text).toContain('Provider recovered')
+      expect(resolved.text).toContain('Output resumed after')
       expect(resolved.stall).toMatchObject({ messageId: warned.messageId, outcome: 'recovered' })
 
       // Same row, updated instead of duplicated.

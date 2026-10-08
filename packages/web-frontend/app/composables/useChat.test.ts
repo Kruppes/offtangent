@@ -12,6 +12,7 @@ import {
   stripFailedAttempt,
   stripTrailingTurn,
   turnErrorFromHistoryMetadata,
+  stallInfoFromHistoryMetadata,
   upsertErrorMessage,
   upsertStallMessage,
   useChat,
@@ -1390,5 +1391,20 @@ describe('shared feed websocket integration', () => {
     releaseMobile()
     expect(currentSocket().readyState).toBe(3)
     releaseMobile()
+  })
+})
+
+describe('stallInfoFromHistoryMetadata (plan 2026-10-09-provider-silence)', () => {
+  it('rebuilds a persisted stall row including the first-token phase', () => {
+    expect(stallInfoFromHistoryMetadata({
+      kind: 'provider_stall', startedAt: '2026-01-01T00:00:00.000Z', resolvedAt: '2026-01-01T00:00:45.000Z', durationMs: 45_000, outcome: 'recovered',
+    }, 7)).toEqual({ messageId: 7, startedAt: '2026-01-01T00:00:00.000Z', resolvedAt: '2026-01-01T00:00:45.000Z', durationMs: 45_000, outcome: 'recovered' })
+    expect(stallInfoFromHistoryMetadata({ kind: 'provider_stall', startedAt: '2026-01-01T00:00:00.000Z', durationMs: 5_000, outcome: null, phase: 'first_token' }, 8))
+      .toEqual({ messageId: 8, startedAt: '2026-01-01T00:00:00.000Z', resolvedAt: undefined, durationMs: 5_000, outcome: undefined, phase: 'first_token' })
+  })
+
+  it('treats an unknown stored outcome as unresolved instead of trusting it', () => {
+    expect(stallInfoFromHistoryMetadata({ startedAt: 'x', durationMs: 'bad', outcome: 'exploded' }, 9))
+      .toEqual({ messageId: 9, startedAt: 'x', resolvedAt: undefined, durationMs: 0, outcome: undefined })
   })
 })

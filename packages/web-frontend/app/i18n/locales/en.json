@@ -221,7 +221,15 @@
     "olderLoad": "Load older messages",
     "olderLoading": "Loading older messages …",
     "olderError": "Older messages could not be loaded.",
-    "historySyncError": "The history could not be synced, files or answers may be missing."
+    "historySyncError": "The history could not be synced, files or answers may be missing.",
+    "stall": {
+      "waiting": "Response pause – no visible output yet, still waiting…",
+      "recovered": "Response pause over – output continues",
+      "ended": "Request ended without output",
+      "canceled": "Request canceled after a response pause",
+      "aborted": "No output – attempt aborted by the watchdog",
+      "error": "Provider request failed"
+    }
   },
   "canvas": {
     "open": "Open canvas",
@@ -772,9 +780,9 @@
     "retryBaseDelay": "Base delay",
     "retryBaseDelayHint": "Delay before the first retry, doubled for each further attempt (default 2000 ms). Current schedule: {schedule}.",
     "watchdogStallWarn": "Stall warning threshold",
-    "watchdogStallWarnHint": "Show a warning in the chat when the provider has sent nothing for this long. Default: 30000 ms.",
+    "watchdogStallWarnHint": "Show a warning in the chat when the provider has sent nothing for this long. Running tools do not count as silence. Default: 30000 ms.",
     "watchdogStallAbort": "Stall abort threshold",
-    "watchdogStallAbortHint": "Abort the attempt when the provider stays silent for this long. Counts as a retryable error. Default: 90000 ms.",
+    "watchdogStallAbortHint": "Abort the attempt when the provider stays silent for this long. Running tools do not count as silence. Counts as a retryable error. Default: 90000 ms.",
     "watchdogStallAbortInvalid": "The abort threshold must be greater than or equal to the warning threshold.",
     "days": "days",
     "attemptsUnit": "attempts",
@@ -1354,17 +1362,17 @@
       "heartbeat": "Heartbeat"
     },
     "stalls": {
-      "title": "Provider stalls",
-      "description": "Turns where the provider went silent long enough to trigger the watchdog, within the selected date range.",
-      "empty": "No provider stalls in this period.",
-      "total": "Stalls",
+      "title": "Response pauses",
+      "description": "Turns with no visible output long enough to trigger the watchdog, within the selected date range. A pause is not proof of a provider outage (e.g. hidden reasoning); older entries also include tool runtime and streamed tool calls. Only “Aborted” marks an actual abort.",
+      "empty": "No response pauses in this period.",
+      "total": "Pauses",
       "allResolved": "All resolved",
       "unresolved": "{count} unresolved",
-      "avgDuration": "Avg. silence",
+      "avgDuration": "Avg. pause",
       "longest": "Longest {duration}",
-      "recovered": "Recovered",
+      "recovered": "Resumed",
       "aborted": "Aborted",
-      "share": "{percent}% of stalls",
+      "share": "{percent}% of pauses",
       "avgShort": "ø {duration}"
     },
     "table": {

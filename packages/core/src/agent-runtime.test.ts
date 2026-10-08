@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, beforeEach } from 'vitest'
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import { createAgentRuntime } from './agent-runtime.js'
 import type { AgentRuntimePiAgentAccess } from './agent-runtime.js'
 import { initDatabase } from './database.js'
@@ -6,6 +6,8 @@ import type { AgentTool } from '@earendil-works/pi-agent-core'
 import { assembleSystemPrompt } from './memory.js'
 import { logToolCall } from './token-logger.js'
 import { loadConfig } from './config.js'
+import { subscribeProviderPhase, STREAM_ACTIVITY_SIGNAL_INTERVAL_MS } from './provider-phase.js'
+import type { ProviderPhaseEvent } from './provider-phase.js'
 
 const runtimeHarness = vi.hoisted(() => ({
   promptBehaviors: [] as Array<(agent: { emit: (event: unknown) => void }, text: string) => Promise<void>>,
@@ -576,5 +578,83 @@ describe('AgentRuntime codemode wiring', () => {
     // A model-issued id takes the normal Eco path (reads the strand mode).
     await internals.freezeEcoToolResult(ctx('toolu_parent'))
     expect(prepare).toHaveBeenCalled()
+  })
+})
+
+/**
+ * Runtime -> watchdog wiring of `stream_activity` (plan
+ * 2026-10-09-provider-silence). Synthetic events only: a model streaming a
+ * long tool call produces `message_update` events that map to no chunk; the
+ * runtime must still tell the session's stall watchdog that the stream is
+ * alive, throttled, and must stay quiet for chunk-producing output.
+ */
+describe('AgentRuntime stream_activity signal', () => {
+  const tick = () => new Promise<void>(resolve => setTimeout(resolve, 0))
+
+  beforeEach(() => {
+    runtimeHarness.promptBehaviors = []
+    runtimeHarness.promptCalls = []
+    runtimeHarness.continueCalls = 0
+    // Only Date is faked: setTimeout stays real so the runtime loop drains.
+    vi.useFakeTimers({ toFake: ['Date'] })
+    vi.setSystemTime(new Date('2026-01-01T00:00:00.000Z'))
+  })
+
+  afterEach(() => {
+    vi.useRealTimers()
+  })
+
+  async function run(sessionId: string, behavior: (agent: { emit: (event: unknown) => void }) => Promise<void>) {
+    const runtime = createAgentRuntime({ model: makeModel(), apiKey: 'sk-synthetic', db: initDatabase(':memory:'), tools: [] })
+    const own: ProviderPhaseEvent[] = []
+    const other: ProviderPhaseEvent[] = []
+    const offOwn = subscribeProviderPhase(sessionId, e => own.push(e))
+    const offOther = subscribeProviderPhase('unrelated-session', e => other.push(e))
+    runtimeHarness.promptBehaviors.push(behavior)
+    const chunks: string[] = []
+    try {
+      for await (const chunk of runtime.streamPrompt('synthetic prompt', sessionId)) chunks.push(chunk.type)
+    } finally {
+      offOwn()
+      offOther()
+    }
+    return { own, other, chunks }
+  }
+
+  const toolcallDelta = (delta: string) => ({ type: 'message_update', assistantMessageEvent: { type: 'toolcall_delta', delta } })
+
+  it('signals stream_activity for tool-call streaming that yields no chunk, throttled per session', async () => {
+    const { own, other, chunks } = await run('session-sa', async (agent) => {
+      agent.emit({ type: 'message_update', assistantMessageEvent: { type: 'toolcall_start' } })
+      for (let i = 0; i < 5; i++) agent.emit(toolcallDelta(`{"x":${i}`))
+      await tick()
+      // Still inside the throttle window: no second signal.
+      vi.setSystemTime(Date.now() + STREAM_ACTIVITY_SIGNAL_INTERVAL_MS - 1)
+      agent.emit(toolcallDelta('more'))
+      await tick()
+      // Past the window: the next chunk-less update signals again.
+      vi.setSystemTime(Date.now() + 2)
+      agent.emit(toolcallDelta('more'))
+      agent.emit({ type: 'message_update', assistantMessageEvent: { type: 'toolcall_end' } })
+      await tick()
+      agent.emit({ type: 'agent_end', messages: [] })
+    })
+
+    expect(own.filter(e => e.phase === 'stream_activity')).toHaveLength(2)
+    expect(other).toHaveLength(0)
+    expect(chunks).toEqual(['done'])
+  })
+
+  it('does not signal stream_activity for chunk-producing or non-message events', async () => {
+    const { own, chunks } = await run('session-sb', async (agent) => {
+      agent.emit({ type: 'message_update', assistantMessageEvent: { type: 'thinking_delta', delta: 'hmm' } })
+      agent.emit({ type: 'message_update', assistantMessageEvent: { type: 'text_delta', delta: 'hi' } })
+      agent.emit({ type: 'tool_execution_start', toolName: 'search_memories', toolCallId: 't-1', args: { query: 'q' } })
+      agent.emit({ type: 'tool_execution_end', toolName: 'search_memories', toolCallId: 't-1', isError: false, result: { matches: [] } })
+      agent.emit({ type: 'agent_end', messages: [] })
+    })
+
+    expect(own.filter(e => e.phase === 'stream_activity')).toHaveLength(0)
+    expect(chunks).toEqual(['thinking', 'text', 'tool_call_start', 'tool_call_end', 'done'])
   })
 })

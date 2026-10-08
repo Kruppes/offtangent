@@ -106,7 +106,7 @@
             </Card>
           </section>
 
-          <!-- ─── Provider stalls ─── -->
+          <!-- ─── Response pauses (stall watchdog) ─── -->
           <Card class="mb-4">
             <CardContent class="p-5">
               <div class="mb-4">
@@ -519,7 +519,7 @@ const kpiCards = computed(() => [
   },
 ])
 
-// ── Provider stall cards ────────────────────────────────────
+// ── Response-pause (stall watchdog) cards ───────────────────
 const stallCards = computed(() => {
   const stats = stalls.value
   const share = (count: number) => stats.total > 0

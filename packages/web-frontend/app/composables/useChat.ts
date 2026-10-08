@@ -67,7 +67,8 @@ export interface ChatActionMessage {
   resolution?: string
 }
 
-export type ChatStallOutcome = 'recovered' | 'aborted' | 'ended' | 'error' | 'canceled'
+const STALL_OUTCOMES = ['recovered', 'aborted', 'ended', 'error', 'canceled'] as const
+export type ChatStallOutcome = typeof STALL_OUTCOMES[number]
 
 /**
  * Provider-stall details attached to a stall notice. Mirrors the backend
@@ -80,6 +81,8 @@ export interface ChatStallInfo {
   resolvedAt?: string
   durationMs: number
   outcome?: ChatStallOutcome
+  /** Set only for a native first-token wait (mirrors backend `StallInfo.phase`). */
+  phase?: 'first_token'
 }
 
 /**
@@ -504,6 +507,25 @@ export function stripFailedAttempt(list: ChatMessage[]): ChatMessage[] {
  * id keeps a single bubble across live warn → resolve, mid-turn replay and a
  * history reload that already rendered the row.
  */
+/**
+ * Rebuild the stall details of a persisted `provider_stall` row. `phase` is
+ * carried so a native first-token wait keeps its backend text while every
+ * other row is relabelled neutrally on render (plan 2026-10-09-provider-silence).
+ */
+export function stallInfoFromHistoryMetadata(meta: Record<string, unknown>, messageId: number): ChatStallInfo {
+  const outcome = typeof meta.outcome === 'string' && (STALL_OUTCOMES as readonly string[]).includes(meta.outcome)
+    ? meta.outcome as ChatStallOutcome
+    : undefined
+  return {
+    messageId,
+    startedAt: typeof meta.startedAt === 'string' ? meta.startedAt : '',
+    resolvedAt: typeof meta.resolvedAt === 'string' ? meta.resolvedAt : undefined,
+    durationMs: typeof meta.durationMs === 'number' ? meta.durationMs : 0,
+    outcome,
+    ...(meta.phase === 'first_token' ? { phase: 'first_token' as const } : {}),
+  }
+}
+
 export function upsertStallMessage(list: ChatMessage[], stall: ChatStallInfo, content: string): ChatMessage[] {
   const index = stall.messageId === undefined
     ? -1
@@ -800,13 +822,7 @@ export function mapHistoryRows(rows: ChatHistoryRow[]): ChatMessage[] {
     if (m.role === 'system' && meta.kind === 'provider_stall') {
       return {
         id: m.id, role: 'system' as const, content: m.content, timestamp: m.timestamp, source,
-        stallInfo: {
-          messageId: m.id,
-          startedAt: meta.startedAt,
-          resolvedAt: meta.resolvedAt ?? undefined,
-          durationMs: typeof meta.durationMs === 'number' ? meta.durationMs : 0,
-          outcome: meta.outcome ?? undefined,
-        },
+        stallInfo: stallInfoFromHistoryMetadata(meta, m.id),
       } as ChatMessage
     }
 

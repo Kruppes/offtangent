@@ -100,12 +100,16 @@ export function formatProviderStallContent(stall: StallInfo): string {
     if (stall.outcome === 'ended') return `\u2139\uFE0F Local model request ended after ${seconds}s with no output`
     return `\u23F3 Local model is still processing the prompt${est}: no output yet after ${seconds}s, waiting up to ${budget} for the first token\u2026`
   }
-  if (stall.outcome === 'recovered') return `\u2705 Provider recovered after ${seconds}s of silence`
-  if (stall.outcome === 'aborted') return `\u26A0\uFE0F Provider stopped responding \u2014 aborted after ${seconds}s of silence`
-  if (stall.outcome === 'error') return `\u26A0\uFE0F Provider request failed after ${seconds}s of silence`
-  if (stall.outcome === 'canceled') return `\u23F9\uFE0F Request canceled after ${seconds}s of silence`
-  if (stall.outcome === 'ended') return `\u2139\uFE0F Request ended after ${seconds}s of silence with no output`
-  return `\u23F3 Provider has not responded for ${seconds}s\u2026`
+  // Wording rule (plan 2026-10-09-provider-silence): a pause without visible
+  // output is NOT proof of a provider outage (hidden reasoning, a slow first
+  // token or a dead connection all look the same here). Only an explicit
+  // signal — the watchdog abort or a request error — is phrased as a failure.
+  if (stall.outcome === 'recovered') return `\u25B6\uFE0F Output resumed after a ${seconds}s pause`
+  if (stall.outcome === 'aborted') return `\u26A0\uFE0F No output for ${seconds}s \u2014 attempt aborted by the watchdog`
+  if (stall.outcome === 'error') return `\u26A0\uFE0F Provider request failed after ${seconds}s without output`
+  if (stall.outcome === 'canceled') return `\u23F9\uFE0F Request canceled after ${seconds}s without output`
+  if (stall.outcome === 'ended') return `\u2139\uFE0F Request ended after ${seconds}s with no output`
+  return `\u23F3 No visible output for ${seconds}s \u2014 still waiting\u2026`
 }
 
 export interface StallStatsQueryOptions {
