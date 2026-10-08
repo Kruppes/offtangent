@@ -12,9 +12,9 @@
  * This module is a tiny side channel, keyed by session id, from the native
  * Ollama stream wrapper (which knows when a request was dispatched and when
  * the first real output arrived) to the TurnRunner watchdog of that session
- * (which owns the abort). Nothing here touches other providers: only the
- * native path emits phases, so for every other api the watchdog behaves
- * exactly as before.
+ * (which owns the abort). The first-token phases are emitted by the native
+ * path only. `stream_activity` is emitted by the agent runtime for every api
+ * and only ever counts as activity, it never extends a first-token budget.
  *
  * Budget strategy (explicit and conservative — no invented precision): the
  * prompt cache hit rate is NOT known before the first token, so the whole
@@ -70,6 +70,17 @@ export type ProviderPhaseEvent =
     end?: 'done' | 'error' | 'canceled'
   }
 
+  | {
+    /**
+     * The provider stream of this session delivered output that produces no
+     * text/thinking chunk (tool-call argument deltas, block boundaries).
+     * Emitted by the agent runtime for every api, so the stall watchdog does
+     * not mistake a model that is busy streaming a long tool call for a
+     * silent provider (plan 2026-10-09-provider-silence).
+     */
+    phase: 'stream_activity'
+  }
+
 type Listener = (event: ProviderPhaseEvent) => void
 const listeners = new Map<string, Set<Listener>>()
 
@@ -100,5 +111,23 @@ export function emitProviderPhase(sessionId: string | undefined, event: Provider
     } catch (err) {
       console.error('[provider-phase] listener failed:', err)
     }
+  }
+}
+
+/** Minimum gap between two `stream_activity` signals of one turn. */
+export const STREAM_ACTIVITY_SIGNAL_INTERVAL_MS = 1000
+
+/**
+ * Returns a notifier that emits `stream_activity` for `sessionId`, at most
+ * once per {@link STREAM_ACTIVITY_SIGNAL_INTERVAL_MS}. Called by the agent
+ * runtime for provider output that produced no chunk.
+ */
+export function createStreamActivityNotifier(sessionId: string, now: () => number = Date.now): () => void {
+  let last = Number.NEGATIVE_INFINITY
+  return () => {
+    const t = now()
+    if (t - last < STREAM_ACTIVITY_SIGNAL_INTERVAL_MS) return
+    last = t
+    emitProviderPhase(sessionId, { phase: 'stream_activity' })
   }
 }

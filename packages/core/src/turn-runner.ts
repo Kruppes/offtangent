@@ -991,6 +991,8 @@ export class TurnRunner {
           watchdog.resume()
           continue
         }
+        if (chunk.type === 'tool_call_start') watchdog.toolStarted(chunk.toolCallId ?? '')
+        if (chunk.type === 'tool_call_end') watchdog.toolEnded(chunk.toolCallId ?? '')
 
         // `done` is owned by the turn, not by an attempt.
         if (chunk.type === 'done') continue
@@ -1209,6 +1211,15 @@ export class TurnRunner {
     let firstToken: FirstTokenWait | null = null
     const unsubscribePhase = subscribeProviderPhase(turn.sessionId, (event) => {
       const now = Date.now()
+      if (event.phase === 'stream_activity') {
+        // Provider output without a text/thinking chunk (e.g. a long tool
+        // call being streamed): the provider is alive. Ignored during a
+        // native first-token wait, whose own phases own that budget.
+        if (firstToken) return
+        closeStall(now, 'recovered')
+        lastActivityAt = now
+        return
+      }
       if (event.phase === 'awaiting_first_token') {
         // Dispatching the request is activity; from here the budget applies.
         closeStall(now, 'recovered')
@@ -1247,6 +1258,13 @@ export class TurnRunner {
      * so agents that do not send queue signals keep the old coverage.
      */
     let counting = true
+    /**
+     * Tool calls currently executing. While one runs, no provider request is
+     * in flight, so silence is tool runtime, not provider silence: counting
+     * pauses (plan 2026-10-09-provider-silence). A hung tool stays bounded by
+     * the tool's own timeout and the runtime's turn inactivity guard.
+     */
+    const toolsInFlight = new Set<string>()
 
     const db = this.db
 
@@ -1329,6 +1347,7 @@ export class TurnRunner {
 
     const timer = setInterval(() => {
       if (!counting) return
+      if (toolsInFlight.size > 0) return
       if (this.isAttemptAborted(turn)) return
       const now = Date.now()
       const idleMs = now - lastActivityAt
@@ -1385,6 +1404,16 @@ export class TurnRunner {
         const now = Date.now()
         closeStall(now, 'recovered')
         lastActivityAt = now
+      },
+      /** A tool started executing: its runtime is not provider silence. */
+      toolStarted: (toolCallId: string) => {
+        closeStall(Date.now(), 'recovered')
+        toolsInFlight.add(toolCallId)
+      },
+      /** A tool finished: the next provider request starts a fresh budget. */
+      toolEnded: (toolCallId: string) => {
+        toolsInFlight.delete(toolCallId)
+        lastActivityAt = Date.now()
       },
       /** The turn is queued behind another one — stop counting idle time. */
       suspend: () => {

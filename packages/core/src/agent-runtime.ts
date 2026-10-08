@@ -13,6 +13,7 @@ import { logTokenUsage, logToolCall } from './token-logger.js'
 import { estimateCost, getApiKeyForProvider, buildModel, buildStreamFn, loadProvidersDecrypted, parseProviderModelId, getProviderDefaultModel, resolvePromptProfileOptions } from './provider-config.js'
 import type { ProviderConfig } from './provider-config.js'
 import type { ProviderManager } from './provider-manager.js'
+import { createStreamActivityNotifier } from './provider-phase.js'
 import type { SettingsThinkingLevel } from './contracts/settings.js'
 import { normalizeThinkingLevel } from './thinking-level.js'
 import { assembleSystemPrompt, ensureMemoryStructure, ensureConfigStructure, formatCurrentTimeContext } from './memory.js'
@@ -1357,6 +1358,10 @@ class PiAgentRuntime implements AgentRuntimeBoundary, AgentRuntimePiAgentAccess 
     let toolCalls = 0
     let errorChunks = 0
     let corruptedContext = false
+    // Provider output that maps to no chunk (tool-call argument deltas, block
+    // boundaries) is still proof the stream is alive. Tell the stall watchdog
+    // of this session, throttled (plan 2026-10-09-provider-silence).
+    const signalStreamActivity = createStreamActivityNotifier(sessionId)
 
     try {
       while (true) {
@@ -1364,6 +1369,7 @@ class PiAgentRuntime implements AgentRuntimeBoundary, AgentRuntimePiAgentAccess 
         while (eventQueue.length > 0) {
           const event = eventQueue.shift()!
           const chunks = this.processEvent(event, sessionId)
+          if (chunks.length === 0 && event.type === 'message_update') signalStreamActivity()
           for (const chunk of chunks) {
             if (chunk.type === 'done') yieldedDone = true
             if (chunk.type === 'text') textChars += chunk.text?.length ?? 0
