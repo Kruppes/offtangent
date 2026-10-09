@@ -7,6 +7,7 @@ import type { AgentCore, EffectiveModel, ModelSelection, Database, NowSetMode, S
 import {
   EMPTY_STRAND_READ_STATE,
   InvalidInputError,
+  listActivePersonaIds,
   firstAwaitingStrandId,
   getStrandAttentions,
   getStrandReadStates,
@@ -381,13 +382,26 @@ export function createStrandsService(options: StrandsServiceOptions) {
   function patchStrand(userId: number, strandId: string, patch: PatchStrandBody): Thread {
     const existing = requireStrand(userId, strandId)
     const agentId = patch.agentId ?? existing.agentId
+    // Resolve against the database as well as persona folders: archived
+    // personas remain readable, but cannot become a strand's new identity.
+    if (agentId !== existing.agentId && !listActivePersonaIds({ db }).includes(agentId)) {
+      throw new StrandServiceError(400, 'unknown_agent', 'Unknown agentId')
+    }
     const workingMode = patch.workingMode ?? (agentId === 'main' ? existing.workingMode : 'main')
     if (workingMode === 'auto' && agentId !== 'main') {
       throw new StrandServiceError(400, 'invalid_working_mode', 'Auto mode requires the Main persona')
     }
     const identityChanged = agentId !== existing.agentId || workingMode !== existing.workingMode
-    if (identityChanged && options.getTurnRunner?.()?.hasActiveTurnInSession?.(userId, strandId)) {
-      throw new StrandServiceError(409, 'strand_busy', 'Wait for the current turn before changing persona or mode')
+    const core = options.getAgentCore()
+    // AgentCore task injections bypass TurnRunner. Its real strand queue counts
+    // waiting AND running work; checking synchronously before update/eviction
+    // closes the identity-change race without changing any worker's persona.
+    if (identityChanged && (
+      options.getTurnRunner?.()?.hasActiveTurnInSession?.(userId, strandId)
+      || (core?.getPendingMessageCount?.(existing.agentId, strandId) ?? 0) > 0
+      || (agentId !== existing.agentId && (core?.getPendingMessageCount?.(agentId, strandId) ?? 0) > 0)
+    )) {
+      throw new StrandServiceError(409, 'strand_busy', 'Wait for the current turn or task result before changing persona or mode')
     }
     if (patch.archived === true && !existing.archived) assertNotBusy(userId, strandId)
 

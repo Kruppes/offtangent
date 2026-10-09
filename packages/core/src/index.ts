@@ -26,6 +26,7 @@ export { buildAttachmentContext } from './attachment-context.js'
 export type { AttachmentContext } from './attachment-context.js'
 export { loadConfig, warnConfigReadFailed, getConfigDir, ensureConfigTemplates, getDefaultTimezone, getProjectRootDir, getReadmePath, getDocsPath, getAgentDocsPath, loadMultiPersonaSettings, loadCaptureModeSettings, loadCaptureDefaultAgentId } from './config.js'
 export type { MultiPersonaSettings } from './config.js'
+export { listActivePersonaIds } from './persona-directory.js'
 export { loadPersona, clearPersonaCache, invalidatePersonaCache, seedPersonaFiles, getPersonaDir, listPersonaIds } from './persona-loader.js'
 export type { PersonaContext } from './persona-loader.js'
 // Offtangent (SPEC 13.2, 13.3, 13.5): the persona record, the structured view

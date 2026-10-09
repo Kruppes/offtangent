@@ -1044,6 +1044,26 @@ describe('strand persona and working mode', () => {
     expect(db.prepare('SELECT COUNT(*) AS n FROM chat_messages WHERE session_id = ?').get(legacy.id)).toEqual({ n: count })
   })
 
+  it('rejects archived folder personas through HTTP but permits the current identity no-op', async () => {
+    fs.mkdirSync(path.join(tempDataDir, 'agents', 'oldie'), { recursive: true })
+    db.prepare('INSERT INTO personas (id, archived) VALUES (?, 1)').run('oldie')
+    try {
+      const strand = sessionManager.createThread('1', 'main', 'Archived validation')
+      const result = await api('PATCH', `/api/strands/${strand.id}`, { agentId: 'oldie' })
+      expect(result.status).toBe(400)
+      expect(result.body.code).toBe('unknown_agent')
+      expect(sessionManager.getThread('1', strand.id)?.agentId).toBe('main')
+      expect(evicted).toEqual([])
+      expect(db.prepare('SELECT COUNT(*) AS n FROM chat_messages WHERE session_id = ?').get(strand.id)).toEqual({ n: 0 })
+      const historical = sessionManager.createThread('1', 'oldie', 'Historical archived persona')
+      expect((await api('PATCH', `/api/strands/${historical.id}`, { agentId: 'oldie' })).status).toBe(200)
+      expect((await api('PATCH', `/api/strands/${historical.id}`, { agentId: 'main' })).status).toBe(200)
+    } finally {
+      db.prepare('DELETE FROM personas WHERE id = ?').run('oldie')
+      fs.rmSync(path.join(tempDataDir, 'agents', 'oldie'), { recursive: true, force: true })
+    }
+  })
+
   it('rejects unknown persona, invalid mode, specialist Auto, foreign ownership and active turns atomically', async () => {
     const strand = sessionManager.createThread('1', 'main', 'Validation')
     for (const patch of [{ agentId: 'missing' }, { agentId: '' }, { workingMode: 'bogus' }, { agentId: 'coder', workingMode: 'auto' }]) {
