@@ -829,11 +829,16 @@ describe('createTaskTool', () => {
       const agents = path.join(personaDir, 'agents')
       fs.mkdirSync(path.join(agents, 'samplebot'), { recursive: true })
       fs.writeFileSync(path.join(agents, 'samplebot', 'IDENTITY.md'), '- **Name:** samplebot\n- **Model:** samplebot-model\n')
+      // Identity-change boundaries reference the authenticated owner row.
+      db.prepare("INSERT INTO users (id, username, password_hash, role) VALUES (1, 'mode-test-user', 'fixture-hash', 'user')").run()
       const strand = sessionManager.createThread('1', 'main', 'samplebot topic', null, 'auto')
       const result = await personaTool('main').execute('samplebot', { prompt: 'Write a samplebot draft for Main to check', name: 'samplebot worker', persona: 'samplebot' })
       expect(result.details).not.toMatchObject({ error: true })
       const task = runner.getStore().list().find(t => t.name === 'samplebot worker')!
-      expect(task).toMatchObject({ agentId: 'samplebot', delegatedBy: 'main', model: 'samplebot-model', strandOrigin: strand.id })
+      expect(task).toMatchObject({ agentId: 'samplebot', delegatedBy: 'main', model: 'samplebot-model' })
+      // Strand origin is session lineage, not a property of the task row.
+      expect(db.prepare('SELECT parent_session_id, agent_id FROM sessions WHERE id = ?').get(task.sessionId!))
+        .toEqual({ parent_session_id: strand.id, agent_id: 'samplebot' })
       expect(sessionManager.getThread('1', strand.id)).toMatchObject({ agentId: 'main', workingMode: 'auto' })
       sessionManager.updateThread('1', strand.id, { workingMode: 'main' })
       expect(runner.getStore().getById(task.id)).toMatchObject({ agentId: 'samplebot', delegatedBy: 'main' })
