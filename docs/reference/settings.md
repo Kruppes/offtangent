@@ -31,7 +31,7 @@ The directory itself is created with `0700` mode the first time the backend runs
 
 The non-secret runtime config. Edited via every Settings UI panel except [Telegram](../settings/telegram) (which writes to `telegram.json`) and [Secrets](../settings/secrets) (which writes to `secrets.json`).
 
-The on-disk shape is a **superset** of [`SettingsContract`](https://github.com/) (`packages/core/src/contracts/settings.ts`): the contract describes what the API exchanges with the frontend; the file may also contain a few keys the UI doesn't surface (`tokenPriceTable`, `builtinTools`, `braveSearchApiKey`, `searxngUrl`, `tavilyApiKey`) plus dead fields from older versions until they get re-saved.
+The on-disk shape is a **superset** of [`SettingsContract`](https://github.com/) (`packages/core/src/contracts/settings.ts`): the contract describes what the API exchanges with the frontend; the file may also contain a few keys the UI doesn't surface (`tokenPriceTable`, `builtinTools`, `codemode`, `braveSearchApiKey`, `searxngUrl`, `tavilyApiKey`) plus dead fields from older versions until they get re-saved.
 
 ### Home Assistant MQTT (admin-only)
 
@@ -72,6 +72,7 @@ The on-disk shape is a **superset** of [`SettingsContract`](https://github.com/)
 | `instanceIdentity`                 | object                                                            | see below      | nested                                  | Self-identification of this installation, rendered as `<runtime_instance>` at the top of the system prompt.       |
 | `tokenPriceTable`                  | `Record<string, { input: number; output: number }>`               | seed prices    | not validated by API                    | Per-model USD/1M-token costs used by [Token Usage](../web-ui/token-usage). Merged on top of `DEFAULT_PRICE_TABLE`. |
 | `builtinTools`                     | object                                                            | see below      | not validated by API                    | Enable/disable built-in `web_search` and `web_fetch` tools, choose the search provider.                           |
+| `codemode`                         | object                                                            | `mode: "off"` | strict, see below (PUT only)          | Opt-in `codemode` tool: one sandboxed script calls several allowlisted tools in a single model turn.              |
 | `braveSearchApiKey`                | `string`                                                          | `""`           | not validated by API                    | **Legacy** — read at boot, migrated into `builtinTools.webSearch.braveSearchApiKey` if present.                   |
 | `searxngUrl`                       | `string`                                                          | `""`           | not validated by API                    | **Legacy** — read at boot, migrated into `builtinTools.webSearch.searxngUrl` if present.                          |
 | `tavilyApiKey`                     | `string`                                                          | `""`           | not validated by API                    | **Legacy** — read at boot, migrated into `builtinTools.webSearch.tavilyApiKey` if present.                       |
@@ -126,6 +127,36 @@ Stalls are aggregated on the **Token Usage** page (admin only): count, average a
 longest silence, and the split between recovered and aborted turns for the
 selected date range. Only stalls recorded after this feature shipped are counted
 — there is no historical backfill.
+
+### `codemode`
+
+Opt-in tool that lets the model write one short JavaScript script which calls several tools and returns only the result, instead of one model round trip per tool call. The script runs in a WASM QuickJS sandbox (`@earendil-works/pi-codemode`) without file, network or process access of its own; every nested call goes through the regular tool path (same `beforeToolCall`/`afterToolCall` hooks, same secret boundary). Applies to chat turns and background tasks alike. The key is not shown in the Settings UI; edit `settings.json` by hand or send it with `PUT /api/settings`.
+
+| Key | Type | Default | Validation | Meaning |
+|---|---|---|---|---|
+| `codemode.mode` | `"off" \| "readonly" \| "coding"` | `"off"` | enum | `off`: no tool, byte-identical requests. `readonly`: only read tools. `coding`: read tools plus `write_file`, `edit_file`, `shell` |
+| `codemode.models` | `string[]` | `["claude-", "gpt-"]` | non-empty strings | Model-id prefixes the tool is offered to; any other model never sees it |
+| `codemode.timeoutMs` | `number` | `120000` | integer 1000–600000 | Wall-clock limit of one script |
+| `codemode.memoryLimitBytes` | `number` | `67108864` (64 MiB) | integer 1 MiB–1 GiB | Sandbox heap limit |
+| `codemode.maxNestedCalls` | `number` | `50` | integer 1–200 | Tool calls one script may issue; further calls throw inside the script |
+| `codemode.maxConcurrentNestedCalls` | `number` | `4` | integer 1–16 | Nested tool calls running at the same time (per turn or task, across scripts); further calls wait in a FIFO queue. A waiting call never starts once the script has ended, timed out or been aborted; it rejects inside the script instead |
+| `codemode.maxOutputChars` | `number` | `20000` | integer 1000–1000000 | Inline output cap; the rest goes through the usual tool-output spill file |
+
+Callable from a script, and only if the tool is active in the turn anyway:
+
+- `readonly`: `read_file`, `list_files`, `web_search`, `web_fetch`, `search_memories`, `read_chat_history`, `recall_message`, `list_tasks`, `get_task`, `list_cronjobs`, `get_cronjob`, `list_agent_skills`, `email_list`, `email_folders`
+- `coding`: the above plus `write_file`, `edit_file`, `shell`
+- never: anything with external effect, cost or people in the loop (sending or reading mail, creating tasks/cronjobs/reminders, boards, files to the user, canvas, image generation, other agents/connectors, task steering, strand forks, voice, quota) and `codemode` itself. The lists are fixed in code (`packages/core/src/codemode-tool.ts`); the setting can only narrow, never widen them.
+
+Behaviour worth knowing:
+
+- The setting is read at the start of every turn and on every provider swap; no restart or reload hook is needed. Fail closed: if `mode` is not `off` and **any** `codemode` field is invalid (wrong type, out of range, unknown mode), the whole codemode is off — the tool is not registered — until the value is fixed. The server log names the field: `[codemode] invalid settings, codemode is off until they are fixed: codemode.maxNestedCalls must be an integer between 1 and 200; codemode switched off: mode "coding" is ignored while any codemode setting is invalid`.
+- Output is text only. Items a script emits with `image()` are discarded and replaced by the note `image output is not supported in codemode and was discarded`, so all output stays within `maxOutputChars`, the spill file and the secret sealing.
+- The transcript holds exactly one tool result per script. It starts with a summary line (`codemode: 3 calls (read_file×2, shell×1), 1.2 s`); `details.codemode.calls` logs up to 100 nested calls with arguments truncated to 2 KB and a `complete` flag.
+- Nested calls count against the task tool-call cap and the repeated-call guard like model-issued calls. Eco compacts only the codemode result, never the nested calls.
+- The final output is sealed by the secret boundary again, so a registered secret cannot leave through `text()`, `return`, `console` or an error message.
+- `PUT /api/settings` rejects the whole write (HTTP 400) on an invalid value or an unknown field inside `codemode`, and also when a field already stored in `settings.json` is invalid (it would keep codemode off); send a valid value for that field in the same write.
+- Not bounded by the settings: `memoryLimitBytes` limits only the sandbox heap, not what the host allocates while collecting the output (the library's own cap of 16 Mi characters / 100 000 output items applies there); and a chat turn has no overall tool-call guard like the 300-call cap of tasks, only the per-script caps above.
 
 ### `retry`
 

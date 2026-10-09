@@ -26,6 +26,7 @@ import {
   TASK_TELEGRAM_DELIVERY_VALUES,
   withLegacySettingsPayloadCompatibility,
   listPersonaIds,
+  resolveCodemodeSettings,
 } from '@axiom/core'
 
 export interface MergeGroupResult {
@@ -999,4 +1000,39 @@ export function mergeStt(
 
   settingsRaw.stt = existing
   return { error: null }
+}
+
+/**
+ * `codemode` (plan 2026-10-08-codemode). Strict: any invalid field rejects
+ * the whole write (HTTP 400), nothing is half-applied. Unknown keys are
+ * rejected too, so a typo can never be stored and silently ignored. The
+ * merged object is validated as well: core switches codemode off when any
+ * stored field is invalid, so such a write would not take effect.
+ */
+export function mergeCodemode(
+  body: Record<string, unknown>,
+  settingsRaw: Record<string, unknown>,
+): MergeGroupResult {
+  const codemode = body.codemode
+  if (codemode === undefined) return { error: null, changed: false }
+  if (!codemode || typeof codemode !== 'object' || Array.isArray(codemode)) {
+    return { error: 'codemode must be an object', changed: false }
+  }
+  const allowed = new Set(['mode', 'models', 'timeoutMs', 'memoryLimitBytes', 'maxNestedCalls', 'maxConcurrentNestedCalls', 'maxOutputChars'])
+  const unknown = Object.keys(codemode).filter(key => !allowed.has(key))
+  if (unknown.length > 0) return { error: `codemode: unknown field(s) ${unknown.join(', ')}`, changed: false }
+  const { problems } = resolveCodemodeSettings(codemode)
+  if (problems.length > 0) return { error: problems[0], changed: false }
+  const existing = (settingsRaw.codemode && typeof settingsRaw.codemode === 'object' && !Array.isArray(settingsRaw.codemode)
+    ? settingsRaw.codemode : {}) as Record<string, unknown>
+  const merged: Record<string, unknown> = { ...existing }
+  for (const [key, value] of Object.entries(codemode as Record<string, unknown>)) {
+    merged[key] = Array.isArray(value) ? value.map(v => (v as string).trim()) : value
+  }
+  // Core fails closed on ANY invalid field, so a stored (hand-edited) broken
+  // value next to a valid update would silently keep codemode off: reject it.
+  const mergedProblems = resolveCodemodeSettings(merged).problems
+  if (mergedProblems.length > 0) return { error: `stored ${mergedProblems[0]}`, changed: false }
+  settingsRaw.codemode = merged
+  return { error: null, changed: true }
 }

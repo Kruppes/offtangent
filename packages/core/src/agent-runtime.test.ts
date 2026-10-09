@@ -510,3 +510,71 @@ describe('AgentRuntime boundary', () => {
     expect(abortSpy).toHaveBeenCalledTimes(2)
   })
 })
+
+// Codemode wiring in the interactive runtime (plan 2026-10-08-codemode).
+// Synthetic settings only; the tool itself is covered in codemode-tool*.test.ts.
+describe('AgentRuntime codemode wiring', () => {
+  const baseConfig = { language: 'de', timezone: 'Europe/Berlin', builtinTools: { webSearch: { enabled: true } } }
+
+  function withConfig<T>(codemode: unknown, fn: () => T | Promise<T>): Promise<T> {
+    const mockedLoadConfig = vi.mocked(loadConfig)
+    const previous = mockedLoadConfig.getMockImplementation()
+    mockedLoadConfig.mockImplementation(() => ({ ...baseConfig, ...(codemode === undefined ? {} : { codemode }) }))
+    return Promise.resolve(fn()).finally(() => mockedLoadConfig.mockImplementation(previous!))
+  }
+
+  beforeEach(() => {
+    runtimeHarness.promptBehaviors = []
+    runtimeHarness.promptCalls = []
+  })
+
+  it('registers no codemode tool by default (mode off)', async () => {
+    await withConfig(undefined, () => {
+      const runtime = createAgentRuntime({ model: makeModel(), apiKey: 'k', db: initDatabase(':memory:'), tools: [] })
+      expect(runtime.getStateSnapshot().toolNames).not.toContain('codemode')
+    })
+  })
+
+  it('registers codemode for an allowlisted model and not for another one', async () => {
+    await withConfig({ mode: 'coding' }, () => {
+      const runtime = createAgentRuntime({ model: makeModel(), apiKey: 'k', db: initDatabase(':memory:'), tools: [] })
+      expect(runtime.getStateSnapshot().toolNames).toContain('codemode')
+    })
+    await withConfig({ mode: 'coding', models: ['claude-'] }, () => {
+      const runtime = createAgentRuntime({ model: makeModel(), apiKey: 'k', db: initDatabase(':memory:'), tools: [] })
+      expect(runtime.getStateSnapshot().toolNames).not.toContain('codemode')
+    })
+  })
+
+  it('re-reads the setting per turn and drops the tool on a swap to a non-allowlisted model', async () => {
+    const runtime = await withConfig(undefined, () =>
+      createAgentRuntime({ model: makeModel(), apiKey: 'k', db: initDatabase(':memory:'), tools: [] }))
+    expect(runtime.getStateSnapshot().toolNames).not.toContain('codemode')
+
+    await withConfig({ mode: 'readonly', models: ['gpt-'] }, async () => {
+      runtimeHarness.promptBehaviors.push(async (agent) => { agent.emit({ type: 'agent_end', messages: [] }) })
+      for await (const _chunk of runtime.streamPrompt('hello', 'session-cm')) { /* drain */ }
+      expect(runtime.getStateSnapshot().toolNames).toContain('codemode')
+
+      runtime.swapProvider({ enabledModels: ['local-model'] } as never, 'k2')
+      expect(runtime.getStateSnapshot().modelId).toBe('local-model')
+      expect(runtime.getStateSnapshot().toolNames).not.toContain('codemode')
+    })
+  })
+
+  it('never Eco-freezes a call a codemode script issued', async () => {
+    const db = initDatabase(':memory:')
+    const runtime = createAgentRuntime({ model: makeModel(), apiKey: 'k', db, tools: [] })
+    const internals = runtime as unknown as { currentSessionId: string | null; freezeEcoToolResult: (ctx: unknown) => Promise<unknown> }
+    internals.currentSessionId = 'session-eco'
+    const prepare = vi.spyOn(db, 'prepare')
+    const ctx = (id: string) => ({ toolCall: { id, name: 'read_file' }, result: { content: [{ type: 'text', text: 'x' }] } })
+
+    // Nested id: returns before even looking up the strand's Eco mode.
+    expect(await internals.freezeEcoToolResult(ctx('toolu_parent/cm-1'))).toBeUndefined()
+    expect(prepare).not.toHaveBeenCalled()
+    // A model-issued id takes the normal Eco path (reads the strand mode).
+    await internals.freezeEcoToolResult(ctx('toolu_parent'))
+    expect(prepare).toHaveBeenCalled()
+  })
+})

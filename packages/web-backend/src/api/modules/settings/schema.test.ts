@@ -8,6 +8,7 @@ import {
   mergeOfftangent,
   mergePrivacy,
   mergeRetry,
+  mergeCodemode,
   mergeStt,
   mergeTasks,
   mergeTts,
@@ -134,6 +135,41 @@ describe('settings schema', () => {
       error: 'watchdog.stallAbortMs must be greater than or equal to watchdog.stallWarnMs',
       changed: false,
     })
+  })
+
+  it('merges codemode strictly: invalid or unknown fields reject the write, valid fields are stored', () => {
+    const settingsRaw: Record<string, unknown> = {}
+    expect(mergeCodemode({}, settingsRaw)).toEqual({ error: null, changed: false })
+    expect(mergeCodemode({ codemode: 'on' }, settingsRaw)).toEqual({ error: 'codemode must be an object', changed: false })
+    expect(mergeCodemode({ codemode: { mode: 'yolo' } }, settingsRaw).error).toContain('codemode.mode')
+    expect(mergeCodemode({ codemode: { models: [''] } }, settingsRaw).error).toContain('codemode.models')
+    expect(mergeCodemode({ codemode: { timeoutMs: 10 } }, settingsRaw).error).toContain('codemode.timeoutMs')
+    expect(mergeCodemode({ codemode: { maxNestedCalls: 1.5 } }, settingsRaw).error).toContain('codemode.maxNestedCalls')
+    expect(mergeCodemode({ codemode: { maxNestedCalls: 201 } }, settingsRaw).error).toBe('codemode.maxNestedCalls must be an integer between 1 and 200')
+    expect(mergeCodemode({ codemode: { maxConcurrentNestedCalls: 0 } }, settingsRaw).error).toBe('codemode.maxConcurrentNestedCalls must be an integer between 1 and 16')
+    expect(mergeCodemode({ codemode: { maxConcurrentNestedCalls: 17 } }, settingsRaw).error).toContain('codemode.maxConcurrentNestedCalls')
+    expect(mergeCodemode({ codemode: { maxConcurrentNestedCalls: '4' } }, settingsRaw).error).toContain('codemode.maxConcurrentNestedCalls')
+    expect(mergeCodemode({ codemode: { mode: 'coding', maxNestedCalls: '1' } }, settingsRaw).error).toContain('codemode.maxNestedCalls')
+    expect(mergeCodemode({ codemode: { tools: ['email_send'] } }, settingsRaw).error).toContain('unknown field(s) tools')
+    expect(settingsRaw.codemode).toBeUndefined()
+
+    expect(mergeCodemode({ codemode: { mode: 'readonly', models: [' claude-'] } }, settingsRaw)).toEqual({ error: null, changed: true })
+    expect(mergeCodemode({ codemode: { maxNestedCalls: 20 } }, settingsRaw)).toEqual({ error: null, changed: true })
+    expect(settingsRaw.codemode).toEqual({ mode: 'readonly', models: ['claude-'], maxNestedCalls: 20 })
+    expect(mergeCodemode({ codemode: { maxNestedCalls: 200, maxConcurrentNestedCalls: 16 } }, settingsRaw)).toEqual({ error: null, changed: true })
+    expect(settingsRaw.codemode).toEqual({ mode: 'readonly', models: ['claude-'], maxNestedCalls: 200, maxConcurrentNestedCalls: 16 })
+  })
+
+  it('rejects a codemode write that a stored invalid field would keep switched off', () => {
+    // Synthetic hand-edited file: a broken guardrail is already on disk.
+    const settingsRaw: Record<string, unknown> = { codemode: { mode: 'off', maxNestedCalls: '1' } }
+    const result = mergeCodemode({ codemode: { mode: 'coding' } }, settingsRaw)
+    expect(result.changed).toBe(false)
+    expect(result.error).toContain('codemode.maxNestedCalls')
+    expect(settingsRaw.codemode).toEqual({ mode: 'off', maxNestedCalls: '1' })
+    // Fixing the broken field in the same write is accepted.
+    expect(mergeCodemode({ codemode: { mode: 'coding', maxNestedCalls: 10 } }, settingsRaw)).toEqual({ error: null, changed: true })
+    expect(settingsRaw.codemode).toEqual({ mode: 'coding', maxNestedCalls: 10 })
   })
 
   it('merges the retry policy with bounded values', () => {

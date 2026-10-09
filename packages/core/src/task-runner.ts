@@ -40,6 +40,7 @@ import { loadHeuristics } from './heuristics.js'
 import { TaskProgressGuard } from './task-progress-guard.js'
 import type { ProgressGuardTrip } from './task-progress-guard.js'
 import { cacheReadRatio } from './cache-stats.js'
+import { isNestedCodemodeCallId, loadCodemodeSettings, withCodemodeTool } from './codemode-tool.js'
 import { withSecretBoundary, redactMessages, sealSystemText } from './secret-boundary.js'
 import { buildWrapUpMessage, planWrapUp } from './task-wrap-up.js'
 import { buildTaskHandoff, extractHandoffSection } from './task-handoff.js'
@@ -873,15 +874,27 @@ export class TaskRunner {
       // secret boundary as the interactive runtime — tool results and error
       // texts are sealed, only `shell` resolves handles (D5).
       let effectiveTools = withSecretBoundary(this.options.tools)
+      let disabledTools: string[] = []
       if (overrides?.toolsOverride) {
         try {
-          const disabledTools: string[] = JSON.parse(overrides.toolsOverride)
-          if (Array.isArray(disabledTools) && disabledTools.length > 0) {
+          const parsed: unknown = JSON.parse(overrides.toolsOverride)
+          if (Array.isArray(parsed) && parsed.length > 0) {
+            disabledTools = parsed.filter((name): name is string => typeof name === 'string')
             effectiveTools = effectiveTools.filter(t => !disabledTools.includes(t.name))
           }
         } catch {
           // Invalid JSON — use all tools
         }
+      }
+      // Codemode (plan 2026-10-08-codemode): off by default, then the list is
+      // unchanged. Built from the tools this task actually has (after the
+      // override filter), so a script can never reach a disabled tool; the
+      // override can also disable `codemode` itself. Fails closed.
+      try {
+        effectiveTools = withCodemodeTool(effectiveTools, loadCodemodeSettings(), model.id, () => agent)
+          .filter(t => !disabledTools.includes(t.name))
+      } catch (err) {
+        console.error(`[task-runner] codemode tool assembly failed for task ${taskId}, continuing without it:`, err)
       }
 
       // Create isolated PiAgent
@@ -921,7 +934,28 @@ export class TaskRunner {
         // Real Eco (plan 2026-10-05-real-eco): a NEW tool result is compacted
         // once, before the model ever sees it, and that projection is what the
         // transcript keeps. Already-sent context is never touched.
+        // Codemode (plan 2026-10-08-codemode): a call a script issues emits no
+        // tool_execution_end event, so it is counted here, BEFORE it runs,
+        // against the same progress guard (tool-call cap + repeated-call
+        // guard) as a model-issued call. A trip blocks the call and tears the
+        // task down; the abort reaches the sandbox through the tool signal.
+        beforeToolCall: async (ctx) => {
+          if (!isNestedCodemodeCallId(ctx.toolCall.id)) return undefined
+          const running = this.runningTasks.get(taskId)
+          if (!running) return undefined
+          if (running.guardTripped || running.aborted) {
+            return { block: true, reason: 'Task is stopping; no further tool calls.' }
+          }
+          running.toolCallCount++
+          const tripped = this.checkProgressGuard(running, (guard) => guard.recordToolCall(ctx.toolCall.name, ctx.args))
+          if (!tripped) return undefined
+          const trip = running.guardTripped as ProgressGuardTrip | null
+          return { block: true, reason: trip?.message ?? 'Progress guard tripped.' }
+        },
         afterToolCall: async (ctx) => {
+          // Nested codemode calls never reach the transcript: only the
+          // codemode result itself is frozen.
+          if (isNestedCodemodeCallId(ctx.toolCall.id)) return undefined
           if (readStrandEcoMode(this.db, sessionId) !== 'on') return undefined
           if ((ctx.result as { structuredContent?: unknown }).structuredContent !== undefined) return undefined
           const frozen = freezeEcoToolResult({

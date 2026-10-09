@@ -38,6 +38,7 @@ import { createProviderQuotaTool } from './quota-tool.js'
 import { withSecretBoundary, redactMessages, sealSystemText, sealToolText } from './secret-boundary.js'
 import { commandInvokesVaultCli } from './secret-vault-cli.js'
 import { spillToolOutput } from './tool-output-spill.js'
+import { isNestedCodemodeCallId, loadCodemodeSettings, withCodemodeTool } from './codemode-tool.js'
 import type { QuotaServiceLike } from './quota-tool.js'
 import type { AbortScope, AgentRuntimeStateSnapshot, ResponseChunk } from './agent-runtime-types.js'
 import { loadHeuristics } from './heuristics.js'
@@ -750,6 +751,8 @@ function getActiveSkillEntries(): SkillPromptEntry[] {
 
 class PiAgentRuntime implements AgentRuntimeBoundary, AgentRuntimePiAgentAccess {
   private agent: PiAgent
+  /** Boundary-wrapped tools without `codemode`; codemode is derived per turn (plan 2026-10-08-codemode). */
+  private baseTools: AgentTool[] = []
   private model: Model<Api>
   private apiKey: string
   private db: Database
@@ -831,12 +834,15 @@ class PiAgentRuntime implements AgentRuntimeBoundary, AgentRuntimePiAgentAccess 
       }),
       ...askAgentTools,
     ])
+    this.baseTools = tools
 
     this.agent = new PiAgent({
       initialState: {
         systemPrompt,
         model: this.model,
-        tools,
+        // Codemode (plan 2026-10-08-codemode): off by default, then this is
+        // `tools` unchanged. Re-derived per turn in `refreshCodemodeTool`.
+        tools: this.toolsWithCodemode(),
         thinkingLevel: effectiveThinkingLevel,
       },
       streamFn: buildStreamFn(
@@ -900,7 +906,34 @@ class PiAgentRuntime implements AgentRuntimeBoundary, AgentRuntimePiAgentAccess 
     })
   }
 
+  /** `baseTools` plus `codemode` when the setting and the current model allow it. Fails closed to `baseTools`. */
+  private toolsWithCodemode(): AgentTool[] {
+    try {
+      return withCodemodeTool(this.baseTools, loadCodemodeSettings(), this.model.id, () => this.agent)
+    } catch (err) {
+      console.error('[agent-runtime] codemode tool assembly failed, continuing without it:', err)
+      return this.baseTools
+    }
+  }
+
+  /**
+   * Re-derive the codemode tool at the start of a turn: the setting is read
+   * per turn and `swapProvider` may have changed the model. The description
+   * is deterministic, so an unchanged allowlist declares no tool change and
+   * the prompt cache prefix stays stable.
+   */
+  private refreshCodemodeTool(): void {
+    // pi-agent-core diffs tool DECLARATIONS (name, description, schema), not
+    // instances, so a rebuilt codemode tool with the same allowlist and
+    // limits declares no tool change. Always assigning keeps the freshly
+    // read limits (memory, output cap) in effect.
+    this.agent.state.tools = this.toolsWithCodemode()
+  }
+
   private async freezeEcoToolResult(ctx: AfterToolCallContext): Promise<AfterToolCallResult | undefined> {
+    // A call a codemode script issued never reaches the model or the
+    // transcript; only the codemode result itself is frozen (plan 2026-10-08-codemode).
+    if (isNestedCodemodeCallId(ctx.toolCall.id)) return undefined
     const sessionId = this.currentSessionId
     if (!sessionId || readStrandEcoMode(this.db, sessionId) !== 'on') return undefined
     if ((ctx.result as { structuredContent?: unknown }).structuredContent !== undefined) return undefined
@@ -1020,6 +1053,9 @@ class PiAgentRuntime implements AgentRuntimeBoundary, AgentRuntimePiAgentAccess 
     this.apiKey = apiKey
     this.providerConfig = provider
     this.agent.state.model = this.model
+    // The codemode tool is gated by a model allowlist: a fallback to a model
+    // outside it must lose the tool at once, not only on the next turn.
+    this.refreshCodemodeTool()
   }
 
   getProviderManager(): ProviderManager | undefined {
@@ -1287,6 +1323,7 @@ class PiAgentRuntime implements AgentRuntimeBoundary, AgentRuntimePiAgentAccess 
 
     // Start the prompt (non-blocking)
     this.currentSessionId = sessionId
+    this.refreshCodemodeTool()
     const started = continueTranscript ? this.agent.continue() : this.agent.prompt(text, images)
     const promptPromise = started.then(() => {
       done = true

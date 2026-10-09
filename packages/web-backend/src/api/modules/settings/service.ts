@@ -15,6 +15,7 @@ import {
   mergeOfftangent,
   mergePrivacy,
   mergeRetry,
+  mergeCodemode,
   mergeStt,
   mergeTasks,
   mergeTts,
@@ -154,6 +155,10 @@ export function createSettingsService(options: SettingsRouterOptions = {}): Sett
 
     const retryMerge = mergeRetry(body, settingsRaw)
     if (retryMerge.error) throw new SettingsValidationError(retryMerge.error)
+
+    // Read on every turn by core (loadCodemodeSettings) — no reload hook needed.
+    const codemodeMerge = mergeCodemode(body, settingsRaw)
+    if (codemodeMerge.error) throw new SettingsValidationError(codemodeMerge.error)
 
     const offtangentMerge = mergeOfftangent(body, settingsRaw)
     if (offtangentMerge.error) throw new SettingsValidationError(offtangentMerge.error)

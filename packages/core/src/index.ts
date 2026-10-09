@@ -714,6 +714,8 @@ export type { SessionSummary, SessionSummaryDelta } from './session-summary-sche
 export { getLatestSessionSummary, insertSessionSummary, listSessionSummaries, ensureSessionSummariesTable } from './session-summary-store.js'
 export type { SessionSummaryRow } from './session-summary-store.js'
 export { loadHeuristics, resolveHeuristics, DEFAULT_HEURISTICS, setHeuristicsOverrideForTests } from './heuristics.js'
+export { resolveCodemodeSettings, DEFAULT_CODEMODE_SETTINGS, CODEMODE_SETTING_BOUNDS, CODEMODE_READONLY_TOOLS, CODEMODE_CODING_EXTRA_TOOLS, CODEMODE_NEVER_TOOLS } from './codemode-tool.js'
+export type { CodemodeSettings, CodemodeMode } from './codemode-tool.js'
 export { toIsoUtc, toIsoUtcOrNull, timestampSortKey } from './timestamps.js'
 export { detectTopicShift, toSessionMessages, resolveTopicShiftThresholds, extractTopicTags, topicOverlap, queryMemoriesFts, buildFactInjection } from './session-store.js'
 export type { TopicShiftThresholds, TopicShiftResult, SessionMessage } from './session-store.js'
