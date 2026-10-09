@@ -222,6 +222,44 @@ describe('strand mutation workflows', () => {
 
 describe('eco mode switch', () => {
   const eco = (enabled: boolean, last: unknown = null) => ({ eco: { enabled, observedContextLimitTokens: null, inputBudgetTokens: 28000, outputReserveTokens: 4096, contextFallback: false, last } })
+  it('compact leaf stays a labelled switch and preserves native context settings and keyboard info access', async () => {
+    const api = setup()
+    const cw = { choice: null, presets: [32768, 65536], supported: true, state: 'unchanged' }
+    api.mockResolvedValueOnce({ eco: { ...eco(false).eco, contextWindow: cw } })
+    api.mockResolvedValueOnce({ eco: { ...eco(true).eco, contextWindow: cw } })
+    const { root } = mount(EcoSwitch, { strandId: 's', compact: true })
+    await flush()
+    expect(visibleText(root)).not.toContain('eco.off')
+    expect(byTestId(root, 'eco-leaf-off')).toBeDefined()
+    expect(String(byTestId(root, 'eco-leaf')!.props.class)).toContain('text-muted-foreground')
+    const toggle = byTestId(root, 'eco-toggle')!
+    expect(toggle.props.role).toBe('switch')
+    expect(toggle.props['aria-label']).toBe('eco.label: eco.off')
+    expect(toggle.props['aria-checked']).toBe(false)
+    const info = byTestId(root, 'eco-info')!
+    ;(info.props.onClick as () => void)(); await flush()
+    expect(visibleText(root)).toContain('eco.cwShort')
+    expect(visibleText(root)).toContain('eco.hint')
+    ;(info.props.onKeydown as (e: unknown) => void)({ key: 'Escape' }); await flush()
+    expect(visibleText(root)).not.toContain('eco.cwShort')
+    ;(toggle.props.onClick as () => void)(); await flush()
+    expect(api).toHaveBeenLastCalledWith('/api/strands/s/eco', { method: 'PATCH', body: '{"enabled":true}' })
+    expect(byTestId(root, 'eco-toggle')!.props['aria-checked']).toBe(true)
+    expect(byTestId(root, 'eco-leaf-off')).toBeUndefined()
+    expect(String(byTestId(root, 'eco-leaf')!.props.class)).toContain('text-green-500')
+  })
+  it('compact: a rejected leaf toggle keeps off and shows an alert even with the info panel closed', async () => {
+    const api = setup().mockResolvedValueOnce(eco(false)).mockRejectedValueOnce(new ApiError('raw', 500, {}))
+    const { root } = mount(EcoSwitch, { strandId: 's', compact: true })
+    await flush()
+    ;(byTestId(root, 'eco-toggle')!.props.onClick as () => void)(); await flush()
+    expect(api).toHaveBeenLastCalledWith('/api/strands/s/eco', { method: 'PATCH', body: '{"enabled":true}' })
+    expect(byTestId(root, 'eco-toggle')!.props['aria-checked']).toBe(false)
+    expect(byTestId(root, 'eco-leaf-off')).toBeDefined()
+    expect(visibleText(root)).toContain('eco.saveError')
+    expect(all(root).some(n => n.props.role === 'alert' && text(n).includes('eco.saveError'))).toBe(true)
+    expect(visibleText(root)).not.toContain('raw')
+  })
   it('loads off by default, switches on with a strict PATCH and shows estimates', async () => {
     const api = setup()
     api.mockResolvedValueOnce(eco(false))
@@ -516,12 +554,15 @@ describe('strand header: eco and context window follow the effective model', () 
     const { root } = mount(headerWith(setStrandModel), { strandId: 's' }); await flush()
     context[0]!.resolve(native); await flush()
     expect(byTestId(root, 'eco-cw-select')).toBeDefined()
-    // in the top row, right next to the model (the switch's wrapper is `display: contents`)
+    // Compact status row; native context controls remain reachable via the info popover.
     const wrapper = byTestId(root, 'eco-mode')!
-    expect(String(wrapper.props.class).split(' ')).toContain('contents')
+    expect(String(wrapper.props.class).split(' ')).toContain('inline-flex')
     expect(byTestId(wrapper, 'eco-context-window')).toBeDefined()
     const row = wrapper.parent!
-    expect(row.children.some(n => text(n).includes('strandDetail.model: qwen3:32b'))).toBe(true)
+    expect(row.props['data-testid']).toBe('strand-status-row')
+    expect(byTestId(row, 'strand-model-select')!.props.title).toBe('strandDetail.model: qwen3:32b')
+    expect(byTestId(row, 'eco-leaf')).toBeDefined()
+    expect(String(row.props.class)).toContain('flex-nowrap')
 
     const dialog = all(root).find(n => n.tag === 'model-picker-dialog')!
     ;(dialog.props.onSelect as (s: unknown) => Promise<void>)({ providerId: 'openai-compat', modelId: 'gpt-oss' })

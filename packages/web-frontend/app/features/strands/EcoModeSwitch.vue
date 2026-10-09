@@ -5,8 +5,8 @@
  * report an eco status (older server): no switch without effect.
  *
  * Compact header layout (plan 2026-10-06-eco-header): the component renders
- * inline into the header's model row (`display: contents`). Visible are only
- * short controls and short states; every long explanation lives in an info
+ * inline into the header's status row. Compact mode shows an MDI leaf switch
+ * and moves the native context picker into its reachable info panel; every long explanation lives in an info
  * panel that is the controls' aria-describedby target, shown on tap/Enter
  * (mobile), on keyboard focus of the info button and as hover `title`.
  * The context-window picker exists only when the server reports the strand's
@@ -20,6 +20,8 @@ import { ecoSavedPercent, useStrandEcoApi, type StrandEcoStatus } from '~/api/st
 const props = defineProps<{
   strandId: string
   disabled?: boolean
+  /** Icon-only status-row control; context settings stay in the info popover. */
+  compact?: boolean
   /** Identity of the strand's effective model (provider + model). A change re-reads the status; undefined = not tracked. */
   modelKey?: string | null
 }>()
@@ -55,7 +57,8 @@ async function load(quiet = false) {
     else state.value = 'error'
   } finally { if (mine === seq) reading.value = false }
 }
-async function toggle() {
+async function toggle(event?: Event) {
+  positionInfo(event)
   if (!status.value || saving.value || props.disabled) return
   const next = !status.value.enabled
   saving.value = true
@@ -131,13 +134,28 @@ const cwInactive = computed(() => !!cw.value && cw.value.choice !== null && cw.v
 const cwFixed = computed(() => mlxFixed.value && cw.value?.choice === null)
 // Info panels: tap/Enter toggles (mobile and keyboard), Escape closes.
 const openInfo = ref<'eco' | 'cw' | null>(null)
-function toggleInfo(which: 'eco' | 'cw') { openInfo.value = openInfo.value === which ? null : which }
+const infoPosition = ref({ top: '96px', left: '12px' })
+function positionInfo(event?: Event) {
+  // Fixed positioning escapes the header's scroll/overflow clipping on phones.
+  if (props.compact && typeof HTMLElement !== 'undefined' && event?.currentTarget instanceof HTMLElement) {
+    const rect = event.currentTarget.getBoundingClientRect()
+    const width = Math.min(272, window.innerWidth * 0.75)
+    infoPosition.value = {
+      top: `${Math.min(rect.bottom + 4, window.innerHeight * 0.5)}px`,
+      left: `${Math.max(12, Math.min(rect.left, window.innerWidth - width - 12))}px`,
+    }
+  }
+}
+function toggleInfo(which: 'eco' | 'cw', event?: Event) {
+  positionInfo(event)
+  openInfo.value = openInfo.value === which ? null : which
+}
 function infoKey(event: KeyboardEvent) { if (event.key === 'Escape') openInfo.value = null }
 const ecoInfoText = computed(() => {
   const s = status.value
   if (!s) return ''
   if (!s.enabled) return t('eco.hint')
-  const parts = [budgetLabel.value, s.contextFallback ? t('eco.fallback') : null,
+  const parts = [s.last?.degraded ? t('eco.degraded') : null, budgetLabel.value, s.contextFallback ? t('eco.fallback') : null,
     s.observedContextLimitTokens ? t('eco.observed', { limit: s.observedContextLimitTokens }) : null,
     saved.value !== null ? t('eco.saved', { percent: saved.value }) : t('eco.noData')]
   return parts.filter(Boolean).join(' · ')
@@ -149,13 +167,36 @@ onMounted(() => { void load() })
 </script>
 
 <template>
-  <div v-if="state !== 'unavailable'" class="contents" data-testid="eco-mode">
-    <p v-if="state === 'loading'" role="status" class="px-1 text-sm text-muted-foreground">{{ t('eco.loading') }}</p>
+  <div v-if="state !== 'unavailable'" :class="compact ? 'relative inline-flex shrink-0 items-center' : 'contents'" data-testid="eco-mode">
+    <p v-if="state === 'loading'" role="status" :aria-label="t('eco.loading')" :class="compact ? 'inline-flex h-11 w-11 items-center justify-center text-muted-foreground' : 'px-1 text-sm text-muted-foreground'">
+      <span v-if="compact" class="h-4 w-4 animate-spin rounded-full border-2 border-current border-t-transparent" aria-hidden="true" />
+      <template v-else>{{ t('eco.loading') }}</template>
+    </p>
     <p v-else-if="state === 'error'" role="alert" class="flex flex-wrap items-center gap-2 text-sm">
-      {{ t('eco.loadError') }}
-      <Button class="min-h-11" variant="outline" type="button" @click="load()">{{ t('strandDetail.retry') }}</Button>
+      <span :class="compact ? 'sr-only' : ''">{{ t('eco.loadError') }}</span>
+      <Button :class="compact ? 'min-h-11 min-w-11 px-1' : 'min-h-11'" :aria-label="`${t('eco.loadError')}, ${t('strandDetail.retry')}`" variant="outline" type="button" @click="load()"><template v-if="compact">!</template><template v-else>{{ t('strandDetail.retry') }}</template></Button>
     </p>
     <template v-else-if="status">
+      <!-- Eco switch: one short control, the explanation in the info panel. -->
+      <span class="inline-flex items-center gap-1">
+        <Button :class="compact ? 'min-h-11 min-w-11 px-1 [&_svg]:size-6' : 'min-h-11'" variant="ghost" type="button" role="switch" data-testid="eco-toggle"
+          :aria-label="`${t('eco.label')}: ${t(status.enabled ? 'eco.on' : 'eco.off')}`" :title="ecoInfoText" :aria-checked="status.enabled" :disabled="saving || disabled" :aria-describedby="`${idBase}-info`" @click="toggle">
+          <svg v-if="compact" data-testid="eco-leaf" :class="status.enabled ? 'text-green-500' : 'text-muted-foreground'" width="24" height="24" viewBox="0 0 24 24" aria-hidden="true">
+            <path fill="currentColor" d="M17 8C8 10 5.9 16.17 3.82 21.32L5.71 22L6.66 19.7C7.14 19.87 7.64 20 8 20C19 20 22 3 22 3C21 5 14 5.25 9 6.25C4 7.25 2 11.5 2 13.5C2 15.5 3.75 17.25 3.75 17.25C7 8 17 8 17 8Z" />
+            <path v-if="!status.enabled" data-testid="eco-leaf-off" d="M3 3L21 21" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" />
+          </svg>
+          <template v-else>{{ t('eco.label') }}: {{ t(status.enabled ? 'eco.on' : 'eco.off') }}</template>
+        </Button>
+        <span v-if="status.enabled && status.last?.degraded && !compact" class="rounded-md border border-border px-2 py-1 text-xs font-medium text-foreground" data-testid="eco-degraded">{{ t('eco.degraded') }}</span>
+        <button type="button" data-testid="eco-info"
+          class="inline-flex min-h-11 min-w-11 items-center justify-center rounded-md text-muted-foreground hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring pointer-fine:min-h-8 pointer-fine:min-w-8"
+          :aria-label="t('eco.infoEco')" :aria-describedby="`${idBase}-info`" :title="ecoInfoText"
+          :aria-expanded="openInfo === 'eco'" :aria-controls="`${idBase}-info`" @click="toggleInfo('eco', $event)" @keydown="infoKey">
+          <AppIcon name="info" size="sm" />
+        </button>
+      </span>
+      <p v-if="compact && saveError" role="alert" :style="infoPosition" class="fixed z-40 w-48 rounded-md border border-destructive bg-background p-2 text-sm">{{ t('eco.saveError') }}</p>
+      <div data-testid="eco-settings" :style="compact ? infoPosition : undefined" :class="compact ? (openInfo ? 'fixed z-40 flex max-h-[50dvh] w-[min(17rem,75vw)] flex-wrap gap-2 overflow-y-auto rounded-md border border-border bg-background p-2 shadow-lg' : 'hidden') : 'contents'">
       <!-- Context window (native Ollama only): short label + select, details in the info panel. -->
       <span v-if="cw" class="inline-flex min-w-0 items-center gap-1" data-testid="eco-context-window">
         <label :for="cwFixed ? undefined : `${idBase}-cw`" :title="t('eco.cwLabel')" class="text-sm text-muted-foreground">{{ t('eco.cwShort') }}</label>
@@ -173,7 +214,7 @@ onMounted(() => { void load() })
         <button type="button" data-testid="eco-cw-info"
           class="inline-flex min-h-11 min-w-11 items-center justify-center rounded-md text-muted-foreground hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring pointer-fine:min-h-8 pointer-fine:min-w-8"
           :aria-label="t('eco.infoCw')" :aria-describedby="`${idBase}-cw-info`" :title="t(`eco.cwState.${mlxFixed ? 'runner_fixed' : cw.state}`)"
-          :aria-expanded="openInfo === 'cw'" :aria-controls="`${idBase}-cw-info`" @click="toggleInfo('cw')" @keydown="infoKey">
+          :aria-expanded="openInfo === 'cw'" :aria-controls="`${idBase}-cw-info`" @click="toggleInfo('cw', $event)" @keydown="infoKey">
           <AppIcon name="info" size="sm" />
         </button>
       </span>
@@ -184,21 +225,7 @@ onMounted(() => { void load() })
           :disabled="recheckBusy" @click="recheck">{{ t('eco.cwRecheck') }}</button>
       </span>
       <p v-if="cw && cwError" role="alert" class="text-sm">{{ t('eco.cwSaveError') }}</p>
-      <!-- Eco switch: one short control, the explanation in the info panel. -->
-      <span class="inline-flex items-center gap-1">
-        <Button class="min-h-11" variant="ghost" type="button" role="switch" data-testid="eco-toggle"
-          :aria-checked="status.enabled" :disabled="saving || disabled" :aria-describedby="`${idBase}-info`" @click="toggle">
-          {{ t('eco.label') }}: {{ t(status.enabled ? 'eco.on' : 'eco.off') }}
-        </Button>
-        <span v-if="status.enabled && status.last?.degraded" class="rounded-md border border-border px-2 py-1 text-xs font-medium text-foreground" data-testid="eco-degraded">{{ t('eco.degraded') }}</span>
-        <button type="button" data-testid="eco-info"
-          class="inline-flex min-h-11 min-w-11 items-center justify-center rounded-md text-muted-foreground hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring pointer-fine:min-h-8 pointer-fine:min-w-8"
-          :aria-label="t('eco.infoEco')" :aria-describedby="`${idBase}-info`" :title="ecoInfoText"
-          :aria-expanded="openInfo === 'eco'" :aria-controls="`${idBase}-info`" @click="toggleInfo('eco')" @keydown="infoKey">
-          <AppIcon name="info" size="sm" />
-        </button>
-      </span>
-      <p v-if="saveError" role="alert" class="text-sm">{{ t('eco.saveError') }}</p>
+      <p v-if="saveError && !compact" role="alert" class="text-sm">{{ t('eco.saveError') }}</p>
       <!-- Info panels: always in the DOM as describedby targets; visible when opened. -->
       <span v-if="cw" :id="`${idBase}-cw-info`" data-testid="eco-cw-info-panel"
         :class="openInfo === 'cw' ? 'block' : 'hidden'"
@@ -215,6 +242,7 @@ onMounted(() => { void load() })
       <span :id="`${idBase}-info`" data-testid="eco-info-panel"
         :class="openInfo === 'eco' ? 'block' : 'hidden'"
         class="basis-full rounded-md border border-border bg-muted p-2 text-xs text-muted-foreground [overflow-wrap:anywhere]">{{ ecoInfoText }}</span>
+      </div>
       <span class="sr-only" role="status" aria-live="polite">{{ announce }}</span>
     </template>
   </div>

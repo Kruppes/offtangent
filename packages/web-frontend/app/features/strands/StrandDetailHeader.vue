@@ -173,29 +173,33 @@ onMounted(() => { void load(); void loadProjects(); void loadPersonas() })
     </nav>
     <Alert v-if="error" variant="destructive" role="alert" class="my-2"><AlertDescription>{{ error }}</AlertDescription><Button class="min-h-11" variant="ghost" :disabled="saving" @click="load">{{ t('strandDetail.retry') }}</Button><Button v-if="strand" class="min-h-11" variant="ghost" @click="error = ''">{{ t('strandDetail.dismiss') }}</Button></Alert>
     <template v-if="strand">
-      <section class="mt-2 flex flex-wrap items-center gap-2 text-sm" data-testid="strand-identity" :aria-label="t('strandDetail.identity')">
-        <label class="flex min-w-0 flex-col gap-1">{{ t('strandDetail.persona') }}
-          <select data-testid="strand-persona-select" :value="strand.agentId" :disabled="saving || turnActive" class="min-h-11 max-w-full rounded-md border border-input bg-background px-2" @change="changeIdentity($event, 'agentId')">
-            <option v-if="!personas.some(p => p.id === strand!.agentId)" :value="strand.agentId">{{ strand.agentId }}</option>
-            <option v-for="p in personas.filter(p => !p.archived || p.id === strand!.agentId)" :key="p.id" :value="p.id">{{ p.displayName }}</option>
-          </select>
-        </label>
-        <label class="flex min-w-0 flex-col gap-1">{{ t('strandDetail.workingMode') }}
-          <select data-testid="strand-mode-select" :value="strand.workingMode || 'main'" :disabled="saving || turnActive" class="min-h-11 rounded-md border border-input bg-background px-2" @change="changeIdentity($event, 'workingMode')">
-            <option value="main">{{ t('strandDetail.modeMain') }}</option><option value="auto">{{ t('strandDetail.modeAuto') }}</option>
-          </select>
-        </label>
-        <p class="basis-full text-xs text-muted-foreground">{{ t('strandDetail.identityHint') }}</p>
-        <Button v-if="personaError" variant="ghost" class="min-h-11" @click="loadPersonas">{{ t('strandDetail.retry') }}</Button>
+      <!-- One compact status row: context, Eco, persona/mode, model. Long names
+           truncate visually; native labels and the existing pickers remain accessible. -->
+      <section class="mt-2 flex min-w-0 flex-nowrap items-center gap-1 text-sm" data-testid="strand-status-row" :aria-label="t('strandDetail.identity')">
+        <slot name="status" />
+        <EcoModeSwitch compact :strand-id="strandId" :disabled="loading || saving" :model-key="effectiveModelKey" />
+        <p :id="`identity-hint-${strandId}`" class="sr-only">{{ t('strandDetail.identityHint') }}</p>
+        <div class="flex min-w-[5.75rem] flex-1 items-center gap-1" data-testid="strand-identity">
+          <label class="min-w-11 flex-1 overflow-hidden" :title="t('strandDetail.identityHint')"><span class="sr-only">{{ t('strandDetail.persona') }}</span>
+            <select data-testid="strand-persona-select" :aria-describedby="`identity-hint-${strandId}`" :value="strand.agentId" :disabled="saving || turnActive" class="min-h-11 w-full min-w-0 rounded-md border border-input bg-background px-1" @change="changeIdentity($event, 'agentId')">
+              <option v-if="!personas.some(p => p.id === strand!.agentId)" :value="strand.agentId">{{ strand.agentId }}</option>
+              <option v-for="p in personas.filter(p => !p.archived || p.id === strand!.agentId)" :key="p.id" :value="p.id">{{ p.displayName }}</option>
+            </select>
+          </label>
+          <label class="min-w-11 flex-1 overflow-hidden" :title="t('strandDetail.identityHint')"><span class="sr-only">{{ t('strandDetail.workingMode') }}</span>
+            <select data-testid="strand-mode-select" :aria-describedby="`identity-hint-${strandId}`" :value="strand.workingMode || 'main'" :disabled="saving || turnActive" class="min-h-11 w-full min-w-0 rounded-md border border-input bg-background px-1" @change="changeIdentity($event, 'workingMode')">
+              <option value="main">{{ t('strandDetail.modeMain') }}</option><option value="auto">{{ t('strandDetail.modeAuto') }}</option>
+            </select>
+          </label>
+        </div>
+        <Button data-testid="strand-model-select" class="min-h-11 min-w-11 max-w-[35%] flex-1 overflow-hidden px-1" variant="ghost" :disabled="saving" :title="`${t('strandDetail.model')}: ${displayedModel?.modelId || t('strandDetail.defaultModel')}`" @click="openModels"><span class="block truncate">{{ displayedModel?.modelId || t('strandDetail.defaultModel') }}</span><span class="sr-only">{{ t('strandDetail.model') }}</span></Button>
       </section>
-      <div class="mt-2 flex flex-wrap items-center gap-2 text-sm [overflow-wrap:anywhere]">
+      <div class="mt-1 flex flex-wrap items-center gap-2 text-xs [overflow-wrap:anywhere]">
         <span class="rounded-md bg-muted px-2 py-1">{{ projectName || t('strandDetail.noProject') }}</span>
         <span v-for="tag in strand.tags" :key="tag" class="rounded-md border border-border px-2 py-1">#{{ tag }}</span>
-        <Button class="min-h-11 max-w-full whitespace-normal break-all" variant="ghost" :disabled="saving" @click="openModels">{{ t('strandDetail.model') }}: {{ displayedModel?.modelId || t('strandDetail.defaultModel') }}</Button>
+        <Button v-if="personaError" variant="ghost" class="min-h-11" @click="loadPersonas">{{ t('strandDetail.retry') }}</Button>
         <span v-if="modelDiffers" role="status" class="rounded-md bg-muted px-2 py-1 text-muted-foreground [overflow-wrap:anywhere]">{{ t('strandDetail.answeringWith', { model: runningModel!.modelId, next: strand.effectiveModel?.modelId || t('strandDetail.defaultModel') }) }}</span>
         <Button v-if="strand.pinnedModel" class="min-h-11" variant="ghost" :disabled="saving" @click="chooseModel(null)">{{ t('strandDetail.resetModel') }}</Button>
-        <!-- Context window (native Ollama only) + Eco, compact and next to the model (plan 2026-10-06-eco-header). -->
-        <EcoModeSwitch :strand-id="strandId" :disabled="loading || saving" :model-key="effectiveModelKey" />
         <Button class="min-h-11" variant="ghost" :disabled="saving" :aria-pressed="strand.pinned" @click="mutate(() => api.patch(strandId, { pinned: !strand!.pinned }))">{{ t(strand.pinned ? 'strandDetail.unpin' : 'strandDetail.pin') }}</Button>
       </div>
       <section v-if="strand.projectSuggestion && !strand.projectId" class="mt-2 flex flex-wrap items-center gap-2 rounded-lg border border-border p-2" :aria-label="t('strandDetail.suggestion')">

@@ -128,6 +128,8 @@ const ringLabel = computed(() => {
       <StrandDetailHeader :key="threadId" :strand-id="threadId" :show-back="shell.tier.value === 'one'" @back="backToInbox" @updated="updated" @deleted="deleted">
         <template #actions>
           <StrandRunningHint :hint="hint" @open="openActivity" />
+        </template>
+        <template #status>
           <button ref="contextToggleRef" type="button" data-testid="context-toggle"
             class="inline-flex h-11 w-11 shrink-0 items-center justify-center rounded-lg text-muted-foreground hover:bg-accent hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
             :class="contextOpen ? 'selected-marker-bottom bg-accent text-foreground' : ''"
