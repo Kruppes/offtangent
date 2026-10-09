@@ -389,7 +389,11 @@ export function createChatRouter(options: ChatRouterOptions): Router {
       where.push('cm.session_id = ?')
       params.push(sessionId)
     }
-    if (agentId !== undefined) {
+    // Only an explicitly switched strand drops the speaker filter. Ordinary
+    // persona-scoped history keeps its contract; the user scope below is never removed.
+    const switchedStrand = sessionId && db.prepare("SELECT 1 FROM chat_messages WHERE session_id = ? AND user_id = ? AND metadata LIKE ? LIMIT 1")
+      .get(sessionId, userId, '%"type":"strand_identity_change"%')
+    if (agentId !== undefined && !switchedStrand) {
       where.push('cm.agent_id = ?')
       params.push(agentId)
     }

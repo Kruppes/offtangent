@@ -1105,7 +1105,7 @@ export class AgentCore {
     // (no channel/user). Bring it to the exact prompt every later turn of this
     // strand will send, so the cached prefix stays stable from turn 1 on.
     // No-op when the prompt is already current.
-    runtime.refreshSystemPrompt(channel, currentUser, agentId)
+    runtime.refreshSystemPrompt(channel, currentUser, agentId, sessionId)
 
     // Strand context by token budget (SPEC 11.3): trim the verbatim window,
     // then prepend strand notes, an index of the older messages and capped
@@ -1281,7 +1281,7 @@ export class AgentCore {
     // row — never from the injection text and never whatever profile the last
     // turn of another user left behind. Anything unclear → no profile at all.
     const owner = this.resolveStrandOwnerForInjection(sessionId, targetUserId)
-    runtime.refreshSystemPrompt(owner.channel, owner.currentUser, agentId)
+    runtime.refreshSystemPrompt(owner.channel, owner.currentUser, agentId, sessionId)
 
     // Same turn-local note as an interactive turn: the answer to a finished
     // task is spoken by the server too, so the agent must not attach its own

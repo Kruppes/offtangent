@@ -2145,7 +2145,13 @@
     "actions": "Strand-Aktionen",
     "resetModel": "Standardmodell verwenden",
     "nowSlotRemoved": "Der Now-Slot wird ebenfalls entfernt.",
-    "noNowSlot": "Kein Now-Slot ist belegt."
+    "noNowSlot": "Kein Now-Slot ist belegt.",
+    "identity": "Strand-Identität",
+    "persona": "Persona",
+    "workingMode": "Arbeitsmodus",
+    "modeMain": "Main · vorzugsweise inline",
+    "modeAuto": "Auto · vorzugsweise delegieren",
+    "identityHint": "Auto nutzt Main als Orchestrator. Eine Fachpersona ist ein Direktchat. Wechsel erhalten Verlauf und bestehende Tasks."
   },
   "projectsW3": {
     "detail": "Projekt",

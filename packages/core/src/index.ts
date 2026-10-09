@@ -1,3 +1,5 @@
+export { isStrandWorkingMode, readStrandWorkingMode, strandWorkingModePrompt } from './strand-working-mode.js'
+export type { StrandWorkingMode } from './strand-working-mode.js'
 export { AgentHeartbeatService, DEFAULT_AGENT_HEARTBEAT_SETTINGS } from './agent-heartbeat.js'
 export type { AgentHeartbeatSettings, AgentHeartbeatNightMode, AgentHeartbeatServiceOptions } from './agent-heartbeat.js'
 export { initDatabase, getDatabase, isValidUsername, validateUsername } from './database.js'

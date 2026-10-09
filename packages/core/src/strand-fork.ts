@@ -1,3 +1,4 @@
+import { readStrandWorkingMode, type StrandWorkingMode } from './strand-working-mode.js'
 /**
  * strand-fork.ts: branching a strand instead of cutting it.
  *
@@ -72,7 +73,7 @@ export class ForkStrandError extends Error {
 
 /** The slice of `SessionManager` a fork needs; keeps this module testable. */
 export interface ForkSessionManagerLike {
-  createThread(userId: string, agentId?: string, title?: string | null, projectId?: string | null): { id: string }
+  createThread(userId: string, agentId?: string, title?: string | null, projectId?: string | null, workingMode?: StrandWorkingMode): { id: string }
   getThread(userId: string, strandId: string): {
     id: string
     agentId: string
@@ -341,9 +342,9 @@ export function forkStrand(input: ForkStrandInput): StrandFork {
   // the fork, so it degrades to "no project" exactly like a capture does.
   let child: { id: string }
   try {
-    child = sessions.createThread(userId, parent.agentId, title, inheritProject ? parent.projectId : null)
+    child = sessions.createThread(userId, parent.agentId, title, inheritProject ? parent.projectId : null, readStrandWorkingMode(db, parent.id))
   } catch {
-    child = sessions.createThread(userId, parent.agentId, title, null)
+    child = sessions.createThread(userId, parent.agentId, title, null, readStrandWorkingMode(db, parent.id))
   }
 
   const forkedAt = new Date().toISOString()

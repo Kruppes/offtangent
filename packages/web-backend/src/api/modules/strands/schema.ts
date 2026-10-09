@@ -1,4 +1,4 @@
-import { parseContextWindowChoice } from '@axiom/core'
+import { isStrandWorkingMode, type StrandWorkingMode, parseContextWindowChoice } from '@axiom/core'
 import { normalizeSessionId, resolveAgentId } from '../../../persona-request.js'
 import { STRAND_SEARCH_MAX_LENGTH, STRAND_SEARCH_MIN_LENGTH } from './search.js'
 
@@ -157,6 +157,8 @@ export function parseNowSetBody(body: unknown): ParseResult<string[]> {
 }
 
 export interface PatchStrandBody {
+  agentId?: string
+  workingMode?: StrandWorkingMode
   archived?: boolean
   pinned?: boolean
   title?: string | null
@@ -170,6 +172,15 @@ export interface PatchStrandBody {
 export function parsePatchStrandBody(body: unknown): ParseResult<PatchStrandBody> {
   const b = (typeof body === 'object' && body !== null ? body : {}) as Record<string, unknown>
   const value: PatchStrandBody = {}
+  if (b.agentId !== undefined) {
+    const agentId = typeof b.agentId === 'string' && b.agentId.trim() ? resolveAgentId(b.agentId) : null
+    if (!agentId) return { ok: false, error: 'Unknown agentId', code: 'unknown_agent' }
+    value.agentId = agentId
+  }
+  if (b.workingMode !== undefined) {
+    if (!isStrandWorkingMode(b.workingMode)) return { ok: false, error: 'workingMode must be main or auto', code: 'invalid_working_mode' }
+    value.workingMode = b.workingMode
+  }
   if (b.archived !== undefined) {
     if (typeof b.archived !== 'boolean') return { ok: false, error: 'archived must be a boolean', code: 'invalid_archived' }
     value.archived = b.archived
@@ -185,7 +196,7 @@ export function parsePatchStrandBody(body: unknown): ParseResult<PatchStrandBody
     value.title = b.title as string | null
   }
   if (Object.keys(value).length === 0) {
-    return { ok: false, error: 'Nothing to update: pass archived, pinned or title', code: 'empty_patch' }
+    return { ok: false, error: 'Nothing to update: pass archived, pinned, title, agentId or workingMode', code: 'empty_patch' }
   }
   return { ok: true, value }
 }

@@ -791,6 +791,7 @@ describe('createTaskTool', () => {
         db,
         personaBaseDir: path.join(personaDir, 'agents'),
         getCurrentAgentId: () => caller,
+        getParentSessionId: () => sessionManager.listThreads('1').find(t => t.workingMode === 'auto')?.id ?? null,
         getDefaultProvider: () => mockProvider,
         resolveProvider: () => mockProvider,
         resolveModelInput: opts.resolveModelInput ?? ((input) => ({
@@ -822,6 +823,21 @@ describe('createTaskTool', () => {
       const closed = db.prepare('SELECT success, finished_at FROM persona_delegations WHERE task_id = ?').get(task.id) as { success: number; finished_at: string | null }
       expect(closed.success).toBe(0)
       expect(closed.finished_at).not.toBeNull()
+    })
+
+    it('Main Auto delegates samplebot execution without moving the strand or rewriting worker identity on a mode switch', async () => {
+      const agents = path.join(personaDir, 'agents')
+      fs.mkdirSync(path.join(agents, 'samplebot'), { recursive: true })
+      fs.writeFileSync(path.join(agents, 'samplebot', 'IDENTITY.md'), '- **Name:** samplebot\n- **Model:** samplebot-model\n')
+      const strand = sessionManager.createThread('1', 'main', 'samplebot topic', null, 'auto')
+      const result = await personaTool('main').execute('samplebot', { prompt: 'Write a samplebot draft for Main to check', name: 'samplebot worker', persona: 'samplebot' })
+      expect(result.details).not.toMatchObject({ error: true })
+      const task = runner.getStore().list().find(t => t.name === 'samplebot worker')!
+      expect(task).toMatchObject({ agentId: 'samplebot', delegatedBy: 'main', model: 'samplebot-model', strandOrigin: strand.id })
+      expect(sessionManager.getThread('1', strand.id)).toMatchObject({ agentId: 'main', workingMode: 'auto' })
+      sessionManager.updateThread('1', strand.id, { workingMode: 'main' })
+      expect(runner.getStore().getById(task.id)).toMatchObject({ agentId: 'samplebot', delegatedBy: 'main' })
+      runner.abortTask(task.id, 'cleanup')
     })
 
     it('an explicit model beats the persona model', async () => {

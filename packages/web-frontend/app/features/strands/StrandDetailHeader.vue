@@ -3,6 +3,7 @@ import { computed, onMounted, ref, watch } from 'vue'
 import type { Thread, Project } from '@axiom/core'
 import { useModelsApi, type ModelSelection, type SelectableModel } from '~/api/models'
 import { useProjectsApi } from '~/api/projects'
+import { usePersonasApi, type PersonaListItem } from '~/api/personas'
 import StrandActions from './StrandActions.vue'
 import EcoModeSwitch from './EcoModeSwitch.vue'
 import { strandErrorKey, useStrandDetailApi, type StrandDetail } from './detailApi'
@@ -13,6 +14,9 @@ const { t } = useI18n()
 const api = useStrandDetailApi()
 const modelApi = useModelsApi()
 const projectApi = useProjectsApi()
+const personaApi = usePersonasApi()
+const personas = ref<PersonaListItem[]>([])
+const personaError = ref(false)
 const strand = ref<StrandDetail | null>(null)
 const loading = ref(true)
 const saving = ref(false)
@@ -68,6 +72,19 @@ async function load() {
   catch (cause) { error.value = t(strandErrorKey(cause)) }
   finally { loading.value = false }
 }
+async function loadPersonas() {
+  personaError.value = false
+  try { personas.value = await personaApi.listPersonas() }
+  catch { personaError.value = true }
+}
+async function changeIdentity(event: Event, field: 'agentId' | 'workingMode') {
+  const value = (event.target as HTMLSelectElement).value
+  if (!strand.value) return
+  const patch = field === 'workingMode'
+    ? { workingMode: value as 'main' | 'auto', ...(value === 'auto' ? { agentId: 'main' } : {}) }
+    : { agentId: value, ...(value !== 'main' ? { workingMode: 'main' as const } : {}) }
+  await mutate(() => api.patch(props.strandId, patch))
+}
 async function loadProjects() {
   projectsError.value = false
   try { projects.value = await projectApi.list() }
@@ -118,7 +135,7 @@ async function chooseModel(selection: ModelSelection | null) {
   } catch (cause) { modelError.value = t(strandErrorKey(cause)); error.value = modelError.value }
   finally { saving.value = false }
 }
-onMounted(() => { void load(); void loadProjects() })
+onMounted(() => { void load(); void loadProjects(); void loadPersonas() })
 </script>
 
 <template>
@@ -156,6 +173,21 @@ onMounted(() => { void load(); void loadProjects() })
     </nav>
     <Alert v-if="error" variant="destructive" role="alert" class="my-2"><AlertDescription>{{ error }}</AlertDescription><Button class="min-h-11" variant="ghost" :disabled="saving" @click="load">{{ t('strandDetail.retry') }}</Button><Button v-if="strand" class="min-h-11" variant="ghost" @click="error = ''">{{ t('strandDetail.dismiss') }}</Button></Alert>
     <template v-if="strand">
+      <section class="mt-2 flex flex-wrap items-center gap-2 text-sm" data-testid="strand-identity" :aria-label="t('strandDetail.identity')">
+        <label class="flex min-w-0 flex-col gap-1">{{ t('strandDetail.persona') }}
+          <select data-testid="strand-persona-select" :value="strand.agentId" :disabled="saving || turnActive" class="min-h-11 max-w-full rounded-md border border-input bg-background px-2" @change="changeIdentity($event, 'agentId')">
+            <option v-if="!personas.some(p => p.id === strand!.agentId)" :value="strand.agentId">{{ strand.agentId }}</option>
+            <option v-for="p in personas.filter(p => !p.archived || p.id === strand!.agentId)" :key="p.id" :value="p.id">{{ p.displayName }}</option>
+          </select>
+        </label>
+        <label class="flex min-w-0 flex-col gap-1">{{ t('strandDetail.workingMode') }}
+          <select data-testid="strand-mode-select" :value="strand.workingMode || 'main'" :disabled="saving || turnActive" class="min-h-11 rounded-md border border-input bg-background px-2" @change="changeIdentity($event, 'workingMode')">
+            <option value="main">{{ t('strandDetail.modeMain') }}</option><option value="auto">{{ t('strandDetail.modeAuto') }}</option>
+          </select>
+        </label>
+        <p class="basis-full text-xs text-muted-foreground">{{ t('strandDetail.identityHint') }}</p>
+        <Button v-if="personaError" variant="ghost" class="min-h-11" @click="loadPersonas">{{ t('strandDetail.retry') }}</Button>
+      </section>
       <div class="mt-2 flex flex-wrap items-center gap-2 text-sm [overflow-wrap:anywhere]">
         <span class="rounded-md bg-muted px-2 py-1">{{ projectName || t('strandDetail.noProject') }}</span>
         <span v-for="tag in strand.tags" :key="tag" class="rounded-md border border-border px-2 py-1">#{{ tag }}</span>

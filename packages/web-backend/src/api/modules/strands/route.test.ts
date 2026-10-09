@@ -8,7 +8,7 @@ import fs from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
 import express from 'express'
-import { initDatabase, saveProviders, SessionManager, insertSessionSummary, putStrandProjectSuggestion } from '@axiom/core'
+import { initDatabase, saveProviders, SessionManager, TaskStore, insertSessionSummary, putStrandProjectSuggestion } from '@axiom/core'
 import type { AgentCore, Database, Tag, Thread } from '@axiom/core'
 import { createStrandsRouters } from './route.js'
 import { configureNowSetResolver } from '../../../now-set-limit.js'
@@ -1005,5 +1005,56 @@ describe('strand context telemetry', () => {
     const strand = sessionManager.createThread('1', 'main', 'Auth')
     const res = await fetch(`${baseUrl}/api/strands/${strand.id}/context`)
     expect(res.status).toBe(401)
+  })
+})
+
+
+describe('strand persona and working mode', () => {
+  it('preserves identity for historical strands and persists all transitions without losing history or workers', async () => {
+    const legacy = sessionManager.createThread('1', 'coder', 'Direct specialist')
+    expect(legacy).toMatchObject({ agentId: 'coder', workingMode: 'main' })
+    db.prepare('INSERT INTO chat_messages (session_id, user_id, role, content, agent_id) VALUES (?, 1, ?, ?, ?)')
+      .run(legacy.id, 'user', 'Original context', 'coder')
+    const store = new TaskStore(db)
+    const worker = store.create({ name: 'Specialist worker', prompt: 'work', triggerType: 'user', agentId: 'coder', delegatedBy: 'main', sessionId: legacy.id })
+    store.update(worker.id, { status: 'running' })
+    const transitions = [
+      { agentId: 'main', workingMode: 'auto' },
+      { workingMode: 'main' },
+      { agentId: 'coder' },
+      { agentId: 'main', workingMode: 'auto' },
+      { agentId: 'coder' },
+      { agentId: 'main', workingMode: 'main' },
+    ] as const
+    for (const patch of transitions) {
+      const result = await api('PATCH', `/api/strands/${legacy.id}`, patch)
+      expect(result.status).toBe(200)
+      const expected = { agentId: 'agentId' in patch ? patch.agentId : 'main', workingMode: 'workingMode' in patch ? patch.workingMode : 'main' }
+      expect(result.body.strand).toMatchObject(expected)
+      expect((await api('GET', `/api/strands/${legacy.id}`)).body.strand).toMatchObject(expected)
+      expect(store.getById(worker.id)).toMatchObject({ agentId: 'coder', delegatedBy: 'main', status: 'running' })
+    }
+    const rows = db.prepare('SELECT content, metadata FROM chat_messages WHERE session_id = ? ORDER BY id').all(legacy.id) as Array<{ content: string; metadata: string | null }>
+    expect(rows[0].content).toBe('Original context')
+    expect(rows.slice(1)).toHaveLength(transitions.length)
+    expect(rows.slice(1).every(row => JSON.parse(row.metadata!).type === 'strand_identity_change')).toBe(true)
+    expect(evicted.some(e => e.agentId === 'coder' && e.sessionId === legacy.id)).toBe(true)
+    const count = rows.length
+    expect((await api('PATCH', `/api/strands/${legacy.id}`, { workingMode: 'main' })).status).toBe(200)
+    expect(db.prepare('SELECT COUNT(*) AS n FROM chat_messages WHERE session_id = ?').get(legacy.id)).toEqual({ n: count })
+  })
+
+  it('rejects unknown persona, invalid mode, specialist Auto, foreign ownership and active turns atomically', async () => {
+    const strand = sessionManager.createThread('1', 'main', 'Validation')
+    for (const patch of [{ agentId: 'missing' }, { agentId: '' }, { workingMode: 'bogus' }, { agentId: 'coder', workingMode: 'auto' }]) {
+      expect((await api('PATCH', `/api/strands/${strand.id}`, patch)).status).toBe(400)
+    }
+    const foreign = sessionManager.createThread('2', 'main', 'Other user')
+    expect((await api('PATCH', `/api/strands/${foreign.id}`, { workingMode: 'auto' })).status).toBe(404)
+    busySessions.push(strand.id)
+    expect((await api('PATCH', `/api/strands/${strand.id}`, { workingMode: 'auto' })).status).toBe(409)
+    expect((await api('PATCH', `/api/strands/${strand.id}`, { agentId: 'coder' })).status).toBe(409)
+    expect(sessionManager.getThread('1', strand.id)).toMatchObject({ agentId: 'main', workingMode: 'main' })
+    expect(db.prepare('SELECT COUNT(*) AS n FROM chat_messages WHERE session_id = ?').get(strand.id)).toEqual({ n: 0 })
   })
 })

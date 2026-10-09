@@ -76,6 +76,25 @@ describe('database', () => {
     legacyDb.close()
   }
 
+  it('adds a persisted working mode without rewriting historic persona or history', () => {
+    const dbPath = tmpDbPath()
+    createLegacyDatabase(dbPath)
+    const legacy = new BetterSqlite3(dbPath)
+    legacy.exec("ALTER TABLE sessions ADD COLUMN agent_id TEXT NOT NULL DEFAULT 'samplebot'")
+    legacy.close()
+    const first = initDatabase(dbPath)
+    const row = first.prepare('SELECT id, agent_id, working_mode FROM sessions').get() as { id: string, agent_id: string, working_mode: string }
+    expect(row).toMatchObject({ agent_id: 'samplebot', working_mode: 'main' })
+    expect(first.prepare('SELECT COUNT(*) AS n FROM chat_messages WHERE session_id = ?').get(row.id)).toEqual({ n: 2 })
+    first.prepare("UPDATE sessions SET agent_id = 'main', working_mode = 'auto' WHERE id = ?").run(row.id)
+    first.close()
+    const reopened = initDatabase(dbPath)
+    expect(reopened.prepare('SELECT agent_id, working_mode FROM sessions WHERE id = ?').get(row.id)).toEqual({ agent_id: 'main', working_mode: 'auto' })
+    expect(reopened.prepare('SELECT COUNT(*) AS n FROM chat_messages WHERE session_id = ?').get(row.id)).toEqual({ n: 2 })
+    expect(() => reopened.prepare("UPDATE sessions SET working_mode = 'invalid' WHERE id = ?").run(row.id)).toThrow()
+    reopened.close()
+  })
+
   it('creates database with new schema, virtual tables, triggers, and indexes', () => {
     const db = initDatabase(tmpDbPath())
 

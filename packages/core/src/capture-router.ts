@@ -562,8 +562,9 @@ Schema:
 }
 
 Rules:
+- New strands use Main as orchestrator unless capture.personaHint explicitly selects a direct specialist chat. Topic expertise belongs in delegated workers, never infer a specialist orchestrator from the topic.
 - "append" requires "strandId" from the candidates. "link" requires "strandId" (the primary strand the capture is appended to) and "secondaryStrandId" (a second candidate the capture explicitly refers to). "new_strand" requires "newStrand" with a title of at most 60 characters, a personaId from the persona list, and tags.
-- Choose "new_strand" when no candidate is a real match and the capture introduces a subject that is absent from every candidate title, tag and summary. Prefer the capture's persona hint, else the persona of the closest candidate, else the default persona.
+- Choose "new_strand" when no candidate is a real match and the capture introduces a subject that is absent from every candidate title, tag and summary. Use the capture's explicit persona hint for a direct chat; otherwise use Main, even when a specialist candidate is closest.
 - "confidence" is a float between 0 and 1 for the chosen action. Be honest: 0.85 or more only for an unmistakable match, 0.4 to 0.7 when plausible but unsure, below 0.4 when guessing.
 - "tags": one to three short lowercase slugs that describe the capture; reuse known tags where they fit.
 - "alternatives": at most 3 entries, best first, never repeating the chosen action and target. May be empty.
@@ -708,12 +709,9 @@ export function parseRouterOutput(text: string, input: RouterInput): ParseRouter
     const nsObj = ns as Record<string, unknown>
     const title = typeof nsObj.title === 'string' ? nsObj.title.replace(/\s+/g, ' ').trim().slice(0, ROUTER_TITLE_MAX) : ''
     if (!title) return { ok: false, error: 'newStrand.title is required' }
-    let personaId = typeof nsObj.personaId === 'string' ? nsObj.personaId.trim() : ''
-    if (!input.personas.includes(personaId)) {
-      personaId = input.capture.personaHint && input.personas.includes(input.capture.personaHint)
-        ? input.capture.personaHint
-        : input.defaultPersona
-    }
+    const personaId = input.capture.personaHint && input.personas.includes(input.capture.personaHint)
+      ? input.capture.personaHint
+      : 'main'
     // Strict like `strandId` (SPEC 4.3): this project is really written on the
     // created strand, so an id the user does not own is a parse error.
     let projectId: string | null = null
@@ -801,9 +799,7 @@ export function guardLowConfidenceAppend(proposal: RouterProposal, input: Router
     || 'New strand'
   const personaId = input.capture.personaHint && input.personas.includes(input.capture.personaHint)
     ? input.capture.personaHint
-    : target && input.personas.includes(target.personaId)
-      ? target.personaId
-      : input.defaultPersona
+    : 'main'
 
   const kept: DecisionAlternative[] = [{
     action: 'append',
@@ -852,7 +848,7 @@ export function syntheticProposal(input: RouterInput, reason: string): RouterPro
   const title = deriveStrandTitle(input.capture.text, ROUTER_TITLE_MAX) || 'New strand'
   const personaId = input.capture.personaHint && input.personas.includes(input.capture.personaHint)
     ? input.capture.personaHint
-    : input.defaultPersona
+    : 'main'
   return {
     action: 'new_strand',
     strandId: null,

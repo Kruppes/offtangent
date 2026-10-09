@@ -2145,7 +2145,13 @@
     "actions": "Strand actions",
     "resetModel": "Use default model",
     "nowSlotRemoved": "The Now slot will also be removed.",
-    "noNowSlot": "No Now slot is occupied."
+    "noNowSlot": "No Now slot is occupied.",
+    "identity": "Strand identity",
+    "persona": "Persona",
+    "workingMode": "Working mode",
+    "modeMain": "Main · inline first",
+    "modeAuto": "Auto · delegation first",
+    "identityHint": "Auto uses Main as orchestrator. A specialist selection is a direct chat. Changes preserve history and existing tasks."
   },
   "projectsW3": {
     "detail": "Project",

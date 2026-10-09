@@ -56,6 +56,10 @@ type WriteClass = 'sealed-user-input' | 'system-text' | 'model-text' | 'tool-tex
  */
 const WRITE_SITES: Record<string, { class: WriteClass; why: string }> = {
   // ---------------------------------------------------------------- core
+  'core/src/session-manager.ts#updateThread': {
+    class: 'system-text',
+    why: 'Identity boundary composed from validated persona ids and working-mode enums, not from user message text. Existing conversation and task rows are not rewritten.',
+  },
   'core/src/turn-runner.ts#saveChatMessage': {
     class: 'sealed-user-input',
     why: 'The shared row writer of every interactive turn (user, assistant, tool, system). `startTurn` seals the user text of the turn (user tier) before this runs, so the `user` row can only hold handles.',

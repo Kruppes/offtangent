@@ -748,3 +748,18 @@ describe('declaresSelfNote', () => {
     expect(addressStrength('Nur als Notiz: du musst noch die Reifen wechseln, schau mal.')).toBe('none')
   })
 })
+
+
+describe('Main orchestration versus explicit specialist direct chats', () => {
+  it.each([null, 'main', 'samplebot'])('topic-only model selection does not pick a specialist; explicit %s is respected', personaHint => {
+    const data = input({
+      personas: ['main', 'samplebot'], defaultPersona: 'samplebot',
+      capture: { ...input().capture, text: 'Draft a samplebot post about AI', personaHint },
+    })
+    const result = parseRouterOutput(JSON.stringify({ action: 'new_strand', newStrand: { title: 'samplebot post', personaId: 'samplebot', tags: [] }, confidence: 0.9 }), data)
+    expect(result.ok).toBe(true)
+    if (!result.ok) throw new Error(result.error)
+    expect(result.proposal.newStrand?.personaId).toBe(personaHint ?? 'main')
+    expect(syntheticProposal(data, 'fallback').newStrand?.personaId).toBe(personaHint ?? 'main')
+  })
+})

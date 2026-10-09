@@ -18,7 +18,7 @@ function loadPage(path: string, overrides: Record<string, unknown> = {}): Compon
   const script = compileScript(descriptor, { id: path, inlineTemplate: true })
   const { outputText } = transpileModule(script.content, { compilerOptions: { module: ModuleKind.CommonJS } })
   const exports: { default?: Component } = {}
-  const modules: Record<string, unknown> = { vue: Vue, '~/composables/useShellCommands': shellCommands, './detailApi': detailApi, '~/api/strandW5b': strandW5b, '~/api/models': { useModelsApi: () => ({ listModels: async () => [] }) }, '~/api/projects': { useProjectsApi: () => ({ list: async () => [] }) }, './StrandActions.vue': { default: defineComponent({ render: () => h('aside') }) }, './EcoModeSwitch.vue': { default: defineComponent({ render: () => h('span') }) }, '~/api/strandEco': strandEco, ...overrides }
+  const modules: Record<string, unknown> = { vue: Vue, '~/composables/useShellCommands': shellCommands, './detailApi': detailApi, '~/api/strandW5b': strandW5b, '~/api/models': { useModelsApi: () => ({ listModels: async () => [] }) }, '~/api/projects': { useProjectsApi: () => ({ list: async () => [] }) }, '~/api/personas': { usePersonasApi: () => ({ listPersonas: async () => [{ id: 'main', displayName: 'Main' }, { id: 'coder', displayName: 'Coder' }] }) }, './StrandActions.vue': { default: defineComponent({ render: () => h('aside') }) }, './EcoModeSwitch.vue': { default: defineComponent({ render: () => h('span') }) }, '~/api/strandEco': strandEco, ...overrides }
   new Function('require', 'exports', outputText)((name: string) => {
     if (!(name in modules)) throw new Error(`Unexpected import: ${name}`)
     return modules[name]
@@ -570,5 +570,49 @@ describe('strand header: eco and context window follow the effective model', () 
     await flush()
     expect(api.mock.calls.map(c => c[0])).toEqual(['/api/strands/s', '/api/strands/s/context', '/api/strands/s'])
     expect(byTestId(root, 'eco-cw-select')).toBeDefined()
+  })
+})
+
+
+describe('persona and working mode header controls', () => {
+  it('keeps explicit specialists direct and allows every Main/Auto transition', async () => {
+    let strand = { id: 'identity', title: 'Context stays', tags: [], projectId: null, pinned: false, agentId: 'coder', workingMode: 'main' }
+    const api = setup()
+    api.mockImplementation(async (url: string, options?: { method?: string, body?: string }) => {
+      if (url !== '/api/strands/identity') throw new Error(`Unexpected ${url}`)
+      if (options?.method === 'PATCH') strand = { ...strand, ...JSON.parse(options.body!) }
+      return { strand }
+    })
+    const { root } = mount(Header, { strandId: 'identity' }); await flush()
+    const change = async (testId: string, value: string) => {
+      const select = byTestId(root, testId)!
+      expect(select).toBeDefined()
+      await (select.props.onChange as (event: unknown) => unknown)({ target: { value } })
+      await flush()
+    }
+    expect(text(root)).toContain('strandDetail.identityHint')
+    await change('strand-mode-select', 'auto')
+    expect(strand).toMatchObject({ agentId: 'main', workingMode: 'auto' })
+    await change('strand-mode-select', 'main')
+    expect(strand).toMatchObject({ agentId: 'main', workingMode: 'main' })
+    await change('strand-persona-select', 'coder')
+    expect(strand).toMatchObject({ agentId: 'coder', workingMode: 'main' })
+    await change('strand-mode-select', 'auto')
+    await change('strand-persona-select', 'coder')
+    expect(strand).toMatchObject({ agentId: 'coder', workingMode: 'main' })
+    await change('strand-persona-select', 'main')
+    expect(strand).toMatchObject({ agentId: 'main', workingMode: 'main' })
+    expect(api.mock.calls.filter(([, o]) => o?.method === 'PATCH')).toHaveLength(6)
+  })
+
+  it('does not optimistically change persona/mode when the server rejects an active turn', async () => {
+    const strand = { id: 'busy', title: 'Busy', tags: [], projectId: null, pinned: false, agentId: 'main', workingMode: 'main' }
+    const api = setup().mockResolvedValueOnce({ strand }).mockRejectedValueOnce(new Error('strand busy'))
+    const { root } = mount(Header, { strandId: 'busy' }); await flush()
+    const mode = byTestId(root, 'strand-mode-select')!
+    await (mode.props.onChange as (event: unknown) => unknown)({ target: { value: 'auto' } }); await flush()
+    expect(byTestId(root, 'strand-mode-select')!.props.value).toBe('main')
+    expect(text(root)).toContain('strandDetail.error')
+    expect(api).toHaveBeenCalledTimes(2)
   })
 })

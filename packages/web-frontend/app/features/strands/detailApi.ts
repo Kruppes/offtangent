@@ -31,7 +31,7 @@ export function useStrandDetailApi() {
   const path = (id: string) => `/api/strands/${encodeURIComponent(id)}`
   return {
     async get(id: string) { return (await apiFetch<{ strand: StrandDetail }>(path(id))).strand },
-    async patch(id: string, patch: { title?: string | null; pinned?: boolean; archived?: boolean }) {
+    async patch(id: string, patch: { title?: string | null; pinned?: boolean; archived?: boolean; agentId?: string; workingMode?: 'main' | 'auto' }) {
       return (await apiFetch<{ strand: Thread }>(path(id), { method: 'PATCH', body: JSON.stringify(patch) })).strand
     },
     preview(id: string) { return apiFetch<StrandDeletePreview>(`${path(id)}/delete-preview`) },

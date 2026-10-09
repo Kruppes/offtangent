@@ -136,6 +136,11 @@ export async function routeTaskOutcome(deps: TaskOutcomeDeps, input: TaskOutcome
   if (anchor) agentId = taskOwnerAgentId(anchor.task)
 
   if (strandOrigin) {
+    // A user may have changed the orchestrator since this worker started.
+    // Keep the task's execution identity intact, but inject through the strand's current owner.
+    const current = deps.db.prepare("SELECT agent_id FROM sessions WHERE id = ? AND (user_id = ? OR (user_id IS NULL AND session_user = ?)) AND type = 'interactive'")
+      .get(strandOrigin, userId, String(userId)) as { agent_id: string | null } | undefined
+    if (current) agentId = current.agent_id ?? 'main'
     const sessionId = strandOrigin
     deps.injectIntoStrand({
       task,

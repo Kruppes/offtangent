@@ -539,3 +539,15 @@ describe('deliverSubtaskResultToParent', () => {
     expect(await deliverSubtaskResultToParent(no.rt, { id: 'p', status: 'running' }, 'c1', 'x')).toBe(false)
   })
 })
+
+
+it('delivers an existing worker through the new strand persona without rewriting execution identity', async () => {
+  const strand = sessionManager.createThread('1', 'main', 'Auto orchestration', null, 'auto')
+  const worker = store.create({ name: 'Worker', prompt: 'result', triggerType: 'user', sessionId: backgroundSession('task', strand.id), agentId: 'builder', delegatedBy: 'main' })
+  sessionManager.updateThread('1', strand.id, { agentId: 'coder' })
+  const done = store.update(worker.id, { status: 'completed', resultStatus: 'completed' })!
+  const deliveries: string[] = []
+  await routeTaskOutcome(deps({ injectIntoStrand: ({ agentId, strandId }) => { deliveries.push(`${strandId}:${agentId}`) } }), { task: done, injection: 'worker report', userId: 1, agentId: 'builder', durationMinutes: 1 })
+  expect(deliveries).toEqual([`${strand.id}:coder`])
+  expect(store.getById(worker.id)).toMatchObject({ agentId: 'builder', delegatedBy: 'main' })
+})

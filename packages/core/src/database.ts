@@ -743,6 +743,9 @@ export function initDatabase(dbPath?: string): Database {
   if (!threadCols.find(c => c.name === 'archived')) {
     db.exec("ALTER TABLE sessions ADD COLUMN archived INTEGER NOT NULL DEFAULT 0")
   }
+  if (!threadCols.find(c => c.name === 'working_mode')) {
+    db.exec("ALTER TABLE sessions ADD COLUMN working_mode TEXT NOT NULL DEFAULT 'main' CHECK (working_mode IN ('main', 'auto'))")
+  }
   // Per-strand model pins. Additive only: the production sessions table is
   // large, so this migration deliberately performs no rebuild or backfill.
   if (!threadCols.find(c => c.name === 'model_id')) {

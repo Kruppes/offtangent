@@ -1,3 +1,4 @@
+import { readStrandWorkingMode, strandWorkingModePrompt } from './strand-working-mode.js'
 import { spawn } from 'node:child_process'
 import { readStrandContextWindow, readStrandEcoMode } from './eco-mode-store.js'
 import { resolveTurnEcoOwner, freezeEcoToolResult } from './eco-tool-freeze.js'
@@ -165,7 +166,7 @@ export interface AgentRuntimeBoundary {
   retryLastTurn(text: string, sessionId: string, images?: ImageContent[]): AsyncIterable<ResponseChunk>
   // Fork: persona-aware system prompt refresh (agentId selects the persona's
   // instructions). Kept over upstream's 2-arg version.
-  refreshSystemPrompt(channel?: string, currentUser?: { username: string }, agentId?: string): void
+  refreshSystemPrompt(channel?: string, currentUser?: { username: string }, agentId?: string, sessionId?: string): void
   getCurrentTimeContext(): string
   swapProvider(provider: ProviderConfig, apiKey: string, modelId?: string): void
   getProviderManager(): ProviderManager | undefined
@@ -1020,8 +1021,8 @@ class PiAgentRuntime implements AgentRuntimeBoundary, AgentRuntimePiAgentAccess 
   // replayed from the transcript's system messages. Replacing the prompt (what
   // this fork does on every persona/channel switch) therefore means rewriting
   // the leading system message in place, keeping its tool declarations.
-  refreshSystemPrompt(channel?: string, currentUser?: { username: string }, agentId?: string): void {
-    const prompt = this.buildSystemPrompt(channel, currentUser, agentId ?? this.agentId)
+  refreshSystemPrompt(channel?: string, currentUser?: { username: string }, agentId?: string, sessionId?: string): void {
+    const prompt = this.buildSystemPrompt(channel, currentUser, agentId ?? this.agentId, sessionId)
     if (this.agent.state.systemPrompt === prompt) return
 
     const messages = this.agent.state.messages.slice()
@@ -1186,7 +1187,7 @@ class PiAgentRuntime implements AgentRuntimeBoundary, AgentRuntimePiAgentAccess 
     return { language, timezone, builtinToolsConfig, sttEnabled, thinkingLevel, instanceIdentity }
   }
 
-  private buildSystemPrompt(channel?: string, currentUser?: { username: string }, agentId?: string): string {
+  private buildSystemPrompt(channel?: string, currentUser?: { username: string }, agentId?: string, sessionId?: string): string {
     const { language, timezone, builtinToolsConfig, sttEnabled, instanceIdentity } = this.readRuntimeSettings()
 
     const activeSkills = getActiveSkillEntries()
@@ -1287,6 +1288,8 @@ class PiAgentRuntime implements AgentRuntimeBoundary, AgentRuntimePiAgentAccess 
       availableProviders,
       agentId,
     })
+
+    if (sessionId) prompt += strandWorkingModePrompt(agentId ?? this.agentId, readStrandWorkingMode(this.db, sessionId))
 
     // Append cross-persona hint when ask_agent is available.
     if (loadMultiPersonaSettings().enabled) {

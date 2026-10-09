@@ -303,7 +303,7 @@ describe('answering the card', () => {
     expect(res.body).toMatchObject({ applied: true, resumed: true, idempotent: false, value: CAPTURE_CONFIRM_ANSWER })
 
     // The turn runs on the CAPTURE text, not on the label that was tapped.
-    expect(turns).toEqual([{ sessionId: capture.strandId, text: 'Fuer Demo App die Preisseite umstellen?', agentId: 'coder' }])
+    expect(turns).toEqual([{ sessionId: capture.strandId, text: 'Fuer Demo App die Preisseite umstellen?', agentId: 'main' }])
     // And no stray user row: the tapped label is not something the user said.
     expect(rowsIn(capture.strandId!).map(r => r.role)).toEqual(['user', 'assistant'])
 

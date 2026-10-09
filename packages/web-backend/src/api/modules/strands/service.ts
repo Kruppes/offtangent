@@ -380,14 +380,29 @@ export function createStrandsService(options: StrandsServiceOptions) {
    */
   function patchStrand(userId: number, strandId: string, patch: PatchStrandBody): Thread {
     const existing = requireStrand(userId, strandId)
+    const agentId = patch.agentId ?? existing.agentId
+    const workingMode = patch.workingMode ?? (agentId === 'main' ? existing.workingMode : 'main')
+    if (workingMode === 'auto' && agentId !== 'main') {
+      throw new StrandServiceError(400, 'invalid_working_mode', 'Auto mode requires the Main persona')
+    }
+    const identityChanged = agentId !== existing.agentId || workingMode !== existing.workingMode
+    if (identityChanged && options.getTurnRunner?.()?.hasActiveTurnInSession?.(userId, strandId)) {
+      throw new StrandServiceError(409, 'strand_busy', 'Wait for the current turn before changing persona or mode')
+    }
     if (patch.archived === true && !existing.archived) assertNotBusy(userId, strandId)
 
     const updated = manager().updateThread(String(userId), strandId, {
       ...(patch.archived !== undefined ? { archived: patch.archived } : {}),
       ...(patch.archived === true ? { pinned: false } : patch.pinned !== undefined ? { pinned: patch.pinned } : {}),
       ...(patch.title !== undefined ? { title: patch.title } : {}),
+      ...(identityChanged ? { agentId, workingMode } : {}),
     })
     if (!updated) throw new StrandServiceError(404, 'strand_not_found', 'Strand not found')
+    if (identityChanged) {
+      const core = options.getAgentCore?.()
+      core?.evictSessionTranscript?.(String(userId), existing.agentId, strandId)
+      if (agentId !== existing.agentId) core?.evictSessionTranscript?.(String(userId), agentId, strandId)
+    }
 
     // Manual: the slot is freed and the broadcast carries the stored set.
     // Auto: the archived strand simply drops out of the ranking, so the

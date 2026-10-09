@@ -23,6 +23,7 @@ import { resolveAssignableProjectId } from './project-manager.js'
 import { clearStrandProjectSuggestion, getStrandProjectSuggestion } from './project-assignment-store.js'
 import type { StrandProjectSuggestion } from './project-assignment-store.js'
 import { countStrandLinks, getStrandTags, strandIdsWithTag } from './strand-store.js'
+import { isStrandWorkingMode, type StrandWorkingMode } from './strand-working-mode.js'
 import { deriveStrandTitle } from './strand-title.js'
 import { loadHeuristics } from './heuristics.js'
 import { toIsoUtc } from './timestamps.js'
@@ -74,6 +75,7 @@ export interface ThreadAccessRow {
 
 /** Raw `sessions` columns a thread is built from. */
 interface ThreadRow {
+  working_mode: StrandWorkingMode
   id: string
   agent_id: string | null
   title: string | null
@@ -91,7 +93,7 @@ interface ThreadRow {
 /** Columns every thread read selects (kept in one place, used three times). */
 const THREAD_COLUMNS =
   'id, agent_id, title, pinned, archived, project_id, started_at, last_activity, ended_at, message_count, '
-  + 'parent_strand_id, forked_at'
+  + 'parent_strand_id, forked_at, working_mode'
 
 /**
  * Normalize a user-supplied thread title: trimmed, capped, and `null` for
@@ -163,6 +165,7 @@ export interface SessionInfo {
  * timestamps) and must not change field names without updating the frontend.
  */
 export interface Thread {
+  workingMode: StrandWorkingMode
   id: string
   agentId: string
   title: string | null
@@ -219,6 +222,8 @@ export interface ListThreadsOptions {
 }
 
 export interface UpdateThreadPatch {
+  agentId?: string
+  workingMode?: StrandWorkingMode
   title?: string | null
   pinned?: boolean
   archived?: boolean
@@ -1688,7 +1693,11 @@ export class SessionManager {
     agentId: string = 'main',
     title?: string | null,
     projectId?: string | null,
+    workingMode: StrandWorkingMode = 'main',
   ): Thread {
+    if (!isStrandWorkingMode(workingMode) || (workingMode === 'auto' && agentId !== 'main')) {
+      throw new Error('Auto mode requires the Main persona')
+    }
     // Validate the project BEFORE creating the row: a refused assignment must
     // not leave an orphan thread behind.
     const resolvedProjectId = resolveAssignableProjectId(this.db, userId, projectId)
@@ -1696,6 +1705,7 @@ export class SessionManager {
     // `getOrCreateSession`) precisely because it does NOT cache the session
     // per user and does not start an inactivity timer.
     const session = this.createSession({ type: 'interactive', source: 'web', userId, agentId })
+    this.db.prepare('UPDATE sessions SET working_mode = ? WHERE id = ?').run(workingMode, session.id)
     const normalizedTitle = normalizeThreadTitle(title)
     if (normalizedTitle !== null) {
       this.db.prepare('UPDATE sessions SET title = ? WHERE id = ?').run(normalizedTitle, session.id)
@@ -1748,8 +1758,18 @@ export class SessionManager {
     const existing = this.getThread(userId, sessionId)
     if (!existing) return null
 
+    const agentId = patch.agentId ?? existing.agentId
+    const workingMode = patch.workingMode ?? (agentId === 'main' ? existing.workingMode : 'main')
+    if (!isStrandWorkingMode(workingMode) || (workingMode === 'auto' && agentId !== 'main')) {
+      throw new Error('Auto mode requires the Main persona')
+    }
+    const identityChanged = agentId !== existing.agentId || workingMode !== existing.workingMode
     const sets: string[] = []
     const params: unknown[] = []
+    if (identityChanged) {
+      sets.push('agent_id = ?', 'working_mode = ?')
+      params.push(agentId, workingMode)
+    }
     if (patch.title !== undefined) {
       sets.push('title = ?')
       params.push(normalizeThreadTitle(patch.title))
@@ -1773,7 +1793,15 @@ export class SessionManager {
       clearStrandProjectSuggestion(this.db, sessionId)
     }
     if (sets.length > 0) {
-      this.db.prepare(`UPDATE sessions SET ${sets.join(', ')} WHERE id = ?`).run(...params, sessionId)
+      this.db.transaction(() => {
+        this.db.prepare(`UPDATE sessions SET ${sets.join(', ')} WHERE id = ?`).run(...params, sessionId)
+        if (identityChanged) {
+          const content = `Strand settings changed — Persona: ${existing.agentId} → ${agentId}; Mode: ${existing.workingMode} → ${workingMode}. History is retained. Existing tasks keep their identity.`
+          this.db.prepare('INSERT INTO chat_messages (session_id, user_id, role, content, agent_id, metadata) VALUES (?, ?, ?, ?, ?, ?)')
+            .run(sessionId, /^\d+$/.test(userId) ? Number(userId) : null, 'assistant', content, agentId, JSON.stringify({ type: 'strand_identity_change', previousAgentId: existing.agentId, agentId, previousWorkingMode: existing.workingMode, workingMode }))
+        }
+      })()
+      if (identityChanged) this.releaseSessionSlot(userId, existing.agentId, sessionId)
     }
 
     // Archiving the thread that occupies the slot parks it, otherwise the
@@ -1999,6 +2027,7 @@ export class SessionManager {
     return {
       id: row.id,
       agentId,
+      workingMode: row.working_mode ?? 'main',
       title: row.title ?? null,
       pinned: !!row.pinned,
       archived: !!row.archived,

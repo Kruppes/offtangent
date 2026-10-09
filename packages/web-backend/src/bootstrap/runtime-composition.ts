@@ -904,6 +904,10 @@ export async function createRuntimeComposition(options: RuntimeCompositionOption
     options: { markAttempt?: boolean; persisted?: boolean } = {},
   ): boolean {
     if (!agentCore) return false
+    // Queued results survive restarts and persona changes; resolve delivery identity anew.
+    const current = db.prepare("SELECT agent_id FROM sessions WHERE id = ? AND (user_id = ? OR (user_id IS NULL AND session_user = ?)) AND type = 'interactive'")
+      .get(row.sessionId, row.userId, String(row.userId)) as { agent_id: string | null } | undefined
+    const deliveryAgentId = current ? current.agent_id ?? 'main' : row.agentId
     const persisted = options.persisted !== false
     if (persisted && options.markAttempt !== false) {
       try {
@@ -917,9 +921,9 @@ export async function createRuntimeComposition(options: RuntimeCompositionOption
       userId: row.userId,
       sessionId: row.sessionId,
       injectionId: row.id,
-      agentId: row.agentId,
+      agentId: deliveryAgentId,
     })
-    agentCore.injectTaskResult(row.payload, String(row.userId), row.sessionId, row.id, row.agentId).catch(err => {
+    agentCore.injectTaskResult(row.payload, String(row.userId), row.sessionId, row.id, deliveryAgentId).catch(err => {
       logger.error(`[axiom] Failed to inject task result for ${row.taskId}:`, err)
       pendingInjections.delete(row.id)
       if (!persisted) return

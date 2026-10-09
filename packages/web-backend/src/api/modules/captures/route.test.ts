@@ -223,7 +223,7 @@ describe('POST /api/captures', () => {
     expect(mediumCapture.status).toBe('needs_review')
     expect(mediumCapture.strandId).not.toBe(strand.id)
     expect(turns.length).toBe(2)
-    expect(turns[1]).toEqual({ sessionId: mediumCapture.strandId, text: 'and the canary?', agentId: 'coder' })
+    expect(turns[1]).toEqual({ sessionId: mediumCapture.strandId, text: 'and the canary?', agentId: 'main' })
     expect(events.filter(e => e.type === 'capture_needs_review').length).toBe(1)
 
     // Confirming the filing afterwards is a filing decision, not a second
@@ -296,7 +296,7 @@ describe('POST /api/captures', () => {
     expect(decision.createdStrandId).toBe(capture.strandId)
     const created = sessionManager.getThread('1', capture.strandId!)!
     expect(created.title).toBe('Dach Angebot Nord')
-    expect(created.agentId).toBe('coder')
+    expect(created).toMatchObject({ agentId: 'main', workingMode: 'auto' })
     expect(created.tags).toEqual(['dach'])
 
     // Malformed twice: repair retry, then synthetic decision, status failed.
@@ -390,7 +390,7 @@ describe('an ask is answered whatever the confidence band says', () => {
     expect(events.filter(e => e.type === 'capture_needs_review')).toHaveLength(1)
 
     // The answer is not: the band is not about WHETHER an answer is owed.
-    expect(turns).toEqual([{ sessionId: capture.strandId, text: ASK_A, agentId: 'coder' }])
+    expect(turns).toEqual([{ sessionId: capture.strandId, text: ASK_A, agentId: 'main' }])
 
     // The turn owns the activity bump, so the strand counts one message, not two.
     const row = db.prepare('SELECT message_count FROM sessions WHERE id = ?').get(capture.strandId) as { message_count: number }
@@ -400,7 +400,7 @@ describe('an ask is answered whatever the confidence band says', () => {
   it('answers the second capture of the incident too', async () => {
     const capture = await fileMediumAsk(ASK_B)
     expect(capture.status).toBe('needs_review')
-    expect(turns).toEqual([{ sessionId: capture.strandId, text: ASK_B, agentId: 'coder' }])
+    expect(turns).toEqual([{ sessionId: capture.strandId, text: ASK_B, agentId: 'main' }])
   })
 
   it('does not answer twice when the review is confirmed after the answer arrived', async () => {
@@ -449,6 +449,7 @@ describe('an ask is answered whatever the confidence band says', () => {
     expect(capture.status).toBe('needs_review')
     expect(turns).toEqual([])
     db.prepare("UPDATE router_decisions SET intent = 'ask' WHERE capture_id = ?").run(capture.id)
+    db.prepare("UPDATE sessions SET agent_id = 'coder', working_mode = 'main' WHERE id = ?").run(capture.strandId)
 
     const confirm = await api('POST', `/api/captures/${capture.id}/apply`, {})
     expect(confirm.status).toBe(200)
@@ -644,7 +645,7 @@ describe('a note that talks to you (text backstop)', () => {
     // The model keeps its own words behind the marker.
     expect(decision.rationale).toContain('eigenes Thema')
     expect(capture.status).toBe('filed')
-    expect(turns).toEqual([{ sessionId: capture.strandId, text: INCIDENT, agentId: 'coder' }])
+    expect(turns).toEqual([{ sessionId: capture.strandId, text: INCIDENT, agentId: 'main' }])
 
     // Countable in router_decisions, and separable from the dialog guard.
     const stored = db.prepare('SELECT intent, rationale FROM router_decisions WHERE id = ?').get(decision.id) as { intent: string; rationale: string }
@@ -776,7 +777,7 @@ describe('the doubt band: a note that might be addressed at you', () => {
 
     // The doorbell: a real question, so it must survive suppress-when-online=turn.
     expect(doorbells).toHaveLength(1)
-    expect(doorbells[0]).toMatchObject({ kind: 'question', strandId: capture.strandId, agentId: 'coder', userId: 1 })
+    expect(doorbells[0]).toMatchObject({ kind: 'question', strandId: capture.strandId, agentId: 'main', userId: 1 })
     expect(doorbells[0].messageId).toBe(rows[1].id)
 
     // And the strand looks like something is waiting: activity was bumped for
@@ -1336,4 +1337,14 @@ describe('capture model selection', () => {
     expect((await api('POST', '/api/captures', { text: 'x', strandId: own.id, ...selection })).status).toBe(409)
     expect(db.prepare('SELECT COUNT(*) AS n FROM captures').get()).toEqual({ n: 0 })
   })
+})
+
+
+it('keeps an explicitly selected specialist direct, while topic-only auto creates a Main Auto strand', async () => {
+  const automatic = await api('POST', '/api/captures', { text: 'Plan a samplebot campaign', destination: 'new_strand' })
+  const autoCapture = automatic.body.capture as Capture
+  expect(sessionManager.getThread('1', autoCapture.strandId!)).toMatchObject({ agentId: 'main', workingMode: 'auto' })
+  const direct = await api('POST', '/api/captures', { text: 'Code a parser', destination: 'new_strand', agentId: 'coder' })
+  const directCapture = direct.body.capture as Capture
+  expect(sessionManager.getThread('1', directCapture.strandId!)).toMatchObject({ agentId: 'coder', workingMode: 'main' })
 })

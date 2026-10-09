@@ -138,7 +138,7 @@ const ringLabel = computed(() => {
         </template>
       </StrandDetailHeader>
       <div class="min-h-0 flex-1">
-        <ChatView ref="chatView" :key="threadId" :thread-session-id="threadId" :thread-agent-id="thread?.agentId ?? null" @back="backToInbox" />
+        <ChatView ref="chatView" :key="`${threadId}:${thread?.agentId}:${thread?.workingMode}`" :thread-session-id="threadId" :thread-agent-id="thread?.agentId ?? null" @back="backToInbox" />
       </div>
     </div>
     <aside v-if="inline && inlineOpen" id="strand-context-column" data-testid="context-column" data-placement="inline"

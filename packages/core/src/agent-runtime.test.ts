@@ -658,3 +658,31 @@ describe('AgentRuntime stream_activity signal', () => {
     expect(chunks).toEqual(['thinking', 'text', 'tool_call_start', 'tool_call_end', 'done'])
   })
 })
+
+
+describe('persisted strand working mode in the actual runtime prompt', () => {
+  it('shares Main base instructions, changes only the mode policy and keeps specialist/task runtimes direct', () => {
+    const db = initDatabase(':memory:')
+    db.prepare("INSERT INTO sessions (id, session_user, source, type, agent_id, working_mode) VALUES ('mode-strand', '1', 'web', 'interactive', 'main', 'main')").run()
+    const runtime = createAgentRuntime({ model: makeModel(), apiKey: 'test', db, tools: [], memoryDir: '/workspace/test-memory', baseInstructions: 'shared base' })
+    const agent = (runtime as typeof runtime & AgentRuntimePiAgentAccess).getAgent()
+    // Match native pi-agent-core >= 0.87: systemPrompt is derived from transcript.
+    Object.defineProperty(agent.state, 'systemPrompt', { configurable: true, get: () => (agent.state.messages[0] as unknown as { content?: string })?.content ?? '' })
+    runtime.refreshSystemPrompt('web', undefined, 'main', 'mode-strand')
+    const mainPrompt = String((agent.state.messages[0] as unknown as { content: string }).content)
+    expect(mainPrompt).toContain('Main is inline-first')
+    expect(mainPrompt).not.toContain('Auto is delegation-first')
+    db.prepare("UPDATE sessions SET working_mode = 'auto' WHERE id = 'mode-strand'").run()
+    runtime.refreshSystemPrompt('web', undefined, 'main', 'mode-strand')
+    const autoPrompt = String((agent.state.messages[0] as unknown as { content: string }).content)
+    expect(autoPrompt).toContain('Auto is delegation-first')
+    expect(autoPrompt).toContain('checking delegated results')
+    expect(autoPrompt).not.toContain('Main is inline-first')
+    expect(mainPrompt.split('<strand_working_mode')[0]).toBe(autoPrompt.split('<strand_working_mode')[0])
+    runtime.refreshSystemPrompt('web', undefined, 'coder', 'mode-strand')
+    expect(String((agent.state.messages[0] as unknown as { content: string }).content)).not.toContain('<strand_working_mode')
+    runtime.refreshSystemPrompt()
+    expect(String((agent.state.messages[0] as unknown as { content: string }).content)).not.toContain('<strand_working_mode')
+    db.close()
+  })
+})

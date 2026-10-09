@@ -396,9 +396,10 @@ export function withCaptureDefaultAgent<T extends { agentId: string | null | und
 export function createCapturesService(options: CapturesServiceOptions) {
   const { db } = options
 
-  function rememberSelection(capture: Capture, selection?: ModelSelection, mode: CaptureMode = 'work'): void {
+  function rememberSelection(capture: Capture, selection?: ModelSelection, mode: CaptureMode = 'work', strandWorkingMode?: 'main' | 'auto'): void {
     const metadata: Record<string, unknown> = {}
     if (selection) metadata.turnOverride = selection
+    if (strandWorkingMode) metadata.strandWorkingMode = strandWorkingMode
     // Only a non-default mode is stored (`work` is the default). The column is read back by every turn
     // this capture starts (including one a later confirmation starts), so the
     // style and thinking level of a quick capture survive the request that
@@ -406,6 +407,17 @@ export function createCapturesService(options: CapturesServiceOptions) {
     if (mode !== 'work') metadata.mode = mode
     if (Object.keys(metadata).length === 0) return
     db.prepare('UPDATE captures SET metadata = ? WHERE id = ?').run(JSON.stringify(metadata), capture.id)
+  }
+
+  /** Forced new-strand/quick captures retain resolved agentId for old clients,
+   * while this independent policy records whether the user explicitly chose it. */
+  function strandWorkingModeOf(capture: Capture): 'main' | 'auto' {
+    const row = db.prepare('SELECT metadata FROM captures WHERE id = ?').get(capture.id) as { metadata: string | null } | undefined
+    try {
+      const policy = row?.metadata ? (JSON.parse(row.metadata) as { strandWorkingMode?: string }).strandWorkingMode : undefined
+      if (policy === 'main' || policy === 'auto') return policy
+    } catch { /* Historical metadata does not imply a policy. */ }
+    return capture.agentId ? 'main' : 'auto'
   }
 
   /** The mode a capture was created with, as stored in `captures.metadata`. */
@@ -891,10 +903,10 @@ export function createCapturesService(options: CapturesServiceOptions) {
   function resolveTargets(userId: number, capture: Capture, proposal: RouterProposal): StrandTargets {
     if (proposal.action === 'new_strand') {
       const ns = proposal.newStrand
-        ?? { title: capture.text.slice(0, 60), personaId: capture.agentId ?? defaultPersona(), tags: [], projectId: null }
+        ?? { title: capture.text.slice(0, 60), personaId: capture.agentId ?? 'main', tags: [], projectId: null }
       const personaId = personaList().includes(ns.personaId) ? ns.personaId : defaultPersona()
       const selection = selectionFor(capture)
-      const strand = manager().createThread(String(userId), personaId, ns.title, usableProjectId(userId, ns.projectId))
+      const strand = manager().createThread(String(userId), personaId, ns.title, usableProjectId(userId, ns.projectId), personaId === 'main' ? strandWorkingModeOf(capture) : 'main')
       if (selection) db.prepare('UPDATE sessions SET model_provider_id = ?, model_id = ? WHERE id = ?')
         .run(selection.providerId, selection.modelId, strand.id)
       if (ns.tags.length > 0) addStrandTags(db, String(userId), strand.id, ns.tags, 'router')
@@ -1280,7 +1292,7 @@ export function createCapturesService(options: CapturesServiceOptions) {
     // a second selection per part would only cost reads.
     const input = buildRouterInput(db, userKey, {
       id: capture.id, text: capture.text, kind: capture.kind, personaHint: capture.agentId, createdAt: capture.createdAt,
-    }, { personas: personaList(), defaultPersona: capture.agentId ?? defaultPersona(), deviceHint })
+    }, { personas: personaList(), defaultPersona: capture.agentId ?? 'main', deviceHint })
 
     const split = await splitForIntake(capture, body)
     if (split.model !== 'none') rememberSplit(capture.id, split)
@@ -1430,7 +1442,7 @@ export function createCapturesService(options: CapturesServiceOptions) {
     const userKey = String(userId)
     const plan = planQuickMode(body.source)
     if (plan.modelNote) console.warn(`[captures] quick mode: ${plan.modelNote}`)
-    const agentId = body.agentId ?? defaultPersona()
+    const agentId = body.agentId ?? 'main'
     // An explicit pin from the client outranks the mode's configured model
     // (SPEC 4.1, explicit beats heuristic): the caller named a model, the
     // setting only says what to use when nobody did.
@@ -1444,7 +1456,7 @@ export function createCapturesService(options: CapturesServiceOptions) {
       userId: userKey, agentId, clientMessageId: body.clientMessageId, text: body.text,
       kind: body.kind, source: body.source, attachments: body.attachments,
     })
-    rememberSelection(capture, selection, 'quick')
+    rememberSelection(capture, selection, 'quick', body.agentId ? 'main' : 'auto')
 
     const proposal: RouterProposal = strandId
       ? {
@@ -1477,12 +1489,12 @@ export function createCapturesService(options: CapturesServiceOptions) {
    */
   function createInNewStrand(userId: number, body: CreateCaptureBody, selection: ModelSelection | undefined): CaptureResult {
     const userKey = String(userId)
-    const agentId = body.agentId ?? defaultPersona()
+    const agentId = body.agentId ?? 'main'
     const capture = insertCapture(db, {
       userId: userKey, agentId, clientMessageId: body.clientMessageId, text: body.text,
       kind: body.kind, source: body.source, attachments: body.attachments,
     })
-    rememberSelection(capture, selection, body.mode)
+    rememberSelection(capture, selection, body.mode, body.agentId ? 'main' : 'auto')
     const proposal: RouterProposal = {
       action: 'new_strand', strandId: null, secondaryStrandId: null, intent: body.intent ?? 'ask',
       newStrand: { title: newStrandTitle(body), personaId: agentId, tags: [], projectId: null },
@@ -1697,7 +1709,7 @@ export function createCapturesService(options: CapturesServiceOptions) {
   function manualProposal(capture: Capture, body: ApplyCaptureBody, base: Decision): RouterProposal {
     const action: RouterAction = body.action ?? base.action
     const title = body.title ?? base.title ?? 'New strand'
-    const personaId = body.personaId ?? base.personaId ?? capture.agentId ?? defaultPersona()
+    const personaId = body.personaId ?? base.personaId ?? capture.agentId ?? 'main'
     return {
       action,
       strandId: action === 'new_strand' ? null : (body.strandId ?? base.strandId),
@@ -1995,7 +2007,7 @@ export function createCapturesService(options: CapturesServiceOptions) {
     const deviceHint = findDeviceAffinity(db, String(userId), { source: capture.source, excludeCaptureId: capture.id })
     const input = buildRouterInput(db, String(userId), {
       id: capture.id, text: capture.text, kind: capture.kind, personaHint: capture.agentId, createdAt: capture.createdAt,
-    }, { personas: personaList(), defaultPersona: capture.agentId ?? defaultPersona(), deviceHint })
+    }, { personas: personaList(), defaultPersona: capture.agentId ?? 'main', deviceHint })
     const body: CreateCaptureBody = {
       text: capture.text, clientMessageId: null, agentId: capture.agentId, strandId: null,
       kind: capture.kind, source: capture.source, attachments: capture.attachments, intent: null, mode: modeOf(capture),
@@ -2017,7 +2029,7 @@ export function createCapturesService(options: CapturesServiceOptions) {
     for (const part of split.parts) {
       const input = buildRouterInput(db, String(userId), {
         id: 'preview', text: part.text, kind: 'text', personaHint: body.agentId, createdAt: new Date().toISOString(),
-      }, { personas: personaList(), defaultPersona: body.agentId ?? defaultPersona() })
+      }, { personas: personaList(), defaultPersona: body.agentId ?? 'main' })
       const result = await runRouter(input, { chain, complete: options.routerComplete })
       const p = result.proposal
       parts.push({
