@@ -120,11 +120,15 @@ After route authorization, independent review, and explicit deployment approval:
    the adapter allowlist. Do not enable the integration's wide default tool list.
    Tool-count cutoff's `tool_choice:none` is supported; call-ID shortening should
    remain off. Built-in OpenAI integration's Responses route is NOT implemented.
+   **Client retry prerequisite:** current Extended helper constructs AsyncOpenAI
+   without `max_retries`; upstream Python SDK defaults to **2 retries**. The helper
+   must be separately reviewed/patched to set `max_retries=0` (not an extra_body
+   option). Unmodified Extended is NOT presented as a deployment-ready client.
 4. Proxy only the two paths, preserve Authorization, add network allowlisting/TLS
    and matching body/time limits. Never forward Offtangent login cookies/tokens.
 5. Integration versions differ. The live system was Core 2026.9.4 with builtin
    Ollama; Extended OpenAI was NOT installed or production-tested. Its exact installed
-   version and safe retry behavior still require review. A real OpenAI JS SDK made
+   version and the explicit no-retry client patch still require review. A real OpenAI JS SDK made
    successful HTTP model-list + buffered SSE toolcall/mock-result/final roundtrip
    through this adapter against gpt-6-luna; this proves the wire seam, not HA rollout.
 
