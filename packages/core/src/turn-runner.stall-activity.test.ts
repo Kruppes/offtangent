@@ -144,6 +144,53 @@ describe('stall watchdog: provider silence vs. other activity', () => {
     await vi.advanceTimersByTimeAsync(1)
   })
 
+  // Codemode (plan 2026-10-08-codemode) is one model-issued tool call whose
+  // script issues nested calls (`<parentId>/cm-<n>`). Only the codemode call
+  // is a loop-level tool execution (see codemode-tool.integration.test.ts),
+  // so its runtime, including slow nested calls, must pause the stall budget
+  // like any other tool. Should nested ids ever surface as chunks, they must
+  // not end the pause while the codemode call itself still runs.
+  it('pauses the stall budget for a long codemode script, also across nested call ids', async () => {
+    vi.useFakeTimers()
+    const db = freshDb()
+    const { agent, push, finish } = controllableAgent()
+    const { runner, events } = start(db, agent)
+    await vi.advanceTimersByTimeAsync(0)
+
+    push({ type: 'tool_call_start', toolName: 'codemode', toolCallId: 'toolu_parent', toolArgs: { code: 'await tools.shell({ command: "sleep 60" })' } })
+    await vi.advanceTimersByTimeAsync(60_000)
+    push({ type: 'tool_call_start', toolName: 'shell', toolCallId: 'toolu_parent/cm-1', toolArgs: {} })
+    push({ type: 'tool_call_end', toolName: 'shell', toolCallId: 'toolu_parent/cm-1', toolResult: 'ok', toolIsError: false })
+    await vi.advanceTimersByTimeAsync(100_000)
+
+    expect(stallChunks(events)).toEqual([])
+    expect(stallRowCount(db)).toBe(0)
+    expect(agent.abort).not.toHaveBeenCalled()
+
+    push({ type: 'tool_call_end', toolName: 'codemode', toolCallId: 'toolu_parent', toolResult: 'codemode: 1 call', toolIsError: false })
+    push({ type: 'text', text: 'done' })
+    finish()
+    await vi.advanceTimersByTimeAsync(1)
+    expect(runner.hasActiveTurn(USER_ID)).toBe(false)
+  })
+
+  it('counts provider silence again after a codemode call has finished', async () => {
+    vi.useFakeTimers()
+    const db = freshDb()
+    const { agent, push } = controllableAgent()
+    const { events } = start(db, agent)
+    await vi.advanceTimersByTimeAsync(0)
+
+    push({ type: 'tool_call_start', toolName: 'codemode', toolCallId: 'toolu_parent', toolArgs: {} })
+    await vi.advanceTimersByTimeAsync(120_000)
+    push({ type: 'tool_call_end', toolName: 'codemode', toolCallId: 'toolu_parent', toolResult: 'ok', toolIsError: false })
+    await vi.advanceTimersByTimeAsync(1)
+    expect(stallChunks(events)).toEqual([])
+
+    await vi.advanceTimersByTimeAsync(31_000)
+    expect(stallChunks(events).map(c => c.type)).toEqual(['stall_warning'])
+  })
+
   it('treats provider stream activity without text (tool-call argument streaming) as activity', async () => {
     vi.useFakeTimers()
     const db = freshDb()
