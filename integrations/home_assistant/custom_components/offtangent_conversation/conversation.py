@@ -4,7 +4,7 @@ import json
 import time
 from dataclasses import replace
 from uuid import uuid4
-from datetime import timedelta
+from datetime import UTC, datetime, timedelta
 
 from probatio import to_openapi
 import voluptuous as vol
@@ -43,6 +43,8 @@ class OfftangentConversationEntity(conversation.ConversationEntity, conversation
         self._degradation_count = 0
         self._last_path = "relay"
         self._auth_state = "unknown"
+        self._auth_status_last_success_at = None
+        self._auth_status_last_error_at = None
         self._warning_active = False
         self._state_ready = False
         self._attr_unique_id = entry.entry_id
@@ -62,6 +64,8 @@ class OfftangentConversationEntity(conversation.ConversationEntity, conversation
         return {"provider_auth_state": self._auth_state, "last_path": self._last_path,
                 "degradation_count": self._degradation_count,
                 "relogin_required": self._auth_state == "relogin_required",
+                "auth_status_last_success_at": self._auth_status_last_success_at,
+                "auth_status_last_error_at": self._auth_status_last_error_at,
                 "fallback_agent": self._settings.get("fallback_agent") or None}
 
     async def async_added_to_hass(self):
@@ -77,12 +81,18 @@ class OfftangentConversationEntity(conversation.ConversationEntity, conversation
         try:
             status = await self._client.auth_status()
             state = status["auth"]["state"]
-            if state in {"unknown", "ready", "access_expired", "access_rejected", "refresh_unavailable", "relogin_required", "provider_unavailable"}:
-                self._auth_state = state
-                self._warn_login()
-                self._publish_state()
+            if state not in {"unknown", "ready", "access_expired", "access_rejected", "refresh_unavailable", "relogin_required", "provider_unavailable"}:
+                raise AdapterError("invalid_auth_status")
+            self._auth_state = state
+            self._auth_status_last_success_at = datetime.now(UTC).isoformat()
+            self._warn_login()
+            self._publish_state()
         except (AdapterError, KeyError, TypeError):
-            pass  # A status GET is not an inference/auth-readiness success.
+            # Never present a cached ready observation as fresh during an outage.
+            # Keep any existing login notification until verified inference repairs it.
+            self._auth_state = "relay_unavailable"
+            self._auth_status_last_error_at = datetime.now(UTC).isoformat()
+            self._publish_state()
 
     def _publish_state(self):
         if self._state_ready:

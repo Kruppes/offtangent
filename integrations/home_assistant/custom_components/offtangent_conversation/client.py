@@ -194,7 +194,11 @@ class AdapterClient:
         return validate_reply(await self._request("POST", "/chat/completions", payload), self.model, tools)
 
 
-READ_ONLY_TOOLS = {"GetLiveContext", "HassGetState", "HassGetTemperature", "HassGetCurrentTime", "HassGetCurrentDate", "HassRespond"}
+# Verified against HA 2026.9.4 intent handlers (intent, intent.timers, weather).
+# TimerStatus only reads Assist timers; start/cancel/pause remain mutations.
+READ_ONLY_TOOLS = {"GetLiveContext", "HassGetState", "HassClimateGetTemperature",
+                   "HassGetWeather", "HassTimerStatus", "HassGetCurrentTime",
+                   "HassGetCurrentDate", "HassRespond"}
 
 
 def is_mutating(name: str) -> bool:

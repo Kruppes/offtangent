@@ -52,16 +52,17 @@ neuen Proxy. Vor Review bleiben Merge, Deploy und HA-Umschaltung gesperrt.
 }
 ```
 
-- Bestehendes HTTPS-Ingress nur für `/ha-relay/v1/{models,auth/status,chat/completions}`
+- Bestehendes HTTPS-Ingress nur für `/ha-relay/v1/{models,status,chat/completions,session/discard}`
   freigeben; keine breite Freigabe von `/api` oder Admin-Endpunkten. Relay besitzt
   eigenen Bearer, normale Offtangent-Userauth wird dadurch nicht ersetzt.
   Ohne gültige opt-in-Datei ist der Relay nicht verfügbar. Dateikonfiguration
   wird beim Backendstart gelesen; Aktivierung/Änderung braucht kontrollierten
   Backendneustart, keine HA-/Providerprozess-Duplikate.
-- GET `/ha-relay/v1/models` und `/ha-relay/v1/auth/status` mit privatem Bearer
+- GET `/ha-relay/v1/models` und `/ha-relay/v1/status` mit privatem Bearer
   prüfen. Catalog allein ist keine Inferenzbereitschaft; `unknown` ist zulässig,
   `ready` erst nach verifiziertem Relay-Inferenzresultat. Refresh-Ablauf darf `null`
-  bleiben. Optional freigegebener harmloser Relayroundtrip mit `tools: []`.
+  bleiben. Danach verpflichtender freigegebener harmloser Relayroundtrip mit
+  `tools: []` (siehe unten); Status/Providerhealth ersetzt dieses Gate nicht.
   **Kein** `conversation.process`, Aktorservice oder Automationstest.
 - Bearer-/Providerdateien niemals in Logs, Shellhistory, Screenshots oder Git.
 
@@ -82,6 +83,52 @@ neuen Proxy. Vor Review bleiben Merge, Deploy und HA-Umschaltung gesperrt.
 - Rein lesend Entry/Entity zurücklesen. Authstatus ist als Entityattribute sichtbar;
   Loginwarnung pollt automatisch/minütlich und ist dedupliziert. Keine feste
   Refresh-Laufzeit behaupten; nötig werdenden Login ausschließlich zentral erneuern.
+
+## Status und Loginwarnung im Betrieb
+
+- `/ha-relay/v1/status` ist ein rein lesender Auth-Beobachtungsstatus, kein
+  Inferenztest. `ready` beruht auf einer zuvor erfolgreichen Relay-Inferenz;
+  ein GET beweist weder aktuelle Upstream-Erreichbarkeit noch Modell-Wire-ID.
+- HA pollt initial und minütlich. Bei Poll-/Antwortfehler wird
+  `provider_auth_state=relay_unavailable` publiziert, nicht der alte `ready`-Wert.
+  `auth_status_last_success_at` und `auth_status_last_error_at` sind UTC-Zeitpunkte
+  der letzten erfolgreichen/fehlgeschlagenen **Statusabfrage** (keine Turnzeiten).
+  Der Fehlerzeitpunkt bleibt nach Erholung als Historie sichtbar. Ausfallerkennung
+  erfolgt spätestens beim nächsten Poll, nicht unmittelbar beim Netzausfall.
+- `relogin_required` erzeugt eine persistente Warnung mit fester ID je Entry,
+  ohne Duplikate. Zentraler Re-Login verändert den Credentialstamp: Status kann
+  zunächst `unknown` sein und `relogin_required=false`, die vorhandene Warnung
+  bleibt aber absichtlich stehen. Auch ein Pollausfall löscht sie nicht.
+  Erst eine erfolgreiche Relay-Inferenz (`ready`, direkt oder beim nächsten Poll
+  beobachtet) löscht die Warnung. Nicht zur Warnungsbeseitigung Aktionen auslösen.
+- Backend-Auth-Beobachtungen sind bewusst **nur RAM**: Backendneustart verliert
+  erkannte Refresh-/Re-Loginfehler; dann `unknown`/`access_expired`, bis ein neuer
+  Turn frische Evidenz liefert. Auch HA-Pollzeitpunkte sind RAM und gehen bei
+  Entryreload/HA-Neustart verloren. Keine persistierte Authgesundheit behaupten.
+
+## Harmloses Relay-Gate nach externem Deploy (vor HA-Steuerung)
+
+Erst nach Main-Nachreview und gesonderter Deploymentfreigabe; hier nicht ausgeführt.
+Direkt an `POST /ha-relay/v1/chat/completions`, privater dedizierter Relay-Bearer,
+kein HA-Agent oder `conversation.process`. Private Relaykonfig `tools: []` belassen:
+
+```json
+{
+  "model": "claude-haiku-5-5",
+  "messages": [{"role": "user", "content": "Antworte nur mit OK."}],
+  "tools": [],
+  "tool_choice": "none",
+  "stream": false
+}
+```
+
+Genau ein Versuch, keine automatischen POST-Retries. Erwartet: HTTP 200, exakt
+gepinntes Modell, `finish_reason=stop`, Textantwort, keine `tool_calls`; anschließend
+Status `ready`. Zeit, HTTPcode, Modell, Finishreason und toolcall-Anzahl redigiert
+festhalten; keine Tokens/Header/private URLs. Ein abweichendes Modell oder
+`incomplete_or_wrong_model` bleibt ein Stop-Gate (Wire-ID bisher nur offline
+geprüft). Bei Fehler keine Tools/Voice-Zuordnung aktivieren, keine API-Key- oder
+Modellausweichroute: externen Rollback/Analyseweg verwenden.
 
 ## D. Allowlist und ausschließlich Voice Preview (später)
 

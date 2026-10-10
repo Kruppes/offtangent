@@ -283,6 +283,50 @@ class ActualHAEntityTests(unittest.IsolatedAsyncioTestCase):
         self.assertNotIn("Aktion bestätigt", result.response.speech["plain"]["speech"])
 
 
+    async def test_auth_poll_outage_invalid_status_and_recovery_never_keep_cached_ready(self):
+        from datetime import datetime
+        adapter = MockAdapter([])
+        adapter.auth_status = AsyncMock(side_effect=[
+            {"auth": {"state": "ready"}}, AdapterError("adapter_unavailable"),
+            {"auth": {"state": "not_a_state"}}, {},
+            {"auth": {"state": "unknown"}},
+        ])
+        agent = self.agent(adapter, control=False)
+        agent._state_ready = True
+        with patch.object(agent, "async_write_ha_state") as publish:
+            await agent._poll_auth()
+            success_at = agent.extra_state_attributes["auth_status_last_success_at"]
+            self.assertEqual(agent.extra_state_attributes["provider_auth_state"], "ready")
+            self.assertIsNotNone(datetime.fromisoformat(success_at).tzinfo)
+            for _ in range(3):
+                await agent._poll_auth()
+                attrs = agent.extra_state_attributes
+                self.assertEqual(attrs["provider_auth_state"], "relay_unavailable")
+                self.assertEqual(attrs["auth_status_last_success_at"], success_at)
+                self.assertIsNotNone(datetime.fromisoformat(attrs["auth_status_last_error_at"]).tzinfo)
+            error_at = attrs["auth_status_last_error_at"]
+            await agent._poll_auth()
+            self.assertEqual(agent.extra_state_attributes["provider_auth_state"], "unknown")
+            self.assertEqual(agent.extra_state_attributes["auth_status_last_error_at"], error_at)
+            self.assertEqual(publish.call_count, 5)
+        self.assertEqual(adapter.requests, [])
+        self.assertEqual(self.tool.calls, [])
+
+    async def test_login_notification_survives_poll_outage_and_relogin_unknown(self):
+        adapter = MockAdapter([])
+        adapter.auth_status = AsyncMock(side_effect=[
+            {"auth": {"state": "relogin_required"}}, AdapterError("adapter_unavailable"),
+            {"auth": {"state": "unknown"}}, {"auth": {"state": "ready"}},
+        ])
+        agent = self.agent(adapter, control=False)
+        with patch("custom_components.offtangent_conversation.conversation.persistent_notification.async_create") as create, patch("custom_components.offtangent_conversation.conversation.persistent_notification.async_dismiss") as dismiss:
+            for _ in range(3):
+                await agent._poll_auth()
+            create.assert_called_once()
+            dismiss.assert_not_called()
+            await agent._poll_auth()
+            dismiss.assert_called_once()
+
     async def test_auth_status_poll_deduplicates_login_warning_and_unknown_does_not_dismiss(self):
         adapter = MockAdapter([])
         adapter.auth_status = AsyncMock(side_effect=[{"auth": {"state": state}} for state in ["relogin_required", "relogin_required", "unknown", "ready"]])

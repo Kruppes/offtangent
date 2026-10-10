@@ -3,8 +3,9 @@
 **Do not merge/deploy before independent review. Technical legacy-provider prototype,
 not evidence of an officially authorized subscription-sharing deployment.**
 
-This is NOT the interview.v1 endpoint, NOT an agent, and NOT mounted on the main
-Offtangent router. Nothing starts unless the separate CLI is launched explicitly.
+This is NOT the interview.v1 endpoint and NOT a general Offtangent agent. The
+opt-in relay is mounted at `/ha-relay` in the existing backend; no separate CLI,
+listener or credential process is used. The old standalone script is disabled.
 No main prompt, SOUL, memory, conversation DB, tool execution, or request logging.
 Existing provider-config OAuth renewal and pi-models streaming are reused; no
 credential store, copied provider keys, API-billing fallback, or replacement model.
@@ -92,13 +93,21 @@ provision it only to the intended HA client, and hash it in config. The existing
 Offtangent service environment must provide provider configuration/encryption access;
 never export/copy OAuth access or refresh credentials.
 
-```sh
-DATA_DIR=/data pnpm exec tsx scripts/ha-inference.mts /absolute/private/path/ha-inference.json 3107
-```
+After independent review and explicit deployment approval, deploy Core and the
+backend together through the normal external deployment procedure. Put the opt-in
+configuration in `${DATA_DIR}/config/ha-inference.json`: regular private file,
+mode **0600**, no symlink. The backend reads it at startup; activation/config changes
+require a controlled backend restart. No `tsx scripts/ha-inference.mts` launch or
+additional service/listener is supported.
 
-Remove/disable the service to turn it off. `enabled:false` or a malformed config
-fails closed. No startup/service unit is installed by this branch. Binding an
-additional listener or a reverse proxy is deployment and requires later approval.
+Proxy only the required `/ha-relay/v1` routes (`models`, `status`,
+`chat/completions`, `session/discard`) with the dedicated HA bearer and TLS.
+Remove the private file or set `enabled:false`, then externally restart the backend
+to disable the relay. Missing/invalid configuration fails closed. Detailed current
+Anthropic/HA install, harmless `tools: []` gate and rollback:
+[`INSTALL-ROLLBACK.md`](../../integrations/home_assistant/INSTALL-ROLLBACK.md).
+The Codex authorization findings above remain historical route-specific evidence,
+not a new deployment authorization.
 
 ## HA integration seam (not installed or executed against HA)
 
@@ -113,7 +122,7 @@ is 0.5, and its custom function defaults can include shell/file/execute_services
 After route authorization, independent review, and explicit deployment approval:
 1. Add a SEPARATE test conversation agent; leave the preferred production pipeline
    unchanged. No real actions during initial integration verification.
-2. Base URL: approved HTTPS proxy of this dedicated listener ending `/v1`; use only
+2. Base URL: approved HTTPS proxy of the existing backend ending `/ha-relay/v1`; use only
    the new HA bearer secret. Pin `gpt-6-luna`, temperature **1**, top_p **1**, max
    tokens **4096**, empty extra_body, no structured output/skills/general agent tools.
 3. Explicitly configure restricted genuine HA tools and copy their exact schemas to
@@ -124,7 +133,7 @@ After route authorization, independent review, and explicit deployment approval:
    without `max_retries`; upstream Python SDK defaults to **2 retries**. The helper
    must be separately reviewed/patched to set `max_retries=0` (not an extra_body
    option). Unmodified Extended is NOT presented as a deployment-ready client.
-4. Proxy only the two paths, preserve Authorization, add network allowlisting/TLS
+4. Proxy only the required relay paths listed above, preserve Authorization, add network allowlisting/TLS
    and matching body/time limits. Never forward Offtangent login cookies/tokens.
 5. Integration versions differ. The live system was Core 2026.9.4 with builtin
    Ollama; Extended OpenAI was NOT installed or production-tested. Its exact installed

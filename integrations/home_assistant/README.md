@@ -32,14 +32,19 @@ Ein technischer Erfolg ist keine Aussage über Vertragsbedingungen/Abrechnung.
   Modell-Toolsignaturen verbleiben im separaten serverseitigen Vault (5 Minuten,
   maximal 16 laufende Tool-Sessions); HA erhält
   sie nicht. Folgebezüge dürfen nie unbekannte Geräte erraten.
-- `/auth/status`: Access-Ablauf separat, unbekannte Refresh-Laufzeit `null` statt
+- `/ha-relay/v1/status`: Access-Ablauf separat, unbekannte Refresh-Laufzeit `null` statt
   erfundenem festen Ablaufdatum. Zentraler Locked-Refresh; bei Upstream-401 nur
   Credential-Reparatur, **kein** Replay des Inferenz-POST. Erst nächster eigener
   Turn darf erneut inferieren. 403/429 wechseln weder Identität noch Provider.
 - HA pollt Authstatus beim Hinzufügen und minütlich rein lesend. Notwendiger
   Re-Login erzeugt eine deduplizierte persistente Warnung; verifiziert reparierter
-  Zustand löscht sie. Entity/Diagnostics zeigen Authzustand, letzten Pfad und
-  Degradationszähler, nicht die Credentials.
+  Zustand (`ready` nach Relay-Inferenz) löscht sie; `unknown` nach zentralem
+  Re-Login oder ein Pollausfall löschen sie nicht. Bei Pollfehler wird
+  `provider_auth_state=relay_unavailable` mit UTC-Fehlerzeitpunkt publiziert.
+  Entityattribute zeigen auch den letzten erfolgreichen Pollzeitpunkt; beide
+  Zeitpunkte und Backend-Auth-Beobachtungen sind bewusst RAM, nicht persistent.
+  Entity/Diagnostics zeigen Authzustand, letzten Pfad und Degradationszähler,
+  nicht die Credentials. Lifecycle/Neustartgrenzen: `INSTALL-ROLLBACK.md`.
 - Optional genau ein bestehender lokaler Ollama-Agent als Ersatz: lokale URL,
   Ollama-Eintrag/Subentry und keine zusätzliche Steuerungsfreigabe prüfen.
   Nur **vor jeglichem Tool-Dispatch** darf ein Relayfehler auf diesen Agenten
