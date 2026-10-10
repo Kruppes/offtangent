@@ -47,7 +47,7 @@
         :aria-modal="sidebarOpen ? 'true' : undefined"
         :data-mode="sidebarOpen ? 'drawer' : effectiveMode"
         class="flex shrink-0 flex-col border-r border-sidebar-border bg-sidebar"
-        :class="sidebarOpen ? 'fixed inset-y-0 left-0 z-50 w-64 shadow-overlay' : compact ? 'static w-14' : 'static w-64'"
+        :class="sidebarOpen ? 'fixed inset-y-0 left-0 z-50 w-64 pt-[env(safe-area-inset-top)] pb-[env(safe-area-inset-bottom)] shadow-overlay' : compact ? 'static w-14' : 'static w-64'"
         :aria-label="$t('shell.sidebar')"
         @keydown.tab="trapDrawerFocus"
       >

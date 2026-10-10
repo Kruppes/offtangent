@@ -390,12 +390,22 @@ export function createApp(options?: AppOptions): express.Express {
       const query = queryIndex < 0 ? '' : req.originalUrl.slice(queryIndex)
       res.redirect(301, `/strands/${encodeURIComponent(String(req.params.id))}${query}`)
     })
-    app.use(express.static(frontendDir))
+    app.use(express.static(frontendDir, {
+      setHeaders: (res, filePath) => {
+        // Explicit, so home-screen installs never depend on the mime table.
+        if (filePath.endsWith('.webmanifest')) {
+          res.setHeader('Content-Type', 'application/manifest+json; charset=utf-8')
+        }
+      },
+    }))
 
     // SPA fallback: serve index.html for all non-API/non-WS routes
     app.get('{*path}', (req, res, next) => {
-      // Skip API and WebSocket paths — let them 404 naturally with JSON
-      if (req.path.startsWith('/api/') || req.path.startsWith('/ws/') || req.path === '/health') {
+      // Skip API and WebSocket paths — let them 404 naturally with JSON.
+      // Install assets (manifest, touch/app icons) are fetched by the OS
+      // without a session; a missing one must 404, never answer index.html.
+      if (req.path.startsWith('/api/') || req.path.startsWith('/ws/') || req.path === '/health'
+        || isInstallAssetPath(req.path)) {
         next()
         return
       }
@@ -416,4 +426,10 @@ export function createApp(options?: AppOptions): express.Express {
   }
 
   return app
+}
+
+const INSTALL_ASSET_PATH = /^\/(?:manifest\.webmanifest|apple-touch-icon(?:-precomposed)?(?:-\d+x\d+)?\.png|icon-[\w-]+\.png)$/
+
+function isInstallAssetPath(urlPath: string): boolean {
+  return INSTALL_ASSET_PATH.test(urlPath)
 }

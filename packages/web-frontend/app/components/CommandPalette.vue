@@ -216,7 +216,7 @@ function retry() {
       <DialogContent
         data-testid="command-palette"
         :aria-describedby="undefined"
-        class="fixed inset-x-3 top-3 z-50 mx-auto flex max-h-[min(36rem,calc(100dvh-1.5rem))] max-w-[40rem] flex-col overflow-hidden rounded-xl border border-border bg-card text-card-foreground shadow-overlay focus:outline-none sm:top-[12vh] sm:max-h-[min(36rem,76vh)]"
+        class="fixed inset-x-3 top-[calc(env(safe-area-inset-top)+0.75rem)] z-50 mx-auto flex max-h-[min(36rem,calc(100dvh-1.5rem-env(safe-area-inset-top)))] max-w-[40rem] flex-col overflow-hidden rounded-xl border border-border bg-card text-card-foreground shadow-overlay focus:outline-none sm:top-[12vh] sm:max-h-[min(36rem,76vh)]"
         @open-auto-focus.prevent="input?.focus()"
       >
         <DialogTitle class="sr-only">{{ t('palette.title') }}</DialogTitle>

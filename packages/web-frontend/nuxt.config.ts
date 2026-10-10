@@ -86,11 +86,23 @@ export default defineNuxtConfig({
     head: {
       title: 'Offtangent',
       meta: [
-        { name: 'viewport', content: 'width=device-width, initial-scale=1' },
+        // viewport-fit=cover: the standalone home-screen app draws under the
+        // status bar and home indicator; layouts pad with env(safe-area-inset-*).
+        { name: 'viewport', content: 'width=device-width, initial-scale=1, viewport-fit=cover' },
         { name: 'description', content: 'Offtangent: self-hosted agent backend. Talk first, the system sorts.' },
+        // Home-screen install (iOS "Add to Home Screen", Android/Chrome install).
+        { name: 'apple-mobile-web-app-capable', content: 'yes' },
+        { name: 'mobile-web-app-capable', content: 'yes' },
+        { name: 'apple-mobile-web-app-title', content: 'Offtangent' },
+        { name: 'apple-mobile-web-app-status-bar-style', content: 'black-translucent' },
+        // Ground colour (--n0) of the dark and light theme.
+        { name: 'theme-color', content: '#0F1215', media: '(prefers-color-scheme: dark)' },
+        { name: 'theme-color', content: '#F8FAF9', media: '(prefers-color-scheme: light)' },
       ],
       link: [
         { rel: 'icon', type: 'image/svg+xml', href: '/favicon.svg' },
+        { rel: 'manifest', href: '/manifest.webmanifest' },
+        { rel: 'apple-touch-icon', sizes: '180x180', href: '/apple-touch-icon.png' },
       ],
       // Apply the stored colour mode before the first paint (the app is a
       // client-only SPA, so without this the page would flash in the default

@@ -155,7 +155,7 @@ const ringLabel = computed(() => {
       <DialogPortal>
         <DialogOverlay class="fixed inset-0 z-40 bg-scrim" />
         <DialogContent id="strand-context-column" data-testid="context-column" data-placement="overlay" :aria-describedby="undefined"
-          class="fixed inset-y-0 right-0 z-50 w-[min(20rem,100vw)] border-l border-border bg-background shadow-overlay focus:outline-none">
+          class="fixed inset-y-0 right-0 z-50 w-[min(20rem,100vw)] pt-[env(safe-area-inset-top)] pb-[env(safe-area-inset-bottom)] border-l border-border bg-background shadow-overlay focus:outline-none">
           <DialogTitle class="sr-only">{{ $t('shell.dock') }}</DialogTitle>
           <StrandDock :strand-id="threadId" :strand="thread" :turn-running="turnRunning" :resizable="false" @close="closeContext">
             <template #context-extra><StrandContextDetails :strand-id="threadId" :project-id="thread?.projectId ?? null" /></template>

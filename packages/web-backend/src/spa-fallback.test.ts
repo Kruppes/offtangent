@@ -24,6 +24,8 @@ beforeAll(async () => {
   fs.mkdirSync(path.join(frontendDir, 'chat'), { recursive: true })
   fs.writeFileSync(path.join(frontendDir, 'index.html'), '<!doctype html><title>spa</title>')
   fs.writeFileSync(path.join(frontendDir, 'chat', 'index.html'), '<!doctype html><title>chat</title>')
+  fs.writeFileSync(path.join(frontendDir, 'manifest.webmanifest'), JSON.stringify({ name: 'Offtangent', display: 'standalone' }))
+  fs.writeFileSync(path.join(frontendDir, 'apple-touch-icon.png'), Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]))
   previousFrontendDir = process.env.FRONTEND_DIR
   previousDataDir = process.env.DATA_DIR
   process.env.FRONTEND_DIR = frontendDir
@@ -67,5 +69,24 @@ describe('SPA fallback', () => {
     const api = await fetch(`${baseUrl}/api/does-not-exist`)
     expect(api.status).toBe(404)
     expect((await api.text()).includes('<title>spa</title>')).toBe(false)
+  })
+
+  it('serves the web app manifest and touch icon as real files, without a session', async () => {
+    const manifest = await fetch(`${baseUrl}/manifest.webmanifest`)
+    expect(manifest.status).toBe(200)
+    expect(manifest.headers.get('content-type')).toMatch(/^application\/manifest\+json/)
+    expect(await manifest.json()).toMatchObject({ name: 'Offtangent', display: 'standalone' })
+
+    const icon = await fetch(`${baseUrl}/apple-touch-icon.png`)
+    expect(icon.status).toBe(200)
+    expect(icon.headers.get('content-type')).toBe('image/png')
+  })
+
+  it('answers 404 for a missing install asset instead of the SPA index', async () => {
+    for (const assetPath of ['/apple-touch-icon-precomposed.png', '/icon-192.png']) {
+      const res = await fetch(`${baseUrl}${assetPath}`)
+      expect(res.status).toBe(404)
+      expect((await res.text()).includes('<title>spa</title>')).toBe(false)
+    }
   })
 })

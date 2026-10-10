@@ -30,7 +30,7 @@ onBeforeUnmount(() => { if (props.open) overlay.setOverlayOpen(false) })
       <DialogOverlay class="fixed inset-0 z-50 bg-scrim data-[state=open]:animate-fade-in" />
       <DialogContent
         data-testid="shortcut-help"
-        class="fixed inset-x-3 top-3 z-50 mx-auto flex max-h-[calc(100dvh-1.5rem)] max-w-[32rem] flex-col overflow-hidden rounded-xl border border-border bg-card text-card-foreground shadow-overlay focus:outline-none sm:top-[10vh] sm:max-h-[80vh]"
+        class="fixed inset-x-3 top-[calc(env(safe-area-inset-top)+0.75rem)] z-50 mx-auto flex max-h-[calc(100dvh-1.5rem-env(safe-area-inset-top))] max-w-[32rem] flex-col overflow-hidden rounded-xl border border-border bg-card text-card-foreground shadow-overlay focus:outline-none sm:top-[10vh] sm:max-h-[80vh]"
       >
         <div class="flex shrink-0 items-center justify-between gap-2 border-b border-border py-2 pl-6 pr-2">
           <DialogTitle class="text-lg font-semibold">{{ t('shortcuts.title') }}</DialogTitle>
