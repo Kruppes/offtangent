@@ -1,0 +1,12 @@
+{
+  "domain": "offtangent_conversation",
+  "name": "Offtangent Conversation",
+  "version": "0.1.0",
+  "config_flow": true,
+  "integration_type": "service",
+  "iot_class": "local_polling",
+  "dependencies": ["conversation", "llm"],
+  "requirements": [],
+  "codeowners": [],
+  "documentation": "https://github.com/Kruppes/offtangent"
+}

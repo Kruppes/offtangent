@@ -1,0 +1,38 @@
+{
+  "title": "Offtangent Conversation",
+  "config": {
+    "step": {
+      "user": {
+        "title": "Separater Offtangent-Agent",
+        "description": "Keine Pipeline oder Entitätenfreigabe wird geändert. Standardmäßig ist Steuerung aus. Haiku-Abotransport ist bis zur Authklärung gesperrt.",
+        "data": {
+          "url": "Adapter-URL (HTTPS, endet mit /v1)",
+          "adapter_token": "Separates HA-Adapter-Token (kein Anthropic-Token)",
+          "model": "Exakte Modell-ID",
+          "control": "Assist-Steuerung ausdrücklich freigeben",
+          "allowed_tools": "Freigegebene Toolnamen als JSON-Liste (muss Adapter-Allowlist entsprechen)"
+        }
+      }
+    },
+    "error": {
+      "invalid_config": "URL, Token, Modell oder Toolliste ungültig."
+    }
+  },
+  "options": {
+    "step": {
+      "init": {
+        "title": "Separaten Agenten konfigurieren",
+        "data": {
+          "url": "Adapter-URL (HTTPS, endet mit /v1)",
+          "adapter_token": "Separates HA-Adapter-Token (kein Anthropic-Token)",
+          "model": "Exakte Modell-ID",
+          "control": "Assist-Steuerung ausdrücklich freigeben",
+          "allowed_tools": "Freigegebene Toolnamen als JSON-Liste (muss Adapter-Allowlist entsprechen)"
+        }
+      }
+    },
+    "error": {
+      "invalid_config": "Ungültige Konfiguration."
+    }
+  }
+}
