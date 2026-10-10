@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Offline only: production provider access is mocked/gated; no HA instance connected.
+# Offline only: provider/network are mocked; no HA instance or real credentials connected.
 set -euo pipefail
 cd "$(dirname "$0")/.."
 python="${1:?Usage: test-ha-haiku.sh /absolute/HA-venv/bin/python /absolute/output-directory}"
@@ -10,6 +10,7 @@ export TMPDIR="$out/test-tmp" PYTHONDONTWRITEBYTECODE=1
 export HA_TEST_PYTHON="$python" PYTHONPATH="$PWD/integrations/home_assistant"
 export HA_WIRE_EVIDENCE_PATH="$out/haiku-wire-mock.json"
 export HA_BRIDGE_EVIDENCE_PATH="$out/haiku-http-python-bridge.json"
+export HA_RELAY_BRIDGE_EVIDENCE_PATH="$out/ha-relay-http-python-bridge.json"
 "$python" - <<'PY' | tee "$out/runtime-versions.log"
 import importlib.metadata as m
 import sys
@@ -25,6 +26,11 @@ flock "${HEAVY_BUILD_LOCK:-/workspace/.heavy-build.lock}" node node_modules/vite
 flock "${HEAVY_BUILD_LOCK:-/workspace/.heavy-build.lock}" node node_modules/typescript/bin/tsc \
   -p packages/core/tsconfig.json --noEmit 2>&1 | tee "$out/typecheck-final.log"
 echo 'TypeScript core typecheck exit=0' | tee -a "$out/typecheck-final.log"
+# Check ALL backend sources/tests against this worktree's core, not /app's older dist.
+# No test exclusion and no change to the regular production build configuration.
+flock "${HEAVY_BUILD_LOCK:-/workspace/.heavy-build.lock}" node node_modules/typescript/bin/tsc \
+  -p scripts/tsconfig-ha-backend.json 2>&1 | tee "$out/typecheck-backend-final.log"
+echo 'TypeScript backend worktree-source typecheck exit=0' | tee -a "$out/typecheck-backend-final.log"
 "$python" -m unittest discover -s integrations/home_assistant/tests -v \
   2>&1 | tee "$out/python-final.log"
 "$python" - <<'PY' | tee "$out/python-source-check.log"

@@ -19,7 +19,7 @@ def _schema(defaults):
         vol.Required("model", default=defaults.get("model", DEFAULT_MODEL)): str,
         vol.Required("control", default=defaults.get("control", False)): bool,
         vol.Required("allowed_tools", default=defaults.get("allowed_tools", "[]")): str,
-        vol.Required("fallback_agent", default=defaults.get("fallback_agent", "")):
+        vol.Optional("fallback_agent", default=defaults.get("fallback_agent", "")):
             selector.EntitySelector({"domain": "conversation"}),
     })
 
@@ -33,7 +33,7 @@ def _validate(data):
         or not re.fullmatch(r"[A-Za-z0-9-]{1,128}", data["model"])):
         raise ValueError()
     fallback = data.get("fallback_agent")
-    if fallback is not None and not re.fullmatch(r"conversation\.[a-z0-9_]+", fallback):
+    if fallback not in (None, "") and (not isinstance(fallback, str) or not re.fullmatch(r"conversation\.[a-z0-9_]+", fallback)):
         raise ValueError()
     names = json.loads(data["allowed_tools"])
     if (not isinstance(names, list) or len(names) > 32

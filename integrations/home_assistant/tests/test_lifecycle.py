@@ -42,6 +42,23 @@ class LifecycleTests(unittest.IsolatedAsyncioTestCase):
         self.client.close.assert_awaited_once()
         self.manager.async_forward_entry_setups.assert_not_awaited()
 
+    async def test_setup_outage_keeps_selected_local_fallback_usable_but_bad_bearer_does_not(self):
+        self.entry.options["fallback_agent"] = "conversation.local_ollama"
+        before = dict(self.entry.data)
+        with patch.object(integration, "local_fallback_entry") as selection:
+            self.client.check_model.side_effect = integration.AdapterError("adapter_unavailable")
+            self.assertTrue(await integration.async_setup_entry(self.hass, self.entry))
+            selection.assert_called_once_with(self.hass, "conversation.local_ollama", control=False)
+            self.client.close.assert_not_awaited()
+            self.manager.async_forward_entry_setups.assert_awaited_once()
+            self.assertEqual(self.entry.data, before)
+            self.manager.async_forward_entry_setups.reset_mock()
+            self.client.check_model.side_effect = integration.AdapterError("adapter_http_401")
+            with self.assertRaises(ConfigEntryNotReady):
+                await integration.async_setup_entry(self.hass, self.entry)
+            self.client.close.assert_awaited_once()
+            self.manager.async_forward_entry_setups.assert_not_awaited()
+
     async def test_cancellation_closes_client_and_propagates(self):
         self.client.check_model.side_effect = asyncio.CancelledError()
         with self.assertRaises(asyncio.CancelledError):

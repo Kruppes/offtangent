@@ -142,7 +142,7 @@ describe('real pi-ai Anthropic SDK with entirely simulated wire',()=>{
   expect(fetch).not.toHaveBeenCalled()
   if(process.env.HA_WIRE_EVIDENCE_PATH)writeFileSync(process.env.HA_WIRE_EVIDENCE_PATH,JSON.stringify({
    mode:'OFFLINE ONLY — all Anthropic requests intercepted; synthetic credential and tools; no HA services',
-   model:c.model,productionStatus:'503 anthropic_subscription_auth_blocked before loading any credentials',
+   model:c.model,productionStatus:'Central-provider relay implemented; this fixture is offline only, not live/deployment evidence',
    captures:fixture.captures.map(capture=>({url:capture.url,headers:Object.fromEntries(
     ['user-agent','x-app','anthropic-beta','anthropic-version'].filter(name=>capture.headers[name]).map(name=>[name,capture.headers[name]])),payload:capture.payload})),
    firstTool:r.choices[0].message.tool_calls[0].function,final:'Home Assistant hat die simulierte Aktion bestätigt.',

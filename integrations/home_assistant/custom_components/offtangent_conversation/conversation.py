@@ -144,8 +144,8 @@ class OfftangentConversationEntity(conversation.ConversationEntity, conversation
             recent = self._history.get(key, (0, []))[1]
             # Own delegated answer only, never the local agent's other histories or prompt.
             self._history[key] = (time.monotonic(), (recent + [
-                {"role": "user", "content": user_input.text},
-                {"role": "assistant", "content": spoken},
+                {"role": "user", "content": user_input.text[:8192]},
+                {"role": "assistant", "content": spoken[:8192]},
             ])[-12:])
         self._publish_state()
         return result

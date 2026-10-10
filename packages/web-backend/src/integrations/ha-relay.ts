@@ -24,6 +24,7 @@ export function createHaRelayRouter(): express.Router {
       const response = await handler(new Request('http://127.0.0.1' + incoming.url, init))
       if (outgoing.destroyed) return
       outgoing.status(response.status)
+      outgoing.setHeader('Cache-Control', 'no-store')
       response.headers.forEach((value, name) => outgoing.setHeader(name, value))
       outgoing.end(Buffer.from(await response.arrayBuffer()))
     } catch { if (!outgoing.headersSent) outgoing.status(500); outgoing.end() }

@@ -1,0 +1,12 @@
+{
+  "extends": "../tsconfig.json",
+  "compilerOptions": {
+    "rootDir": "..",
+    "noEmit": true,
+    "paths": {
+      "@axiom/core": ["../packages/core/src/index.ts"],
+      "@axiom/core/contracts": ["../packages/core/src/contracts/index.ts"]
+    }
+  },
+  "include": ["../packages/web-backend/src"]
+}

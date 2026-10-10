@@ -45,17 +45,19 @@ class FakeClient:
 
 class ValidationTests(unittest.TestCase):
     def test_generic_urls_require_tls_except_loopback(self):
-        for url in ["https://adapter.example.invalid/v1", "http://127.0.0.1:8095/v1/", "http://[::1]:8095/v1"]:
+        for url in ["https://adapter.example.invalid/v1", "http://127.0.0.1:8095/v1/", "http://[::1]:8095/v1",
+                    "https://adapter.example.invalid/ha-relay/v1", "http://localhost:8095/ha-relay/v1/"]:
             self.assertEqual(client.validate_url(url), url.rstrip("/"))
         for url in ["http://private.invalid/v1", "https://user:pass@adapter.invalid/v1", "https://adapter.invalid/v1?a=b",
                     "https://adapter.invalid/v1#x", "https://adapter.invalid/v1?", "https://adapter.invalid/v1#",
                     "https://adapter.invalid/other", "https://adapter.invalid:bad/v1", "ftp://adapter.invalid/v1",
+                    "https://adapter.invalid/ha-relay/../v1", "https://adapter.invalid/ha-relay/v1/other",
                     "https://adapter.invalid/v1\n", "http://127.0.0.1.evil.invalid/v1"]:
             with self.subTest(url=url), self.assertRaises(ValueError):
                 client.validate_url(url)
 
     def test_duplicate_json_and_nonfinite_numbers_rejected(self):
-        for data in ['{"a":1,"a":2}', '{"a":NaN}', '{"a":Infinity}']:
+        for data in ['{"a":1,"a":2}', '{"a":NaN}', '{"a":Infinity}', '{"a":1e999}', '{"a":-1e999}']:
             with self.assertRaises(ValueError):
                 client.decode_json(data)
 
@@ -71,7 +73,7 @@ class ValidationTests(unittest.TestCase):
                         {"role": "assistant", "content": None},
                         tool_reply([CALL.copy(), CALL.copy()])]:
             variants.append(envelope(message, "length" if message.get("content") == "partial" else None))
-        for args in ['{"name":"x","name":"y"}', '{"name":NaN}', '[]', '{bad', '"x"']:
+        for args in ['{"name":"x","name":"y"}', '{"name":NaN}', '{"name":1e999}', '[]', '{bad', '"x"']:
             call = json.loads(json.dumps(CALL)); call["function"]["arguments"] = args
             variants.append(envelope(tool_reply([call])))
         call = json.loads(json.dumps(CALL)); call["function"]["name"] = "shell__exec"
@@ -169,6 +171,37 @@ class EngineTests(unittest.IsolatedAsyncioTestCase):
         with self.assertRaises(asyncio.CancelledError):
             await client.run_turn(f, "Sicher", "Licht", TOOLS, lambda n, a: a, dispatch)
         self.assertEqual(len(f.requests), 1)
+
+    async def test_query_datetime_and_enum_serialization_preserves_information(self):
+        from datetime import date, datetime, time, timezone
+        from enum import Enum
+        class Unit(Enum):
+            CELSIUS = "°C"
+        name = "homeassistant__HassGetCurrentDate"
+        tool = {"type": "function", "function": {**TOOLS[0]["function"], "name": name}}
+        call = {**CALL, "function": {"name": name, "arguments": "{}"}}
+        f = FakeClient([envelope(tool_reply([call])), envelope({"role": "assistant", "content": "Der simulierte Tag ist der 10. Oktober."})])
+        async def dispatch(*args):
+            return {"response_type": "query_answer", "data": {"failed": [], "date": date(2026, 10, 10),
+                "timestamp": datetime(2026, 10, 10, 12, 0, tzinfo=timezone.utc), "time": time(12, 0), "unit": Unit.CELSIUS}}
+        outcome = await client.run_turn(f, "Sicher", "Datum?", [tool], lambda n, a: a, dispatch)
+        self.assertFalse(outcome.failed)
+        self.assertEqual(outcome.text, "Der simulierte Tag ist der 10. Oktober.")
+        self.assertEqual(len(f.requests), 2)
+        payload = client.decode_json(outcome.messages[3]["content"])
+        self.assertEqual(payload["data"], {"failed": [], "date": "2026-10-10", "timestamp": "2026-10-10T12:00:00+00:00", "time": "12:00:00", "unit": "°C"})
+        self.assertNotIn("Aktion bestätigt", outcome.text)
+
+    async def test_unknown_result_type_is_unconfirmed_without_followup(self):
+        f = FakeClient([envelope(tool_reply())])
+        async def dispatch(*args):
+            return {**SUCCESS, "unknown": object()}
+        progress = client.TurnProgress()
+        result = await client.run_turn(f, "Sicher", "Simulierte Aktion", TOOLS, lambda n, a: a, dispatch, progress=progress)
+        self.assertTrue(progress.dispatched)
+        self.assertTrue(result.failed)
+        self.assertEqual(len(f.requests), 1)
+        self.assertIn("nicht eindeutig bestätigt", result.text)
 
     async def test_readcontext_tool_roundtrip_uses_result_not_action_confirmation(self):
         tool = {"type": "function", "function": {**TOOLS[0]["function"], "name": "homeassistant__GetLiveContext"}}

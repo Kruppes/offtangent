@@ -103,8 +103,8 @@ class ActualHAEntityTests(unittest.IsolatedAsyncioTestCase):
         entity.entity_id = "conversation.offtangent_synthetic"
         return entity
 
-    def log(self):
-        log = ChatLog(self.hass, "offline-conversation")
+    def log(self, conversation_id="offline-conversation"):
+        log = ChatLog(self.hass, conversation_id)
         log.async_add_user_content(UserContent(content=self.input.text))
         return log
 
@@ -210,6 +210,30 @@ class ActualHAEntityTests(unittest.IsolatedAsyncioTestCase):
         await agent._async_handle_message(other, self.log())
         self.assertEqual([x["role"] for x in adapter.requests[1]["messages"]], ["system", "user"])
 
+    async def test_auth_poll_actively_warns_without_conversation_and_dismisses_only_verified_ready(self):
+        adapter = MockAdapter([])
+        adapter.auth_status = AsyncMock(side_effect=[
+            {"auth": {"state": "relogin_required"}}, {"auth": {"state": "relogin_required"}},
+            AdapterError("adapter_unavailable"), {"auth": {"state": "access_expired"}},
+            {"auth": {"state": "ready"}}, {"auth": {"state": "ready"}},
+        ])
+        agent = self.agent(adapter)
+        with patch("custom_components.offtangent_conversation.conversation.persistent_notification.async_create") as notice, patch("custom_components.offtangent_conversation.conversation.persistent_notification.async_dismiss") as dismiss:
+            for _ in range(4):
+                await agent._poll_auth()
+            self.assertEqual(notice.call_count, 1)
+            dismiss.assert_not_called()
+            self.assertEqual(agent.extra_state_attributes["provider_auth_state"], "access_expired")
+            for _ in range(2):
+                await agent._poll_auth()
+            self.assertEqual(notice.call_count, 1)
+            self.assertEqual(dismiss.call_count, 1)
+            self.assertFalse(agent.extra_state_attributes["relogin_required"])
+        self.assertEqual(adapter.auth_status.await_count, 6)
+        self.assertEqual(adapter.requests, [])
+        self.assertEqual(self.tool.calls, [])
+        self.assertEqual(agent.extra_state_attributes["degradation_count"], 0)
+
     async def test_relogin_warning_deduplicated_local_fallback_counted_and_session_isolated(self):
         adapter = MockAdapter([])
         adapter.complete = AsyncMock(side_effect=AdapterError("provider_relogin_required"))
@@ -298,9 +322,12 @@ class ActualHAConfigFlowTests(unittest.TestCase):
         data = {"url": "https://example.invalid/v1", "adapter_token": "synthetic-token-only", "model": "another-model-1",
                 "control": True, "allowed_tools": '["homeassistant__HassTurnOff"]'}
         config_flow._validate(data)
+        config_flow._validate({**data, "url": "https://example.invalid/ha-relay/v1", "fallback_agent": ""})
+        config_flow._validate({**data, "fallback_agent": "conversation.local_ollama"})
         for key, value in [("url", "http://insecure.invalid/v1"), ("adapter_token", "short"),
                            ("allowed_tools", "[]"), ("allowed_tools", '["shell__exec"]'),
-                           ("allowed_tools", '["HassTurnOff","HassTurnOff"]'), ("model", "bad/model")]:
+                           ("allowed_tools", '["HassTurnOff","HassTurnOff"]'), ("model", "bad/model"),
+                           ("fallback_agent", "remote.agent"), ("fallback_agent", 1)]:
             with self.subTest(key=key), self.assertRaises(ValueError):
                 config_flow._validate({**data, key: value})
         form = config_flow._schema(data)

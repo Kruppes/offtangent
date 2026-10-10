@@ -1,104 +1,85 @@
-# Haiku 5.5 / separater Home-Assistant-Agent — REVIEW ONLY
+# Haiku 5.5 / HA-Relay — aktueller Reviewstand 2026-10-10
 
-Stand: 2026-10-10. **Nicht produktiv installiert, nicht gemergt, nicht deployed.**
+## Verbindliche Architektur
 
-## Ergebnis und harte Grenze
+`HA Custom ConversationEntity → bestehendes Offtangent-Backend /ha-relay/v1 →
+bestehender zentraler Anthropic-Abo-Provider (claude-haiku-5-5)`.
 
-Der HA-Wireadapter akzeptiert die explizite Kombination
-`transport: "anthropic-oauth"`, `model: "claude-haiku-5-5"`, `thinking: "low"`.
-Der Default-Transport gibt dabei **HTTP 503 / `anthropic_subscription_auth_blocked`**
-zurück, BEVOR Providerdaten oder Credentials geladen werden. Es gibt weder
-HTTP-/Config-Bypass noch API-Key-, Usage-Credit-, Modell- oder Codex-Fallback.
-Das ist kein erfolgreich implementierter Live-Haiku-Transport. Die bestehende
-Codex-Implementierung bleibt bestehen; sie ist keine Ausweichroute für Haiku.
+Kein separater Proxy-/Claude-/Refreshprozess, eigener HA-Providerstore,
+API-Key-/Credits-Fallback, neue Identity-/Header-Manipulation oder Änderung anderer
+Pipelines/Ollama/STT/TTS. HA bekommt ausschließlich seinen neuen Relaybearer.
+Der Relay nutzt `getApiKeyForProvider`, `buildModel`, `streamSimple` und den
+vorhandenen `refreshOAuthCredentialsLocked`; bestehendes SDK-Verhalten bleibt
+unverändert. Der frühere Prototyp-Authblocker ist historisch, nicht der heutige
+Produktionsdefault. Der bestehende Codex-Prototyp-/Interviewpfad bleibt erhalten.
+Keine neue Zulässigkeitsrecherche; technische Tests beweisen keine Vertrags-
+oder Abo-Abrechnungszusage.
 
-Implementiert und getestet sind das generische HA-Integrationspaket, der neue
-separate Conversation-Agent und die vollständige native Tool/Thinking-Wire-Seam.
-Die installierte pi-ai SDK wird mit komplett abgefangenem Netztransport getestet.
-Ein echter ungefährlicher Modellroundtrip wurde **wegen Auth-/Abrechnungsgrenze
-nicht ausgeführt**. Frühere Benchmark-Erfolge sind kein Nachweis dieser Freigabe.
-Unabhängiges Main-Review ist noch offen. Review allein hebt das Authgate nicht auf.
+## Implementierte Sicherheitsgrenzen
 
-## Geöffnete Primärquellen / Authbefund
+- Backend-Opt-in in privater regulärer `${DATA_DIR}/config/ha-inference.json`;
+  SHA-256 Relay-Verifier, exakter zentraler OAuth-Provider-/Modellpin, schemaexakte
+  Assist-Allowlist. Abwesend/deaktiviert/ungültig bedeutet unavailable.
+  Eigener Relaybearer schützt auch Models/Authstatus; kein Zugriff auf Admin-APIs.
+- Access-Expiry getrennt von notwendigem Re-Login, unbekannte Refresh-Expiry `null`.
+  Credentialbezogener Authzustand invalidiert bei zentraler Credentialänderung.
+  HA pollt Authstatus beim Hinzufügen und minütlich, Loginwarnung dedupliziert.
+  Kein Token/Upstreambody in Diagnosen, Status oder Fehlermeldungen.
+- Upstream-401: ein Inferenz-POST, zentrale Refresh-Reparatur, **kein** Inferenzreplay.
+  403/429: kein Refresh-/Identitäts-/Provider-/Creditswechsel. `maxRetries: 0`.
+- Buffer bis vollständigem Modellresultat; Modell-/API-/SSE-/Tool-/Argumentprüfung,
+  Duplicate-JSON-/NaN-/Infinity-/Truncation-Schutz, Request-/Output-/Raten-/Zeitlimits,
+  Disconnect/Cancellation und kein nur teilweise ausgelieferter Toolbatch.
+- Signiertes Thinking verbleibt nur im kurzlebigen In-Memory-Sessionvault.
+  Exakter HA-Folgeprefix/Toolschema-Pin und einmals verwendbare Continuation-ID
+  verhindern Transcript-Swaps/Replay. HA-ChatLog markiert Tools extern ausgeführt.
+- Eigene Mehrturn-History, keine Offtangent-Memory/SOUL/fremden Agentenprompts.
+  Conversation-ID plus Gerät/Satellit, begrenzte Sessions/Nachrichten und TTL.
+- Mutationsbestätigung ausschließlich aus strukturiertem HA-Ergebnis; danach
+  feste Bestätigung ohne Folgeinferenz. Query-/Infotools dürfen zum Modell zurück;
+  Datum/Zeit/Enum serialisieren deterministisch. Unbekannte Typen fail closed.
+- Lokaler Fallback nur vor **jeglichem** Tool-Dispatch. Bei möglicher/teilweiser
+  Aktion, Timeout, Cancellation, Wiederholung oder unklarer Bestätigung niemals
+  Fallback/Retry. Eigene Fallback-Conversation-ID, sichtbare Degradationsantwort,
+  Zähler/Entityattribute, keine Ollama-Konfigänderung oder Steuerungseskalation.
 
-1. https://code.claude.com/docs/en/legal-and-compliance
-   Abschnitt "Authentication and credential use": OAuth unterstützt gewöhnliche
-   Nutzung von Claude Code und anderen nativen Anthropic-Anwendungen. Entwickler
-   eigener Anwendungen sollen Console API-Key oder unterstützte Cloudprovider
-   nutzen. Unverändertes Claude Code ist ausdrücklich ein anderes Szenario.
-2. https://support.claude.com/en/articles/13189465-log-in-to-your-claude-account
-   Abschnitt "Authenticating to subscription plans": Anthropic kann bestimmte
-   Dritttools bei aktivierten Usage Credits zulassen, aber deren Nutzung von
-   Credits statt Abolimits abziehen. Dritttools mit falsch dargestellter Identität
-   oder Routing von Dritttraffic gegen Abolimits werden ausdrücklich untersagt.
+## Tatsächliche Messung (kein Live-Relay-/HA-E2E)
 
-Beide Quellen wurden 2026-10-10 geöffnet. **Nicht** die pauschale Behauptung,
-OAuth für Dritttools sei immer unmöglich: Die dokumentierte mögliche Zulassung
-enthält eine vom Nutzer nicht genehmigte Credit-Abrechnung. Eine technisch
-akzeptierte Antwort bestätigt weder Nutzungsfreigabe noch abonnementexklusive
-Abrechnung.
+Am 2026-10-10 10:39:36 UTC wurde der bereits laufende **normale** Backend-
+Providerhealthpfad `/api/providers/{id}/test` mit `modelId: claude-haiku-5-5`
+aufgerufen. Bestehender Healthprompt: `Respond with OK only.`; keine Tools/HA.
+Resultat: HTTP **200**, `success: true`, `status: healthy`, `modelId:
+claude-haiku-5-5`, gemeldete Modelllatenz **603 ms**, gemessener Gesamtrequest
+**622 ms**. Der vorhandene Healthpfad aktualisiert nur Providerhealthstatus.
+Kein Roh-Wire-/Tokenusage-/TTFT-/Kosten- oder Live-Relayausführungsbeleg aus
+Healthresponse; diese Werte werden ausdrücklich nicht erfunden.
 
-Quellcodebefund: `provider-config.ts#buildModel` setzt für `anthropic-oauth`
-`user-agent: claude-cli/...`. Die installierte SDK ergänzt `x-app: cli` und den
-Systemblock `You are Claude Code, Anthropic's official CLI for Claude.`. Der
-reproduzierbare **synthetische** Wiretest erfasst dies, ohne echte Credentials zu
-laden. Header entfernen/ändern oder Identität weiter imitieren, um durchzukommen,
-ist keine hier autorisierte Lösung. Bestehende Provider-/OAuth-Lifecycle-Dateien
-wurden nicht verändert. Kein Secretstore, Credentialexport oder Tokenrefresh.
+Offline-Gates: `scripts/test-ha-haiku.sh /ABSOLUT/HA-VENV/bin/python /ABSOLUT/out`.
+Runtime: HA 2026.9.4 / Python 3.14.2 / aiohttp 3.14.3 / probatio 0.11.4 /
+voluptuous 0.16.0 / vorhandenes pi-ai 1.0.0. Der Lauf prüft Core-tsc und sämtliche
+Backendquellen/tests gegen dieses Worktree-Core mit `scripts/tsconfig-ha-backend.json`
+(keine Ausschlüsse); Shared `/app/node_modules` würde sonst alten Core-dist laden.
 
-Vor Aktivierung erforderlich: belastbare Autorisierung für diesen konkreten
-Drittclient **und** Nachweis der verlangten Abo-only-Abrechnung; anschließend
-explizit unabhängig reviewte Implementierung des erlaubten Transportes. Die
-aktuelle Gate-Zeile darf nicht einfach gelöscht werden. Ein nativer CLI-/Agent-
-SDK-Neuentwurf oder kostenpflichtiger API-/Credits-Weg ist eine neue Entscheidung,
-kein stiller Fallback dieses Pakets.
+Echte lokale HTTP-/Bibliothekstests mit **synthetischen** Modellen/Tools:
+1. Python-aiohttp → Node-Seam → echte SDK/SSE-Verarbeitung → genau ein simulierter
+   Toolcallback, feste strukturierte HA-Bestätigung und keine redundante Inferenz.
+2. Python-aiohttp → reale Express-Mount `/ha-relay/v1` → Models/Authstatus/Completion;
+   synthetischer Provider, null Tools/Services, `Synthetic OK`.
+3. Echte HA ChatLog/LLMContext/Voluptuous mit synthetischer APIInstance; Mehrturn,
+   Query-Serialisierung, Teilfehler, Fallback-Isolierung und aktiver Loginwarnung.
 
-## Protokoll
+Nicht behauptet: installierte HA-/Voice-Preview-End-to-End-Validierung,
+STT/TTS-/Aktor-/Automationstests, Produktions-Tool-Wireakzeptanz, bestehende
+HA-Konfig-Vorher/Nachher-Messung, Rollback-Ausführung, hassfest, vollständiger
+Monorepo-Build oder externe unabhängige Reviewfreigabe. Authstatus `ready` entsteht
+nur aus verifiziertem Relayresultat, nicht Models-Catalog oder Healthprobe.
 
-Bestehender opt-in Loopbacklistener und eigener HA-Bearer bleiben getrennt von
-Main-Router, Interview-Auth, Agenten, SOUL, Memory und Datenbank.
+## Review und spätere Installation
 
-- Tools: explizite Allowlist UND exakt gepinnte Schemas, maximal 32; echte HA-Assist-
-  Namen `Hass…` / `GetLiveContext`, optional namespaced (z.B.
-  `homeassistant__HassTurnOff`). Kein beliebiges Service-/Shelltool.
-- Haiku: ausschließlich explizites Low-Thinking; Sampling, caller effort und
-  service tier werden abgewiesen. Kein `thinking: off` oder Modellfallback.
-- Native Assistant-Nachricht mit Thinking und opaque Signatur bleibt serverseitig
-  in einer nicht persistenten Vault. Weder Thinking noch Signatur verlassen sie.
-- `ha_session` ist ein einmaliger, fünf Minuten gültiger Fortsetzungshandle,
-  gebunden an exakt denselben Nachrichtenprefix und dieselben Tools. Nur genau
-  die ausstehenden Resultate sind erlaubt. Replay, fremde Assistant-History,
-  geänderter Prefix/Tools/Handle und zusätzliche Usernachrichten schlagen fehl.
-- Keine neue Sitzung mit vom Client rekonstruierter signierter Assistant-History.
-  Alle Browser-/HA-Aufrufer müssen diese Extension unterstützen. Der hier
-  gelieferte Pythonclient tut dies; unmodifizierte Standardclients tun es nicht.
-- Ganze Modellantwort wird vor Ausgabe geprüft: Modellpin, vollständiger Stream,
-  Stopgrund, Tools/Argumente und Größenlimits. Kein partieller Action-Stream.
-- Structured `success:false`, `error` und HA `response_type:error` markieren native
-  Toolresults als Fehler. Keine Regex-Behauptung über Wahrheit von Modellprosa.
+Installierbares Paket: `integrations/home_assistant/custom_components/offtangent_conversation/`.
+Details/privates Setup/Voice-Preview-only-Rollback:
+`integrations/home_assistant/INSTALL-ROLLBACK.md`.
 
-Der Offline-SDK-Wiretest sendet adaptive thinking, summarized display,
-`output_config.effort: low`, `max_tokens: 4096`, kein temperature und keine fallbacks.
-Das ist der tatsächliche simulierte SDK-Payload, **kein** Live-API-Akzeptanz- oder
-Latenz-/Kostenbeleg. Die Mock-Modellmetadaten werden explizit im Test aufgebaut;
-die spätere autorisierte Providerauflösung/Haiku-Metadaten müssen gesondert
-verifiziert werden. Die heute produktive Haiku-Provideranbindung bleibt blockiert.
-
-## HA-Paket
-
-Siehe `integrations/home_assistant/README.md` und `INSTALL-ROLLBACK.md`.
-`offtangent_conversation` erstellt ausschließlich eine neue ConfigEntry/Entity.
-Die Optionen sind generisch: URL, eigener Adapterbearer, exakte Modell-ID,
-Steuerung standardmäßig AUS, explizite Toolnamenliste. Keine OAuth-Credentials
-in HA, keine fremde ConfigEntry-/Pipeline-/Exposure-Mutation.
-
-Geprüft gegen **Home Assistant 2026.9.4, Python 3.14.2, probatio 0.11.4,
-aiohttp 3.14.3, voluptuous 0.16.0** in einem isolierten Offline-Harness. Dieser nutzt
-die echte ChatLog/LLMContext/Voluptuous/ToolInput-Bibliothek und ausschließlich
-synthetische Toolimplementierungen ohne Serviceaufrufe oder reale Zustände.
-Keine HA-Produktivinstallation und kein HACS-/hassfest-/Gesamtsuite-Gate behauptet.
-
-Reproduzierbarkeit und exakte Befehle: `scripts/test-ha-haiku.sh`. Die Python-
-Umgebung muss zuvor die HA-2026.9.4-Abhängigkeiten enthalten. Das Script installiert
-nichts und nutzt kein Produktions-DATA_DIR. Größere Testumgebung/Installcache liegt
-auf dem zuvor verifizierten NAS; kleine Reviewdateien liegen in /workspace.
+**Vor unabhängigem Review kein Merge, Deploy, HA-Installation oder Pipelinewechsel.**
+Unabhängiger Reviewer prüft vor allem Auth-/Refreshabgrenzung, Fallback-nie-nach-
+Dispatch, Multi-Device-Memorygrenzen, Query-/Mutationssemantik und echte HA-APIs.

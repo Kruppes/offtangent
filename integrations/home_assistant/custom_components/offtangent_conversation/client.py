@@ -7,6 +7,7 @@ from datetime import date, datetime, time
 from enum import Enum
 import ipaddress
 import json
+import math
 import re
 from typing import Any
 from urllib.parse import urlsplit
@@ -35,7 +36,7 @@ def validate_url(value: str) -> str:
         loopback = url.hostname == "localhost"
     if (url.scheme not in ("http", "https") or not url.hostname
         or (url.scheme == "http" and not loopback) or url.username or url.password
-        or url.query or url.fragment or url.path.rstrip("/") != "/v1"):
+        or url.query or url.fragment or url.path.rstrip("/") not in {"/v1", "/ha-relay/v1"}):
         raise ValueError("invalid_url")
     try:
         _ = url.port
@@ -57,7 +58,13 @@ def decode_json(text: str) -> Any:
     def invalid_constant(_):
         raise ValueError("invalid_json_number")
 
-    return json.loads(text, object_pairs_hook=pairs, parse_constant=invalid_constant)
+    def finite_float(raw):
+        value = float(raw)
+        if not math.isfinite(value):
+            raise ValueError("invalid_json_number")
+        return value
+
+    return json.loads(text, object_pairs_hook=pairs, parse_constant=invalid_constant, parse_float=finite_float)
 
 
 @dataclass(frozen=True)
