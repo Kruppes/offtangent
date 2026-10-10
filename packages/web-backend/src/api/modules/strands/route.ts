@@ -135,6 +135,7 @@ export function createStrandsRouters(options: StrandsRouterOptions): StrandsRout
   strands.patch('/:id/eco', controller.patchStrandEco)
   strands.get('/:id/tasks', controller.strandTasks)
   strands.get('/:id/context', controller.strandContext)
+  strands.get('/:id/stats', controller.strandStats)
   strands.get('/:id/facts', controller.strandFacts)
   strands.post('/:id/fork', perUserRateLimit({ windowMs: 60_000, max: FORK_PER_MINUTE, code: 'fork_rate_limited' }), controller.forkStrand)
   strands.patch('/:id', controller.patchStrand)

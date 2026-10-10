@@ -60,6 +60,7 @@ import type { ChatEventBus } from '../../../chat-event-bus.js'
 import { resolveNowSetMax, resolveNowSetMode } from '../../../now-set-limit.js'
 import { describePendingTurn } from '../../../turn-queue.js'
 import { searchStrands } from './search.js'
+import { cachedStrandStats, type StrandStats } from './stats.js'
 import type { DeleteStrandQuery, ListStrandsQuery, PatchStrandBody, PatchStrandModelBody, PatchStrandEcoBody, StrandActivityIdsBody, StrandTasksQuery } from './schema.js'
 import { effectiveModelForStrand, getProvider, modelMetadataFor } from '../../../model-selection.js'
 
@@ -855,6 +856,20 @@ export function createStrandsService(options: StrandsServiceOptions) {
     return measuredProvider !== slug
   }
 
+  /**
+   * Strand statistics (`strand_stats.v1`): same ownership rule as every other
+   * strand read; cached for 60 s per strand. The context window falls back to
+   * the effective model's metadata when no request recorded one yet.
+   */
+  function strandStats(userId: number, strandId: string, include: { tasks?: boolean; series?: boolean } = {}): StrandStats {
+    requireStrand(userId, strandId)
+    const stats = cachedStrandStats(db, strandId, { includeTasks: include.tasks, includeSeries: include.series })
+    if (stats.contextWindow !== null) return stats
+    const effective = effectiveModelForStrand(db, strandId, options.getTurnRunner?.()?.getTurnModelOverride?.(userId, strandId))
+    const window = effective ? modelMetadataFor(effective.providerId, effective.modelId)?.contextWindow ?? null : null
+    return window === null ? stats : { ...stats, contextWindow: window }
+  }
+
   function strandContext(userId: number, strandId: string): StrandContextReport {
     requireStrand(userId, strandId)
     const effective = effectiveModelForStrand(db, strandId, options.getTurnRunner?.()?.getTurnModelOverride?.(userId, strandId))
@@ -1160,6 +1175,7 @@ export function createStrandsService(options: StrandsServiceOptions) {
     removeStrand,
     strandTasks,
     strandContext,
+    strandStats,
     strandFacts,
     forkAtMessage,
     setTags,

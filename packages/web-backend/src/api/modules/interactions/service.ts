@@ -52,6 +52,8 @@ export interface InteractionTurnStarter {
     source: string
     agentId: string
     explicitSessionId: string
+    /** Recorded on the strand turn (statistics). */
+    inputMode?: 'typed' | 'voice' | 'answer' | null
   }) => unknown
 }
 

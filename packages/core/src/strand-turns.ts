@@ -74,7 +74,11 @@ export function ensureStrandStatsSchema(db: Database, internalToolNames: Iterabl
 
   // The stats endpoint walks a strand's task tree; these keep that walk on
   // indexes instead of table scans. Additive and idempotent.
+  // idx_token_usage_session: EXPLAIN on a copy of the live DB (203k rows)
+  // showed a full SCAN per task session; the long strand took ~370 ms, of
+  // that ~270 ms in the per-task token_usage aggregate.
   db.exec(`
+    CREATE INDEX IF NOT EXISTS idx_token_usage_session ON token_usage(session_id);
     CREATE INDEX IF NOT EXISTS idx_token_usage_turn ON token_usage(turn_id);
     CREATE INDEX IF NOT EXISTS idx_tool_calls_turn ON tool_calls(turn_id);
   `)

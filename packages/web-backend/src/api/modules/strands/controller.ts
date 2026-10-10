@@ -30,6 +30,7 @@ export interface StrandsController {
   deleteStrand: (req: AuthenticatedRequest, res: Response) => void
   strandTasks: (req: AuthenticatedRequest, res: Response) => void
   strandContext: (req: AuthenticatedRequest, res: Response) => void
+  strandStats: (req: AuthenticatedRequest, res: Response) => void
   strandFacts: (req: AuthenticatedRequest, res: Response) => void
   forkStrand: (req: AuthenticatedRequest, res: Response) => void
   setStrandTags: (req: AuthenticatedRequest, res: Response) => void
@@ -174,6 +175,13 @@ export function createStrandsController(service: StrandsService): StrandsControl
     strandContext(req, res) {
       run(res, 'Failed to read strand context', () => {
         res.json(service.strandContext(req.user!.userId, String(req.params.id)))
+      })
+    },
+
+    strandStats(req, res) {
+      const include = new Set(String(req.query.include ?? '').split(',').map(s => s.trim()).filter(Boolean))
+      runSafe(res, 'Failed to read strand stats', () => {
+        res.json(service.strandStats(req.user!.userId, String(req.params.id), { tasks: include.has('tasks'), series: include.has('series') }))
       })
     },
 

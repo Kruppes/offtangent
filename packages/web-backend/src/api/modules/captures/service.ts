@@ -243,6 +243,8 @@ export interface CaptureTurnStarter {
     explicitSessionId: string
     turnModelOverride?: ModelSelection
     turnOverrides?: TurnRuntimeOverrides
+    /** How the prompt was entered, recorded on the strand turn (statistics). */
+    inputMode?: 'typed' | 'voice' | 'answer' | null
   }) => unknown
 }
 
