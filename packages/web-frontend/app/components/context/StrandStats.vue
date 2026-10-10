@@ -525,9 +525,9 @@ const tokenBar = computed(() => {
   const sum = Math.max(b.cacheRead + b.cacheWrite + b.uncached + b.out, 1)
   return [
     { key: 'cacheRead', label: t('context.stats.cacheRead'), value: b.cacheRead, cls: 'bg-primary' },
-    { key: 'cacheWrite', label: t('context.stats.cacheWrite'), value: b.cacheWrite, cls: 'bg-primary/50' },
+    { key: 'cacheWrite', label: t('context.stats.cacheWrite'), value: b.cacheWrite, cls: 'bg-primary-container' },
     { key: 'uncached', label: t('context.stats.uncached'), value: b.uncached, cls: 'bg-warning' },
-    { key: 'out', label: t('context.stats.out'), value: b.out, cls: 'bg-foreground/60' },
+    { key: 'out', label: t('context.stats.out'), value: b.out, cls: 'bg-muted-foreground' },
   ].map(seg => ({ ...seg, pct: (seg.value / sum) * 100 }))
 })
 
@@ -564,7 +564,7 @@ const timeline = computed(() => {
     const b = tk.endedAt ? parseBackendTimestamp(tk.endedAt)?.getTime() ?? a : t1
     const x = Math.max(0, Math.min(100, ((a - t0) / span) * 100))
     const w = Math.max(0.8, Math.min(100 - x, ((b - a) / span) * 100))
-    const cls = tk.status === 'failed' ? 'fill-destructive' : tk.depth > 0 ? 'fill-primary/50' : 'fill-primary'
+    const cls = tk.status === 'failed' ? 'fill-destructive' : tk.depth > 0 ? 'fill-primary-container' : 'fill-primary'
     return { id: tk.id, x, w, cls }
   })
 })

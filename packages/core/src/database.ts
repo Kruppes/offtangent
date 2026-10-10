@@ -14,7 +14,7 @@ import { ensureMemoryPageEmbeddingTables } from './memory-page-embeddings.js'
 import { ensurePersonaTable } from './persona-store.js'
 import { ensurePersonaDelegationTable } from './persona-delegation-log.js'
 import { ensureStrandStatsSchema } from './strand-turns.js'
-import { NON_WORK_TOOL_NAMES } from './token-logger.js'
+import { NON_WORK_TOOL_NAMES } from './tool-names.js'
 
 export type Database = BetterSqlite3.Database
 
