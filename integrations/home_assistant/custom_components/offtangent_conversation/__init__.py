@@ -2,20 +2,29 @@
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import Platform
 from homeassistant.core import HomeAssistant
-from homeassistant.exceptions import ConfigEntryNotReady
+from homeassistant.exceptions import ConfigEntryNotReady, ConfigEntryError
 
 from .client import AdapterClient, AdapterError
+from .fallback import local_fallback_entry
 
 
 async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     settings = {**entry.data, **entry.options}
+    if settings.get("fallback_agent"):
+        try:
+            local_fallback_entry(hass, settings["fallback_agent"], control=settings.get("control", False))
+        except ValueError as err:
+            raise ConfigEntryError("invalid_local_fallback") from err
     client = AdapterClient(settings["url"], settings["adapter_token"], settings["model"])
     try:
         # Read-only advertisement; NOT inference and NOT a live-model readiness claim.
         await client.check_model()
     except AdapterError as err:
-        await client.close()
-        raise ConfigEntryNotReady(str(err)) from err
+        # Keep the entity/fallback usable during relay outage (not wrong bearer/model).
+        if not settings.get("fallback_agent") or str(err) not in {
+            "adapter_unavailable", "adapter_unreachable", "adapter_http_429", "adapter_http_502", "adapter_http_503", "adapter_http_504"}:
+            await client.close()
+            raise ConfigEntryNotReady(str(err)) from err
     except BaseException:
         await client.close()
         raise

@@ -100,9 +100,8 @@ class EngineTests(unittest.IsolatedAsyncioTestCase):
             calls.append((cid, name, args)); return SUCCESS
         result = await client.run_turn(f, "Nur HA sicher", "Simuliertes Licht aus", TOOLS, lambda n, a: a, dispatch)
         self.assertEqual(calls, [(CALL["id"], NAME, {"name": "simulated"})])
-        self.assertEqual(len(f.requests), 2)
-        self.assertEqual(f.requests[1]["session"], "synthetic-vault")
-        self.assertEqual(json.loads(f.requests[1]["messages"][-1]["content"]), SUCCESS)
+        self.assertEqual(len(f.requests), 1)
+        self.assertEqual(json.loads(result.messages[-2]["content"]), SUCCESS)
         self.assertEqual(result.text, "Home Assistant hat die Aktion bestätigt.")
         self.assertNotIn("andere Geräte", result.text)
         self.assertFalse(result.failed)
@@ -158,9 +157,10 @@ class EngineTests(unittest.IsolatedAsyncioTestCase):
         count = 0
         async def dispatch(*args):
             nonlocal count; count += 1; return SUCCESS
-        with self.assertRaisesRegex(client.AdapterError, "repeated_tool_call_blocked"):
-            await client.run_turn(f, "Sicher", "Licht", TOOLS, lambda n, a: a, dispatch)
+        result = await client.run_turn(f, "Sicher", "Licht", TOOLS, lambda n, a: a, dispatch)
         self.assertEqual(count, 1)
+        self.assertEqual(len(f.requests), 1)  # A repeated model command is never requested.
+        self.assertFalse(result.failed)
 
     async def test_cancellation_does_not_dispatch_again_or_request_followup(self):
         f = FakeClient([envelope(tool_reply())])
@@ -183,6 +183,7 @@ class EngineTests(unittest.IsolatedAsyncioTestCase):
 class HTTPTests(unittest.IsolatedAsyncioTestCase):
     async def asyncSetUp(self):
         self.posts = []
+        self.discards = []
         self.mode = "ok"
         self.received = asyncio.Event()
         async def models(request):
@@ -205,7 +206,10 @@ class HTTPTests(unittest.IsolatedAsyncioTestCase):
             if len(self.posts) == 1:
                 return web.json_response({**envelope(tool_reply()), "ha_session": "synthetic-session"})
             return web.json_response(envelope({"role": "assistant", "content": "Simulation bestätigt."}))
-        app = web.Application(); app.router.add_get("/v1/models", models); app.router.add_post("/v1/chat/completions", complete)
+        async def discard(request):
+            self.discards.append(await request.json())
+            return web.json_response({"discarded": True})
+        app = web.Application(); app.router.add_get("/v1/models", models); app.router.add_post("/v1/chat/completions", complete); app.router.add_post("/v1/session/discard", discard)
         self.runner = web.AppRunner(app); await self.runner.setup()
         self.site = web.TCPSite(self.runner, "127.0.0.1", 0); await self.site.start()
         port = self.site._server.sockets[0].getsockname()[1]
@@ -220,10 +224,11 @@ class HTTPTests(unittest.IsolatedAsyncioTestCase):
             return SUCCESS
         result = await client.run_turn(self.adapter, "German prompt", "Simulated action", TOOLS, lambda n, a: a, dispatch)
         self.assertEqual(result.text, "Home Assistant hat die Aktion bestätigt.")
-        self.assertEqual(len(self.posts), 2)
+        self.assertEqual(len(self.posts), 1)
         self.assertEqual(self.posts[0]["body"]["model"], MODEL)
         self.assertFalse(self.posts[0]["body"]["stream"])
-        self.assertEqual(self.posts[1]["body"]["ha_session"], "synthetic-session")
+        self.assertIsNone(result.session)  # Successful action vault is closed; no completion replay.
+        self.assertEqual(self.discards, [{"ha_session": "synthetic-session"}])
         self.assertEqual(self.posts[0]["headers"]["Authorization"], "Bearer synthetic-test-token-not-real")
         for forbidden in ["temperature", "reasoning_effort", "agent", "user", "max_tokens"]:
             self.assertNotIn(forbidden, self.posts[0]["body"])

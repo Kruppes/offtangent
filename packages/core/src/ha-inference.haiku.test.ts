@@ -1,5 +1,5 @@
 /** OFFLINE ONLY. Real installed SDK; every request intercepted, credentials synthetic.
- * Identity capture intentionally demonstrates WHY the production OAuth route is blocked.
+ * Existing SDK identity is captured unchanged; no new identity/header manipulation.
  */
 import {afterEach,beforeEach,describe,expect,it,vi} from 'vitest'
 import {createHash} from 'node:crypto'
@@ -11,8 +11,8 @@ import {createHaHttpServer} from './ha-inference-http.js'
 import type {Context, Model} from '@earendil-works/pi-ai'
 import {streamSimple} from './pi-models.js'
 import {createHaInferenceHandler,completeHaSubscription,validateHaConfig,type HaInferenceConfig,type HaComplete} from './ha-inference.js'
-const auth=vi.hoisted(()=>({load:vi.fn(()=>{throw new Error('must not load credentials')}),key:vi.fn()}))
-vi.mock('./provider-config.js',()=>({loadProvidersDecrypted:auth.load,getApiKeyForProvider:auth.key,buildModel:vi.fn()}))
+const auth=vi.hoisted(()=>({load:vi.fn<()=>{providers:any[]}>(()=>{throw new Error('must not load credentials')}),key:vi.fn()}))
+vi.mock('./provider-config.js',()=>({loadProvidersDecrypted:auth.load,getApiKeyForProvider:auth.key,buildModel:vi.fn(),getPiOAuthAuth:vi.fn(),refreshOAuthCredentialsLocked:vi.fn(),storedToOAuthCredentials:vi.fn()}))
 vi.mock('./data-policy.js',()=>({checkAutomaticModelFor:vi.fn()}))
 const token='ha-fixture-'.repeat(4) // deliberately obvious non-production test material
 const tool={name:'homeassistant__HassTurnOff',description:'Synthetic Assist tool. Never executes.',parameters:{type:'object',properties:{name:{type:'string'}},required:['name'],additionalProperties:false}}
@@ -64,10 +64,13 @@ function sdkFixture(status=200,wireEvents?:any[]){
 beforeEach(()=>vi.stubGlobal('fetch',vi.fn(()=>{throw new Error('UNEXPECTED LIVE NETWORK')})))
 afterEach(()=>{vi.unstubAllGlobals();vi.clearAllMocks()})
 describe('Haiku auth and exact-model configuration',()=>{
- it('blocks before resolving any credentials or issuing any request',async()=>{
-  await expect(completeHaSubscription(c,{messages:[]},new AbortController().signal)).rejects.toThrow('anthropic_subscription_auth_blocked')
-  expect(auth.load).not.toHaveBeenCalled();expect(auth.key).not.toHaveBeenCalled();expect(fetch).not.toHaveBeenCalled()
-  const response=await createHaInferenceHandler(c)(req());expect(response.status).toBe(503);expect(await response.json()).toEqual({error:{message:'anthropic_subscription_auth_blocked',type:'ha_inference_error',code:'anthropic_subscription_auth_blocked'}})
+ it('fails closed when the centrally selected subscription provider is unavailable',async()=>{
+  auth.load.mockImplementationOnce(()=>({providers:[]} as any))
+  await expect(completeHaSubscription(c,{messages:[]},new AbortController().signal)).rejects.toThrow('subscription_provider_unavailable')
+  expect(auth.key).not.toHaveBeenCalled();expect(fetch).not.toHaveBeenCalled()
+  auth.load.mockImplementationOnce(()=>({providers:[]} as any))
+  const response=await createHaInferenceHandler(c)(req());expect(response.status).toBe(503)
+  expect(await response.json()).toEqual({error:{message:'subscription_provider_unavailable',type:'ha_inference_error',code:'subscription_provider_unavailable'}})
  })
  it('pins Haiku and supported low effort; rejects unavailable off or arbitrary transport',()=>{
   expect(validateHaConfig(c)).toEqual(c)
@@ -170,9 +173,8 @@ describe('real pi-ai Anthropic SDK with entirely simulated wire',()=>{
     'integrations/home_assistant/tests/bridge_smoke.py',`http://127.0.0.1:${port}/v1`,
    ],{timeout:10000,maxBuffer:16384,env:{PYTHONPATH:process.cwd()+'/integrations/home_assistant',PYTHONDONTWRITEBYTECODE:'1'}})
    const bridge=JSON.parse(stdout);expect(bridge.simulated_calls).toHaveLength(1)
-   expect(bridge.final).toBe('Home Assistant hat die Aktion bestätigt.');expect(f.captures).toHaveLength(2)
-   expect(f.captures[1].payload.messages[1].content).toContainEqual(expect.objectContaining({type:'thinking',signature:'synthetic-signed-opaque'}))
-   expect(f.captures[1].payload.messages[2].content).toContainEqual(expect.objectContaining({type:'tool_result',is_error:false}))
+   expect(bridge.final).toBe('Home Assistant hat die Aktion bestätigt.');expect(f.captures).toHaveLength(1)
+   // Successful action is locally confirmed: no redundant inference POST.
    expect(fetch).not.toHaveBeenCalled()
    if(process.env.HA_BRIDGE_EVIDENCE_PATH)writeFileSync(process.env.HA_BRIDGE_EVIDENCE_PATH,JSON.stringify(bridge,null,2)+'\n')
   } finally {server.closeAllConnections();await new Promise<void>(resolve=>server.close(()=>resolve()))}

@@ -3,6 +3,8 @@ from __future__ import annotations
 
 import asyncio
 from dataclasses import dataclass
+from datetime import date, datetime, time
+from enum import Enum
 import ipaddress
 import json
 import re
@@ -115,11 +117,11 @@ def validate_reply(data: Any, model: str, tools: list[dict]) -> Reply:
 class AdapterClient:
     """Dedicated HTTP session, no SDK/env/proxy credential fallback or POST retries."""
 
-    def __init__(self, url: str, token: str, model: str, timeout: int = 100):
+    def __init__(self, url: str, token: str, model: str, timeout: int = 95):
         self.url = validate_url(url)
         if (not isinstance(token, str) or not re.fullmatch(r"[^\s]{16,512}", token)
             or not isinstance(model, str) or not re.fullmatch(r"[A-Za-z0-9-]{1,128}", model)
-            or not isinstance(timeout, int) or not 1 <= timeout <= 120):
+            or not isinstance(timeout, int) or not 1 <= timeout <= 100):
             raise ValueError("invalid_client_config")
         self._token = token
         self.model = model
@@ -140,8 +142,6 @@ class AdapterClient:
                     raise AdapterError("request_too_large")
                 kwargs.update(data=encoded, headers={"Content-Type": "application/json"})
             async with self._session.request(method, self.url + path, **kwargs) as response:
-                if response.status != 200:
-                    raise AdapterError("adapter_http_" + str(response.status))
                 if response.content_type != "application/json":
                     raise AdapterError("invalid_adapter_response")
                 parts = []
@@ -151,10 +151,24 @@ class AdapterClient:
                     if size > MAX_RESPONSE_BYTES:
                         raise AdapterError("response_too_large")
                     parts.append(part)
-                return decode_json(b"".join(parts).decode("utf-8"))
+                data = decode_json(b"".join(parts).decode("utf-8"))
+                if response.status != 200:
+                    error = data.get("error") if isinstance(data, dict) else None
+                    code = error.get("code") if isinstance(error, dict) else None
+                    safe = {"provider_relogin_required", "provider_refresh_unavailable", "provider_access_rejected",
+                            "provider_access_blocked", "subscription_rate_limit", "timeout", "subscription_http_error"}
+                    raise AdapterError(code if isinstance(code, str) and code in safe else "adapter_http_" + str(response.status))
+                return data
         except (aiohttp.ClientError, TimeoutError, ValueError, UnicodeError) as err:
             raise AdapterError("adapter_unavailable") from err
         # CancelledError deliberately propagates. No retry and no model fallback.
+
+    async def auth_status(self):
+        return await self._request("GET", "/status")
+
+    async def discard(self, session):
+        if session:
+            await self._request("POST", "/session/discard", {"ha_session": session})
 
     async def check_model(self):
         data = await self._request("GET", "/models")
@@ -173,8 +187,16 @@ class AdapterClient:
         return validate_reply(await self._request("POST", "/chat/completions", payload), self.model, tools)
 
 
+READ_ONLY_TOOLS = {"GetLiveContext", "HassGetState", "HassGetTemperature", "HassGetCurrentTime", "HassGetCurrentDate", "HassRespond"}
+
+
+def is_mutating(name: str) -> bool:
+    # Unknown tools remain action-like: no heuristic allowing future mutations.
+    return name.split("__")[-1] not in READ_ONLY_TOOLS
+
+
 def confirmed_result(name: str, result: Any) -> bool:
-    """Structured HA evidence only. No regex judging model prose as true."""
+    """Actions need target success. Known info tools need a successful typed response."""
     if not isinstance(result, dict) or result.get("error") or result.get("success") is False:
         return False
     if name.split("__")[-1] == "GetLiveContext":
@@ -182,14 +204,26 @@ def confirmed_result(name: str, result: Any) -> bool:
     data = result.get("data")
     if not isinstance(data, dict) or data.get("failed"):
         return False
-    if result.get("response_type") == "query_answer":
-        return isinstance(data.get("success"), list) and bool(data["success"])
+    if not is_mutating(name):
+        return result.get("response_type") in {"query_answer", "action_done"}
     return (result.get("response_type") == "action_done"
             and isinstance(data.get("success"), list) and bool(data["success"]))
 
 
-def is_mutating(name: str) -> bool:
-    return name.split("__")[-1] not in {"GetLiveContext", "HassGetState"}
+def json_result(result):
+    def safe(value):
+        if isinstance(value, (datetime, date, time)):
+            return value.isoformat()
+        if isinstance(value, Enum):
+            return value.value
+        raise TypeError("unsupported_tool_result_type")
+    return json.dumps(result, ensure_ascii=False, allow_nan=False, default=safe)
+
+
+@dataclass
+class TurnProgress:
+    dispatched: bool = False
+    provider_completed: bool = False
 
 
 @dataclass
@@ -197,26 +231,35 @@ class Outcome:
     text: str
     messages: list[dict]
     failed: bool = False
+    start_index: int = 2
+    session: None = None  # Completed turns never export a reusable native action vault.
 
 
-async def run_turn(client, prompt, text, tools, validate_args, dispatch) -> Outcome:
+async def run_turn(client, prompt, text, tools, validate_args, dispatch, history=None, progress=None) -> Outcome:
     """Sequential Assist roundtrip. Caller supplies HA validation and execution.
 
-    One utterance only; no other agent's history. No failed/ambiguous action retries.
+    Only caller-owned text history; no other agent's history. No action retries.
     Mutating confirmation is deterministic, not unconstrained model prose.
     """
-    messages = [{"role": "system", "content": prompt}, {"role": "user", "content": text}]
+    history = history or []
+    if (len(history) > 12 or any(set(m) != {"role", "content"} or m["role"] not in {"user", "assistant"}
+        or not isinstance(m["content"], str) or len(m["content"]) > 8192 for m in history)):
+        raise AdapterError("invalid_local_history")
+    progress = progress or TurnProgress()
+    messages = [{"role": "system", "content": prompt}, *history, {"role": "user", "content": text}]
+    start_index = len(messages)
     session = None
     attempted = set()
     mutations = 0
     for _ in range(MAX_ROUNDS):
         reply = await client.complete(messages, tools, session)
+        progress.provider_completed = True
         calls = reply.message.get("tool_calls", [])
         if not calls:
             final = ("Home Assistant hat die Aktion bestätigt." if mutations == 1 else
                      "Home Assistant hat die Aktionen bestätigt." if mutations else reply.message["content"])
             messages.append({"role": "assistant", "content": final})
-            return Outcome(final, messages)
+            return Outcome(final, messages, start_index=start_index)
         # No partial batch: schema-validate and duplicate-check all first.
         inputs = []
         for call in calls:
@@ -232,18 +275,35 @@ async def run_turn(client, prompt, text, tools, validate_args, dispatch) -> Outc
         session = reply.session
         for call, name, args in inputs:
             try:
+                # Set BEFORE awaiting: timeout/exception can mean the action ran.
+                progress.dispatched = True
                 result = await dispatch(call["id"], name, args)
+                encoded = json_result(result)
+                if len(encoded.encode()) > MAX_RESPONSE_BYTES:
+                    raise ValueError("tool_result_too_large")
             except asyncio.CancelledError:
                 raise
             except Exception:
                 # A timeout can mean the service ran. Never retry or claim failure/success.
                 result = {"error": "tool_result_unconfirmed"}
+                encoded = json_result(result)
             messages.append({"role": "tool", "tool_call_id": call["id"],
-                             "content": json.dumps(result, ensure_ascii=False, allow_nan=False)})
+                             "content": encoded})
             if not confirmed_result(name, result):
                 text = "Home Assistant hat das Ergebnis nicht eindeutig bestätigt. Ich habe keine weiteren Aktionen versucht."
                 messages.append({"role": "assistant", "content": text})
-                return Outcome(text, messages, failed=True)
+                return Outcome(text, messages, failed=True, start_index=start_index)
             if is_mutating(name):
                 mutations += 1
+        if mutations:
+            # All actions confirmed. No redundant provider POST after execution.
+            final = "Home Assistant hat die Aktion bestätigt." if mutations == 1 else "Home Assistant hat die Aktionen bestätigt."
+            messages.append({"role": "assistant", "content": final})
+            if session and hasattr(client, "discard"):
+                try:
+                    async with asyncio.timeout(2):
+                        await client.discard(session)
+                except (AdapterError, TimeoutError):
+                    pass  # TTL will expire; never replay an action to clean up.
+            return Outcome(final, messages, start_index=start_index)
     raise AdapterError("tool_iteration_limit")

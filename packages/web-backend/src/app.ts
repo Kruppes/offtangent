@@ -1,3 +1,4 @@
+import { createHaRelayRouter, HA_RELAY_MOUNT } from './integrations/ha-relay.js'
 import { createHomeAssistantMqttRouter } from './integrations/home-assistant-mqtt/route.js'
 import type { HomeAssistantMqttService } from './integrations/home-assistant-mqtt/service.js'
 import path from 'node:path'
@@ -131,6 +132,8 @@ export interface AppOptions {
 
 export function createApp(options?: AppOptions): express.Express {
   const app = express()
+  // Dedicated HA bearer, raw bounded body, no JWT/CORS/agent/memory access.
+  app.use(HA_RELAY_MOUNT, createHaRelayRouter())
 
   // The speech routes accept an inline message text of up to
   // SPEECH_TEXT_MAX_CHARS (200.000 chars), which does not fit the 100 kB

@@ -11,6 +11,7 @@ import sys
 import tempfile
 import unittest
 from unittest.mock import AsyncMock, patch
+from types import SimpleNamespace
 
 from homeassistant.components import conversation
 from homeassistant.components.conversation.chat_log import ChatLog, UserContent
@@ -184,6 +185,112 @@ class ActualHAEntityTests(unittest.IsolatedAsyncioTestCase):
         await self.agent(adapter)._async_handle_message(self.input, log)
         self.assertEqual([m["role"] for m in adapter.requests[0]["messages"]], ["system", "user"])
         self.assertNotIn("Private previous conversation", json.dumps(adapter.requests))
+
+
+    async def test_multiturn_pronoun_receives_only_own_history_and_same_device_context(self):
+        adapter = MockAdapter([reply({"role": "assistant", "content": "Gemeint ist das simulierte Küchenlicht."}), reply(calls=[call(args={"name": "Küchenlicht"})])])
+        agent = self.agent(adapter); log = self.log()
+        await agent._async_handle_message(self.input, log)
+        log.async_add_assistant_content_without_tools(conversation.AssistantContent(agent_id="foreign-agent", content="FOREIGN_PRIVATE_SECRET"))
+        followup = replace(self.input, text="Schalte es aus.")
+        log.async_add_user_content(UserContent(content=followup.text))
+        await agent._async_handle_message(followup, log)
+        sent = adapter.requests[1]["messages"]
+        self.assertEqual([x["role"] for x in sent], ["system", "user", "assistant", "user"])
+        self.assertEqual(sent[-1]["content"], "Schalte es aus.")
+        self.assertIn("Küchenlicht", sent[-2]["content"])
+        self.assertNotIn("FOREIGN_PRIVATE_SECRET", json.dumps(sent))
+        self.assertEqual(len(self.tool.calls), 1)
+        self.assertEqual(self.tool.calls[0][0].tool_args, {"name": "Küchenlicht"})
+
+    async def test_same_chat_id_different_device_does_not_import_own_or_foreign_history(self):
+        adapter = MockAdapter([reply(), reply()]); agent = self.agent(adapter)
+        await agent._async_handle_message(self.input, self.log())
+        other = replace(self.input, device_id="another-device", satellite_id="other-satellite")
+        await agent._async_handle_message(other, self.log())
+        self.assertEqual([x["role"] for x in adapter.requests[1]["messages"]], ["system", "user"])
+
+    async def test_relogin_warning_deduplicated_local_fallback_counted_and_session_isolated(self):
+        adapter = MockAdapter([])
+        adapter.complete = AsyncMock(side_effect=AdapterError("provider_relogin_required"))
+        agent = self.agent(adapter); agent._settings["fallback_agent"] = "conversation.synthetic_ollama"
+        async def local_reply(_input):
+            response = conversation.ConversationResult(response=__import__('homeassistant.helpers.intent', fromlist=['IntentResponse']).IntentResponse(language="de"), conversation_id="synthetic-local-returned-id")
+            response.response.async_set_speech("Lokale synthetische Antwort")
+            return response
+        local = SimpleNamespace(async_process=AsyncMock(side_effect=local_reply))
+        with patch("custom_components.offtangent_conversation.conversation.local_fallback_entry", return_value=object()), patch.object(conversation, "async_get_agent", return_value=local), patch("custom_components.offtangent_conversation.conversation.persistent_notification.async_create") as notice, patch("custom_components.offtangent_conversation.conversation.persistent_notification.async_dismiss") as dismiss:
+            for _ in range(2):
+                result = await agent._async_handle_message(self.input, self.log())
+                self.assertEqual(result.response.speech["plain"]["speech"], "Lokaler Ersatzassistent. Lokale synthetische Antwort")
+            self.assertEqual(notice.call_count, 1)
+            self.assertEqual(agent.extra_state_attributes["degradation_count"], 2)
+            self.assertEqual(agent.extra_state_attributes["last_path"], "local_fallback")
+            self.assertTrue(agent.extra_state_attributes["relogin_required"])
+            first = local.async_process.await_args_list[0].args[0]
+            second = local.async_process.await_args_list[1].args[0]
+            self.assertNotEqual(first.conversation_id, self.input.conversation_id)
+            self.assertEqual(second.conversation_id, "synthetic-local-returned-id")
+            self.assertIsNone(first.extra_system_prompt)
+            self.assertEqual(first.agent_id, "conversation.synthetic_ollama")
+            agent._auth_state = "ready"; agent._warn_login(); agent._warn_login()
+            dismiss.assert_called_once()
+        self.assertEqual(self.tool.calls, [])
+
+    async def test_tool_partial_failure_and_raising_mutation_never_use_fallback_or_repeat(self):
+        for tool_result in [{"response_type": "action_done", "data": {"success": [1], "failed": [2]}}, {"error": "synthetic possible execution before failure"}]:
+            self.tool.calls.clear(); self.tool.result = tool_result
+            adapter = MockAdapter([reply(calls=[call(), call("second", {"name": "other"})])])
+            agent = self.agent(adapter); agent._settings["fallback_agent"] = "conversation.synthetic_ollama"
+            with patch.object(agent, "_fallback", new=AsyncMock()) as fallback:
+                result = await agent._async_handle_message(self.input, self.log())
+                fallback.assert_not_awaited()
+            self.assertEqual(len(self.tool.calls), 1); self.assertEqual(len(adapter.requests), 1)
+            self.assertIn("nicht eindeutig bestätigt", result.response.speech["plain"]["speech"])
+
+    async def test_queried_information_is_not_required_to_be_an_action_confirmation(self):
+        name = "homeassistant__HassGetState"
+        info = SyntheticTool(name, {"response_type": "query_answer", "data": {"success": [1], "failed": []}, "speech": {"plain": {"speech": "Die Temperatur beträgt 22 Grad."}}})
+        self.api.tools = [info]
+        adapter = MockAdapter([reply(calls=[call(name=name)]), reply({"role": "assistant", "content": "Die Temperatur beträgt 22 Grad."})])
+        result = await self.agent(adapter, allowed=[name])._async_handle_message(self.input, self.log())
+        self.assertEqual(len(info.calls), 1); self.assertEqual(len(adapter.requests), 2)
+        self.assertEqual(result.response.speech["plain"]["speech"], "Die Temperatur beträgt 22 Grad.")
+        self.assertNotIn("Aktion bestätigt", result.response.speech["plain"]["speech"])
+
+
+    async def test_auth_status_poll_deduplicates_login_warning_and_unknown_does_not_dismiss(self):
+        adapter = MockAdapter([])
+        adapter.auth_status = AsyncMock(side_effect=[{"auth": {"state": state}} for state in ["relogin_required", "relogin_required", "unknown", "ready"]])
+        agent = self.agent(adapter, control=False)
+        with patch("custom_components.offtangent_conversation.conversation.persistent_notification.async_create") as create, patch("custom_components.offtangent_conversation.conversation.persistent_notification.async_dismiss") as dismiss:
+            await agent._poll_auth(); await agent._poll_auth(); await agent._poll_auth()
+            self.assertEqual(create.call_count, 1); dismiss.assert_not_called()
+            await agent._poll_auth(); dismiss.assert_called_once()
+        self.assertEqual(len(adapter.requests), 0); self.assertEqual(self.tool.calls, [])
+
+    async def test_fallback_only_sessions_are_bounded_and_own_answer_is_retained(self):
+        adapter = MockAdapter([reply({"role": "assistant", "content": "Eigener Folgebezug"})])
+        agent = self.agent(adapter, control=False)
+        agent._settings["fallback_agent"] = "conversation.synthetic_ollama"
+        async def local_reply(value):
+            response = intent.IntentResponse(language="de")
+            response.async_set_speech("Eigene lokale Antwort")
+            return conversation.ConversationResult(response=response, conversation_id=value.conversation_id)
+        from homeassistant.helpers import intent
+        local = SimpleNamespace(async_process=AsyncMock(side_effect=local_reply))
+        with patch("custom_components.offtangent_conversation.conversation.local_fallback_entry"), patch("custom_components.offtangent_conversation.conversation.conversation.async_get_agent", return_value=local):
+            for i in range(70):
+                own_input = replace(self.input, conversation_id=f"synthetic-own-{i}")
+                own_log = self.log(own_input.conversation_id)
+                key = agent._history_key(own_input, own_log)
+                await agent._fallback(own_input, own_log, key)
+        self.assertEqual(len(agent._history), 64); self.assertEqual(len(agent._fallback_ids), 64)
+        own_input = replace(self.input, conversation_id="synthetic-own-69", text="Was davon?")
+        await agent._async_handle_message(own_input, self.log(own_input.conversation_id))
+        self.assertEqual([m["role"] for m in adapter.requests[0]["messages"]], ["system", "user", "assistant", "user"])
+        self.assertEqual(adapter.requests[0]["messages"][-2]["content"], "Lokaler Ersatzassistent. Eigene lokale Antwort")
+        self.assertEqual(self.tool.calls, [])
 
 
 class ActualHAConfigFlowTests(unittest.TestCase):

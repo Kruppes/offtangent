@@ -1709,3 +1709,7 @@ export type { EcoViewMetric } from './eco-mode-store.js'
 
 export { createGenerateTool } from './generate-tool.js'
 export { loadGeneratorConfig, generateImages, codexPrompt, generatorCost } from './generators.js'
+
+// Dedicated HA relay, composed inside the backend (shared OAuth lifecycle).
+export { createHaInferenceHandler, validateHaConfig } from './ha-inference.js'
+export type { HaInferenceConfig } from './ha-inference.js'

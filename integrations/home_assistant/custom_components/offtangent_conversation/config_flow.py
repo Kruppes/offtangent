@@ -8,6 +8,7 @@ from homeassistant.helpers import selector
 
 from .client import TOOL_NAME, validate_url
 from .const import DEFAULT_MODEL, DOMAIN
+from .fallback import local_fallback_entry
 
 
 def _schema(defaults):
@@ -18,6 +19,8 @@ def _schema(defaults):
         vol.Required("model", default=defaults.get("model", DEFAULT_MODEL)): str,
         vol.Required("control", default=defaults.get("control", False)): bool,
         vol.Required("allowed_tools", default=defaults.get("allowed_tools", "[]")): str,
+        vol.Required("fallback_agent", default=defaults.get("fallback_agent", "")):
+            selector.EntitySelector({"domain": "conversation"}),
     })
 
 
@@ -28,6 +31,9 @@ def _validate(data):
         raise ValueError()
     if (not re.fullmatch(r"[^\s]{16,512}", data["adapter_token"])
         or not re.fullmatch(r"[A-Za-z0-9-]{1,128}", data["model"])):
+        raise ValueError()
+    fallback = data.get("fallback_agent")
+    if fallback is not None and not re.fullmatch(r"conversation\.[a-z0-9_]+", fallback):
         raise ValueError()
     names = json.loads(data["allowed_tools"])
     if (not isinstance(names, list) or len(names) > 32
@@ -44,6 +50,8 @@ class OfftangentConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         if user_input is not None:
             try:
                 _validate(user_input)
+                if user_input.get("fallback_agent"):
+                    local_fallback_entry(self.hass, user_input["fallback_agent"], control=user_input["control"])
             except (ValueError, TypeError, KeyError):
                 errors["base"] = "invalid_config"
             else:
@@ -62,6 +70,8 @@ class OfftangentOptionsFlow(config_entries.OptionsFlow):
         if user_input is not None:
             try:
                 _validate(user_input)
+                if user_input.get("fallback_agent"):
+                    local_fallback_entry(self.hass, user_input["fallback_agent"], control=user_input["control"])
             except (ValueError, TypeError, KeyError):
                 errors["base"] = "invalid_config"
             else:
