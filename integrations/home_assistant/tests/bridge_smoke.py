@@ -1,10 +1,22 @@
 """Offline fixture driver, NOT a HA service: loopback Node adapter, one simulated action."""
 import asyncio
+import importlib.util
 import json
+from pathlib import Path
 import sys
 from urllib.parse import urlsplit
 
-from custom_components.offtangent_conversation.client import AdapterClient, run_turn
+# This wire fixture exercises the unchanged, HA-independent production client.
+# Import its exact source rather than bootstrapping the HA integration package:
+# the Node image deliberately does not contain the entire HA runtime.
+spec = importlib.util.spec_from_file_location(
+    "offtangent_bridge_client",
+    Path(__file__).resolve().parents[1] / "custom_components/offtangent_conversation/client.py",
+)
+client_module = importlib.util.module_from_spec(spec)
+sys.modules[spec.name] = client_module
+spec.loader.exec_module(client_module)
+AdapterClient, run_turn = client_module.AdapterClient, client_module.run_turn
 
 
 async def main():

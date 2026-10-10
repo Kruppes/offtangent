@@ -54,8 +54,13 @@ describe('backend HA relay mount, actual loopback HTTP and bounded raw Request b
   })
   it('actual Python aiohttp client accepts mounted backend URL and performs status/catalog/completion without HA services',async()=>{
     write();await start()
-    const python = `import asyncio, json, sys
-from custom_components.offtangent_conversation.client import AdapterClient
+    const python = `import asyncio, importlib.util, json, pathlib, sys
+# Execute the exact HA-independent client source, not HA's package bootstrap.
+spec = importlib.util.spec_from_file_location('offtangent_mounted_client', pathlib.Path('integrations/home_assistant/custom_components/offtangent_conversation/client.py'))
+client_module = importlib.util.module_from_spec(spec)
+sys.modules[spec.name] = client_module
+spec.loader.exec_module(client_module)
+AdapterClient = client_module.AdapterClient
 async def main():
     client = AdapterClient(sys.argv[1], sys.argv[2], sys.argv[3])
     try:
