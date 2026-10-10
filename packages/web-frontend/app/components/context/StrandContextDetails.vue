@@ -93,11 +93,14 @@
       </li>
     </ul>
   </section>
+
+  <StrandStats :strand-id="strandId" />
 </template>
 
 <script setup lang="ts">
 import { computed } from 'vue'
 import ContextRing from './ContextRing.vue'
+import StrandStats from './StrandStats.vue'
 import { useStrandContext } from '~/composables/useStrandContext'
 import { formatTokens, gaugeBand, gaugePercent, type StrandContextView } from '~/utils/contextGauge'
 import { messageRoute } from '~/api/strandW5b'
