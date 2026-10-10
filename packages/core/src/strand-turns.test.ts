@@ -15,6 +15,9 @@ import {
   billingForProvider,
   billingMapping,
   configureBillingMapping,
+  clearActiveStrandTurn,
+  closeOrphanedStrandTurns,
+  IS_INTERNAL_BACKFILL_KEY,
 } from './strand-turns.js'
 
 describe('strand-turns', () => {
@@ -72,6 +75,84 @@ describe('strand-turns', () => {
     const tu = raw.prepare('SELECT billing, turn_id FROM token_usage').get()
     expect(tu).toEqual({ billing: null, turn_id: null })
     raw.close()
+  })
+
+  function oldDb(): BetterSqlite3.Database {
+    const p = path.join(os.tmpdir(), `axiom-strand-turns-mig-${Date.now()}-${Math.random().toString(36).slice(2)}.db`)
+    tmpFiles.push(p)
+    const raw = new BetterSqlite3(p)
+    raw.exec(`
+      CREATE TABLE token_usage (id INTEGER PRIMARY KEY AUTOINCREMENT, provider TEXT NOT NULL, model TEXT NOT NULL, session_id TEXT);
+      CREATE TABLE tool_calls (id INTEGER PRIMARY KEY AUTOINCREMENT, session_id TEXT, tool_name TEXT NOT NULL, status TEXT NOT NULL DEFAULT 'success');
+      CREATE TABLE persona_delegations (id INTEGER PRIMARY KEY AUTOINCREMENT, kind TEXT);
+      INSERT INTO tool_calls (session_id, tool_name) VALUES ('s1', 'shell'), ('s1', 'internal_metric');
+    `)
+    return raw
+  }
+
+  it('M2: a migration interrupted after ALTER (column present, no backfill) is backfilled on the next start', () => {
+    const raw = oldDb()
+    // State a crash between the two old steps left behind: column added with
+    // DEFAULT 0, backfill never ran, no marker.
+    raw.exec('ALTER TABLE tool_calls ADD COLUMN is_internal INTEGER NOT NULL DEFAULT 0')
+    ensureStrandStatsSchema(raw as unknown as Database, ['internal_metric'])
+    expect(raw.prepare('SELECT tool_name, is_internal FROM tool_calls ORDER BY id').all()).toEqual([
+      { tool_name: 'shell', is_internal: 0 },
+      { tool_name: 'internal_metric', is_internal: 1 },
+    ])
+    expect(raw.prepare('SELECT key FROM strand_stats_migrations').all()).toEqual([{ key: IS_INTERNAL_BACKFILL_KEY }])
+    // Second boot: marker present, nothing re-runs (a row written as 0 later stays 0).
+    raw.exec("INSERT INTO tool_calls (session_id, tool_name, is_internal) VALUES ('s1', 'internal_metric', 0)")
+    ensureStrandStatsSchema(raw as unknown as Database, ['internal_metric'])
+    expect((raw.prepare('SELECT is_internal FROM tool_calls ORDER BY id DESC LIMIT 1').get() as { is_internal: number }).is_internal).toBe(0)
+    raw.close()
+  })
+
+  it('M2: ALTER and backfill are atomic, a failing backfill leaves neither column nor marker, the rerun completes', () => {
+    const raw = oldDb()
+    raw.exec("CREATE TRIGGER fail_backfill BEFORE UPDATE ON tool_calls BEGIN SELECT RAISE(ABORT, 'simulated crash'); END")
+    expect(() => ensureStrandStatsSchema(raw as unknown as Database, ['internal_metric'])).toThrow(/simulated crash/)
+    const cols = (raw.prepare('PRAGMA table_info(tool_calls)').all() as { name: string }[]).map(c => c.name)
+    expect(cols).not.toContain('is_internal')
+    expect(raw.prepare('SELECT count(*) n FROM strand_stats_migrations').get()).toEqual({ n: 0 })
+    raw.exec('DROP TRIGGER fail_backfill')
+    ensureStrandStatsSchema(raw as unknown as Database, ['internal_metric'])
+    expect(raw.prepare('SELECT tool_name, is_internal FROM tool_calls ORDER BY id').all()).toEqual([
+      { tool_name: 'shell', is_internal: 0 },
+      { tool_name: 'internal_metric', is_internal: 1 },
+    ])
+    raw.close()
+  })
+
+  it('M1: a turn left running by a dead process is closed as interrupted at its last activity on restart', () => {
+    const p = path.join(os.tmpdir(), `axiom-strand-turns-restart-${Date.now()}-${Math.random().toString(36).slice(2)}.db`)
+    tmpFiles.push(p)
+    let d = initDatabase(p)
+    recordStrandTurnStart(d, { id: 'orphan', sessionId: 's9', startedAt: '2026-10-10T10:00:00.000Z' })
+    d.prepare("INSERT INTO token_usage (provider, model, session_id, turn_id, timestamp) VALUES ('anthropic', 'm', 's9', 'orphan', '2026-10-10 10:00:20')").run()
+    d.prepare("INSERT INTO tool_calls (session_id, tool_name, turn_id, timestamp) VALUES ('s9', 'shell', 'orphan', '2026-10-10T10:00:42.000Z')").run()
+    d.prepare("INSERT INTO chat_messages (session_id, role, content, timestamp) VALUES ('s9', 'assistant', 'x', '2026-10-10 10:00:35')").run()
+    // A turn of the CURRENT process must survive a second initDatabase.
+    recordStrandTurnStart(d, { id: 'live', sessionId: 's10', startedAt: '2026-10-10T10:00:00.000Z' })
+    clearActiveStrandTurn('s9', 'orphan') // the process that ran it is gone
+    d.close()
+    d = initDatabase(p) // restart
+    db = d
+    expect(d.prepare("SELECT status, ended_at FROM strand_turns WHERE id = 'orphan'").get())
+      .toEqual({ status: 'interrupted', ended_at: '2026-10-10T10:00:42.000Z' })
+    expect(d.prepare("SELECT status, ended_at FROM strand_turns WHERE id = 'live'").get()).toEqual({ status: 'running', ended_at: null })
+    // Idempotent: a later restart does not move the end.
+    expect(closeOrphanedStrandTurns(d)).toBe(0)
+    expect((d.prepare("SELECT ended_at FROM strand_turns WHERE id = 'orphan'").get() as { ended_at: string }).ended_at).toBe('2026-10-10T10:00:42.000Z')
+    clearActiveStrandTurn('s10', 'live')
+  })
+
+  it('M1: an orphan without any activity ends at its start', () => {
+    const d = createDb()
+    recordStrandTurnStart(d, { id: 'bare', sessionId: 's11', startedAt: '2026-10-10T09:00:00.000Z' })
+    clearActiveStrandTurn('s11', 'bare')
+    expect(closeOrphanedStrandTurns(d)).toBe(1)
+    expect(d.prepare("SELECT status, ended_at FROM strand_turns WHERE id = 'bare'").get()).toEqual({ status: 'interrupted', ended_at: '2026-10-10T09:00:00.000Z' })
   })
 
   it('records the turn lifecycle and tags usage + tool rows with the active turn', () => {

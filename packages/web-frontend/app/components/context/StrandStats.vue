@@ -217,7 +217,7 @@
           >
             <li
               v-for="m in s.models"
-              :key="`${m.provider}/${m.model}`"
+              :key="`${m.provider}/${m.model}/${m.billing}`"
               class="grid grid-cols-[1fr_auto] gap-x-2"
             >
               <span class="min-w-0 truncate">{{ shortModel(m.model) }} <span

@@ -330,6 +330,9 @@ export {
 } from './token-logger.js'
 export {
   ensureStrandStatsSchema,
+  closeOrphanedStrandTurns,
+  lastStrandTurnActivityMs,
+  IS_INTERNAL_BACKFILL_KEY,
   recordStrandTurnStart,
   recordStrandTurnFirstToken,
   recordStrandTurnEnd,

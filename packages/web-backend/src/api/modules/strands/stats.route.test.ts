@@ -36,7 +36,7 @@ beforeAll(async () => {
   const agentCore = { getSessionManager: () => sessionManager } as unknown as AgentCore
   server = http.createServer(createApp({ db, getAgentCore: () => agentCore }))
   await new Promise<void>((resolve) => server.listen(0, resolve))
-  baseUrl = `http://127.0.0.1:${(server.address() as { port: number }).port}`
+  baseUrl = `http://localhost:${(server.address() as { port: number }).port}`
   token = generateAccessToken({ userId: 1, username: 'admin', role: 'admin' })
   otherToken = generateAccessToken({ userId: 2, username: 'other', role: 'user' })
 })
@@ -164,6 +164,58 @@ describe('GET /api/strands/:id/stats', () => {
     expect(s.autarky.estimated).toBe(false)
     expect(s.autarky.mainSec).toBe(30 + 60 + 20)
     expect(s.autarky.latencyMedianSec).toBe(4)
+  })
+
+  it('M1: an open turn without a live runner is capped at its last activity, a live one counts to now', () => {
+    const id = seedStrand()
+    db.prepare(`INSERT INTO strand_turns (id, session_id, trigger, started_at, first_token_at, ended_at, status)
+      VALUES ('dead', ?, 'user', '2026-10-01 10:20:00', '2026-10-01 10:20:02', NULL, 'running')`).run(id)
+    const now = Date.parse('2026-10-05T10:00:00Z') / 1000
+    // Not active in this process: last evidence is the assistant message / usage at 10:20:20.
+    const dead = computeStrandStats(db, id, { now, isTurnActive: () => false })
+    // 30 + 60 s estimated from the two earlier prompts, + 20 s capped open turn.
+    expect(dead.autarky.mainSec).toBe(30 + 60 + 20)
+    expect(dead.turns.interrupted).toBe(1)
+    expect(dead.autarky.estimated).toBe(true)
+    clearStrandStatsCache()
+    // Really running in this process: counts up to now.
+    const live = computeStrandStats(db, id, { now, isTurnActive: t => t === 'dead' })
+    expect(live.autarky.mainSec).toBe(30 + 60 + now - Date.parse('2026-10-01T10:20:00Z') / 1000)
+    expect(live.turns.interrupted).toBe(0)
+  })
+
+  it('M1: turns closed as interrupted at boot count as estimated', () => {
+    const id = seedStrand()
+    db.prepare(`INSERT INTO strand_turns (id, session_id, trigger, started_at, ended_at, status)
+      VALUES ('i1', ?, 'user', '2026-10-01 10:00:00', '2026-10-01 10:00:30', 'completed'),
+             ('i2', ?, 'user', '2026-10-01 10:10:00', '2026-10-01T10:11:00.000Z', 'interrupted')`).run(id, id)
+    const s = computeStrandStats(db, id)
+    expect(s.turns.interrupted).toBe(1)
+    expect(s.autarky.mainSec).toBe(30 + 60)
+    expect(s.autarky.estimated).toBe(true)
+  })
+
+  it('M3: the same model under two billing classes stays two entries with correct shares', () => {
+    const strand = sessionManager.createThread('1', 'main', 'Mixed billing')
+    msg(strand.id, 'user', '2026-10-01 10:00:00')
+    msg(strand.id, 'assistant', '2026-10-01 10:00:30')
+    const ins = db.prepare(`INSERT INTO token_usage (session_id, timestamp, provider, model, prompt_tokens, completion_tokens, cache_read, cache_write, estimated_cost, billing)
+      VALUES (?, ?, 'anthropic', 'claude-sonnet', ?, 10, 0, 0, ?, ?)`)
+    // Metered row first so the old fold-by-first-row would have labelled the whole model metered.
+    ins.run(strand.id, '2026-10-01 10:00:05', 100, 1, 'metered')
+    ins.run(strand.id, '2026-10-01 10:00:10', 300, 3, 'subscription')
+    ins.run(strand.id, '2026-10-01 10:00:20', 300, 3, 'subscription')
+    const s = computeStrandStats(db, strand.id)
+    const sonnet = s.models.filter(m => m.model === 'claude-sonnet').map(m => ({ billing: m.billing, requests: m.requests, costUsd: m.costUsd }))
+      .sort((a, b) => a.billing.localeCompare(b.billing))
+    expect(sonnet).toEqual([
+      { billing: 'metered', requests: 1, costUsd: 1 },
+      { billing: 'subscription', requests: 2, costUsd: 6 },
+    ])
+    expect(s.cost.totalUsd).toBe(7)
+    expect(s.cost.subscriptionUsd).toBe(6)
+    expect(s.cost.meteredUsd).toBe(1)
+    expect(s.cost.subscriptionShare).toBeCloseTo(6 / 7, 5)
   })
 
   it('caches for 60 s per strand', async () => {

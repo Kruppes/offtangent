@@ -15,7 +15,7 @@
  * Read-only: no writes, no migrations here (they live in @axiom/core).
  */
 import type { Database, BillingKind } from '@axiom/core'
-import { billingForProvider, billingMapping, NON_WORK_TOOL_NAMES } from '@axiom/core'
+import { activeStrandTurnId, billingForProvider, billingMapping, lastStrandTurnActivityMs, NON_WORK_TOOL_NAMES } from '@axiom/core'
 
 export const STRAND_STATS_SCHEMA = 'strand_stats.v1'
 export const AUTARKY_DEFINITION = 'union_turns_tasks.v1'
@@ -27,6 +27,12 @@ export interface StrandStatsOptions {
   now?: number
   /** Provider → billing mapping override (tests); defaults to the configured mapping. */
   billing?: Record<string, BillingKind>
+  /**
+   * Is this open turn really running in THIS process? Defaults to the core
+   * active-turn registry. An open row that is not active (its process died)
+   * is capped at its last evidenced activity instead of counting up to now.
+   */
+  isTurnActive?: (turnId: string, sessionId: string) => boolean
 }
 
 export interface TokenBucket {
@@ -41,6 +47,11 @@ export interface TokenBucket {
   costUsd: number
 }
 
+/**
+ * One row per provider + model + billing class: a model that was used both
+ * per subscription and metered (the mapping is configurable and stored per
+ * usage row) appears twice, once per class, instead of being folded into one.
+ */
 export interface StrandStatsModel {
   provider: string
   model: string
@@ -120,7 +131,7 @@ export interface StrandStats {
   contextWindow: number | null
   span: { firstAt: string; lastAt: string; wallSec: number }
   prompts: { total: number; typed: number; voice: number; answers: number }
-  turns: { user: number; auto: number; source: 'recorded' | 'estimated' | 'mixed'; recorded: number; estimated: number }
+  turns: { user: number; auto: number; source: 'recorded' | 'estimated' | 'mixed'; recorded: number; estimated: number; interrupted: number }
   tokens: { main: TokenBucket; tasks: TokenBucket; voice: TokenBucket; total: TokenBucket }
   cost: { currency: 'USD'; basis: 'api_equivalent'; totalUsd: number; subscriptionUsd: number; meteredUsd: number; localUsd: number; subscriptionShare: number | null }
   models: StrandStatsModel[]
@@ -213,6 +224,14 @@ function bucket(rows: UsageAgg[]): TokenBucket {
   return { ...b, in: input, cacheHitRatio: input ? b.cacheRead / input : null, costUsd: round4(b.costUsd) }
 }
 
+/** Bound-parameter lists stay well below SQLite's variable limit on wide task trees. */
+const IN_CHUNK = 500
+function chunks<T>(items: T[], size = IN_CHUNK): T[][] {
+  const out: T[][] = []
+  for (let i = 0; i < items.length; i += size) out.push(items.slice(i, i + size))
+  return out
+}
+
 function placeholders(n: number): string {
   return Array.from({ length: n }, () => '?').join(',')
 }
@@ -245,7 +264,8 @@ function taskTree(db: Database, strandId: string): Map<string, TaskRow & { paren
   for (const r of direct) rows.set(r.id, { ...r, parent: null, depth: 0 })
   let frontier = [...rows.keys()]
   for (let guard = 0; frontier.length > 0 && guard < 10; guard++) {
-    const kids = db.prepare(`SELECT ${cols} FROM tasks WHERE trigger_source_id IN (${placeholders(frontier.length)})`).all(...frontier) as TaskRow[]
+    const kids = chunks(frontier).flatMap(part =>
+      db.prepare(`SELECT ${cols} FROM tasks WHERE trigger_source_id IN (${placeholders(part.length)})`).all(...part) as TaskRow[])
     frontier = []
     for (const k of kids) {
       if (!rows.has(k.id)) { rows.set(k.id, { ...k, parent: null, depth: 0 }); frontier.push(k.id) }
@@ -270,7 +290,7 @@ function taskTree(db: Database, strandId: string): Map<string, TaskRow & { paren
   return rows
 }
 
-interface Turn { start: number; end: number; kind: 'user' | 'task_result' | 'system'; firstToken: number | null; recorded: boolean }
+interface Turn { start: number; end: number; kind: 'user' | 'task_result' | 'system'; firstToken: number | null; recorded: boolean; interrupted?: boolean }
 
 // ---------------------------------------------------------------------------
 
@@ -314,8 +334,8 @@ export function computeStrandStats(db: Database, strandId: string, options: Stra
 
   // ---- turns: recorded rows first, estimation only before the first recorded turn
   const recordedRows = hasColumn(db, 'strand_turns', 'id')
-    ? db.prepare('SELECT trigger, started_at, first_token_at, ended_at FROM strand_turns WHERE session_id = ? ORDER BY started_at').all(strandId) as
-      Array<{ trigger: string; started_at: string; first_token_at: string | null; ended_at: string | null }>
+    ? db.prepare('SELECT id, trigger, started_at, first_token_at, ended_at, status FROM strand_turns WHERE session_id = ? ORDER BY started_at').all(strandId) as
+      Array<{ id: string; trigger: string; started_at: string; first_token_at: string | null; ended_at: string | null; status: string }>
     : []
   const recordedFrom = recordedRows.length ? parseDbTime(recordedRows[0]!.started_at)! : Infinity
 
@@ -335,10 +355,24 @@ export function computeStrandStats(db: Database, strandId: string, options: Stra
     turns.push({ start: t0, end, kind, firstToken: null, recorded: false })
   }
   const estimatedTurns = turns.length
+  const isTurnActive = options.isTurnActive ?? ((turnId: string, sessionId: string) => activeStrandTurnId(sessionId) === turnId)
   for (const r of recordedRows) {
     const start = parseDbTime(r.started_at)!
-    const end = parseDbTime(r.ended_at) ?? now
+    let end = parseDbTime(r.ended_at)
+    // Closed at boot as interrupted: the end is the last evidence, an estimate.
+    let interrupted = r.status === 'interrupted'
+    if (end === null) {
+      if (isTurnActive(r.id, strandId)) end = now
+      else {
+        // Open row without a live runner (process died, boot cleanup not yet
+        // run): cap at the last evidenced activity so it does not grow with the clock.
+        const last = lastStrandTurnActivityMs(db, { id: r.id, session_id: strandId, started_at: r.started_at })
+        end = Math.min(now, last === null ? start : last / 1000)
+        interrupted = true
+      }
+    }
     turns.push({
+      interrupted,
       start, end,
       kind: r.trigger === 'task_injection' ? 'task_result' : r.trigger === 'system' ? 'system' : 'user',
       firstToken: parseDbTime(r.first_token_at),
@@ -380,10 +414,12 @@ export function computeStrandStats(db: Database, strandId: string, options: Stra
   }
 
   // ---- tokens by scope / model
-  const grouped = (sessions: string[]) => sessions.length === 0 ? [] : db.prepare(`SELECT provider, model, kind,
+  // Chunked on wide trees; a group may then appear once per chunk, which is
+  // fine: every consumer below sums the rows.
+  const grouped = (sessions: string[]) => chunks(sessions).flatMap(part => db.prepare(`SELECT provider, model, kind,
       ${hasBillingCol ? 'billing' : 'NULL'} AS billing, count(*) n, sum(prompt_tokens) p, sum(completion_tokens) c, sum(cache_read) cr,
-      sum(cache_write) cw, sum(estimated_cost) cost FROM token_usage WHERE session_id IN (${placeholders(sessions.length)})
-      GROUP BY 1, 2, 3, 4`).all(...sessions) as Array<UsageAgg & { provider: string; model: string; kind: string; billing: string | null }>
+      sum(cache_write) cw, sum(estimated_cost) cost FROM token_usage WHERE session_id IN (${placeholders(part.length)})
+      GROUP BY 1, 2, 3, 4`).all(...part) as Array<UsageAgg & { provider: string; model: string; kind: string; billing: string | null }>)
   const mainRows = grouped([strandId])
   const taskRows = grouped(taskSessions)
   const main = bucket(mainRows.filter(r => r.kind === 'request'))
@@ -394,10 +430,14 @@ export function computeStrandStats(db: Database, strandId: string, options: Stra
   const byModel = new Map<string, StrandStatsModel & { cr: number }>()
   for (const [scope, rows] of [['main', mainRows], ['tasks', taskRows]] as const) {
     for (const r of rows) {
-      const key = `${r.provider}\u0000${r.model}`
+      // Billing class is part of the key: folding a model's subscription and
+      // metered/local rows into one entry would let the order of the SQL
+      // groups decide the class of the whole model.
+      const billing = billingOf(r.provider, r.billing)
+      const key = `${r.provider}\u0000${r.model}\u0000${billing}`
       let e = byModel.get(key)
       if (!e) {
-        e = { provider: r.provider, model: r.model, billing: billingOf(r.provider, r.billing), requests: 0, tokensIn: 0, tokensOut: 0, cacheHitRatio: null, costUsd: 0, costMainUsd: 0, costTasksUsd: 0, cr: 0 }
+        e = { provider: r.provider, model: r.model, billing, requests: 0, tokensIn: 0, tokensOut: 0, cacheHitRatio: null, costUsd: 0, costMainUsd: 0, costTasksUsd: 0, cr: 0 }
         byModel.set(key, e)
       }
       e.requests += r.n; e.tokensIn += r.p + r.cr + r.cw; e.tokensOut += r.c; e.cr += r.cr; e.costUsd += r.cost
@@ -509,6 +549,7 @@ export function computeStrandStats(db: Database, strandId: string, options: Stra
   const first = Math.min(parseDbTime(session.started_at) ?? Infinity, ...ptimes)
   const last = Math.max(first, ...activity, ...tasks.map(t => t.end), ...turns.map(t => t.end))
   const recordedCount = turns.filter(t => t.recorded).length
+  const interruptedTurns = turns.filter(t => t.interrupted).length
 
   const contextWindow = hasColumn(db, 'token_usage', 'context_window')
     ? (db.prepare('SELECT context_window cw FROM token_usage WHERE session_id = ? AND context_window IS NOT NULL ORDER BY id DESC LIMIT 1').get(strandId) as { cw: number } | undefined)?.cw ?? null
@@ -533,6 +574,7 @@ export function computeStrandStats(db: Database, strandId: string, options: Stra
       source: recordedCount === 0 ? 'estimated' : estimatedTurns === 0 ? 'recorded' : 'mixed',
       recorded: recordedCount,
       estimated: estimatedTurns,
+      interrupted: interruptedTurns,
     },
     tokens: { main, tasks: tasksBucket, voice, total },
     cost: {
@@ -577,7 +619,7 @@ export function computeStrandStats(db: Database, strandId: string, options: Stra
       latencyMedianSec: latencies.length ? Math.round(median(latencies)!) : null,
       parallelPeak: parallelPeak(taskIv),
       wallSec: Math.round(last - first),
-      estimated: estimatedTurns > 0,
+      estimated: estimatedTurns > 0 || interruptedTurns > 0,
       definition: AUTARKY_DEFINITION,
     },
     compaction: {

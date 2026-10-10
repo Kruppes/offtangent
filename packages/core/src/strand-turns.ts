@@ -18,7 +18,11 @@ import type { Database } from './database.js'
 
 export type StrandTurnTrigger = 'user' | 'task_injection' | 'system'
 export type StrandTurnInputMode = 'typed' | 'voice' | 'answer'
-export type StrandTurnStatus = 'running' | 'completed' | 'failed' | 'aborted'
+/**
+ * `interrupted`: the process that ran the turn went away (crash, restart)
+ * before it could close the row; set by {@link closeOrphanedStrandTurns}.
+ */
+export type StrandTurnStatus = 'running' | 'completed' | 'failed' | 'aborted' | 'interrupted'
 
 /** How a usage row is paid: an OAuth subscription, metered API billing, or a local model. */
 export type BillingKind = 'subscription' | 'metered' | 'local'
@@ -34,6 +38,9 @@ function columnNames(db: Database, table: string): Set<string> {
  *  - `tool_calls`: turn_id, is_internal
  *  - `persona_delegations`: origin_session_id (the strand an ask_agent came from)
  */
+/** Marker row in `strand_stats_migrations` once the is_internal backfill committed. */
+export const IS_INTERNAL_BACKFILL_KEY = 'tool_calls.is_internal.backfill'
+
 export function ensureStrandStatsSchema(db: Database, internalToolNames: Iterable<string> = []): void {
   db.exec(`
     CREATE TABLE IF NOT EXISTS strand_turns (
@@ -59,14 +66,26 @@ export function ensureStrandStatsSchema(db: Database, internalToolNames: Iterabl
 
   const tc = columnNames(db, 'tool_calls')
   if (!tc.has('turn_id')) db.exec('ALTER TABLE tool_calls ADD COLUMN turn_id TEXT')
-  if (!tc.has('is_internal')) {
-    db.exec('ALTER TABLE tool_calls ADD COLUMN is_internal INTEGER NOT NULL DEFAULT 0')
-    // One-time backfill when the column is first added: the internal metric
-    // rows are identified by name (the same list readers filtered on so far).
+  // is_internal: column + one-time backfill run in ONE transaction and end
+  // with a persistent marker. The marker, not the mere presence of the
+  // column, decides whether the backfill is still due, so a crash between the
+  // two steps (or a database a pre-marker build migrated only in part) gets the
+  // backfill on the next start. The UPDATE is idempotent, a rerun is harmless.
+  db.exec(`CREATE TABLE IF NOT EXISTS strand_stats_migrations (key TEXT PRIMARY KEY, applied_at TEXT NOT NULL)`)
+  const backfillDone = !!db.prepare('SELECT 1 FROM strand_stats_migrations WHERE key = ?').get(IS_INTERNAL_BACKFILL_KEY)
+  if (!tc.has('is_internal') || !backfillDone) {
     const names = [...internalToolNames]
-    if (names.length > 0) {
-      db.prepare(`UPDATE tool_calls SET is_internal = 1 WHERE tool_name IN (${names.map(() => '?').join(',')})`).run(...names)
-    }
+    db.transaction(() => {
+      if (!columnNames(db, 'tool_calls').has('is_internal')) {
+        db.exec('ALTER TABLE tool_calls ADD COLUMN is_internal INTEGER NOT NULL DEFAULT 0')
+      }
+      // The internal metric rows are identified by name (the same list
+      // readers filtered on so far).
+      if (names.length > 0) {
+        db.prepare(`UPDATE tool_calls SET is_internal = 1 WHERE is_internal = 0 AND tool_name IN (${names.map(() => '?').join(',')})`).run(...names)
+      }
+      db.prepare('INSERT OR REPLACE INTO strand_stats_migrations (key, applied_at) VALUES (?, ?)').run(IS_INTERNAL_BACKFILL_KEY, nowIso())
+    })()
   }
 
   const pd = columnNames(db, 'persona_delegations')
@@ -148,6 +167,79 @@ export function recordStrandTurnEnd(db: Database | null | undefined, turnId: str
   } catch (err) {
     console.warn('[strand-turns] could not record turn end:', (err as Error).message)
   }
+}
+
+/** SQLite `datetime('now')` text and ISO strings, both read as UTC; epoch ms or null. */
+function parseTimeMs(value: string | null | undefined): number | null {
+  if (!value) return null
+  const s = value.includes('T') ? value : value.replace(' ', 'T')
+  const ms = Date.parse(/[zZ]|[+-]\d\d:?\d\d$/.test(s) ? s : `${s}Z`)
+  return Number.isFinite(ms) ? ms : null
+}
+
+/**
+ * Last evidenced activity of a turn (epoch ms): its own token_usage and
+ * tool_calls rows, plus assistant/tool messages of the session between its
+ * start and the next turn's start. Falls back to started_at.
+ */
+export function lastStrandTurnActivityMs(db: Database, turn: { id: string; session_id: string; started_at: string }): number | null {
+  const start = parseTimeMs(turn.started_at)
+  if (start === null) return null
+  const candidates: Array<string | null | undefined> = []
+  const one = (sql: string, ...args: unknown[]) => {
+    try {
+      for (const r of db.prepare(sql).all(...args) as Array<{ t: string | null }>) candidates.push(r.t)
+    } catch { /* table missing on an odd install: no evidence from it */ }
+  }
+  // max() per format family: SQLite text and ISO text do not compare as strings.
+  one('SELECT max(timestamp) t FROM token_usage WHERE turn_id = ? GROUP BY instr(timestamp, \'T\') > 0', turn.id)
+  one('SELECT max(timestamp) t FROM tool_calls WHERE turn_id = ? GROUP BY instr(timestamp, \'T\') > 0', turn.id)
+  const next = db.prepare('SELECT started_at FROM strand_turns WHERE session_id = ? AND started_at > ? ORDER BY started_at LIMIT 1')
+    .get(turn.session_id, turn.started_at) as { started_at: string } | undefined
+  const nextMs = parseTimeMs(next?.started_at) ?? Infinity
+  try {
+    // Both text formats as lower bound (superset), exact window checked below.
+    const startSql = new Date(start).toISOString().slice(0, 19).replace('T', ' ')
+    const msgs = db.prepare(`SELECT timestamp t FROM chat_messages WHERE session_id = ? AND role IN ('assistant', 'tool')
+      AND (timestamp >= ? OR timestamp >= ?)`).all(turn.session_id, startSql, turn.started_at) as Array<{ t: string }>
+    for (const m of msgs) {
+      const ms = parseTimeMs(m.t)
+      if (ms !== null && ms >= start && ms < nextMs) candidates.push(m.t)
+    }
+  } catch { /* ignore */ }
+  let end = start
+  for (const c of candidates) {
+    const ms = parseTimeMs(c)
+    if (ms !== null && ms > end && ms < nextMs) end = ms
+  }
+  return end
+}
+
+/**
+ * Boot step: rows still `running` belong to a process that no longer exists
+ * (a turn of THIS process is in the active registry and is skipped). They are
+ * closed as `interrupted` with ended_at = last evidenced activity of the turn,
+ * so their duration stops growing with the clock. Returns the number closed.
+ */
+export function closeOrphanedStrandTurns(db: Database): number {
+  let closed = 0
+  try {
+    const open = db.prepare("SELECT id, session_id, started_at FROM strand_turns WHERE ended_at IS NULL").all() as
+      Array<{ id: string; session_id: string; started_at: string }>
+    const live = new Set(activeTurns.values())
+    const close = db.prepare("UPDATE strand_turns SET ended_at = ?, status = 'interrupted' WHERE id = ? AND ended_at IS NULL")
+    db.transaction(() => {
+      for (const t of open) {
+        if (live.has(t.id)) continue
+        const end = lastStrandTurnActivityMs(db, t)
+        closed += close.run(end === null ? t.started_at : new Date(end).toISOString(), t.id).changes
+      }
+    })()
+    if (closed > 0) console.warn(`[strand-turns] closed ${closed} interrupted turn(s) left open by a previous process`)
+  } catch (err) {
+    console.warn('[strand-turns] could not close interrupted turns:', (err as Error).message)
+  }
+  return closed
 }
 
 // ---------------------------------------------------------------------------

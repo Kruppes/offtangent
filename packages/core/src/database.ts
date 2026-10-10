@@ -13,7 +13,7 @@ import { ensureUserSettingsTable } from './user-settings.js'
 import { ensureMemoryPageEmbeddingTables } from './memory-page-embeddings.js'
 import { ensurePersonaTable } from './persona-store.js'
 import { ensurePersonaDelegationTable } from './persona-delegation-log.js'
-import { ensureStrandStatsSchema } from './strand-turns.js'
+import { closeOrphanedStrandTurns, ensureStrandStatsSchema } from './strand-turns.js'
 import { NON_WORK_TOOL_NAMES } from './tool-names.js'
 
 export type Database = BetterSqlite3.Database
@@ -935,6 +935,9 @@ export function initDatabase(dbPath?: string): Database {
   // persona_delegations. Additive, idempotent; history keeps NULLs and is
   // shown as estimated. Only `tool_calls.is_internal` is backfilled once.
   ensureStrandStatsSchema(db, NON_WORK_TOOL_NAMES)
+  // Turns left `running` by a crashed/restarted process end as `interrupted`
+  // at their last evidenced activity instead of growing with the clock.
+  closeOrphanedStrandTurns(db)
 
   // Backfill token counts from token_usage only when the columns are first added
   if (needsTokenBackfill) {
