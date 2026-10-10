@@ -1,3 +1,4 @@
+import { recordStrandTurnStart, recordStrandTurnFirstToken, recordStrandTurnEnd } from './strand-turns.js'
 import { randomUUID } from 'node:crypto'
 import { AsyncLocalStorage } from 'node:async_hooks'
 import type { AgentMessage, Agent as PiAgent } from '@earendil-works/pi-agent-core'
@@ -993,19 +994,51 @@ export class AgentCore {
       injection,
       'task',
       (msg) => {
-        return this.processTaskInjection(
+        return this.recordInjectionTurn(this.processTaskInjection(
           msg.payload.userId,
           msg.payload.text,
           forcedSessionId,
           resolvedInjectionId,
           agentId,
-        )
+        ), forcedSessionId, agentId)
       },
       { agentId, sessionId: forcedSessionId },
     )
     // Stream response chunks via callback (if set), otherwise drain silently
     for await (const chunk of iterable) {
       this.onTaskInjectionChunkCallback?.(chunk)
+    }
+  }
+
+  /**
+   * Strand statistics: a task injection is a turn of the strand that no user
+   * started (`trigger = task_injection`). Wraps the stream so start, first
+   * token and end land in `strand_turns` and the rows the turn writes carry
+   * its `turn_id`.
+   */
+  private async *recordInjectionTurn(
+    stream: AsyncIterable<ResponseChunk>,
+    sessionId: string,
+    agentId: string,
+  ): AsyncIterable<ResponseChunk> {
+    const turnId = randomUUID()
+    recordStrandTurnStart(this.db, { id: turnId, sessionId, agentId, trigger: 'task_injection' })
+    let status: 'completed' | 'failed' = 'completed'
+    let firstToken = false
+    try {
+      for await (const chunk of stream) {
+        if (!firstToken && (chunk.type === 'text' || chunk.type === 'thinking' || chunk.type === 'tool_call_start')) {
+          firstToken = true
+          recordStrandTurnFirstToken(this.db, turnId)
+        }
+        if (chunk.type === 'error') status = 'failed'
+        yield chunk
+      }
+    } catch (err) {
+      status = 'failed'
+      throw err
+    } finally {
+      recordStrandTurnEnd(this.db, turnId, sessionId, status)
     }
   }
 

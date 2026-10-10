@@ -53,6 +53,10 @@ export function ensurePersonaDelegationTable(db: Database): void {
     CREATE INDEX IF NOT EXISTS idx_persona_delegations_created ON persona_delegations(created_at);
     CREATE INDEX IF NOT EXISTS idx_persona_delegations_task ON persona_delegations(task_id);
   `)
+  // Strand statistics (phase B): the strand an ask_agent call came from.
+  const cols = new Set((db.prepare('PRAGMA table_info(persona_delegations)').all() as { name: string }[]).map(c => c.name))
+  if (!cols.has('origin_session_id')) db.exec('ALTER TABLE persona_delegations ADD COLUMN origin_session_id TEXT')
+  db.exec('CREATE INDEX IF NOT EXISTS idx_persona_delegations_origin ON persona_delegations(origin_session_id)')
 }
 
 export interface RecordDelegationInput {
@@ -68,6 +72,8 @@ export interface RecordDelegationInput {
   outputTokens?: number | null
   costUsd?: number | null
   error?: string | null
+  /** Strand (session) the delegation was issued from — set for ask_agent, which has no session of its own. */
+  originSessionId?: string | null
 }
 
 function finiteOrNull(value: number | null | undefined): number | null {
@@ -81,8 +87,8 @@ export function recordPersonaDelegation(db: Database | null | undefined, input: 
     const finished = input.success !== undefined && input.success !== null
     const result = db.prepare(`
       INSERT INTO persona_delegations
-        (caller_agent_id, target_agent_id, kind, task_id, session_id, success, duration_ms, input_tokens, output_tokens, cost_usd, error, finished_at)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ${finished ? "datetime('now')" : 'NULL'})
+        (caller_agent_id, target_agent_id, kind, task_id, session_id, success, duration_ms, input_tokens, output_tokens, cost_usd, error, origin_session_id, finished_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ${finished ? "datetime('now')" : 'NULL'})
     `).run(
       input.callerAgentId,
       input.targetAgentId,
@@ -95,6 +101,7 @@ export function recordPersonaDelegation(db: Database | null | undefined, input: 
       finiteOrNull(input.outputTokens),
       finiteOrNull(input.costUsd),
       input.error ? input.error.slice(0, 500) : null,
+      input.originSessionId ?? input.sessionId ?? null,
     )
     return Number(result.lastInsertRowid)
   } catch (err) {

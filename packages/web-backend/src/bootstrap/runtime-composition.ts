@@ -1456,6 +1456,9 @@ export async function createRuntimeComposition(options: RuntimeCompositionOption
               source: 'web',
               agentId: input.agentId,
               explicitSessionId: input.strandId,
+              // A fork seed: the strand starts working without a user prompt.
+              trigger: 'system',
+              inputMode: null,
             })
           },
         }

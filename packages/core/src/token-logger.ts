@@ -1,4 +1,5 @@
 import type { Database } from './database.js'
+import { activeStrandTurnId, billingForProvider, type BillingKind } from './strand-turns.js'
 
 /**
  * What produced a `token_usage` row.
@@ -24,6 +25,16 @@ export interface TokenUsageRecord {
   sessionId?: string
   /** Defaults to `request` — a normal provider request of the conversation. */
   kind?: TokenUsageKind
+  /** Persona that produced the row (strand statistics). */
+  agentId?: string | null
+  /** Context window of the model at request time, when known. */
+  contextWindow?: number | null
+  /** Provider error carried by the assistant message (a failed request). */
+  error?: string | null
+  /** Overrides the provider mapping; normally derived from {@link billingForProvider}. */
+  billing?: BillingKind | null
+  /** Turn the row belongs to; defaults to the active turn of `sessionId`. */
+  turnId?: string | null
 }
 
 export interface ToolCallRecord {
@@ -39,6 +50,8 @@ export interface ToolCallRecord {
   sessionType?: string | null
   /** Joined from `sessions.source` (populated by queries that JOIN sessions) */
   sessionSource?: string | null
+  /** Turn the row belongs to; defaults to the active turn of `sessionId`. */
+  turnId?: string | null
 }
 
 /**
@@ -60,12 +73,26 @@ export const INTERNAL_METRIC_TOOL_NAMES: ReadonlySet<string> = new Set([
 ])
 
 /**
+ * Everything in `tool_calls` that is not work the agent did: the metric rows
+ * above plus lifecycle markers (session end/timeout, reminder delivery).
+ * Rows with these names get `is_internal = 1` so the strand statistics count
+ * real tool calls without a name filter.
+ */
+export const NON_WORK_TOOL_NAMES: ReadonlySet<string> = new Set([
+  ...INTERNAL_METRIC_TOOL_NAMES,
+  'session_timeout',
+  'session_end',
+  'reminder_delivery',
+])
+
+/**
  * Log token usage to the SQLite database
  */
 export function logTokenUsage(db: Database, record: TokenUsageRecord): void {
   db.prepare(
-    `INSERT INTO token_usage (provider, model, prompt_tokens, completion_tokens, cache_read, cache_write, estimated_cost, session_id, kind)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`
+    `INSERT INTO token_usage (provider, model, prompt_tokens, completion_tokens, cache_read, cache_write, estimated_cost, session_id, kind,
+       turn_id, billing, agent_id, context_window, error)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
   ).run(
     record.provider,
     record.model,
@@ -76,6 +103,11 @@ export function logTokenUsage(db: Database, record: TokenUsageRecord): void {
     record.estimatedCost,
     record.sessionId ?? null,
     record.kind ?? 'request',
+    record.turnId ?? activeStrandTurnId(record.sessionId),
+    record.billing ?? billingForProvider(record.provider),
+    record.agentId ?? null,
+    typeof record.contextWindow === 'number' && Number.isFinite(record.contextWindow) ? record.contextWindow : null,
+    record.error ? record.error.slice(0, 500) : null,
   )
 
   if (record.sessionId) {
@@ -93,8 +125,8 @@ export function logTokenUsage(db: Database, record: TokenUsageRecord): void {
  */
 export function logToolCall(db: Database, record: ToolCallRecord): number {
   const result = db.prepare(
-    `INSERT INTO tool_calls (session_id, tool_name, input, output, duration_ms, status)
-     VALUES (?, ?, ?, ?, ?, ?)`
+    `INSERT INTO tool_calls (session_id, tool_name, input, output, duration_ms, status, turn_id, is_internal)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?)`
   ).run(
     record.sessionId,
     record.toolName,
@@ -102,6 +134,8 @@ export function logToolCall(db: Database, record: ToolCallRecord): number {
     record.output,
     record.durationMs,
     record.status ?? 'success',
+    record.turnId ?? activeStrandTurnId(record.sessionId),
+    NON_WORK_TOOL_NAMES.has(record.toolName) ? 1 : 0,
   )
   return Number(result.lastInsertRowid)
 }

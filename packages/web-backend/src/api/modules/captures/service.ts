@@ -880,6 +880,7 @@ export function createCapturesService(options: CapturesServiceOptions) {
       explicitSessionId: strand.id,
       turnModelOverride: modelForTurn(capture),
       ...(overrides ? { turnOverrides: overrides } : {}),
+      inputMode: capture.kind === 'voice' ? 'voice' : 'typed',
     })
   }
 

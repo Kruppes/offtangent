@@ -13,6 +13,8 @@ import { ensureUserSettingsTable } from './user-settings.js'
 import { ensureMemoryPageEmbeddingTables } from './memory-page-embeddings.js'
 import { ensurePersonaTable } from './persona-store.js'
 import { ensurePersonaDelegationTable } from './persona-delegation-log.js'
+import { ensureStrandStatsSchema } from './strand-turns.js'
+import { NON_WORK_TOOL_NAMES } from './token-logger.js'
 
 export type Database = BetterSqlite3.Database
 
@@ -927,6 +929,12 @@ export function initDatabase(dbPath?: string): Database {
   // Persona delegation protocol (plan persona-architektur 1c): one row per
   // ask_agent call / foreign-persona task. Additive, no backfill.
   ensurePersonaDelegationTable(db)
+
+  // Strand statistics (context panel, phase B): `strand_turns` plus nullable
+  // turn/billing/persona columns on token_usage, tool_calls and
+  // persona_delegations. Additive, idempotent; history keeps NULLs and is
+  // shown as estimated. Only `tool_calls.is_internal` is backfilled once.
+  ensureStrandStatsSchema(db, NON_WORK_TOOL_NAMES)
 
   // Backfill token counts from token_usage only when the columns are first added
   if (needsTokenBackfill) {

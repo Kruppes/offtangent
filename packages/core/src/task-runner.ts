@@ -1628,6 +1628,10 @@ export class TaskRunner {
             cacheWrite: assistantMsg.usage.cacheWrite,
             estimatedCost: finalCost,
             sessionId,
+            agentId: this.store.getById(runningTask.taskId)?.agentId ?? 'main',
+            contextWindow: (model as { contextWindow?: number }).contextWindow ?? null,
+            error: (assistantMsg as { errorMessage?: string }).errorMessage
+              ?? ((assistantMsg as { stopReason?: string }).stopReason === 'error' ? 'Unknown model error' : null),
           })
 
           // Persist assistant text and thinking to chat_messages for the task viewer
@@ -1717,6 +1721,9 @@ export class TaskRunner {
           input: JSON.stringify(args),
           output: outputStr,
           durationMs,
+          // Strand statistics: was always logged as `success` (default) even
+          // when `isError` was set two lines above.
+          status: isError ? 'error' : 'success',
         })
 
         // Persist the result as a `tool` chat row as well — same shape the

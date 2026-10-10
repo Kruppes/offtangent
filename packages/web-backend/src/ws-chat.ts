@@ -840,6 +840,8 @@ export function setupWebSocketChat(
         preambleToolCalls,
         agentId,
         explicitSessionId,
+        // Strand statistics: the web recorder uploads `recording-*` files.
+        inputMode: parsed.attachments?.some(a => a.originalName.startsWith('recording-')) ? 'voice' : 'typed',
       })
 
       // Turns of one persona are serialized. Tell the client when its message

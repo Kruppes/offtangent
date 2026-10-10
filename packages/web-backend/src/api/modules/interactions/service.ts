@@ -269,6 +269,7 @@ export function createInteractionsService(options: InteractionsServiceOptions): 
           source: 'web',
           agentId: row.agent_id ?? 'main',
           explicitSessionId: row.session_id,
+          inputMode: 'answer',
         })
         resumed = true
       } else if (inserted) {

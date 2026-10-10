@@ -44,6 +44,8 @@ export interface AskAgentToolOptions {
    * archived personas are not filtered (tests, legacy callers).
    */
   db?: Database | null
+  /** Strand the call is made from (`persona_delegations.origin_session_id`). */
+  getCurrentSessionId?: () => string | undefined
   /**
    * Memory root of a persona for `include_core_memory`. Defaults to the
    * scoped persona memory (`/data/agents/<id>/memory`) or, for `main` and
@@ -158,8 +160,9 @@ export function buildAskAgentPromptHint(currentAgentId: string, baseDir?: string
 type AskAgentOutcome = { success: boolean; error?: string; usage?: { input?: number; output?: number; cost?: { total?: number } } }
 
 /** One `persona_delegations` row per ask_agent call (plan persona-architektur 1c, point 4). */
-function logAskAgentDelegation(db: Database | null | undefined, callerAgentId: string, targetAgentId: string, startedAtMs: number, outcome: AskAgentOutcome): void {
+function logAskAgentDelegation(db: Database | null | undefined, callerAgentId: string, targetAgentId: string, startedAtMs: number, outcome: AskAgentOutcome, originSessionId?: string): void {
   recordPersonaDelegation(db, {
+    originSessionId: originSessionId ?? null,
     callerAgentId,
     targetAgentId,
     kind: 'ask_agent',
@@ -354,7 +357,7 @@ export function createAskAgentTool(options: AskAgentToolOptions): AgentTool {
         if (response.stopReason === 'error') {
           const errMsg = response.errorMessage || 'unknown provider error'
           console.error(`[ask_agent] provider error for ${targetAgentId}: ${errMsg}`)
-          logAskAgentDelegation(options.db, currentAgentId, targetAgentId, startedAtMs, { success: false, error: errMsg, usage: response.usage })
+          logAskAgentDelegation(options.db, currentAgentId, targetAgentId, startedAtMs, { success: false, error: errMsg, usage: response.usage }, options.getCurrentSessionId?.())
           return {
             content: [{ type: 'text' as const, text: `Error querying agent '${targetAgentId}': ${errMsg}` }],
             details: { error: true, targetAgentId, reason: 'provider_error', errorMessage: errMsg },
@@ -384,7 +387,7 @@ export function createAskAgentTool(options: AskAgentToolOptions): AgentTool {
         }
 
         if (!responseText) {
-          logAskAgentDelegation(options.db, currentAgentId, targetAgentId, startedAtMs, { success: false, error: 'empty response', usage: response.usage })
+          logAskAgentDelegation(options.db, currentAgentId, targetAgentId, startedAtMs, { success: false, error: 'empty response', usage: response.usage }, options.getCurrentSessionId?.())
           return {
             content: [{ type: 'text' as const, text: `Agent '${targetAgentId}' returned an empty response.` }],
             details: { targetAgentId, empty: true },
@@ -393,7 +396,7 @@ export function createAskAgentTool(options: AskAgentToolOptions): AgentTool {
 
         console.log(`[ask_agent] ${targetAgentId} responded (${responseText.length} chars)`)
 
-        logAskAgentDelegation(options.db, currentAgentId, targetAgentId, startedAtMs, { success: true, usage: response.usage })
+        logAskAgentDelegation(options.db, currentAgentId, targetAgentId, startedAtMs, { success: true, usage: response.usage }, options.getCurrentSessionId?.())
 
         return {
           content: [{ type: 'text' as const, text: formatAskAgentAnswer({ targetAgentId, answer: responseText, coreMemory: coreMemoryLoaded }) }],
@@ -408,7 +411,7 @@ export function createAskAgentTool(options: AskAgentToolOptions): AgentTool {
       } catch (err) {
         const errorMessage = err instanceof Error ? err.message : String(err)
         console.error(`[ask_agent] Error querying ${targetAgentId}:`, err)
-        logAskAgentDelegation(options.db, currentAgentId, targetAgentId, startedAtMs, { success: false, error: errorMessage })
+        logAskAgentDelegation(options.db, currentAgentId, targetAgentId, startedAtMs, { success: false, error: errorMessage }, options.getCurrentSessionId?.())
         return {
           content: [{ type: 'text' as const, text: `Error querying agent '${targetAgentId}': ${errorMessage}` }],
           details: { error: true, targetAgentId },

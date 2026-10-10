@@ -326,7 +326,20 @@ export {
   getDistinctToolNames,
   getMemoryUsageStats,
   INTERNAL_METRIC_TOOL_NAMES,
+  NON_WORK_TOOL_NAMES,
 } from './token-logger.js'
+export {
+  ensureStrandStatsSchema,
+  recordStrandTurnStart,
+  recordStrandTurnFirstToken,
+  recordStrandTurnEnd,
+  activeStrandTurnId,
+  billingForProvider,
+  billingMapping,
+  configureBillingMapping,
+  DEFAULT_BILLING_MAPPING,
+} from './strand-turns.js'
+export type { BillingKind, StrandTurnTrigger, StrandTurnInputMode, StrandTurnStatus } from './strand-turns.js'
 export type { TokenUsageRecord, ToolCallRecord, ToolCallQueryOptions, ToolCallQueryResult, MemoryFileReadStat, MemorySearchStat, MemoryUsageStats } from './token-logger.js'
 export { queryUsageStats, getUsageSummary } from './usage-stats.js'
 export type { UsageGroupBy, UsageStatsQueryOptions, UsageTotals, UsageStatsRow, UsageStatsResult, UsageSummary } from './usage-stats.js'

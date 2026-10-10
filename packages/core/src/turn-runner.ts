@@ -47,6 +47,8 @@ import { isRateLimitError, retryAfterMsFromError } from './provider-concurrency.
 const RATE_LIMIT_RETRY_CAP_MS = 60_000
 import type { TurnRuntimeOverrides } from './turn-overrides.js'
 import { hasTurnRuntimeOverrides } from './turn-overrides.js'
+import { recordStrandTurnStart, recordStrandTurnFirstToken, recordStrandTurnEnd } from './strand-turns.js'
+import type { StrandTurnTrigger, StrandTurnInputMode } from './strand-turns.js'
 
 /**
  * The slice of AgentCore the turn runner depends on. Keeping this narrow
@@ -211,6 +213,10 @@ export interface StartTurnInput {
   continueFromTranscript?: boolean
   /** Synthetic tool calls emitted at the start of the turn, before the agent streams. */
   preambleToolCalls?: TurnPreambleToolCall[]
+  /** Strand statistics: who started the turn. Defaults to `user`. */
+  trigger?: StrandTurnTrigger
+  /** Strand statistics: how the prompt was entered (typed, dictated, block answer). */
+  inputMode?: StrandTurnInputMode | null
 }
 
 export interface TurnRunnerOptions {
@@ -335,6 +341,10 @@ interface TurnState {
   attemptController: AbortController
   ended: boolean
   endedAt: number | null
+  /** Strand statistics: the turn row was written (persisting turn). */
+  statsRecorded?: boolean
+  statsFirstToken?: boolean
+  statsFailed?: boolean
 }
 
 /**
@@ -807,6 +817,14 @@ export class TurnRunner {
     this.recentTurns.set(turn.key, turn)
     this.scheduleRetentionSweep(turn)
 
+    if (turn.statsRecorded) {
+      recordStrandTurnEnd(
+        this.db, turn.id, turn.sessionId,
+        turn.statsFailed ? 'failed' : turn.abortController.signal.aborted ? 'aborted' : 'completed',
+        new Date(turn.endedAt).toISOString(),
+      )
+    }
+
     this.emit(turn, { type: 'turn_end', turnId: turn.id })
     this.onTurnEnd?.(toInfo(turn))
   }
@@ -850,6 +868,21 @@ export class TurnRunner {
     }
 
     this.emit(turn, { type: 'turn_start', turnId: turn.id })
+
+    // Strand statistics: one `strand_turns` row per persisted turn (a retry
+    // of a failed turn is a turn of its own). Channels without a web user
+    // persist nothing, so they record no turn either.
+    if (this.db && turn.userId !== null) {
+      recordStrandTurnStart(this.db, {
+        id: turn.id,
+        sessionId: turn.sessionId,
+        agentId: turn.agentId,
+        trigger: input.trigger ?? 'user',
+        inputMode: input.inputMode ?? (input.continueFromTranscript ? null : 'typed'),
+        startedAt: new Date(turn.startedAt).toISOString(),
+      })
+      turn.statsRecorded = true
+    }
 
     const thresholds = this.resolveStallThresholds()
     const policy = this.resolveRetryPolicy()
@@ -961,7 +994,7 @@ export class TurnRunner {
       if (input.continueFromTranscript !== true) {
         for (const chunk of preambleChunks(input.preambleToolCalls)) {
           transcript.record(chunk)
-          this.emitChunk(turn, chunk)
+          this.emitChunk(turn, chunk, { preamble: true })
         }
       }
       // Keep the legacy 5-arg call shape when no explicit thread was picked:
@@ -1066,6 +1099,7 @@ export class TurnRunner {
    * live rendering and history agree.
    */
   private failTurn(turn: TurnState, failure: Omit<TurnErrorInfo, 'messageId' | 'occurredAt' | 'retryActionId'>): void {
+    turn.statsFailed = true
     const info: TurnErrorInfo = {
       ...failure,
       occurredAt: new Date().toISOString(),
@@ -1154,7 +1188,14 @@ export class TurnRunner {
     return isRetryableTurnError(error)
   }
 
-  private emitChunk(turn: TurnState, chunk: ResponseChunk): void {
+  private emitChunk(turn: TurnState, chunk: ResponseChunk, opts?: { preamble?: boolean }): void {
+    // Preamble tool calls are synthetic (no model output): they must not
+    // count as the first token of the answer.
+    if (turn.statsRecorded && !turn.statsFirstToken && !opts?.preamble
+      && (chunk.type === 'text' || chunk.type === 'thinking' || chunk.type === 'tool_call_start')) {
+      turn.statsFirstToken = true
+      recordStrandTurnFirstToken(this.db, turn.id)
+    }
     this.emit(turn, { type: 'chunk', turnId: turn.id, chunk })
   }
 

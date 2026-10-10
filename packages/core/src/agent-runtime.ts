@@ -812,6 +812,7 @@ class PiAgentRuntime implements AgentRuntimeBoundary, AgentRuntimePiAgentAccess 
           getModel: () => this.model,
           getApiKey: () => this.resolveApiKey('ask_agent'),
           db: this.db,
+          getCurrentSessionId: () => this.currentSessionId ?? undefined,
         })]
       : []
 
@@ -1617,6 +1618,10 @@ class PiAgentRuntime implements AgentRuntimeBoundary, AgentRuntimePiAgentAccess 
             cacheWrite: assistantMsg.usage.cacheWrite,
             estimatedCost: finalCost,
             sessionId,
+            agentId: this.agentId,
+            contextWindow: this.model.contextWindow ?? null,
+            error: (assistantMsg as { errorMessage?: string }).errorMessage
+              ?? ((assistantMsg as { stopReason?: string }).stopReason === 'error' ? 'Unknown model error' : null),
           })
           // SPEC 11.5: one line per turn so a cache regression is visible in
           // the container log without a query.
@@ -1677,6 +1682,11 @@ class PiAgentRuntime implements AgentRuntimeBoundary, AgentRuntimePiAgentAccess 
           input: JSON.stringify(args),
           output: JSON.stringify(event.result ?? {}),
           durationMs,
+          // Strand statistics: the chat path used to log every tool call as
+          // `success` (no status passed → token-logger default) although the
+          // event carries `isError`; the error count was only recoverable
+          // from chat_messages.metadata.toolIsError.
+          status: event.isError ? 'error' : 'success',
         })
 
         chunks.push({
