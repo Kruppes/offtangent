@@ -650,7 +650,7 @@ describe('settings route module', () => {
       await withUnapprovedRoute(async () => {
         expect((await save({ privacy: { modelGate: 'enforce' } })).status).toBe(200)
         await expectRuntimeBlocked()
-        const form = await (await fetch(`${baseUrl}/api/settings`, { headers: authHeaders(adminToken) })).json()
+        const form = await (await fetch(`${baseUrl}/api/settings`, { headers: authHeaders(adminToken) })).json() as Record<string, unknown>
         expect((await save({ ...form, language: 'de' })).status).toBe(200)
         expect(JSON.parse(fs.readFileSync(path.join(configDir(), 'settings.json'), 'utf8')).language).toBe('de')
         await expectRuntimeBlocked()
