@@ -4,7 +4,7 @@ import http from 'node:http'
 import os from 'node:os'
 import path from 'node:path'
 import type { AgentCore, Database } from '@axiom/core'
-import { initDatabase, loadRetryPolicy, loadStallThresholds, resolveAttentionMaxAgeMs } from '@axiom/core'
+import { initDatabase, loadRetryPolicy, loadStallThresholds, resolveAttentionMaxAgeMs, synthesizeTts, TtsPolicyBlockedError } from '@axiom/core'
 import { createApp } from '../../../app.js'
 import type { AppOptions } from '../../../app.js'
 import { generateAccessToken } from '../../../auth.js'
@@ -34,6 +34,7 @@ beforeAll(async () => {
 
   const getAgentCore = () => ({
     getSessionManager: () => ({ setTimeoutMinutes }),
+    setThinkingLevel: vi.fn(),
     refreshSystemPrompt,
   }) as unknown as AgentCore
 
@@ -605,4 +606,145 @@ describe('settings route module', () => {
     })
     expect(nonAdmin.status).toBe(403)
   })
+
+  describe('unapproved explicit TTS settings saves', () => {
+    const tts = {
+      enabled: true, provider: 'gemini', providerId: 'google-save-test',
+      geminiModel: 'gemini-3.8-flash-lite-tts', geminiVoice: 'Charon',
+    }
+    const configDir = () => path.join(tempDataDir, 'config')
+    const save = (body: unknown) => fetch(`${baseUrl}/api/settings`, {
+      method: 'PUT', headers: { ...authHeaders(adminToken), 'Content-Type': 'application/json' }, body: JSON.stringify(body),
+    })
+    async function withUnapprovedRoute(run: () => Promise<void>) {
+      expect((await fetch(`${baseUrl}/api/settings`, { headers: authHeaders(adminToken) })).status).toBe(200)
+      const files = ['settings.json', 'providers.json', 'model-consents.json']
+      const previous = files.map(name => fs.existsSync(path.join(configDir(), name)) ? fs.readFileSync(path.join(configDir(), name)) : null)
+      try {
+        const provider = {
+          id: tts.providerId, name: 'Test Google', providerType: 'google', apiKey: 'test-only',
+          baseUrl: 'https://generativelanguage.googleapis.com', dataPolicy: { region: 'us', training: 'yes' },
+        }
+        fs.writeFileSync(path.join(configDir(), 'providers.json'), JSON.stringify({ providers: [provider, { ...provider, id: 'other-google-save-test' }] }))
+        fs.rmSync(path.join(configDir(), 'model-consents.json'), { force: true })
+        // Selecting explicitly while the gate is off needs no exception and must not create a ledger.
+        expect((await save({ privacy: { modelGate: 'off', blockedModelFamilies: [] }, tts })).status).toBe(200)
+        expect(fs.existsSync(path.join(configDir(), 'model-consents.json'))).toBe(false)
+        await run()
+      } finally {
+        files.forEach((name, i) => previous[i] === null
+          ? fs.rmSync(path.join(configDir(), name), { force: true })
+          : fs.writeFileSync(path.join(configDir(), name), previous[i]!))
+      }
+    }
+    async function expectRuntimeBlocked() {
+      const response = await fetch(`${baseUrl}/api/tts`, {
+        method: 'POST', headers: { ...authHeaders(adminToken), 'Content-Type': 'application/json' },
+        body: JSON.stringify({ text: 'Synthetic text.', format: 'wav' }),
+      })
+      expect(response.status).toBe(403)
+      expect(await response.json()).toMatchObject({ error: 'tts_policy_blocked' })
+    }
+
+    it('saves privacy-only enforcement and unchanged full forms without granting an exception', async () => {
+      await withUnapprovedRoute(async () => {
+        expect((await save({ privacy: { modelGate: 'enforce' } })).status).toBe(200)
+        await expectRuntimeBlocked()
+        const form = await (await fetch(`${baseUrl}/api/settings`, { headers: authHeaders(adminToken) })).json()
+        expect((await save({ ...form, language: 'de' })).status).toBe(200)
+        expect(JSON.parse(fs.readFileSync(path.join(configDir(), 'settings.json'), 'utf8')).language).toBe('de')
+        await expectRuntimeBlocked()
+        expect((await save({ tts: { geminiStyle: 'Calm', responseFormat: 'wav', openaiVoice: 'alloy', voiceNote: { maxChars: 1600, rewrite: false } } })).status).toBe(200)
+        await expectRuntimeBlocked()
+        // Voice-note limits/rewrite remain unrelated even when read-aloud is disabled.
+        expect((await save({ tts: { enabled: false } })).status).toBe(200)
+        expect((await save({ tts: { voiceNote: { maxChars: 1700, rewrite: true } } })).status).toBe(200)
+        expect(fs.existsSync(path.join(configDir(), 'model-consents.json'))).toBe(false)
+      })
+    })
+
+    it.each([
+      ['voice', { geminiVoice: 'Kore' }],
+      ['model', { geminiModel: 'gemini-3.8-flash-tts' }],
+      ['provider account', { providerId: 'other-google-save-test' }],
+      ['voice-note voice', { voiceNote: { voice: 'Kore' } }],
+      ['activation', { enabled: true }],
+    ])('still requires valid consent for a new %s', async (kind, change) => {
+      await withUnapprovedRoute(async () => {
+        expect((await save({ privacy: { modelGate: 'enforce' } })).status).toBe(200)
+        if (kind === 'activation') expect((await save({ tts: { enabled: false } })).status).toBe(200)
+        const before = fs.readFileSync(path.join(configDir(), 'settings.json'), 'utf8')
+        const response = await save({ tts: change })
+        expect(response.status).toBe(409)
+        const warning = await response.json() as { error: string; selections: Array<{ fingerprint: string }> }
+        expect(warning.error).toBe('model_consent_required')
+        expect(warning.selections).toHaveLength(1)
+        expect(fs.readFileSync(path.join(configDir(), 'settings.json'), 'utf8')).toBe(before)
+        expect((await save({ tts: change, modelConsentTokens: ['0'.repeat(64)] })).status).toBe(409)
+        expect(fs.existsSync(path.join(configDir(), 'model-consents.json'))).toBe(false)
+        expect((await save({ tts: change, modelConsentTokens: warning.selections.map(r => r.fingerprint) })).status).toBe(200)
+        expect(JSON.parse(fs.readFileSync(path.join(configDir(), 'model-consents.json'), 'utf8')).consents).toHaveLength(1)
+      })
+    })
+  })
+
+  it('requires informed scoped consent, refuses stale tokens, and does not prompt again after approval', async () => {
+    const configDir = path.join(tempDataDir, 'config')
+    const files = ['settings.json', 'providers.json', 'model-consents.json']
+    const previous = files.map(name => fs.existsSync(path.join(configDir, name)) ? fs.readFileSync(path.join(configDir, name)) : null)
+    const save = (body: unknown) => fetch(`${baseUrl}/api/settings`, {
+      method: 'PUT', headers: { ...authHeaders(adminToken), 'Content-Type': 'application/json' }, body: JSON.stringify(body),
+    })
+    try {
+      fs.writeFileSync(path.join(configDir, 'providers.json'), JSON.stringify({ providers: [{
+        id: 'google-consent-test', name: 'Test Google', providerType: 'google', apiKey: 'test-only',
+        baseUrl: 'https://generativelanguage.googleapis.com', enabledModels: ['gemini-3.8-flash-lite-tts'],
+        dataPolicy: { region: 'us', training: 'yes' },
+      }] }))
+      fs.rmSync(path.join(configDir, 'model-consents.json'), { force: true })
+      const updates = { privacy: { modelGate: 'enforce' }, tts: {
+        enabled: true, provider: 'gemini', providerId: 'google-consent-test', geminiModel: 'gemini-3.8-flash-lite-tts',
+        geminiVoice: 'Charon', voiceNote: { provider: 'gemini', providerId: 'google-consent-test', model: 'gemini-3.8-flash-lite-tts', voice: 'Charon' },
+      } }
+      const before = fs.readFileSync(path.join(configDir, 'settings.json'), 'utf8')
+      const denied = await save(updates)
+      expect(denied.status).toBe(409)
+      const warning = await denied.json() as { error: string; selections: Array<{ fingerprint: string; policy: { training: string }; explicitlySelected: boolean }> }
+      expect(warning.error).toBe('model_consent_required')
+      expect(warning.selections).toHaveLength(1)
+      expect(warning.selections[0]).toMatchObject({ policy: { training: 'yes' }, explicitlySelected: true })
+      expect(fs.readFileSync(path.join(configDir, 'settings.json'), 'utf8')).toBe(before)
+      expect(fs.existsSync(path.join(configDir, 'model-consents.json'))).toBe(false)
+      const tokens = warning.selections.map(w => w.fingerprint)
+      expect((await save({ ...updates, modelConsentTokens: ['0'.repeat(64)] })).status).toBe(409)
+      expect((await save({ ...updates, modelConsentTokens: tokens })).status).toBe(200)
+      expect((await save(updates)).status).toBe(200)
+      const stored = JSON.parse(fs.readFileSync(path.join(configDir, 'model-consents.json'), 'utf8'))
+      expect(stored.consents).toHaveLength(1)
+      expect(stored.consents[0]).toMatchObject({ role: 'tts', modelId: 'gemini-3.8-flash-lite-tts', variant: '["gemini","Charon"]' })
+      // Tightening a hard family prohibition saves successfully and takes precedence over existing approval.
+      expect((await save({ privacy: { blockedModelFamilies: ['gemini'] } })).status).toBe(200)
+      await expect(synthesizeTts('Synthetic text.', { format: 'wav' })).rejects.toBeInstanceOf(TtsPolicyBlockedError)
+      expect((await save({ privacy: { blockedModelFamilies: [] } })).status).toBe(200)
+      const changed = { ...updates, tts: { ...updates.tts, geminiVoice: 'Kore' } }
+      expect((await save(changed)).status).toBe(409)
+      expect((await save({ ...changed, modelConsentTokens: tokens })).status).toBe(409)
+      const automatic = { ...updates, tts: { ...updates.tts, providerId: '', voiceNote: { ...updates.tts.voiceNote, providerId: '' } } }
+      const autoResponse = await save({ ...automatic, modelConsentTokens: tokens })
+      expect(autoResponse.status).toBe(200)
+      await expect(synthesizeTts('Synthetic text.', { format: 'wav' })).rejects.toBeInstanceOf(TtsPolicyBlockedError)
+      // A blocked legacy automatic route must not lock the privacy panel or prevent disabling TTS.
+      expect((await save({ privacy: { modelGate: 'enforce' } })).status).toBe(200)
+      expect((await save({ tts: { enabled: false } })).status).toBe(200)
+      expect(JSON.parse(fs.readFileSync(path.join(configDir, 'model-consents.json'), 'utf8')).consents).toHaveLength(1)
+      expect(JSON.parse(fs.readFileSync(path.join(configDir, 'providers.json'), 'utf8')).providers[0].dataPolicy.training).toBe('yes')
+    } finally {
+      files.forEach((name, i) => {
+        const value = previous[i]
+        if (value) fs.writeFileSync(path.join(configDir, name), value)
+        else fs.rmSync(path.join(configDir, name), { force: true })
+      })
+    }
+  })
+
 })

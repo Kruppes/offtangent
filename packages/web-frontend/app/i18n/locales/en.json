@@ -568,6 +568,12 @@
     "searchLabel": "Search files"
   },
   "settings": {
+    "modelConsent": {
+      "warning": "This selection is blocked by the automatic privacy policy. Confirmation permits only this explicit TTS provider, model and voice; automatic routing and fallback remain protected.",
+      "scope": "Provider: {provider} · Destination: {destination} · Role: {role} · Model: {model} · Voice selection: {voice} · Region: {region} · Training: {training}",
+      "confirm": "Allow this explicitly selected TTS destination despite this policy?",
+      "selectProvider": "Select a specific TTS provider account first. Automatic provider selection cannot receive explicit consent."
+    },
     "mqtt": {
       "title": "Home Assistant (MQTT)",
       "description": "Publish metrics via MQTT and Home Assistant Discovery. Off by default.",
@@ -2534,6 +2540,7 @@
       "note": "Voice note",
       "noteCreating": "Creating the voice note …",
       "error": {
+        "policyBlocked": "Speech is blocked by the privacy policy. Ask an admin to confirm the explicit provider and model in web TTS settings.",
         "unconfigured": "Speech output is not set up on the server.",
         "upstream": "The speech service did not answer. Try again.",
         "empty": "There is nothing to read in this message.",

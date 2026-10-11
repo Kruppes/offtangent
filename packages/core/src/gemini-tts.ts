@@ -191,6 +191,11 @@ export function decodeGeminiAudioBlock(content: GeminiAudioContent): GeminiDecod
   return { samples: pcm16(raw), sampleRate: format.sampleRate, channels: format.channels }
 }
 
+/** Exact transport destination, also used by the settings consent warning. */
+export function geminiTtsEndpoint(baseUrl = GEMINI_TTS_DEFAULT_BASE_URL): string {
+  return `${normalizeBaseUrl(baseUrl)}/interactions`
+}
+
 /**
  * Synthesize one text with Gemini and return the PCM it produced. Throws on
  * transport errors, non-2xx answers, and replies without an audio block;
@@ -199,7 +204,7 @@ export function decodeGeminiAudioBlock(content: GeminiAudioContent): GeminiDecod
  */
 export async function synthesizeGeminiPcm(request: GeminiTtsRequest): Promise<PcmAudio> {
   const fetchImpl = request.fetchImpl ?? fetch
-  const url = `${normalizeBaseUrl(request.baseUrl ?? GEMINI_TTS_DEFAULT_BASE_URL)}/interactions`
+  const url = geminiTtsEndpoint(request.baseUrl)
 
   const body = {
     model: request.model,

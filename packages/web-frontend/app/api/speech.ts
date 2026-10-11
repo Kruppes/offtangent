@@ -43,10 +43,11 @@ export function speechRequestBody(messageId: number | undefined, text: string): 
   return { text }
 }
 
-export type SpeechErrorKind = 'unconfigured' | 'upstream' | 'empty' | 'tooLarge' | 'notFound' | 'network' | 'generic'
+export type SpeechErrorKind = 'policyBlocked' | 'unconfigured' | 'upstream' | 'empty' | 'tooLarge' | 'notFound' | 'network' | 'generic'
 
 /** Map a status + `error` code onto the message the UI shows. */
 export function speechErrorKind(status: number | null, code?: unknown): SpeechErrorKind {
+  if (code === 'tts_policy_blocked') return 'policyBlocked'
   if (status === null) return 'network'
   if (status === 503 || code === 'tts_unconfigured') return 'unconfigured'
   if (status === 502 || code === 'upstream') return 'upstream'

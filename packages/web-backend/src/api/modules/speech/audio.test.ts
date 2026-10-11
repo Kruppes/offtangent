@@ -11,7 +11,7 @@ import { describe, it, expect, beforeAll, afterAll, beforeEach } from 'vitest'
 import http from 'node:http'
 import { Readable } from 'node:stream'
 import express from 'express'
-import { initDatabase, SpeechSummaryUpstreamError, summarizeForSpeech, TtsFormatError } from '@axiom/core'
+import { initDatabase, SpeechSummaryUpstreamError, summarizeForSpeech, TtsFormatError, TtsPolicyBlockedError, TtsUnconfiguredError } from '@axiom/core'
 import type { Database } from '@axiom/core'
 import type { TtsResponseFormat } from '@axiom/core/contracts'
 import { createSpeechRouter } from './route.js'
@@ -36,7 +36,7 @@ let ttsUrl = 'http://tts.invalid:7400'
 let synthCalls: SynthesizeSpeechInput[] = []
 /** Whether the injected cloud TTS reports itself enabled, and how it behaves. */
 let cloudEnabled = false
-let cloudBehaviour: 'ok' | 'fail' | 'unsupported' = 'ok'
+let cloudBehaviour: 'ok' | 'fail' | 'unsupported' | 'policy' | 'missing-key' = 'ok'
 /** Every cloud synthesize call the service made. */
 let cloudCalls: string[] = []
 /** The `format` argument of every cloud synthesize call. */
@@ -172,6 +172,8 @@ beforeAll(async () => {
     synthesizeCloud: async (text, format) => {
       cloudCalls.push(text)
       cloudFormats.push(format)
+      if (cloudBehaviour === 'policy') throw new TtsPolicyBlockedError('blocked:training_yes')
+      if (cloudBehaviour === 'missing-key') throw new TtsUnconfiguredError('Gemini TTS provider is not configured (missing key)')
       if (cloudBehaviour === 'fail') throw new Error('Gemini TTS returned HTTP 429: quota')
       if (cloudBehaviour === 'unsupported') {
         throw new TtsFormatError('TTS provider `gemini` cannot produce `mp3` audio. Supported formats: opus, wav.')
@@ -340,6 +342,24 @@ describe('POST /api/speech/audio', () => {
     expect(res.headers.language).toBe('de')
     expect(res.bytes.equals(FAKE_CLOUD.audio)).toBe(true)
     expect(cloudCalls).toEqual(['Der Deploy ist durch. Alle Gates sind grün.'])
+    expect(synthCalls).toEqual([])
+  })
+
+  it('answers 403 for a cloud policy block without silently using local TTS', async () => {
+    cloudEnabled = true
+    cloudBehaviour = 'policy'
+    const res = await postAudio({ text: 'Hello there.' })
+    expect(res.status).toBe(403)
+    expect(res.json).toEqual({ error: 'tts_policy_blocked' })
+    expect(synthCalls).toEqual([])
+  })
+
+  it('answers 503 tts_unconfigured for a missing cloud key without using local TTS', async () => {
+    cloudEnabled = true
+    cloudBehaviour = 'missing-key'
+    const res = await postAudio({ text: 'Hello there.' })
+    expect(res.status).toBe(503)
+    expect(res.json).toEqual({ error: 'tts_unconfigured' })
     expect(synthCalls).toEqual([])
   })
 

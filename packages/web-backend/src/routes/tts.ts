@@ -10,6 +10,8 @@ import {
   synthesizeTts,
   synthesizeTtsStream,
   TtsFormatError,
+  TtsPolicyBlockedError,
+  TtsUnconfiguredError,
   TTS_PROVIDER_FORMATS,
   PCM_MIN_SAMPLE_RATE,
   PCM_MAX_SAMPLE_RATE,
@@ -265,8 +267,16 @@ export function createTtsRouter(): Router {
         res.destroy()
         return
       }
+      if (err instanceof TtsPolicyBlockedError) {
+        res.status(403).json({ error: 'tts_policy_blocked', detail: err.message })
+        return
+      }
       if (err instanceof TtsFormatError) {
         res.status(400).json({ error: err.message })
+        return
+      }
+      if (err instanceof TtsUnconfiguredError) {
+        res.status(503).json({ error: 'tts_unconfigured', detail: err.message })
         return
       }
       res.status(500).json({ error: `TTS generation failed: ${(err as Error).message}` })
@@ -333,8 +343,16 @@ export function createTtsRouter(): Router {
       res.setHeader('Access-Control-Expose-Headers', 'Content-Disposition, X-Tts-Sample-Rate')
       res.send(result.audio)
     } catch (err) {
+      if (err instanceof TtsPolicyBlockedError) {
+        res.status(403).json({ error: 'tts_policy_blocked', detail: err.message })
+        return
+      }
       if (err instanceof TtsFormatError) {
         res.status(400).json({ error: err.message })
+        return
+      }
+      if (err instanceof TtsUnconfiguredError) {
+        res.status(503).json({ error: 'tts_unconfigured', detail: err.message })
         return
       }
       res.status(500).json({ error: `TTS preview failed: ${(err as Error).message}` })

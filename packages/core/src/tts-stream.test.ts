@@ -8,7 +8,8 @@
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
-vi.mock('./config.js', () => ({
+vi.mock('./config.js', async () => ({
+  ...await vi.importActual<typeof import('./config.js')>('./config.js'),
   loadMultiPersonaSettings: vi.fn(() => ({ enabled: false, defaultAgentId: 'main' })),
   ensureConfigTemplates: vi.fn(),
   loadConfig: vi.fn(),

@@ -14,6 +14,7 @@ import express from 'express'
 import {
   initDatabase,
   SpeechSummaryEmptyError,
+  TtsPolicyBlockedError,
   VoiceNoteUnconfiguredError,
   VoiceNoteUpstreamError,
   type CreatedVoiceNote,
@@ -29,7 +30,7 @@ let token: string
 let otherToken: string
 
 /** What the injected generator does on the next call. */
-let behaviour: 'ok' | 'empty' | 'upstream' | 'unconfigured' | 'slow' = 'ok'
+let behaviour: 'ok' | 'empty' | 'upstream' | 'unconfigured' | 'policy' | 'slow' = 'ok'
 /** Every raw text the generator was handed. */
 let seen: string[] = []
 /** How often the generator actually ran. */
@@ -114,6 +115,7 @@ beforeAll(async () => {
       runs += 1
       if (behaviour === 'empty') throw new SpeechSummaryEmptyError('nothing to speak')
       if (behaviour === 'upstream') throw new VoiceNoteUpstreamError('the voice said no')
+      if (behaviour === 'policy') throw new TtsPolicyBlockedError('blocked:training_yes')
       if (behaviour === 'unconfigured') throw new VoiceNoteUnconfiguredError()
       if (behaviour === 'slow') await new Promise(resolve => setTimeout(resolve, 60))
       const noteBase = {
@@ -296,6 +298,14 @@ describe('POST /api/speech/voice-note', () => {
 
     expect(res.status).toBe(502)
     expect(res.body).toEqual({ error: 'upstream' })
+  })
+
+  it('answers 403 tts_policy_blocked for a real policy denial', async () => {
+    behaviour = 'policy'
+    const id = insertMessage({ content: LONG_ANSWER, userId: null })
+    const res = await post('/api/speech/voice-note', { messageId: id })
+    expect(res.status).toBe(403)
+    expect(res.body).toEqual({ error: 'tts_policy_blocked' })
   })
 
   it('answers 503 when no Gemini voice is configured', async () => {

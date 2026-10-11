@@ -1,5 +1,6 @@
 <template>
   <TooltipProvider>
+    <ModelConsentDialog />
     <NuxtLayout>
       <NuxtPage />
     </NuxtLayout>

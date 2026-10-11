@@ -18,12 +18,13 @@
  */
 
 import { ensureConfigTemplates, loadConfig } from './config.js'
-import { checkAutomaticModelFor, type ProviderPolicyView } from './data-policy.js'
-import { loadProvidersDecrypted, getApiKeyForProvider } from './provider-config.js'
+import { checkAutomaticModelFor, type GateOptions, type ProviderPolicyView } from './data-policy.js'
+import { checkConfiguredModelFor, hasModelConsent, modelConsentSelection } from './model-consent.js'
+import { loadProvidersDecrypted, getApiKeyForProvider, PROVIDER_TYPE_PRESETS } from './provider-config.js'
 import type { ProviderConfig } from './provider-config.js'
 import { synthesizeDeepgram, decryptDeepgramApiKey, DEEPGRAM_DEFAULT_TTS_MODEL } from './deepgram.js'
 import type { DeepgramTtsEncoding } from './deepgram.js'
-import { synthesizeGeminiPcm, type GeminiTtsUsage } from './gemini-tts.js'
+import { geminiTtsEndpoint, synthesizeGeminiPcm, type GeminiTtsUsage } from './gemini-tts.js'
 import { encodeOggOpus, normalizePcm, wrapPcmInWav } from './ogg-opus.js'
 import type { PcmAudio } from './ogg-opus.js'
 import { isSupportedSampleRate, resamplePcm } from './pcm-resample.js'
@@ -278,7 +279,10 @@ function resolveTargetRate(
 export function loadTtsSettings(): TtsSettings {
   ensureConfigTemplates()
   const settings = loadConfig<Record<string, unknown>>('settings.json')
-  const tts = (settings.tts ?? {}) as Partial<TtsSettings>
+  return normalizeTtsSettings((settings.tts ?? {}) as Partial<TtsSettings>)
+}
+
+export function normalizeTtsSettings(tts: Partial<TtsSettings>): TtsSettings {
   return {
     enabled: tts.enabled ?? false,
     provider: tts.provider ?? 'openai',
@@ -323,24 +327,90 @@ function ttsModelId(settings: TtsSettings): string {
   switch (settings.provider) {
     case 'gemini': return settings.geminiModel
     case 'deepgram': return settings.deepgramModel
-    case 'mistral': return settings.mistralVoice
+    case 'mistral': return 'voxtral-mini-tts-2603'
     default: return settings.openaiModel
   }
 }
 
-/**
- * The voice speaks the content of a private message out loud, so choosing the
- * TTS provider is an AUTOMATIC model choice and passes the same gate as the
- * router and the background roles (data-policy.ts). A blocked provider is
- * treated like an unconfigured one: the caller falls back to the local TTS
- * box or answers `tts_unconfigured`, it never speaks through it anyway.
- */
+export class TtsUnconfiguredError extends Error {
+  constructor(message: string) {
+    super(message)
+    this.name = 'TtsUnconfiguredError'
+  }
+}
+
+export class TtsPolicyBlockedError extends Error {
+  constructor(readonly reason: string) {
+    super(`TTS is blocked by the data policy (${reason}). ${reason === 'blocked:region_cn' || reason.startsWith('blocked:family:')
+      ? 'This origin or model-family prohibition cannot be overridden by TTS consent.'
+      : 'Confirm the explicitly selected provider and model in Settings → Text-to-Speech.'}`)
+    this.name = 'TtsPolicyBlockedError'
+  }
+}
+
+function ttsVariant(settings: TtsSettings): string {
+  const voice = settings.provider === 'gemini' ? settings.geminiVoice
+    : settings.provider === 'mistral' ? settings.mistralVoice
+      : settings.provider === 'deepgram' ? settings.deepgramModel : settings.openaiVoice
+  return JSON.stringify([settings.provider, voice])
+}
+
+function hasTtsCredentials(provider: ProviderConfig): boolean {
+  return !!provider.apiKey || !!provider.oauthCredentials
+    || PROVIDER_TYPE_PRESETS[provider.providerType]?.requiresApiKey === false
+}
+
 function allowedForTts(provider: ProviderConfig | null | undefined, settings: TtsSettings): ProviderConfig | null {
-  if (!provider) return null
-  const gate = checkAutomaticModelFor(provider as ProviderPolicyView, ttsModelId(settings), 'tts')
-  if (gate.allowed) return provider
-  console.warn(`[tts] Provider ${provider.id} is blocked by the data policy (${gate.reason})`)
-  return null
+  if (!provider || !hasTtsCredentials(provider)) return null
+  const gate = checkConfiguredModelFor(provider as ProviderPolicyView, ttsModelId(settings), 'tts',
+    !!settings.providerId && settings.providerId === provider.id, ttsVariant(settings))
+  if (!gate.allowed) throw new TtsPolicyBlockedError(gate.reason)
+  return provider
+}
+
+export function ttsConsentRequirement(settings: TtsSettings, options: GateOptions = {}) {
+  // Deepgram uses a separate key, not the selected provider account. Never approve a fictitious account.
+  if (settings.provider === 'deepgram') return null
+  const provider = findTtsProviderRaw(settings)
+  if (!provider || !hasTtsCredentials(provider)) return null
+  const modelId = ttsModelId(settings)
+  const selection = modelConsentSelection(provider, modelId, 'tts', ttsVariant(settings))
+  const gate = checkAutomaticModelFor(provider, modelId, 'tts', { ...options, log: false })
+  if (gate.allowed || gate.reason === 'blocked:region_cn' || gate.blockedFamily !== null
+    || (settings.providerId === provider.id && hasModelConsent(selection))) return null
+  const rawDestination = settings.provider === 'gemini' ? geminiTtsEndpoint(provider.baseUrl || undefined)
+    : `${normalizeBaseUrl(provider.baseUrl || (settings.provider === 'mistral' ? 'https://api.mistral.ai' : 'https://api.openai.com'))}/v1/audio/speech`
+  let destination = '(invalid endpoint)'
+  try {
+    const url = new URL(rawDestination)
+    url.username = ''
+    url.password = ''
+    url.search = ''
+    url.hash = ''
+    destination = url.toString()
+  } catch { /* Never echo a malformed URL that may contain credentials. */ }
+  return { ...selection, providerName: provider.name, destination, policy: gate.policy, reason: gate.reason,
+    explicitlySelected: !!settings.providerId && settings.providerId === provider.id }
+}
+
+/** Cache validity follows the current account scope, approval and credential availability, never the key itself. */
+export function ttsCacheScope(settings: TtsSettings = loadTtsSettings()): unknown {
+  if (settings.provider === 'deepgram') return { credentialsPresent: !!loadTtsDeepgramApiKey() }
+  const provider = findTtsProviderRaw(settings)
+  const variant = ttsVariant(settings)
+  const primary = provider ? {
+    selection: modelConsentSelection(provider, ttsModelId(settings), 'tts', variant),
+    credentialsPresent: hasTtsCredentials(provider),
+    allowed: checkConfiguredModelFor(provider, ttsModelId(settings), 'tts',
+      !!settings.providerId && settings.providerId === provider.id, variant, { log: false }).allowed,
+  } : null
+  const fallback = settings.provider === 'openai'
+    ? loadProvidersDecrypted().providers.filter(p => p.id !== provider?.id
+      && (p.providerType === 'openai' || p.provider === 'openai') && isOfficialOpenAiBaseUrl(p.baseUrl))
+      .map(p => ({ selection: modelConsentSelection(p, TTS_FALLBACK_MODEL, 'tts-fallback'),
+        credentialsPresent: !!p.apiKey, allowed: checkAutomaticModelFor(p, TTS_FALLBACK_MODEL, 'tts-fallback', { log: false }).allowed }))
+    : []
+  return { primary, fallback }
 }
 
 function findTtsProviderRaw(settings: TtsSettings): ProviderConfig | null {
@@ -368,14 +438,17 @@ function findTtsProviderRaw(settings: TtsSettings): ProviderConfig | null {
   return null
 }
 
-function findTtsProvider(settings: TtsSettings): ProviderConfig | null {
-  return allowedForTts(findTtsProviderRaw(settings), settings)
+function findTtsProvider(settings: TtsSettings, options: SynthesizeOptions = {}): ProviderConfig | null {
+  const effective = options.voice ? { ...settings,
+    geminiVoice: options.voice, openaiVoice: options.voice, mistralVoice: options.voice,
+  } : settings
+  return allowedForTts(findTtsProviderRaw(effective), effective)
 }
 
 /** What a pinned Gemini call needs: the key, and a custom endpoint if one is configured. */
 export interface GeminiTtsCredentials {
   apiKey: string
-  /** Only set when the provider points at a non-default Generative Language endpoint. */
+  /** The selected account's endpoint; absent means Google's default endpoint. */
   baseUrl?: string
 }
 
@@ -401,9 +474,7 @@ export async function resolveGeminiTtsCredentials(): Promise<GeminiTtsCredential
   if (!provider) return null
   const apiKey = await getApiKeyForProvider(provider)
   if (!apiKey) return null
-  const baseUrl = provider.baseUrl?.includes('generativelanguage.googleapis.com')
-    ? provider.baseUrl
-    : undefined
+  const baseUrl = provider.baseUrl || undefined
   return baseUrl ? { apiKey, baseUrl } : { apiKey }
 }
 
@@ -566,7 +637,7 @@ async function requestOpenAiSpeech(
  * request was wrong", and repeating a wrong request elsewhere only hides it.
  */
 function deservesTtsFallback(err: unknown): boolean {
-  if (err instanceof TtsFormatError) return false
+  if (err instanceof TtsFormatError || err instanceof TtsPolicyBlockedError) return false
   if (err instanceof TtsUpstreamError) return err.status >= 500
   return true
 }
@@ -581,7 +652,8 @@ function findOpenAiFallbackProvider(excludeId?: string): ProviderConfig | null {
     p.id !== excludeId
     && (p.providerType === 'openai' || p.provider === 'openai')
     && isOfficialOpenAiBaseUrl(p.baseUrl)
-    && !!p.apiKey,
+    && !!p.apiKey
+    && checkAutomaticModelFor(p, TTS_FALLBACK_MODEL, 'tts-fallback').allowed,
   ) ?? null
 }
 
@@ -607,9 +679,9 @@ async function callOpenAiSpeech(
   settings: TtsSettings,
   options: SynthesizeOptions,
 ): Promise<OpenAiSpeechCall> {
-  const provider = findTtsProvider(settings)
+  const provider = findTtsProvider(settings, options)
   if (!provider) {
-    throw new Error(
+    throw new TtsUnconfiguredError(
       'OpenAI TTS provider is not configured. Add or select an OpenAI-compatible provider in Settings \u2192 Text-to-Speech.',
     )
   }
@@ -704,9 +776,9 @@ export async function synthesizeMistral(
   settings: TtsSettings,
   options: SynthesizeOptions = {},
 ): Promise<SynthesizeResult> {
-  const provider = findTtsProvider(settings)
+  const provider = findTtsProvider(settings, options)
   if (!provider) {
-    throw new Error(
+    throw new TtsUnconfiguredError(
       'Mistral TTS provider is not configured. Add or select a Mistral provider in Settings \u2192 Text-to-Speech.',
     )
   }
@@ -769,7 +841,7 @@ async function synthesizeDeepgramWrapped(
 ): Promise<SynthesizeResult> {
   const apiKey = loadTtsDeepgramApiKey()
   if (!apiKey) {
-    throw new Error('Deepgram TTS: API key is not configured. Set it in Settings \u2192 Text-to-Speech.')
+    throw new TtsUnconfiguredError('Deepgram TTS: API key is not configured. Set it in Settings \u2192 Text-to-Speech.')
   }
 
   const format = resolveTtsFormat('deepgram', settings, options)
@@ -895,16 +967,16 @@ export async function synthesizeGemini(
     )
   }
 
-  const provider = findTtsProvider(settings)
+  const provider = findTtsProvider(settings, options)
   if (!provider) {
-    throw new Error(
+    throw new TtsUnconfiguredError(
       'Gemini TTS provider is not configured. Add a Google provider with a Gemini API key in Settings → Providers '
       + 'and select it under Settings → Text-to-Speech.',
     )
   }
   const apiKey = await getApiKeyForProvider(provider)
   if (!apiKey) {
-    throw new Error(`Gemini TTS: provider "${provider.name}" has no API key.`)
+    throw new TtsUnconfiguredError(`Gemini TTS: provider "${provider.name}" has no API key.`)
   }
 
   const voice = options.voice || settings.geminiVoice
@@ -920,7 +992,8 @@ export async function synthesizeGemini(
       model: settings.geminiModel,
       voice,
       apiKey,
-      baseUrl: provider.baseUrl?.includes('generativelanguage.googleapis.com') ? provider.baseUrl : undefined,
+      // Never substitute a different destination after its policy/consent was checked.
+      baseUrl: provider.baseUrl || undefined,
       onUsage: part => {
         usage = usage
           ? {

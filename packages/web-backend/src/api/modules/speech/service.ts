@@ -28,6 +28,7 @@ import crypto from 'node:crypto'
 import { pipeline, Transform, type Readable } from 'node:stream'
 import {
   loadTtsSettings,
+  ttsCacheScope,
   resolveSpeechSummaryModel,
   createVoiceNote as createVoiceNoteFile,
   formatFromAccept,
@@ -37,6 +38,8 @@ import {
   SpeechSummaryUpstreamError,
   summarizeForSpeech,
   TtsFormatError,
+  TtsPolicyBlockedError,
+  TtsUnconfiguredError,
   TTS_STREAMABLE_FORMATS,
   VoiceNoteUnconfiguredError,
   VoiceNoteUpstreamError,
@@ -194,7 +197,9 @@ function cacheKey(raw: string): string {
 function defaultVoiceFingerprint(engine: 'cloud' | 'local', local: () => LocalTtsConfig): unknown {
   if (engine === 'local') return { baseUrl: local().baseUrl }
   const settings = loadTtsSettings() as unknown as Record<string, unknown>
-  return Object.fromEntries(Object.entries(settings).filter(([k]) => !/key|token|secret|password/i.test(k)))
+  return { settings: Object.fromEntries(Object.entries(settings).filter(([k]) => !/key|token|secret|password/i.test(k))),
+    scope: ttsCacheScope(),
+  }
 }
 
 async function defaultSummaryFingerprint(): Promise<string> {
@@ -221,12 +226,13 @@ export function clearSpeechSummaryCache(): void {
  */
 export function toVoiceNoteServiceError(err: unknown): unknown {
   if (err instanceof SpeechServiceError) return err
+  if (err instanceof TtsPolicyBlockedError) return new SpeechServiceError(403, 'tts_policy_blocked', err.message)
   if (err instanceof SpeechSummaryEmptyError) {
     return new SpeechServiceError(400, 'empty', 'Nothing to speak')
   }
   if (err instanceof VoiceNoteUnconfiguredError) {
     console.warn(`[voice-note] not configured: ${err.message}`)
-    return new SpeechServiceError(503, 'tts_unconfigured', 'No Gemini voice configured')
+    return new SpeechServiceError(503, 'tts_unconfigured', 'No TTS provider or API key configured')
   }
   if (err instanceof SpeechSummaryUpstreamError || err instanceof VoiceNoteUpstreamError) {
     console.warn(`[voice-note] upstream failure: ${err.message}`)
@@ -531,6 +537,8 @@ export function createSpeechService(options: SpeechServiceOptions): SpeechServic
   }
 
   function mapCloudError(err: unknown): SpeechServiceError {
+    if (err instanceof TtsPolicyBlockedError) return new SpeechServiceError(403, 'tts_policy_blocked', err.message)
+    if (err instanceof TtsUnconfiguredError) return new SpeechServiceError(503, 'tts_unconfigured', err.message)
     if (err instanceof TtsFormatError) {
       // The caller asked for a container this provider cannot build.
       // That is a bad request, not an upstream outage, and never a

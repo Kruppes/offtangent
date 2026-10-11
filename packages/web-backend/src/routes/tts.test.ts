@@ -17,7 +17,7 @@ import { generateAccessToken } from '../auth.js'
 /** Every call the route made into the synthesizer. */
 let calls: Array<{ text: string; options: SynthesizeOptions }> = []
 /** What the mocked synthesizer does next. */
-let behaviour: 'ok' | 'format-error' | 'boom' = 'ok'
+let behaviour: 'ok' | 'format-error' | 'policy' | 'unconfigured' | 'boom' = 'ok'
 /** Whether the mocked settings report TTS as enabled. */
 let enabled = true
 /** TTS provider the mocked settings report; decides buffered vs. streamed. */
@@ -55,6 +55,8 @@ vi.mock('@axiom/core', async () => {
       if (behaviour === 'format-error') {
         throw new actual.TtsFormatError('TTS provider `gemini` cannot produce `mp3` audio. Supported formats: opus, wav.')
       }
+      if (behaviour === 'policy') throw new actual.TtsPolicyBlockedError('blocked:training_yes')
+      if (behaviour === 'unconfigured') throw new actual.TtsUnconfiguredError('Gemini TTS key is missing')
       if (behaviour === 'boom') throw new Error('provider exploded')
       const format = options.format ?? 'opus'
       const map: Record<string, { contentType: string; extension: string }> = {
@@ -352,6 +354,21 @@ describe('POST /api/tts', () => {
     expect(String(res.json.error)).toContain('cannot produce `mp3`')
   })
 
+  it('answers 403 tts_policy_blocked, not missing configuration or provider failure', async () => {
+    behaviour = 'policy'
+    const res = await postTts({ text: 'Hello there.' })
+    expect(res.status).toBe(403)
+    expect(res.json.error).toBe('tts_policy_blocked')
+    expect(res.json.detail).toContain('blocked:training_yes')
+  })
+
+  it('answers 503 tts_unconfigured for a missing key', async () => {
+    behaviour = 'unconfigured'
+    const res = await postTts({ text: 'Synthetic speech.' })
+    expect(res.status).toBe(503)
+    expect(res.json.error).toBe('tts_unconfigured')
+  })
+
   it('still answers 500 for a real provider failure', async () => {
     behaviour = 'boom'
     const res = await postTts({ text: 'Kurzer Testsatz.' })
@@ -385,6 +402,13 @@ describe('POST /api/tts', () => {
 describe('POST /api/tts/preview', () => {
   const preview = (body: unknown, headers: Record<string, string> = {}, bearer = token) =>
     postTts(body, headers, '/api/tts/preview', bearer)
+
+  it('answers 503 tts_unconfigured for a missing preview key', async () => {
+    behaviour = 'unconfigured'
+    const res = await preview({ text: 'Synthetic speech.' })
+    expect(res.status).toBe(503)
+    expect(res.json.error).toBe('tts_unconfigured')
+  })
 
   it('plays while TTS is switched off, because that is what a preview is for', async () => {
     enabled = false

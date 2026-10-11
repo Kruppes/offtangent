@@ -1,7 +1,7 @@
 import type { Response } from 'express'
 import type { AuthenticatedRequest } from '../../../auth.js'
 import type { SettingsRouterOptions } from './types.js'
-import { createSettingsService, SettingsValidationError } from './service.js'
+import { createSettingsService, SettingsValidationError, SettingsConsentRequiredError } from './service.js'
 
 export interface SettingsController {
   getSettings: (req: AuthenticatedRequest, res: Response) => void
@@ -26,6 +26,10 @@ export function createSettingsController(options: SettingsRouterOptions = {}): S
         const payload = service.updateSettings((req.body ?? {}) as Record<string, unknown>)
         res.json(payload)
       } catch (err) {
+        if (err instanceof SettingsConsentRequiredError) {
+          res.status(409).json({ error: 'model_consent_required', detail: err.message, selections: err.selections })
+          return
+        }
         if (err instanceof SettingsValidationError) {
           res.status(400).json({ error: err.message })
           return

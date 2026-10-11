@@ -1,16 +1,34 @@
 <template>
-  <Dialog :open="open" @update:open="(v: boolean) => { if (!v) emit('cancel') }">
+  <Dialog
+    :open="open"
+    @update:open="(v: boolean) => { if (!v) emit('cancel') }"
+  >
     <DialogContent class="max-h-[90dvh] max-w-sm overflow-y-auto">
       <DialogHeader>
         <DialogTitle>{{ title }}</DialogTitle>
-        <DialogDescription v-if="description">{{ description }}</DialogDescription>
+        <DialogDescription
+          v-if="description"
+          :class="descriptionClass"
+        >
+          {{ description }}
+        </DialogDescription>
       </DialogHeader>
 
       <DialogFooter>
-        <Button class="min-h-11 min-w-11" variant="outline" :disabled="loading" @click="emit('cancel')">
+        <Button
+          class="min-h-11 min-w-11"
+          variant="outline"
+          :disabled="loading"
+          @click="emit('cancel')"
+        >
           {{ resolvedCancelLabel }}
         </Button>
-        <Button class="min-h-11 min-w-11" :variant="destructive ? 'destructive' : 'default'" :disabled="loading" @click="emit('confirm')">
+        <Button
+          class="min-h-11 min-w-11"
+          :variant="destructive ? 'destructive' : 'default'"
+          :disabled="loading"
+          @click="emit('confirm')"
+        >
           <span
             v-if="loading"
             class="mr-1 h-4 w-4 animate-spin rounded-full border-2"
@@ -33,11 +51,16 @@ const props = withDefaults(defineProps<{
   open: boolean
   title: string
   description?: string
+  descriptionClass?: string
   confirmLabel?: string
   cancelLabel?: string
   destructive?: boolean
   loading?: boolean
 }>(), {
+  description: undefined,
+  descriptionClass: undefined,
+  confirmLabel: undefined,
+  cancelLabel: undefined,
   destructive: true,
   loading: false,
 })

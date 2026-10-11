@@ -18,7 +18,7 @@ import { resolveVoiceNoteConfig } from './voice-note-config.js'
 import type { EffectiveVoiceNoteConfig } from './voice-note-config.js'
 import type { VoiceNoteSynthesizer } from './voice-note.js'
 import { wrapPcmInWav } from './ogg-opus.js'
-import type { TtsSettings } from './tts.js'
+import { TtsPolicyBlockedError, type TtsSettings } from './tts.js'
 
 const SAMPLE_RATE = 24_000
 
@@ -95,6 +95,12 @@ describe('synthesizeVoiceNoteAudio (configured route)', () => {
     expect(result.chunks).toBeGreaterThan(1)
     expect(synthesize).toHaveBeenCalledTimes(result.chunks)
     expect(result.seconds).toBeGreaterThan(result.chunks - 0.5)
+  })
+
+  it('preserves a true policy block instead of calling it unconfigured or upstream', async () => {
+    const blocked = new TtsPolicyBlockedError('blocked:training_yes')
+    const synthesize = vi.fn<VoiceNoteSynthesizer>(async () => { throw blocked })
+    await expect(synthesizeVoiceNoteAudio('Hello.', { config: config(), synthesize })).rejects.toBe(blocked)
   })
 
   it('turns a missing provider or key into the unconfigured error (503)', async () => {

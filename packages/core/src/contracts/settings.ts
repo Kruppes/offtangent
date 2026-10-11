@@ -669,7 +669,7 @@ export interface SettingsContract {
   instanceIdentity: InstanceIdentitySettingsContract
 }
 
-export type SettingsUpdateContract = DeepPartial<SettingsContract>
+export type SettingsUpdateContract = DeepPartial<SettingsContract> & { modelConsentTokens?: string[] }
 
 export interface SettingsStorageContract {
   homeAssistantMqtt?: Partial<HomeAssistantMqttSettingsContract>

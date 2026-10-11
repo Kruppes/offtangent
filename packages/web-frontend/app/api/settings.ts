@@ -1,3 +1,4 @@
+import { saveWithModelConsent } from './settingsConsent'
 import type { SettingsContract, SettingsUpdateContract, TtsSettingsContract } from '@axiom/core/contracts'
 
 interface ConsolidationRunResult {
@@ -24,13 +25,25 @@ interface TtsPreviewPayload {
 export function useSettingsApi() {
   const { apiFetch, getAuthHeaders } = useApi()
   const config = useRuntimeConfig()
+  const { t } = useI18n()
+  const consentDialog = useModelConsentDialog()
 
   const getSettings = () => apiFetch<Partial<SettingsContract>>('/api/settings')
 
-  const updateSettings = (updates: Partial<SettingsUpdateContract>) => apiFetch<Partial<SettingsContract> & { message: string }>('/api/settings', {
-    method: 'PUT',
-    body: JSON.stringify(updates),
-  })
+  const updateSettings = (updates: Partial<SettingsUpdateContract>) => saveWithModelConsent(
+    body => apiFetch<Partial<SettingsContract> & { message: string }>('/api/settings', {
+      method: 'PUT', body: JSON.stringify(body),
+    }),
+    updates,
+    warnings => {
+      if (warnings.some(w => !w.explicitlySelected)) throw new Error(t('settings.modelConsent.selectProvider'))
+      const scopes = warnings.map(w => t('settings.modelConsent.scope', {
+        provider: w.providerName, destination: w.destination, model: w.modelId, role: w.role, voice: w.variant,
+        region: w.policy.region, training: w.policy.training,
+      })).join('\n\n')
+      return consentDialog.request(scopes)
+    },
+  )
 
   const getConsolidationStatus = () => apiFetch<ConsolidationStatus>('/api/memory/consolidation/status')
 

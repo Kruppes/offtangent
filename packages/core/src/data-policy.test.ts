@@ -45,7 +45,7 @@ import { resolveEffectiveModel } from './model-resolution.js'
 import { resolveRouterChain } from './router-model.js'
 import { resolveSpeechSummaryModel } from './speech-summary.js'
 import { resolveTaskModelRoleFrom } from './task-model-policy.js'
-import { resolveGeminiTtsCredentials } from './tts.js'
+import { resolveGeminiTtsCredentials, TtsPolicyBlockedError } from './tts.js'
 
 // ── Fixture ───────────────────────────────────────────────────────────
 
@@ -651,13 +651,13 @@ describe('text to speech', () => {
 
   it('refuses a training voice provider in enforce', async () => {
     setup({ mode: 'enforce', providers: [gemini({ dataPolicy: { region: 'us', training: 'yes' } })], settings: ttsSettings() })
-    await expect(resolveGeminiTtsCredentials()).resolves.toBeNull()
+    await expect(resolveGeminiTtsCredentials()).rejects.toBeInstanceOf(TtsPolicyBlockedError)
     expect(listModelGateAudit()[0]).toMatchObject({ role: 'tts', blocked: true })
   })
 
   it('refuses an unchecked voice provider in enforce (fail closed)', async () => {
     setup({ mode: 'enforce', providers: [gemini()], settings: ttsSettings() })
-    await expect(resolveGeminiTtsCredentials()).resolves.toBeNull()
+    await expect(resolveGeminiTtsCredentials()).rejects.toBeInstanceOf(TtsPolicyBlockedError)
   })
 
   it('speaks through the training provider in audit and logs it', async () => {
@@ -687,7 +687,7 @@ describe('text to speech', () => {
       providers: [gemini({ providerType: 'openai-compatible', baseUrl: 'https://api.moonshot.cn/v1' })],
       settings: ttsSettings(),
     })
-    await expect(resolveGeminiTtsCredentials()).resolves.toBeNull()
+    await expect(resolveGeminiTtsCredentials()).rejects.toBeInstanceOf(TtsPolicyBlockedError)
   })
 })
 

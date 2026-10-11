@@ -1164,6 +1164,11 @@ export type {
 export { createTranscribeAudioTool } from './stt-tool.js'
 export {
   loadTtsSettings,
+  normalizeTtsSettings,
+  ttsConsentRequirement,
+  ttsCacheScope,
+  TtsPolicyBlockedError,
+  TtsUnconfiguredError,
   loadTtsDeepgramApiKey,
   synthesizeOpenAi,
   synthesizeOpenAiStream,
@@ -1729,3 +1734,6 @@ export { loadGeneratorConfig, generateImages, codexPrompt, generatorCost } from 
 // Dedicated HA relay, composed inside the backend (shared OAuth lifecycle).
 export { createHaInferenceHandler, validateHaConfig } from './ha-inference.js'
 export type { HaInferenceConfig } from './ha-inference.js'
+
+export { modelConsentSelection, hasModelConsent, confirmModelConsents, checkConfiguredModelFor } from './model-consent.js'
+export type { ModelConsentSelection } from './model-consent.js'

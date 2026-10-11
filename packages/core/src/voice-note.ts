@@ -42,7 +42,7 @@ import {
   sanitizeSpeechSource,
   detectSpeechLanguage,
 } from './speech-text.js'
-import { chunkTextForTts, loadTtsSettings, synthesizeTts } from './tts.js'
+import { chunkTextForTts, loadTtsSettings, synthesizeTts, TtsPolicyBlockedError } from './tts.js'
 import type { TtsSettings } from './tts.js'
 import {
   VOICE_NOTE_DEFAULT_MAX_CHARS,
@@ -287,6 +287,7 @@ export function loadVoiceNoteConfig(readAloud: TtsSettings = loadTtsSettings()):
 const UNCONFIGURED_MESSAGE = /not configured|no api key|api key|not enabled|disabled|no .*provider/i
 
 function classifySynthesisError(err: unknown): Error {
+  if (err instanceof TtsPolicyBlockedError) return err
   const message = err instanceof Error ? err.message : String(err)
   if (UNCONFIGURED_MESSAGE.test(message)) return new VoiceNoteUnconfiguredError(message)
   return new VoiceNoteUpstreamError(message)

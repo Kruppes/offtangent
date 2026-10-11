@@ -1,6 +1,10 @@
 import fs from 'node:fs'
 import path from 'node:path'
-import { ensureConfigTemplates, getConfigDir, loadConfig, SETTINGS_THINKING_LEVELS } from '@axiom/core'
+import { ensureConfigTemplates, getConfigDir, loadConfig, SETTINGS_THINKING_LEVELS,
+  normalizeTtsSettings, ttsConsentRequirement, resolveVoiceNoteConfig, ttsSettingsForVoiceNote,
+  loadModelGateMode, loadBlockedModelFamilies, confirmModelConsents,
+} from '@axiom/core'
+import type { TtsSettings } from '@axiom/core'
 import type { SettingsData, SettingsRouterOptions, TelegramData } from './types.js'
 import {
   mergeAgentHeartbeat,
@@ -29,7 +33,24 @@ import {
 } from './schema.js'
 import { mapSettingsResponse, mapSettingsUpdateResponse } from './mapper.js'
 
+// Match the consent-relevant selection, not delivery options or voice-note text limits.
+function ttsSelectionKey(tts: TtsSettings): string {
+  const model = tts.provider === 'gemini' ? tts.geminiModel
+    : tts.provider === 'deepgram' ? tts.deepgramModel
+      : tts.provider === 'mistral' ? 'voxtral-mini-tts-2603' : tts.openaiModel
+  const voice = tts.provider === 'gemini' ? tts.geminiVoice
+    : tts.provider === 'mistral' ? tts.mistralVoice
+      : tts.provider === 'deepgram' ? tts.deepgramModel : tts.openaiVoice
+  return JSON.stringify([tts.provider, tts.providerId, model, voice])
+}
+
 export class SettingsValidationError extends Error {}
+
+export class SettingsConsentRequiredError extends Error {
+  constructor(readonly selections: NonNullable<ReturnType<typeof ttsConsentRequirement>>[]) {
+    super('Explicit TTS consent required. Review the destination and training policy before confirming.')
+  }
+}
 
 export interface SettingsService {
   readSettings: () => ReturnType<typeof mapSettingsResponse>
@@ -70,6 +91,8 @@ export function createSettingsService(options: SettingsRouterOptions = {}): Sett
     const settings = JSON.parse(fs.readFileSync(settingsPath, 'utf-8')) as SettingsData
     const telegram = JSON.parse(fs.readFileSync(telegramPath, 'utf-8')) as TelegramData
 
+    const previousTts = normalizeTtsSettings((settings.tts ?? {}) as Partial<TtsSettings>)
+    const previousVoiceNote = resolveVoiceNoteConfig(previousTts)
     const previousHealthMonitorInterval = settings.healthMonitorIntervalMinutes ?? 5
     const previousBatchingDelayMs = telegram.batchingDelayMs ?? 2500
     const previousTelegramEnabled = telegram.enabled
@@ -201,6 +224,34 @@ export function createSettingsService(options: SettingsRouterOptions = {}): Sett
       if (telegramBody.sendStallWarnings !== undefined) {
         telegram.sendStallWarnings = !!telegramBody.sendStallWarnings
       }
+    }
+
+    if (body.tts !== undefined || body.privacy !== undefined) {
+      const tts = normalizeTtsSettings((settingsRaw.tts ?? {}) as Partial<TtsSettings>)
+      const voiceNote = ttsSettingsForVoiceNote(tts, resolveVoiceNoteConfig(tts))
+      const privacyOptions = { mode: loadModelGateMode(settingsRaw), blockedFamilies: loadBlockedModelFamilies(settingsRaw) }
+      // Tightening privacy or echoing an unchanged form must save without approving an exception.
+      // Runtime still blocks unapproved routes. Prompt only for a new selection or read-aloud activation.
+      // Voice notes are independently usable even while read-aloud is off.
+      const routes: TtsSettings[] = []
+      if (tts.enabled && (!previousTts.enabled || ttsSelectionKey(previousTts) !== ttsSelectionKey(tts))) {
+        routes.push(tts)
+      }
+      if (ttsSelectionKey(ttsSettingsForVoiceNote(previousTts, previousVoiceNote)) !== ttsSelectionKey(voiceNote)) {
+        routes.push(voiceNote)
+      }
+      const selections = routes.flatMap(route => {
+        const requirement = ttsConsentRequirement(route, privacyOptions)
+        return requirement?.explicitlySelected ? [requirement] : []
+      }).filter((r, i, all) => all.findIndex(other => other.fingerprint === r.fingerprint) === i)
+      const tokens = body.modelConsentTokens
+      if (tokens !== undefined && (!Array.isArray(tokens) || !tokens.every(t => typeof t === 'string' && /^[a-f0-9]{64}$/.test(t)))) {
+        throw new SettingsValidationError('modelConsentTokens must be an array of consent fingerprints')
+      }
+      if (selections.some(r => !(tokens as string[] | undefined)?.includes(r.fingerprint))) {
+        throw new SettingsConsentRequiredError(selections)
+      }
+      confirmModelConsents(selections)
     }
 
     fs.writeFileSync(settingsPath, `${JSON.stringify(settings, null, 2)}\n`, 'utf-8')

@@ -568,6 +568,12 @@
     "searchLabel": "Dateien durchsuchen"
   },
   "settings": {
+    "modelConsent": {
+      "warning": "Diese Auswahl ist durch die automatische Datenschutzregel gesperrt. Die Bestätigung erlaubt nur diesen expliziten TTS-Provider mit Modell und Stimme; automatisches Routing und Fallback bleiben geschützt.",
+      "scope": "Provider: {provider} · Ziel: {destination} · Rolle: {role} · Modell: {model} · Stimme: {voice} · Region: {region} · Training: {training}",
+      "confirm": "Dieses ausdrücklich ausgewählte TTS-Ziel trotz dieser Regel erlauben?",
+      "selectProvider": "Zuerst ein bestimmtes TTS-Providerkonto auswählen. Eine automatische Providerauswahl kann keine explizite Zustimmung erhalten."
+    },
     "mqtt": {
       "title": "Home Assistant (MQTT)",
       "description": "Kennzahlen über MQTT und Home-Assistant-Discovery bereitstellen. Standardmäßig aus.",
@@ -2534,6 +2540,7 @@
       "note": "Sprachnachricht",
       "noteCreating": "Sprachnachricht wird erzeugt …",
       "error": {
+        "policyBlocked": "Die Sprachausgabe ist durch die Datenschutzregel gesperrt. Ein Admin muss den expliziten Provider und das Modell in den Web-TTS-Einstellungen bestätigen.",
         "unconfigured": "Die Sprachausgabe ist auf dem Server nicht eingerichtet.",
         "upstream": "Der Sprachdienst hat nicht geantwortet. Bitte erneut versuchen.",
         "empty": "In dieser Nachricht gibt es nichts vorzulesen.",

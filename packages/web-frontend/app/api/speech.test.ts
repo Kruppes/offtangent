@@ -36,6 +36,8 @@ describe('speech contract (pinned against the backend router, not a fake)', () =
   })
 
   it('maps the documented error codes', () => {
+    expect(speechErrorKind(403, 'tts_policy_blocked')).toBe('policyBlocked')
+    expect(speechErrorKind(403, 'forbidden')).toBe('generic')
     expect(speechErrorKind(503, 'tts_unconfigured')).toBe('unconfigured')
     expect(speechErrorKind(502, 'upstream')).toBe('upstream')
     expect(speechErrorKind(400, 'empty')).toBe('empty')
