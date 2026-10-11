@@ -29,6 +29,7 @@ import { useMarkdown } from '~/composables/useMarkdown'
 import { useInteractions } from '~/composables/useInteractions'
 import { useSkillAutocomplete } from '~/composables/useSkillAutocomplete'
 import { useSkillDetection } from '~/composables/useSkillDetection'
+import { useModelConsentDialog } from '~/composables/useModelConsentDialog'
 import { resetStrandCanvasForTest, useStrandCanvas } from '~/composables/useStrandCanvas'
 import * as memoryFileDetection from '~/utils/memoryFileDetection'
 import * as toolNameFormat from '~/utils/toolNameFormat'
@@ -276,6 +277,7 @@ function stubRuntime() {
   vi.stubGlobal('useSkillAutocomplete', useSkillAutocomplete)
   vi.stubGlobal('useSkillDetection', useSkillDetection)
   vi.stubGlobal('useStrandCanvas', useStrandCanvas)
+  vi.stubGlobal('useModelConsentDialog', useModelConsentDialog)
   vi.stubGlobal('useStt', () => stt.api)
   vi.stubGlobal('useTts', () => tts)
   // W5b: the fork action of a message row opens the new strand.
