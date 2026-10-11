@@ -25,7 +25,7 @@ beforeEach(()=>{
 })
 afterEach(async()=>{if(server){const closing=new Promise<void>(resolve=>server!.close(()=>resolve()));server.closeAllConnections();await closing;server=undefined}if(fs.existsSync(file))fs.unlinkSync(file)})
 function write(data=config,mode=0o600){fs.writeFileSync(file,JSON.stringify(data),{mode});fs.chmodSync(file,mode)}
-async function start(){const app=express();app.use(HA_RELAY_MOUNT,createHaRelayRouter());app.use(express.json());app.get('/api/private',(_req,res)=>res.status(401).end());server=app.listen(0,'127.0.0.1');await once(server,'listening');base=`http://127.0.0.1:${(server.address() as any).port}`}
+async function start(){const app=express();app.use(HA_RELAY_MOUNT,createHaRelayRouter());app.use(express.json());app.get('/api/private',(_req,res)=>res.status(401).end());server=app.listen(0,'127.0.0.1');await once(server,'listening');base=`http://127.0.0.1:${(server.address() as {port:number}).port}`}
 describe('backend HA relay mount, actual loopback HTTP and bounded raw Request bridge',()=>{
   it('is opt-in: absent or disabled configuration never makes an inference route',async()=>{
     await start();expect((await fetch(base+'/ha-relay/v1/models',{headers})).status).toBe(404);expect(mocks.complete).not.toHaveBeenCalled()
@@ -47,7 +47,7 @@ describe('backend HA relay mount, actual loopback HTTP and bounded raw Request b
   it('streams incoming raw JSON before global express.json and returns validated completion',async()=>{
     write();await start()
     const response=await fetch(base+'/ha-relay/v1/chat/completions',{method:'POST',headers,body:JSON.stringify(body)})
-    expect(response.status).toBe(200);expect(response.headers.get('cache-control')).toBe('no-store');expect((await response.json() as any).choices[0].message.content).toBe('Synthetic OK')
+    expect(response.status).toBe(200);expect(response.headers.get('cache-control')).toBe('no-store');expect((await response.json() as {choices:{message:{content:string}}[]}).choices[0].message.content).toBe('Synthetic OK')
     expect(mocks.complete).toHaveBeenCalledTimes(1)
     expect(mocks.complete.mock.calls[0][1].messages).toHaveLength(1)
     expect(mocks.complete.mock.calls[0][1].systemPrompt).toBe('HA isolated')

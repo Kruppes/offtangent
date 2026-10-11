@@ -132,7 +132,7 @@ describe('existing Anthropic SDK HTTP authentication faults, synthetic network o
     const tool={name:'HassTurnOff',description:'Simulated only; never dispatched',parameters:{type:'object',properties:{name:{type:'string'}},required:['name'],additionalProperties:false}}
     const handler=createHaInferenceHandler({...config(),tools:[tool]})
     const response=await handler(new Request('http://localhost/v1/chat/completions',{method:'POST',headers:{authorization:'Bearer synthetic-relay-only','content-type':'application/json'},body:JSON.stringify({model:modelId,messages:[{role:'user',content:'Offline simulated test only'}],tools:[{type:'function',function:tool}]})}))
-    const body=await response.json() as any
+    const body=await response.json() as {choices:{message:{content:string;tool_calls:Array<{function:{arguments:string}}>}}[];error:{code:string}}
     expect(http).toHaveBeenCalledTimes(1)
     expect(central.refresh).not.toHaveBeenCalled()
     if(argumentsJSON==='{"name":"synthetic"}') {

@@ -8,10 +8,14 @@ import {execFile} from 'node:child_process'
 import {promisify} from 'node:util'
 import {once} from 'node:events'
 import {createHaHttpServer} from './ha-inference-http.js'
-import type {Context, Model} from '@earendil-works/pi-ai'
+import type {AssistantMessage,Context, Model} from '@earendil-works/pi-ai'
 import {streamSimple} from './pi-models.js'
-import {createHaInferenceHandler,completeHaSubscription,validateHaConfig,type HaInferenceConfig,type HaComplete} from './ha-inference.js'
-const auth=vi.hoisted(()=>({load:vi.fn<()=>{providers:any[]}>(()=>{throw new Error('must not load credentials')}),key:vi.fn()}))
+import {createHaInferenceHandler,completeHaSubscription,validateHaConfig,type HaInferenceConfig,type HaComplete,type HaCompletion} from './ha-inference.js'
+type HaikuBody={model:string;messages:Array<{role:string;content:unknown;[key:string]:unknown}>;tools:Array<{type:string;function:unknown}>;ha_session?:string;[key:string]:unknown}
+type HaikuResponse={ha_session:string;choices:Array<{message:{role:string;content:string;tool_calls:Array<{function:{name:string}}>} ;[key:string]:unknown}>}
+type WireEvent={type:string;message?:{model:string;[key:string]:unknown};[key:string]:unknown}
+type WireCapture={url:string;headers:Record<string,string>;payload:{model:string;max_tokens:number;stream:boolean;thinking:unknown;output_config:unknown;temperature?:unknown;fallbacks?:unknown;messages:Array<{content:unknown}>;system:Array<{text:string}>}}
+const auth=vi.hoisted(()=>({load:vi.fn<()=>{providers:unknown[]}>(()=>{throw new Error('must not load credentials')}),key:vi.fn()}))
 vi.mock('./provider-config.js',()=>({loadProvidersDecrypted:auth.load,getApiKeyForProvider:auth.key,buildModel:vi.fn(),getPiOAuthAuth:vi.fn(),refreshOAuthCredentialsLocked:vi.fn(),storedToOAuthCredentials:vi.fn()}))
 vi.mock('./data-policy.js',()=>({checkAutomaticModelFor:vi.fn()}))
 const token='ha-fixture-'.repeat(4) // deliberately obvious non-production test material
@@ -19,13 +23,13 @@ const tool={name:'homeassistant__HassTurnOff',description:'Synthetic Assist tool
 const c:HaInferenceConfig={enabled:true,transport:'anthropic-oauth',thinking:'low',tokenSha256:createHash('sha256').update(token).digest('hex'),providerId:'existing-anthropic-oauth',model:'claude-haiku-5-5',tools:[tool],timeoutMs:1000,maxBodyBytes:262144,maxCallsPerHour:100}
 const model:Model<'anthropic-messages'>={id:c.model,name:c.model,api:'anthropic-messages',provider:'anthropic',baseUrl:'https://api.anthropic.com',reasoning:true,input:['text'],cost:{input:0,output:0,cacheRead:0,cacheWrite:0},contextWindow:200000,maxTokens:128000,compat:{forceAdaptiveThinking:true,supportsTemperature:false,supportsStrictTools:true},thinkingLevelMap:{off:null,minimal:null,low:'low',medium:'medium',high:'high',xhigh:'xhigh',max:'max'}}
 const usage={input:3,output:4,cacheRead:0,cacheWrite:0,totalTokens:7,cost:{input:0,output:0,cacheRead:0,cacheWrite:0,total:0}}
-function result(content:any[],stopReason='toolUse',wireModel=c.model):any{return {completed:true,wireModel,message:{role:'assistant',content,api:'anthropic-messages',provider:'anthropic',model:wireModel,usage,stopReason,timestamp:1}}}
-const toolContent=[{type:'thinking',thinking:'synthetic-private-thinking',thinkingSignature:'synthetic-signed-opaque'},{type:'toolCall',id:'call_synthetic1',name:tool.name,arguments:{name:'Simuliertes Licht'}}]
-function body():any{return {model:c.model,messages:[{role:'system',content:'Nur synthetische HA Werkzeuge, kein Offtangent-Agent.'},{role:'user',content:'Schalte simuliertes Licht aus.'}],tools:[{type:'function',function:tool}]}}
+function result(content:AssistantMessage['content'],stopReason:AssistantMessage['stopReason']='toolUse',wireModel=c.model):HaCompletion{return {completed:true,wireModel,message:{role:'assistant',content,api:'anthropic-messages',provider:'anthropic',model:wireModel,usage,stopReason,timestamp:1}}}
+const toolContent:AssistantMessage['content']=[{type:'thinking',thinking:'synthetic-private-thinking',thinkingSignature:'synthetic-signed-opaque'},{type:'toolCall',id:'call_synthetic1',name:tool.name,arguments:{name:'Simuliertes Licht'}}]
+function body():HaikuBody{return {model:c.model,messages:[{role:'system',content:'Nur synthetische HA Werkzeuge, kein Offtangent-Agent.'},{role:'user',content:'Schalte simuliertes Licht aus.'}],tools:[{type:'function',function:tool}]}}
 const req=(data=body(),bearer=token)=>new Request('http://localhost/v1/chat/completions',{method:'POST',headers:{authorization:'Bearer '+bearer,'content-type':'application/json'},body:JSON.stringify(data)})
-function continuation(b:any,r:any){return {...b,ha_session:r.ha_session,messages:[...b.messages,r.choices[0].message,{role:'tool',tool_call_id:'call_synthetic1',content:JSON.stringify({response_type:'action_done',data:{success:[{id:'synthetic-light'}],failed:[]}})}]}}
-function events(toolRound=true):any[]{
- const e:any[]=[{type:'message_start',message:{id:'msg_synthetic',type:'message',role:'assistant',model:c.model,content:[],stop_reason:null,stop_sequence:null,usage:{input_tokens:3,output_tokens:0}}}]
+function continuation(b:HaikuBody,r:HaikuResponse):HaikuBody{return {...b,ha_session:r.ha_session,messages:[...b.messages,r.choices[0].message,{role:'tool',tool_call_id:'call_synthetic1',content:JSON.stringify({response_type:'action_done',data:{success:[{id:'synthetic-light'}],failed:[]}})}]}}
+function events(toolRound=true):WireEvent[]{
+ const e:WireEvent[]=[{type:'message_start',message:{id:'msg_synthetic',type:'message',role:'assistant',model:c.model,content:[],stop_reason:null,stop_sequence:null,usage:{input_tokens:3,output_tokens:0}}}]
  if(toolRound)e.push(
   {type:'content_block_start',index:0,content_block:{type:'thinking',thinking:'',signature:''}},
   {type:'content_block_delta',index:0,delta:{type:'thinking_delta',thinking:'synthetic-private-thinking'}},
@@ -39,18 +43,18 @@ function events(toolRound=true):any[]{
  e.push({type:'message_delta',delta:{stop_reason:toolRound?'tool_use':'end_turn',stop_sequence:null},usage:{output_tokens:4}},{type:'message_stop'})
  return e
 }
-const sse=(e:any[])=>new Response(e.map(x=>`event: ${x.type}\ndata: ${JSON.stringify(x)}\n\n`).join(''),{headers:{'content-type':'text/event-stream'}})
-function sdkFixture(status=200,wireEvents?:any[]){
- const captures:any[]=[]
+const sse=(e:WireEvent[])=>new Response(e.map(x=>`event: ${x.type}\ndata: ${JSON.stringify(x)}\n\n`).join(''),{headers:{'content-type':'text/event-stream'}})
+function sdkFixture(status=200,wireEvents?:WireEvent[]){
+ const captures:WireCapture[]=[]
  const complete:HaComplete=async(_c,context,signal)=>{
   let wireModel='';let terminal=false
-  const transport=vi.fn(async(url:any,init:any)=>{
+  const transport=vi.fn(async(url:Parameters<typeof fetch>[0],init?:Parameters<typeof fetch>[1])=>{
    expect(String(url)).toBe('https://api.anthropic.com/v1/messages?beta=true')
-   const payload=JSON.parse(init.body as string)
-   captures.push({url:String(url),headers:Object.fromEntries(new Headers(init.headers)),payload})
+   const payload=JSON.parse(init!.body as string) as WireCapture['payload']
+   captures.push({url:String(url),headers:Object.fromEntries(new Headers(init!.headers)),payload})
    if(status!==200)return new Response(JSON.stringify({type:'error',error:{type:'rate_limit_error',message:'synthetic'}}),{status,headers:{'content-type':'application/json'}})
    const e=structuredClone(wireEvents??events(captures.length===1))
-   wireModel=e.find(x=>x.type==='message_start')?.message.model??''
+   wireModel=e.find(x=>x.type==='message_start')?.message!.model??''
    terminal=e.some(x=>x.type==='message_stop')
    return sse(e)
   })
@@ -65,16 +69,16 @@ beforeEach(()=>vi.stubGlobal('fetch',vi.fn(()=>{throw new Error('UNEXPECTED LIVE
 afterEach(()=>{vi.unstubAllGlobals();vi.clearAllMocks()})
 describe('Haiku auth and exact-model configuration',()=>{
  it('fails closed when the centrally selected subscription provider is unavailable',async()=>{
-  auth.load.mockImplementationOnce(()=>({providers:[]} as any))
+  auth.load.mockImplementationOnce(()=>({providers:[]}))
   await expect(completeHaSubscription(c,{messages:[]},new AbortController().signal)).rejects.toThrow('subscription_provider_unavailable')
   expect(auth.key).not.toHaveBeenCalled();expect(fetch).not.toHaveBeenCalled()
-  auth.load.mockImplementationOnce(()=>({providers:[]} as any))
+  auth.load.mockImplementationOnce(()=>({providers:[]}))
   const response=await createHaInferenceHandler(c)(req());expect(response.status).toBe(503)
   expect(await response.json()).toEqual({error:{message:'subscription_provider_unavailable',type:'ha_inference_error',code:'subscription_provider_unavailable'}})
  })
  it('pins Haiku and supported low effort; rejects unavailable off or arbitrary transport',()=>{
   expect(validateHaConfig(c)).toEqual(c)
-  for(const changes of [{model:'claude-opus-4-7'},{thinking:undefined},{thinking:'off'},{transport:'api-key'},{transport:undefined}])expect(()=>validateHaConfig({...c,...changes} as any)).toThrow('invalid_config')
+  for(const changes of [{model:'claude-opus-4-7'},{thinking:undefined},{thinking:'off'},{transport:'api-key'},{transport:undefined}])expect(()=>validateHaConfig({...c,...changes} as unknown as HaInferenceConfig)).toThrow('invalid_config')
  })
  it('isolates bearer, rejects caller agent fields and unsupported tools before completion',async()=>{
   const complete=vi.fn(async()=>result(toolContent));const handler=createHaInferenceHandler(c,complete)
@@ -88,15 +92,15 @@ describe('native signed assistant transcript vault',()=>{
  it('preserves thinking/signatures, maps confirmed tool result, emits only final text',async()=>{
   let round=0;let native:Context|undefined
   const handler=createHaInferenceHandler(c,async(_c,context)=>{native=structuredClone(context);return ++round===1?result(toolContent):result([{type:'text',text:'Bestätigt.'}],'stop')})
-  const b=body();const first=await(await handler(req(b))).json() as any
+  const b=body();const first=await(await handler(req(b))).json() as HaikuResponse
   expect(first.ha_session).toEqual(expect.any(String));expect(JSON.stringify(first)).not.toContain('synthetic-private-thinking');expect(JSON.stringify(first)).not.toContain('signed-opaque')
-  const next=continuation(b,first);const final=await(await handler(req(next))).json() as any
+  const next=continuation(b,first);const final=await(await handler(req(next))).json() as HaikuResponse
   expect(final.choices[0].message.content).toBe('Bestätigt.')
   expect(native?.messages[1]).toMatchObject({content:toolContent});expect(native?.messages[2]).toMatchObject({role:'toolResult',isError:false})
   expect((await handler(req(next))).status).toBe(400) // single-use, no action replay
  })
  it.each(['content','tool_spec','session','extra_user'])('rejects altered continuation: %s',async(kind)=>{
-  const complete=vi.fn(async()=>result(toolContent));const handler=createHaInferenceHandler(c,complete);const b=body();const first=await(await handler(req(b))).json() as any;const next=continuation(b,first)
+  const complete=vi.fn(async()=>result(toolContent));const handler=createHaInferenceHandler(c,complete);const b=body();const first=await(await handler(req(b))).json() as HaikuResponse;const next=continuation(b,first)
   if(kind==='content')next.messages[1].content='changed prompt'
   if(kind==='tool_spec')next.tools=[]
   if(kind==='session')next.ha_session='other-session'
@@ -104,17 +108,17 @@ describe('native signed assistant transcript vault',()=>{
   expect((await handler(req(next))).status).toBe(400);expect(complete).toHaveBeenCalledTimes(1)
  })
  it('does not reconstruct unsigned prior assistant messages without a vault handle',async()=>{
-  const handler=createHaInferenceHandler(c,async()=>result(toolContent));const b=body();const r=await(await handler(req(b))).json() as any;const next=continuation(b,r);delete next.ha_session
+  const handler=createHaInferenceHandler(c,async()=>result(toolContent));const b=body();const r=await(await handler(req(b))).json() as HaikuResponse;const next=continuation(b,r);delete next.ha_session
   const failed=await handler(req(next));expect(failed.status).toBe(400);expect(JSON.stringify(await failed.json())).toContain('ha_session_required')
  })
  it.each([{error:'ambiguous_entity'},{success:false},{response:{response_type:'error',data:{code:'no_valid_targets'}}}])('preserves failure signaling without treating prose as truth: %j',async(error)=>{
   let native:Context|undefined;let round=0;const handler=createHaInferenceHandler(c,async(_c,ctx)=>{native=ctx;return ++round===1?result(toolContent):result([{type:'text',text:'Nicht bestätigt.'}],'stop')})
-  const b=body();const r=await(await handler(req(b))).json() as any;const next=continuation(b,r);next.messages.at(-1).content=JSON.stringify(error)
+  const b=body();const r=await(await handler(req(b))).json() as HaikuResponse;const next=continuation(b,r);next.messages.at(-1)!.content=JSON.stringify(error)
   expect((await handler(req(next))).status).toBe(200);expect(native?.messages.at(-1)).toMatchObject({isError:true})
  })
  it('times out and consumes a continuation instead of allowing replay',async()=>{
   let n=0;const handler=createHaInferenceHandler({...c,timeoutMs:1000},async(_c,_ctx,signal)=>++n===1?result(toolContent):new Promise((_,reject)=>signal.addEventListener('abort',()=>reject(signal.reason),{once:true})))
-  const b=body();const r=await(await handler(req(b))).json() as any;const next=continuation(b,r)
+  const b=body();const r=await(await handler(req(b))).json() as HaikuResponse;const next=continuation(b,r)
   expect((await handler(req(next))).status).toBe(504);expect((await handler(req(next))).status).toBe(400)
  })
  it.each(['wrong_model','bad_tool','truncated','unfinished','oversize'])('fails closed on %s before exposing an action batch',async(kind)=>{
@@ -130,9 +134,9 @@ describe('native signed assistant transcript vault',()=>{
 })
 describe('real pi-ai Anthropic SDK with entirely simulated wire',()=>{
  it('performs toolcall/result/final and records explicit adaptive low effort + OAuth identity injection',async()=>{
-  const fixture=sdkFixture();const handler=createHaInferenceHandler(c,fixture.complete);const b=body();const r=await(await handler(req(b))).json() as any
+  const fixture=sdkFixture();const handler=createHaInferenceHandler(c,fixture.complete);const b=body();const r=await(await handler(req(b))).json() as HaikuResponse
   expect(r.choices[0].message.tool_calls[0].function.name).toBe(tool.name)
-  const final=await handler(req(continuation(b,r)));expect(final.status).toBe(200);expect((await final.json() as any).choices[0].message.content).toBe('Home Assistant hat die simulierte Aktion bestätigt.')
+  const final=await handler(req(continuation(b,r)));expect(final.status).toBe(200);expect((await final.json() as HaikuResponse).choices[0].message.content).toBe('Home Assistant hat die simulierte Aktion bestätigt.')
   expect(fixture.captures).toHaveLength(2)
   for(const capture of fixture.captures){expect(capture.payload).toMatchObject({model:c.model,max_tokens:4096,stream:true,thinking:{type:'adaptive',display:'summarized'},output_config:{effort:'low'}});expect(capture.payload.temperature).toBeUndefined();expect(capture.payload.fallbacks).toBeUndefined();expect(capture.headers['user-agent']).toContain('claude-cli');expect(capture.headers['x-app']).toBe('cli')}
   const wire=fixture.captures[1].payload.messages
@@ -150,14 +154,14 @@ describe('real pi-ai Anthropic SDK with entirely simulated wire',()=>{
  })
  it('refuses a native model or API mismatch even when the outer wire model claims the pin',async()=>{
   for(const patch of [{model:'wrong-model'},{api:'openai-codex-responses'}]){
-   const h=createHaInferenceHandler(c,async()=>({...result(toolContent),message:{...result(toolContent).message,...patch} as any}))
+   const h=createHaInferenceHandler(c,async()=>({...result(toolContent),message:{...result(toolContent).message,...patch} as unknown as AssistantMessage}))
    const r=await h(req(body()));expect(r.status).toBe(502);expect(await r.text()).not.toContain('simulierte')
   }
  })
  it('marks structured HA failure as SDK tool_result is_error=true without losing signature',async()=>{
   for(const failure of [{response:{response_type:'error',data:{code:'ambiguous_name'}}},{response_type:'error',data:{code:'ambiguous_name'}},{response_type:'action_done',data:{success:[{id:'synthetic'}],failed:[{id:'synthetic-other'}]}},{success:false},{error:'simulated'}]){
-   const f=sdkFixture();const h=createHaInferenceHandler(c,f.complete);const b=body();const r=await(await h(req(b))).json() as any
-   const next=continuation(b,r);next.messages.at(-1).content=JSON.stringify(failure)
+   const f=sdkFixture();const h=createHaInferenceHandler(c,f.complete);const b=body();const r=await(await h(req(b))).json() as HaikuResponse
+   const next=continuation(b,r);next.messages.at(-1)!.content=JSON.stringify(failure)
    expect((await h(req(next))).status).toBe(200)
    expect(f.captures[1].payload.messages[2].content).toContainEqual(expect.objectContaining({type:'tool_result',tool_use_id:'call_synthetic1',is_error:true}))
    expect(f.captures[1].payload.messages[1].content).toContainEqual(expect.objectContaining({type:'thinking',signature:'synthetic-signed-opaque'}))

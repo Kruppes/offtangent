@@ -21,7 +21,7 @@ export async function completeHaAnthropic(c: HaInferenceConfig, context: Context
   }
   let wireModel = ''; let completed = false; let wireUsage: unknown = null
   let fault: HaProviderFault | undefined; let rejected = false
-  const failWire = (code: string): never => { fault = new HaProviderFault(502, code); throw fault }
+  const failWire: (code: string) => never = (code) => { fault = new HaProviderFault(502, code); throw fault }
   const started = performance.now(); let ttftMs: number | null = null; let firstToolMs: number | null = null
   const wireFetch: typeof fetch = async (url, init) => {
     const target = new URL(typeof url === 'string' ? url : url instanceof URL ? url.href : url.url)
@@ -47,8 +47,8 @@ export async function completeHaAnthropic(c: HaInferenceConfig, context: Context
       while ((pos = buffer.indexOf('\n')) >= 0) {
         const line = buffer.slice(0, pos).trimEnd(); buffer = buffer.slice(pos + 1)
         if (!line.startsWith('data: ')) continue
-        let event: any
-        try { event = parseHaJson(line.slice(6)) } catch { failWire('invalid_subscription_event') }
+        let event: {type:string;index:number;content_block?:{type:string};delta?:{type:string;partial_json:string};message?:{model?:string;usage?:unknown};usage?:Record<string,unknown>}
+        try { event = parseHaJson(line.slice(6)) as typeof event } catch { failWire('invalid_subscription_event') }
         if (event.type === 'content_block_start' && event.content_block?.type === 'tool_use') toolParts.set(event.index, '')
         if (event.type === 'content_block_delta' && event.delta?.type === 'input_json_delta') {
           const partial = (toolParts.get(event.index) ?? '') + event.delta.partial_json

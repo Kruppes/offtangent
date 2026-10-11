@@ -22,9 +22,9 @@ export interface HaCompletion { message: AssistantMessage; wireModel: string; co
 export type HaComplete = (config: HaInferenceConfig, context: Context, signal: AbortSignal) => Promise<HaCompletion>
 class Fault extends HaProviderFault {}
 function fail(code = 'invalid_request'): never { throw new Fault(400, code) }
-function obj(x: unknown): Record<string, any> {
+function obj(x: unknown): Record<string, unknown> {
   if (!x || typeof x !== 'object' || Array.isArray(x)) fail()
-  return x as Record<string, any>
+  return x as Record<string, unknown>
 }
 function keys(x: Record<string, unknown>, allowed: string[]) { if (Object.keys(x).some(k => !allowed.includes(k))) fail('unsupported_field') }
 function str(x: unknown, max = 100000): string { if (typeof x !== 'string' || x.length > max) fail(); return x }
@@ -44,22 +44,22 @@ export function validateHaConfig(raw: unknown): HaInferenceConfig {
   keys(c, ['enabled','tokenSha256','providerId','model','tools','timeoutMs','maxBodyBytes','maxCallsPerHour','transport','thinking'])
   if (c.enabled !== true || typeof c.tokenSha256!=='string' || !/^[a-f0-9]{64}$/.test(c.tokenSha256) || typeof c.model!=='string' || !/^[a-zA-Z0-9-]{1,128}$/.test(c.model)) fail('invalid_config')
   if(!str(c.providerId,128))fail('invalid_config')
-  if(c.transport!==undefined&&!['codex','anthropic-oauth'].includes(c.transport))fail('invalid_config')
+  if(c.transport!==undefined&&(typeof c.transport!=='string'||!['codex','anthropic-oauth'].includes(c.transport)))fail('invalid_config')
   if(c.thinking!==undefined&&c.thinking!=='low')fail('invalid_config')
   if(c.transport==='anthropic-oauth'&&(c.model!=='claude-haiku-5-5'||c.thinking===undefined))fail('invalid_config')
   if(c.transport!=='anthropic-oauth'&&c.thinking!==undefined)fail('invalid_config')
   for (const [k,lo,hi] of [['timeoutMs',1000,90000],['maxBodyBytes',1024,262144],['maxCallsPerHour',1,1000]] as const) {
-    if (!Number.isInteger(c[k]) || c[k]<lo || c[k]>hi) fail('invalid_config')
+    if (typeof c[k]!=='number' || !Number.isInteger(c[k]) || c[k]<lo || c[k]>hi) fail('invalid_config')
   }
   if (!Array.isArray(c.tools) || c.tools.length>32) fail('invalid_config')
   const seen = new Set<string>()
   for (const tool of c.tools) {
     const t = obj(tool); keys(t,['name','description','parameters'])
     if (typeof t.name!=='string' || !(/^(?:[a-z][a-z0-9_]{0,39}__)?(?:GetLiveContext|Hass[A-Z][A-Za-z0-9]{0,59})$/.test(t.name)) || seen.has(t.name)) fail('invalid_config')
-    seen.add(t.name); str(t.description,2048); obj(t.parameters)
-    if (t.parameters.type !== 'object' || canonical(t.parameters).length>20000) fail('invalid_config')
+    seen.add(t.name); str(t.description,2048); const parameters=obj(t.parameters)
+    if (parameters.type !== 'object' || canonical(t.parameters).length>20000) fail('invalid_config')
   }
-  return c as HaInferenceConfig
+  return c as unknown as HaInferenceConfig
 }
 function requestContext(body: unknown, c: HaInferenceConfig): { context: Context; streaming: boolean; outputCap?:number } {
   const b = obj(body)
@@ -68,10 +68,10 @@ function requestContext(body: unknown, c: HaInferenceConfig): { context: Context
   // Codex transport has no sampling/output-budget parameters. Neutral
   // client defaults are accepted explicitly; token cap is a post-completion fence.
   for(const [key,value]of [['temperature',1],['top_p',1],['reasoning_effort','minimal'],['service_tier','auto']] as const)if(b[key]!==undefined&&b[key]!==value)fail('unsupported_parameter')
-  if(b.tool_choice!==undefined&&!['auto','none'].includes(b.tool_choice))fail('unsupported_tool_choice')
+  if(b.tool_choice!==undefined&&(typeof b.tool_choice!=='string'||!['auto','none'].includes(b.tool_choice)))fail('unsupported_tool_choice')
   if(b.max_tokens!==undefined&&b.max_completion_tokens!==undefined)fail('conflicting_output_caps')
   const outputCap=b.max_tokens??b.max_completion_tokens
-  if(outputCap!==undefined&&(!Number.isInteger(outputCap)||outputCap<1||outputCap>4096))fail('invalid_output_cap')
+  if(outputCap!==undefined&&(typeof outputCap!=='number'||!Number.isInteger(outputCap)||outputCap<1||outputCap>4096))fail('invalid_output_cap')
   if (b.model !== c.model) fail('model_is_pinned')
   if (b.stream !== undefined && typeof b.stream !== 'boolean') fail()
   if (b.stream_options !== undefined) { const o=obj(b.stream_options); keys(o,['include_usage']); if (typeof o.include_usage !== 'boolean') fail() }
@@ -109,7 +109,7 @@ function requestContext(body: unknown, c: HaInferenceConfig): { context: Context
         if(!Array.isArray(m.tool_calls) || m.tool_calls.length>16) fail()
         for(const rawCall of m.tool_calls) {
           const tc=obj(rawCall); keys(tc,['id','type','function']); const f=obj(tc.function); keys(f,['name','arguments'])
-          const id=str(tc.id,128); const t=byName.get(f.name)
+          const id=str(tc.id,128); const t=byName.get(f.name as string)
           if(tc.type!=='function'||!id||ids.has(id)||!t) fail('invalid_tool_history')
           content.push({type:'toolCall',id,name:t.name,arguments:args(t,f.arguments)}); pending.set(id,{name:t.name}); ids.add(id)
         }
@@ -127,7 +127,7 @@ function requestContext(body: unknown, c: HaInferenceConfig): { context: Context
 }
 /** HA tools return structured intent results. Transport error signaling is not a truth checker. */
 function toolResultIsError(content: unknown): boolean {
-  try {const r=parseHaJson(str(content));const response=r?.response??r;return !!r?.error || r?.success===false || response?.response_type==='error' || (Array.isArray(response?.data?.failed)&&response.data.failed.length>0)}catch{return false}
+  try {const r=parseHaJson(str(content)) as {error?:unknown;success?:unknown;response?:{response_type?:unknown;data?:{failed?:unknown[]}};response_type?:unknown;data?:{failed?:unknown[]}} | null;const response=r?.response??r;return !!r?.error || r?.success===false || response?.response_type==='error' || (Array.isArray(response?.data?.failed)&&response.data.failed.length>0)}catch{return false}
 }
 /** Reuses existing OAuth lifecycle. Never attempts API billing or another model. */
 export const completeHaSubscription: HaComplete = async (c, context, signal) => {
@@ -152,7 +152,7 @@ export const completeHaSubscription: HaComplete = async (c, context, signal) => 
       let pos: number
       while((pos=buffer.indexOf('\n'))>=0){const line=buffer.slice(0,pos).trimEnd();buffer=buffer.slice(pos+1)
         if(line.startsWith('data: ')) {const data=line.slice(6); if(data==='[DONE]')continue
-          let event: any; try {event=parseHaJson(data)} catch {throw new Fault(502,'invalid_subscription_event')}
+          let event: { type: string; arguments: string; code?: string; error?: { code?: string }; response?: { model?: string; output?: { type: string; arguments: string }[]; status?: string; usage?: unknown; error?: { code?: string } } }; try {event=parseHaJson(data) as typeof event} catch {throw new Fault(502,'invalid_subscription_event')}
           if(event.response?.model) {if(wireModel && wireModel!==event.response.model)throw new Fault(502,'upstream_model_changed');wireModel=event.response.model}
           if(event.type==='response.function_call_arguments.done') {try {parseHaJson(event.arguments)} catch {throw new Fault(502,'invalid_subscription_arguments')}}
           for(const item of event.response?.output ?? []) if(item.type==='function_call') {try {parseHaJson(item.arguments)} catch {throw new Fault(502,'invalid_subscription_arguments')}}
@@ -183,7 +183,7 @@ export function createHaInferenceHandler(config: HaInferenceConfig, complete: Ha
   // One-use handles bind to the exact authenticated HA exchange. No persistence.
   const sessions=new Map<string,{expires:number;prefix:unknown[];context:Context;toolSpec:string}>()
   const sessionTtlMs=300000
-  const toolSpec=(b:Record<string,any>)=>canonical({tools:b.tools??[],tool_choice:b.tool_choice??'auto'})
+  const toolSpec=(b:Record<string,unknown>)=>canonical({tools:b.tools??[],tool_choice:b.tool_choice??'auto'})
   return async (req: Request): Promise<Response> => {
     const url=new URL(req.url);const catalog=req.method==='GET'&&url.pathname==='/v1/models'
     const status=req.method==='GET'&&url.pathname==='/v1/status'
@@ -208,9 +208,10 @@ export function createHaInferenceHandler(config: HaInferenceConfig, complete: Ha
       while(true){signal.throwIfAborted();const part=await Promise.race([reader.read(),aborted]);if(part.done)break
         size+=part.value.length;if(size>c.maxBodyBytes){void reader.cancel();throw new Fault(413,'body_too_large')}parts.push(part.value)
       }
-      const b=parseHaJson(Buffer.concat(parts).toString('utf8'));
-      if(discard){const d=obj(b);keys(d,['ha_session']);const id=str(d.ha_session,128);if(!sessions.delete(id))fail('invalid_ha_session');return Response.json({discarded:true})}
-      const {context,streaming,outputCap}=requestContext(b,c)
+      const parsed=parseHaJson(Buffer.concat(parts).toString('utf8'));
+      const b=parsed as Record<string,unknown> & {messages:Record<string,unknown>[];stream_options?:{include_usage?:boolean}};
+      if(discard){const d=obj(parsed);keys(d,['ha_session']);const id=str(d.ha_session,128);if(!sessions.delete(id))fail('invalid_ha_session');return Response.json({discarded:true})}
+      const {context,streaming,outputCap}=requestContext(parsed,c)
       const anthropic=c.transport==='anthropic-oauth'
       for(const [id,s]of sessions)if(s.expires<=Date.now())sessions.delete(id)
       if(anthropic){
@@ -220,12 +221,12 @@ export function createHaInferenceHandler(config: HaInferenceConfig, complete: Ha
           // Require exactly the pending tool results, no extra user/assistant data.
           const n=(stored.context.messages.at(-1) as AssistantMessage).content.filter(x=>x.type==='toolCall').length
           const tail=b.messages.slice(stored.prefix.length)
-          if(!n||tail.length!==n||tail.some((m:any)=>m.role!=='tool'))fail('invalid_ha_session')
+          if(!n||tail.length!==n||tail.some(m=>m.role!=='tool'))fail('invalid_ha_session')
           const parsedTail=context.messages.slice(-n)
           context.messages=[...structuredClone(stored.context.messages),...parsedTail]
           // Consume before inference: failure/cancel cannot replay an action batch.
           sessions.delete(id)
-        }else if(b.messages.some((m:any)=>m.role==='tool'||m.tool_calls!==undefined))fail('ha_session_required')
+        }else if(b.messages.some(m=>m.role==='tool'||m.tool_calls!==undefined))fail('ha_session_required')
       }else if(b.ha_session!==undefined)fail('unsupported_field')
       calls++
       const result=await Promise.race([complete(c,context,signal),aborted])
@@ -256,9 +257,9 @@ export function createHaInferenceHandler(config: HaInferenceConfig, complete: Ha
       recordHaAuthState(c.providerId,'ready')
       if(!streaming) return Response.json(completion)
       const base={id:completion.id,object:'chat.completion.chunk',created:completion.created,model:completion.model,...(session?{ha_session:session}:{})}
-      const events=[{...base,choices:[{index:0,delta:{role:'assistant',...(text?{content:text}:{})},finish_reason:null}]}]
-      if(toolCalls.length) events.push({...base,choices:[{index:0,delta:{tool_calls:toolCalls.map((t,index)=>({index,...t}))} as any,finish_reason:null}]})
-      events.push({...base,choices:[{index:0,delta:{} as any,finish_reason:completion.choices[0].finish_reason as any}]})
+      const events: {choices:{index:number;delta:Record<string,unknown>;finish_reason:string|null}[];id:string;object:string;created:number;model:string;ha_session?:string}[]=[{...base,choices:[{index:0,delta:{role:'assistant',...(text?{content:text}:{})},finish_reason:null}]}]
+      if(toolCalls.length) events.push({...base,choices:[{index:0,delta:{tool_calls:toolCalls.map((t,index)=>({index,...t}))},finish_reason:null}]})
+      events.push({...base,choices:[{index:0,delta:{},finish_reason:completion.choices[0].finish_reason}]})
       const wire=events.map(e=>'data: '+JSON.stringify(e)+'\n\n').join('')+(b.stream_options?.include_usage?'data: '+JSON.stringify({...base,choices:[],usage:completion.usage})+'\n\n':'')+'data: [DONE]\n\n'
       return new Response(wire,{headers:{'content-type':'text/event-stream','cache-control':'no-store'}})
     }catch(e){

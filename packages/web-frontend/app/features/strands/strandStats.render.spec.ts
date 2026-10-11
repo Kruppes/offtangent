@@ -139,7 +139,7 @@ describe('StrandStats', () => {
     toggle(root, true)
     await flush()
     expect(apiFetch).toHaveBeenCalledTimes(1)
-    expect(apiFetch.mock.calls[0][0]).toBe('/api/strands/s1/stats?include=tasks,series')
+    expect(apiFetch.mock.calls[0]![0]).toBe('/api/strands/s1/stats?include=tasks,series')
     expect(find(root, 'data-strand-stats')!.props['data-state']).toBe('ready')
     // closing and re-opening does not refetch
     toggle(root, false)
@@ -165,7 +165,7 @@ describe('StrandStats', () => {
     const timeline = find(root, 'data-stats-timeline')!
     const bars = all(timeline).filter(n => n.tag === 'rect')
     expect(bars).toHaveLength(2)
-    expect(bars[1].props.class).toBe('fill-destructive')
+    expect(bars[1]!.props.class).toBe('fill-destructive')
     expect(find(root, 'data-stats-spark')).toBeTruthy()
   })
 

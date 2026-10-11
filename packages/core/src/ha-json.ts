@@ -1,9 +1,9 @@
 /** JSON.parse alone silently accepts duplicate keys and overflowing numbers. */
-export function parseHaJson(source: string): any {
+export function parseHaJson(source: string): unknown {
   const value: unknown = JSON.parse(source)
   const frames: { object: boolean; key: boolean; names: Set<string> }[] = []
   // Syntax is already validated by JSON.parse; tokenize complete strings, never their contents.
-  const tokens = /"(?:\\["\\/bfnrt]|\\u[\da-fA-F]{4}|[^"\\\u0000-\u001f])*"|[{}\[\]:,]|-?\d+(?:\.\d+)?(?:[eE][+-]?\d+)?|true|false|null/g
+  const tokens = new RegExp(String.raw`"(?:\\["\\/bfnrt]|\\u[\da-fA-F]{4}|[^"\\\x00-\x1f])*"|[{}[\]:,]|-?\d+(?:\.\d+)?(?:[eE][+-]?\d+)?|true|false|null`, 'g')
   for (const match of source.matchAll(tokens)) {
     const token = match[0], frame = frames.at(-1)
     if (token === '{' || token === '[') {
