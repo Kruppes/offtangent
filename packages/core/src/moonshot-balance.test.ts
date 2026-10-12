@@ -8,6 +8,8 @@ import {
   parseMoonshotBalancePayload,
   resetMoonshotBalanceState,
   MOONSHOT_BALANCE_INITIAL_BACKOFF_MS,
+  MOONSHOT_BALANCE_MAX_BACKOFF_MS,
+  MOONSHOT_BALANCE_RATE_LIMIT_INITIAL_BACKOFF_MS,
   MOONSHOT_BALANCE_REFUSED_RETRY_MS,
 } from './moonshot-balance.js'
 import { getQuotaAdapter } from './quota-registry.js'
@@ -62,6 +64,16 @@ describe('moonshotRegionForBaseUrl', () => {
     // A look-alike host must not count as China.
     expect(moonshotRegionForBaseUrl('https://moonshot.cn.example.com/v1')).toBe('intl')
   })
+
+  it('canonicalizes the host (case, trailing dot) and compares it exactly', () => {
+    expect(moonshotRegionForBaseUrl('https://api.moonshot.cn./v1')).toBe('cn')
+    expect(moonshotRegionForBaseUrl('https://API.MOONSHOT.CN/v1')).toBe('cn')
+    expect(moonshotRegionForBaseUrl('https://Api.Moonshot.Cn../v1')).toBe('cn')
+    expect(moonshotRegionForBaseUrl('https://api.moonshot.ai./v1')).toBe('intl')
+    // Only the known API host counts, not any host under moonshot.cn.
+    expect(moonshotRegionForBaseUrl('https://evil.api.moonshot.cn.example.com/v1')).toBe('intl')
+    expect(moonshotRegionForBaseUrl('https://xapi.moonshot.cn/v1')).toBe('intl')
+  })
 })
 
 describe('parseMoonshotBalancePayload', () => {
@@ -109,6 +121,15 @@ describe('parseMoonshotBalancePayload', () => {
       cash: 2,
       voucher: 1.5,
     })
+  })
+
+  it('does not sum cash + voucher when only one of them is a number', () => {
+    // Only cash: no amount → no display.
+    expect(parseMoonshotBalancePayload({ status: true, data: { cash_balance: 2 } }, 'intl')).toBeNull()
+    expect(parseMoonshotBalancePayload({ status: true, data: { cash_balance: 2, voucher_balance: 'x' } }, 'intl')).toBeNull()
+    // Only voucher: no amount → no display.
+    expect(parseMoonshotBalancePayload({ status: true, data: { voucher_balance: 1.5 } }, 'intl')).toBeNull()
+    expect(parseMoonshotBalancePayload({ status: true, data: { cash_balance: null, voucher_balance: 1.5 } }, 'intl')).toBeNull()
   })
 })
 
@@ -235,5 +256,121 @@ describe('getMoonshotBalanceForProvider (throttling, logging)', () => {
     const again = await getMoonshotBalanceForProvider(provider, f, now, logger)
     expect(again.quota).not.toBeNull()
     expect(fetchImpl).toHaveBeenCalledTimes(3)
+  })
+
+  it('pauses a 429 itself: 20 min, doubling to 2 h, bound to the key', async () => {
+    const fetchImpl = vi.fn(async () => mockResponse({ ok: false, status: 429 }))
+    const f = fetchImpl as unknown as typeof fetch
+    const first = await getMoonshotBalanceForProvider(provider, f, now, logger)
+    expect(first).toMatchObject({ quota: null, status: 429, retryAfterMs: MOONSHOT_BALANCE_RATE_LIMIT_INITIAL_BACKOFF_MS })
+    expect(fetchImpl).toHaveBeenCalledTimes(1)
+
+    clock += MOONSHOT_BALANCE_RATE_LIMIT_INITIAL_BACKOFF_MS - 1
+    const paused = await getMoonshotBalanceForProvider(provider, f, now, logger)
+    expect(paused).toMatchObject({ quota: null, status: 429, retryAfterMs: 1 })
+    expect(fetchImpl).toHaveBeenCalledTimes(1)
+    clock += 1
+    await getMoonshotBalanceForProvider(provider, f, now, logger)
+    expect(fetchImpl).toHaveBeenCalledTimes(2)
+
+    // Each further 429 doubles the pause: 40 min, 80 min, then capped at 2 h.
+    const minute = 60 * 1000
+    for (const pauseMs of [40 * minute, 80 * minute, 120 * minute, 120 * minute]) {
+      const calls = fetchImpl.mock.calls.length
+      clock += pauseMs - 1
+      await getMoonshotBalanceForProvider(provider, f, now, logger)
+      expect(fetchImpl).toHaveBeenCalledTimes(calls)
+      clock += 1
+      await getMoonshotBalanceForProvider(provider, f, now, logger)
+      expect(fetchImpl).toHaveBeenCalledTimes(calls + 1)
+    }
+    expect(MOONSHOT_BALANCE_MAX_BACKOFF_MS).toBe(120 * minute)
+
+    // A new key is not bound by the pause.
+    const calls = fetchImpl.mock.calls.length
+    await getMoonshotBalanceForProvider({ ...provider, apiKey: 'sk_another-moonshot-key-987654' }, f, now, logger)
+    expect(fetchImpl).toHaveBeenCalledTimes(calls + 1)
+  })
+
+  it('a longer Retry-After wins over the 429 backoff, a shorter one does not', async () => {
+    const longRa = vi.fn(async () => mockResponse({ ok: false, status: 429, headers: { 'retry-after': '3600' } }))
+    const r1 = await getMoonshotBalanceForProvider(provider, longRa as unknown as typeof fetch, now, logger)
+    expect(r1.retryAfterMs).toBe(3_600_000)
+    clock += 3_600_000 - 1
+    await getMoonshotBalanceForProvider(provider, longRa as unknown as typeof fetch, now, logger)
+    expect(longRa).toHaveBeenCalledTimes(1)
+
+    resetMoonshotBalanceState()
+    const shortRa = vi.fn(async () => mockResponse({ ok: false, status: 429, headers: { 'retry-after': '60' } }))
+    const r2 = await getMoonshotBalanceForProvider(provider, shortRa as unknown as typeof fetch, now, logger)
+    expect(r2.retryAfterMs).toBe(MOONSHOT_BALANCE_RATE_LIMIT_INITIAL_BACKOFF_MS)
+    clock += 60_000
+    await getMoonshotBalanceForProvider(provider, shortRa as unknown as typeof fetch, now, logger)
+    expect(shortRa).toHaveBeenCalledTimes(1)
+  })
+
+  it('a manual refresh (force) keeps the 429 pause and sends no request', async () => {
+    const fetchImpl = vi.fn(async () => mockResponse({ ok: false, status: 429 }))
+    const f = fetchImpl as unknown as typeof fetch
+    await getMoonshotBalanceForProvider(provider, f, now, logger)
+    clock += 60_000
+    const forced = await getMoonshotBalanceForProvider(provider, f, now, logger, { force: true })
+    expect(forced).toMatchObject({ quota: null, status: 429 })
+    expect(forced.retryAfterMs).toBe(MOONSHOT_BALANCE_RATE_LIMIT_INITIAL_BACKOFF_MS - 60_000)
+    expect(fetchImpl).toHaveBeenCalledTimes(1)
+  })
+
+  it('a manual refresh (force) tests a refused key with exactly one request', async () => {
+    let status = 401
+    const fetchImpl = vi.fn(async () =>
+      status === 200 ? mockResponse({ ok: true, status: 200, json: VALID_BODY }) : mockResponse({ ok: false, status }),
+    )
+    const f = fetchImpl as unknown as typeof fetch
+    await getMoonshotBalanceForProvider(provider, f, now, logger)
+    expect(fetchImpl).toHaveBeenCalledTimes(1)
+
+    // Automatic polling stays paused.
+    clock += 60_000
+    await getMoonshotBalanceForProvider(provider, f, now, logger)
+    expect(fetchImpl).toHaveBeenCalledTimes(1)
+
+    // Manual refresh: one request, still refused → pause renewed for polling.
+    const stillRefused = await getMoonshotBalanceForProvider(provider, f, now, logger, { force: true })
+    expect(fetchImpl).toHaveBeenCalledTimes(2)
+    expect(stillRefused).toMatchObject({ quota: null, status: 401 })
+    clock += MOONSHOT_BALANCE_REFUSED_RETRY_MS - 1
+    await getMoonshotBalanceForProvider(provider, f, now, logger)
+    expect(fetchImpl).toHaveBeenCalledTimes(2)
+
+    // Key works again: the manual refresh shows the balance and ends the pause.
+    status = 200
+    const ok = await getMoonshotBalanceForProvider(provider, f, now, logger, { force: true })
+    expect(fetchImpl).toHaveBeenCalledTimes(3)
+    expect(ok.quota?.balance?.amount).toBe(13.505731)
+    await getMoonshotBalanceForProvider(provider, f, now, logger)
+    expect(fetchImpl).toHaveBeenCalledTimes(4)
+  })
+
+  it('force does not lift the 5xx backoff', async () => {
+    const fetchImpl = vi.fn(async () => mockResponse({ ok: false, status: 503 }))
+    const f = fetchImpl as unknown as typeof fetch
+    await getMoonshotBalanceForProvider(provider, f, now, logger)
+    await getMoonshotBalanceForProvider(provider, f, now, logger, { force: true })
+    expect(fetchImpl).toHaveBeenCalledTimes(1)
+  })
+
+  it('the registered adapter forwards force', async () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
+    let status = 401
+    const fetchImpl = vi.fn(async () => mockResponse({ ok: false, status }))
+    const f = fetchImpl as unknown as typeof fetch
+    await moonshotBalanceAdapter.fetch(provider, f)
+    await moonshotBalanceAdapter.fetch(provider, f)
+    expect(fetchImpl).toHaveBeenCalledTimes(1)
+    status = 403
+    await moonshotBalanceAdapter.fetch(provider, f, { force: true })
+    expect(fetchImpl).toHaveBeenCalledTimes(2)
+    expect(String(warn.mock.calls[0]?.[0])).not.toContain(KEY)
+    warn.mockRestore()
   })
 })

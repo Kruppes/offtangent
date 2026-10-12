@@ -15,6 +15,15 @@ export interface ProviderQuotaFetchResult {
   error?: string
 }
 
+export interface QuotaFetchOptions {
+  /**
+   * Set for an explicit manual refresh. Adapters that keep their own pauses
+   * may use it to bypass a pause that only the user can resolve (e.g. a
+   * refused key); adapters without own state ignore it.
+   */
+  force?: boolean
+}
+
 /**
  * Pluggable per-provider-family quota adapter. Adding a new subscriber quota
  * source means implementing one of these and registering it in
@@ -30,7 +39,7 @@ export interface QuotaProviderAdapter {
   /** Whether this adapter handles the given provider. */
   matches: (provider: ProviderConfig) => boolean
   /** Resolve credentials, fetch, and normalize the provider's usage quota. */
-  fetch: (provider: ProviderConfig, fetchImpl?: typeof fetch) => Promise<ProviderQuotaFetchResult>
+  fetch: (provider: ProviderConfig, fetchImpl?: typeof fetch, options?: QuotaFetchOptions) => Promise<ProviderQuotaFetchResult>
 }
 
 /**

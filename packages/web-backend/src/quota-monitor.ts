@@ -73,8 +73,10 @@ export class QuotaMonitorService {
 
   /**
    * Force an immediate, on-demand usage fetch for a single provider, bypassing
-   * the rate-limit backoff. Returns the resulting cached snapshot (or null if
-   * the provider no longer exists / is not quota-capable).
+   * the monitor's rate-limit backoff. The adapter is told (`force`) and may
+   * still hold its own pause (Moonshot keeps a 429 pause and answers from it
+   * without a request). Returns the resulting cached snapshot (or null if the
+   * provider no longer exists / is not quota-capable).
    *
    * Consumed via the http-boundary `refreshQuota` arrow wrapper, which Fallow cannot trace statically.
    */
@@ -145,7 +147,7 @@ export class QuotaMonitorService {
     // refresh); keep the stale cached value in the meantime.
     if (!opts.force && state && now < state.rateLimitedUntil) return
 
-    const result = await adapter.fetch(provider, this.fetchImpl)
+    const result = await adapter.fetch(provider, this.fetchImpl, { force: !!opts.force })
 
     if (result.quota) {
       this.backoff.delete(provider.id)

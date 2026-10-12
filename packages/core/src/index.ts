@@ -312,7 +312,10 @@ export {
   isMoonshotBalanceProvider,
   moonshotBalanceAdapter,
   moonshotRegionForBaseUrl,
+  MOONSHOT_BALANCE_RATE_LIMIT_INITIAL_BACKOFF_MS,
+  MOONSHOT_BALANCE_REFUSED_RETRY_MS,
   parseMoonshotBalancePayload,
+  resetMoonshotBalanceState,
 } from './moonshot-balance.js'
 export {
   getQuotaAdapter,
@@ -325,7 +328,7 @@ export {
   normalizeUtilization,
   limitWindowLabel,
 } from './provider-quota.js'
-export type { ProviderQuotaFetchResult, QuotaProviderAdapter } from './provider-quota.js'
+export type { ProviderQuotaFetchResult, QuotaFetchOptions, QuotaProviderAdapter } from './provider-quota.js'
 export { encrypt, decrypt, isEncrypted, maskApiKey } from './encryption.js'
 export {
   logTokenUsage,
