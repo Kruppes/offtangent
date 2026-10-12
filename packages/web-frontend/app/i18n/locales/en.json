@@ -317,6 +317,7 @@
     "oauthRenewToken": "Renew Token",
     "oauthRenewing": "Renewing...",
     "oauthCancelRenew": "Cancel",
+    "oauthModelsRequired": "Select at least one model before signing in.",
     "statusConnected": "Connected",
     "statusError": "Error",
     "statusUntested": "Untested",

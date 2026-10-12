@@ -330,6 +330,53 @@
           <p class="text-xs text-muted-foreground">{{ $t('providers.transportHint') }}</p>
         </div>
 
+        <!-- OAuth create: model choice before the sign-in. The server saves the
+             provider the moment the token arrives, so the models must be chosen
+             here; the catalog default is preselected. -->
+        <div
+          v-if="isOAuthProvider && mode === 'create'"
+          class="flex flex-col gap-2"
+          data-testid="oauth-model-choice"
+        >
+          <Label>{{ $t('providers.enabledModels') }}</Label>
+          <div
+            v-if="oauthCatalogLoading"
+            class="flex items-center gap-2 rounded-md border border-border bg-card px-3 py-3 text-xs text-muted-foreground"
+          >
+            <span class="h-3 w-3 animate-spin rounded-full border-2 border-primary-subtle-hover border-t-primary" />
+            {{ $t('providers.loadingModels') }}
+          </div>
+          <div
+            v-else-if="oauthCatalogModels.length > 0"
+            class="flex flex-col gap-0 rounded-md border border-border overflow-hidden max-h-52 overflow-y-auto"
+          >
+            <label
+              v-for="model in oauthCatalogModels"
+              :key="model.id"
+              :class="[
+                'flex items-center gap-3 px-3 py-2 text-sm cursor-pointer transition-colors hover:bg-accent',
+                form.enabledModels.includes(model.id) ? 'bg-accent' : '',
+              ]"
+            >
+              <input
+                type="checkbox"
+                :checked="form.enabledModels.includes(model.id)"
+                :disabled="oauthInProgress"
+                class="h-4 w-4 rounded border-border text-primary focus:ring-primary"
+                @change="toggleOAuthModel(model.id)"
+              />
+              <span class="flex-1 min-w-0 font-mono text-xs truncate">{{ model.name || model.id }}</span>
+            </label>
+          </div>
+          <p
+            v-if="!oauthCatalogLoading && form.enabledModels.length === 0"
+            class="text-xs text-destructive"
+            data-testid="oauth-models-required"
+          >
+            {{ $t('providers.oauthModelsRequired') }}
+          </p>
+        </div>
+
         <!-- OAuth Login Section -->
         <div v-if="isOAuthProvider && (mode === 'create' || oauthInProgress || oauthError)" class="flex flex-col gap-3">
           <!-- OAuth status messages -->
@@ -443,7 +490,7 @@
 </template>
 
 <script setup lang="ts">
-import type { Provider, ProviderTypePreset, OllamaModel, OllamaPullEvent } from '~/features/providers/composables/useProviders'
+import type { AvailableModel, Provider, ProviderTypePreset, OllamaModel, OllamaPullEvent } from '~/features/providers/composables/useProviders'
 
 export interface ProviderFormPayload {
   name: string
@@ -477,6 +524,7 @@ const {
   pullOllamaModel,
   probeOllamaPull,
   startOAuthLogin,
+  fetchModels,
   pollOAuthStatus,
   submitOAuthCode,
   fetchProviders,
@@ -497,6 +545,8 @@ const form = reactive({
 })
 
 const oauthInProgress = ref(false)
+const oauthCatalogModels = ref<AvailableModel[]>([])
+const oauthCatalogLoading = ref(false)
 const oauthError = ref<string | null>(null)
 const oauthLoginId = ref<string | null>(null)
 const oauthUsesCallback = ref(false)
@@ -597,8 +647,51 @@ const supportsTransport = computed(() => {
   return selectedPreset.value?.apiType === 'openai-codex-responses'
 })
 
+// A new OAuth provider is saved by the server as soon as the sign-in
+// completes, so it needs at least one model before the login starts.
 const canStartOAuth = computed(() => {
-  return Boolean(form.name.trim() && form.providerType)
+  return Boolean(form.name.trim() && form.providerType && form.enabledModels.length > 0)
+})
+
+/**
+ * OAuth create mode: load the preset's catalog and preselect its first model
+ * (the catalog default). A choice the user already made for this type stays.
+ */
+async function loadOAuthCatalog() {
+  const providerType = form.providerType
+  oauthCatalogModels.value = []
+  if (props.mode !== 'create' || !providerType || !isOAuthProvider.value) {
+    oauthCatalogLoading.value = false
+    return
+  }
+  oauthCatalogLoading.value = true
+  try {
+    const models = await fetchModels(providerType)
+    if (form.providerType !== providerType) return
+    oauthCatalogModels.value = models
+    const known = new Set(models.map(m => m.id))
+    form.enabledModels = form.enabledModels.filter(id => known.has(id))
+    if (form.enabledModels.length === 0 && models[0]) {
+      form.enabledModels = [models[0].id]
+    }
+  } catch (err) {
+    if (form.providerType === providerType) oauthError.value = (err as Error).message
+  } finally {
+    if (form.providerType === providerType) oauthCatalogLoading.value = false
+  }
+}
+
+function toggleOAuthModel(modelId: string) {
+  const idx = form.enabledModels.indexOf(modelId)
+  if (idx >= 0) {
+    form.enabledModels.splice(idx, 1)
+  } else {
+    form.enabledModels.push(modelId)
+  }
+}
+
+watch(() => [props.open, props.mode, form.providerType, props.presets] as const, ([isOpen]) => {
+  if (isOpen) void loadOAuthCatalog()
 })
 
 const canSubmit = computed(() => {

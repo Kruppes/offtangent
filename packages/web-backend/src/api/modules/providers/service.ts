@@ -88,6 +88,22 @@ export class ProvidersNotFoundError extends Error {}
 export class ProvidersRuntimeError extends Error {}
 export class ProvidersExternalError extends Error {}
 
+/**
+ * Models for a provider created by an OAuth login: the user's choice, or the
+ * first catalog model of the preset when the choice is empty. Throws when the
+ * preset has no catalog, so the login is refused instead of producing a
+ * provider without models.
+ */
+function resolveNewOAuthProviderModels(providerType: ProviderType, enabledModels: string[] | undefined): string[] {
+  const chosen = (enabledModels ?? []).filter(model => model.trim().length > 0)
+  if (chosen.length > 0) return chosen
+  const fallback = getAvailableModels(providerType)[0]?.id
+  if (!fallback) {
+    throw new ProvidersValidationError('Select at least one model before signing in')
+  }
+  return [fallback]
+}
+
 export interface ProvidersService {
   listProviders: () => { masked: ProvidersFile; decrypted: ProvidersFile }
   getModelsByProviderType: (providerType: string) => AvailableModel[]
@@ -257,6 +273,16 @@ export function createProvidersService(options: ProvidersRouterOptions = {}): Pr
     }
     const usesCallbackServer = OAUTH_USES_CALLBACK_SERVER[preset.oauthProviderId] ?? false
 
+    // A new OAuth provider must never be created without models: the login
+    // saves it on the server the moment the token arrives, and an entry with
+    // `enabledModels: []` leaves nothing to pick. An empty list falls back to
+    // the preset's first catalog model; without a catalog the login is refused
+    // before any request leaves. "Renew token" (providerId) keeps the existing
+    // entry's models untouched.
+    const enabledModels = payload.providerId
+      ? payload.enabledModels
+      : resolveNewOAuthProviderModels(payload.providerType as ProviderType, payload.enabledModels)
+
     // Resume an already-running login for the same target instead of starting
     // a second one. Callback-server flows (e.g. Anthropic) bind a fixed local
     // port that stays open until the flow completes; spawning a fresh login
@@ -289,7 +315,7 @@ export function createProvidersService(options: ProvidersRouterOptions = {}): Pr
       status: 'pending',
       providerType: payload.providerType,
       name: payload.name,
-      enabledModels: payload.enabledModels,
+      enabledModels,
       textVerbosity: payload.textVerbosity,
       transport: payload.transport,
       baseUrl: payload.baseUrl,
