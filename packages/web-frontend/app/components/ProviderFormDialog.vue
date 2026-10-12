@@ -347,6 +347,32 @@
             {{ $t('providers.loadingModels') }}
           </div>
           <div
+            v-else-if="oauthCatalogError"
+            class="flex items-center gap-3 rounded-md border border-destructive/50 bg-destructive/10 px-3 py-2"
+            data-testid="oauth-catalog-error"
+          >
+            <p class="flex-1 min-w-0 text-xs text-destructive">
+              {{ $t('providers.oauthCatalogFailed', { error: oauthCatalogError }) }}
+            </p>
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              :disabled="oauthInProgress"
+              data-testid="oauth-catalog-retry"
+              @click="loadOAuthCatalog()"
+            >
+              {{ $t('providers.oauthCatalogRetry') }}
+            </Button>
+          </div>
+          <p
+            v-else-if="oauthCatalogLoaded && oauthCatalogModels.length === 0"
+            class="rounded-md border border-border bg-card px-3 py-2 text-xs text-muted-foreground"
+            data-testid="oauth-catalog-empty"
+          >
+            {{ $t('providers.oauthCatalogEmpty') }}
+          </p>
+          <div
             v-else-if="oauthCatalogModels.length > 0"
             class="flex flex-col gap-0 rounded-md border border-border overflow-hidden max-h-52 overflow-y-auto"
           >
@@ -369,7 +395,7 @@
             </label>
           </div>
           <p
-            v-if="!oauthCatalogLoading && form.enabledModels.length === 0"
+            v-if="!oauthCatalogLoading && oauthCatalogModels.length > 0 && form.enabledModels.length === 0"
             class="text-xs text-destructive"
             data-testid="oauth-models-required"
           >
@@ -490,6 +516,7 @@
 </template>
 
 <script setup lang="ts">
+import { createOAuthCatalogLoader, selectOAuthCatalogModels } from '~/utils/oauthCatalogLoader'
 import type { AvailableModel, Provider, ProviderTypePreset, OllamaModel, OllamaPullEvent } from '~/features/providers/composables/useProviders'
 
 export interface ProviderFormPayload {
@@ -547,6 +574,8 @@ const form = reactive({
 const oauthInProgress = ref(false)
 const oauthCatalogModels = ref<AvailableModel[]>([])
 const oauthCatalogLoading = ref(false)
+const oauthCatalogError = ref<string | null>(null)
+const oauthCatalogLoaded = ref(false)
 const oauthError = ref<string | null>(null)
 const oauthLoginId = ref<string | null>(null)
 const oauthUsesCallback = ref(false)
@@ -656,29 +685,44 @@ const canStartOAuth = computed(() => {
 /**
  * OAuth create mode: load the preset's catalog and preselect its first model
  * (the catalog default). A choice the user already made for this type stays.
+ * A late answer is dropped once the dialog closed, switched to edit mode or
+ * changed type (see `createOAuthCatalogLoader`).
  */
-async function loadOAuthCatalog() {
-  const providerType = form.providerType
-  oauthCatalogModels.value = []
-  if (props.mode !== 'create' || !providerType || !isOAuthProvider.value) {
+const oauthCatalogLoader = createOAuthCatalogLoader<AvailableModel>({
+  fetchModels,
+  context: () => ({
+    open: props.open,
+    mode: props.mode,
+    providerType: form.providerType,
+    isOAuth: isOAuthProvider.value,
+  }),
+  onStart: () => {
+    oauthCatalogModels.value = []
+    oauthCatalogError.value = null
+    oauthCatalogLoaded.value = false
+    oauthCatalogLoading.value = true
+  },
+  onIdle: () => {
+    oauthCatalogModels.value = []
+    oauthCatalogError.value = null
+    oauthCatalogLoaded.value = false
     oauthCatalogLoading.value = false
-    return
-  }
-  oauthCatalogLoading.value = true
-  try {
-    const models = await fetchModels(providerType)
-    if (form.providerType !== providerType) return
+  },
+  onModels: (models) => {
     oauthCatalogModels.value = models
-    const known = new Set(models.map(m => m.id))
-    form.enabledModels = form.enabledModels.filter(id => known.has(id))
-    if (form.enabledModels.length === 0 && models[0]) {
-      form.enabledModels = [models[0].id]
-    }
-  } catch (err) {
-    if (form.providerType === providerType) oauthError.value = (err as Error).message
-  } finally {
-    if (form.providerType === providerType) oauthCatalogLoading.value = false
-  }
+    oauthCatalogLoaded.value = true
+    form.enabledModels = selectOAuthCatalogModels(form.enabledModels, models)
+  },
+  onError: (message) => {
+    oauthCatalogError.value = message
+  },
+  onSettled: () => {
+    oauthCatalogLoading.value = false
+  },
+})
+
+function loadOAuthCatalog() {
+  return oauthCatalogLoader.load()
 }
 
 function toggleOAuthModel(modelId: string) {
@@ -690,8 +734,10 @@ function toggleOAuthModel(modelId: string) {
   }
 }
 
-watch(() => [props.open, props.mode, form.providerType, props.presets] as const, ([isOpen]) => {
-  if (isOpen) void loadOAuthCatalog()
+// Runs on close and on mode changes too: every load starts a new generation,
+// so a request still in flight can no longer write to the form.
+watch(() => [props.open, props.mode, form.providerType, props.presets] as const, () => {
+  void loadOAuthCatalog()
 })
 
 const canSubmit = computed(() => {
