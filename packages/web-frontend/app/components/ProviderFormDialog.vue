@@ -348,7 +348,7 @@
                 >
                   {{ $t('providers.oauthDeviceCode') }}
                   <code
-                    class="ml-1 rounded bg-background px-1.5 py-0.5 font-mono text-sm font-semibold text-foreground"
+                    class="ml-1 rounded bg-background px-2 py-1 font-mono text-sm font-semibold text-foreground"
                     data-testid="oauth-device-code"
                   >{{ oauthUserCode }}</code>
                 </p>
