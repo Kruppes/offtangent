@@ -157,6 +157,8 @@ export function useProvidersApi() {
     providerId?: string
     textVerbosity?: 'low' | 'medium' | 'high' | null
     transport?: 'sse' | 'websocket' | 'websocket-cached' | 'auto' | null
+    /** Region of a multi-region OAuth preset (one of its baseUrlOptions). */
+    baseUrl?: string
   }) =>
     apiFetch<OAuthLoginResponse>('/api/providers/oauth/login', {
       method: 'POST',

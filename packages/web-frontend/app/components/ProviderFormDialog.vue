@@ -69,9 +69,13 @@
         </div>
 
         <!-- Region (fixed-URL presets served from several official endpoints, e.g. Kimi coding plan) -->
-        <div v-if="form.providerType && !isOAuthProvider && baseUrlOptions.length > 0" class="flex flex-col gap-2">
+        <!-- OAuth presets: the region is fixed at sign-in (auth host and API base belong together). -->
+        <div v-if="form.providerType && showRegionSelect" class="flex flex-col gap-2">
           <Label for="provider-region">{{ $t('providers.region') }}</Label>
-          <Select v-model="form.baseUrl">
+          <Select
+            v-model="form.baseUrl"
+            :disabled="oauthInProgress"
+          >
             <SelectTrigger id="provider-region" class="w-full">
               <SelectValue />
             </SelectTrigger>
@@ -82,7 +86,7 @@
             </SelectContent>
           </Select>
           <p class="text-xs text-muted-foreground">
-            {{ $t('providers.regionHint') }}
+            {{ isOAuthProvider ? $t('providers.regionHintOAuth') : $t('providers.regionHint') }}
           </p>
         </div>
 
@@ -338,6 +342,16 @@
               <div class="flex-1">
                 <p class="text-sm font-medium">{{ $t('providers.oauthWaiting') }}</p>
                 <p class="mt-1 text-xs text-muted-foreground">{{ $t('providers.oauthWaitingHint') }}</p>
+                <p
+                  v-if="oauthUserCode"
+                  class="mt-2 text-xs text-muted-foreground"
+                >
+                  {{ $t('providers.oauthDeviceCode') }}
+                  <code
+                    class="ml-1 rounded bg-background px-1.5 py-0.5 font-mono text-sm font-semibold text-foreground"
+                    data-testid="oauth-device-code"
+                  >{{ oauthUserCode }}</code>
+                </p>
               </div>
             </div>
 
@@ -486,6 +500,9 @@ const oauthInProgress = ref(false)
 const oauthError = ref<string | null>(null)
 const oauthLoginId = ref<string | null>(null)
 const oauthUsesCallback = ref(false)
+// Device-code flows (Kimi Code, GitHub Copilot) return the user code as
+// `instructions`; shown so the user can compare it with the browser page.
+const oauthUserCode = ref<string | null>(null)
 const manualCode = ref('')
 
 // Ollama state
@@ -547,6 +564,20 @@ watch([baseUrlOptions, () => form.baseUrl], ([options, current]) => {
 const isOAuthProvider = computed(() => {
   return selectedPreset.value?.authMethod === 'oauth'
 })
+
+// API-key presets: always editable. OAuth presets: only before the sign-in —
+// afterwards the region belongs to the stored token ("Renew token" keeps it).
+const showRegionSelect = computed(() => {
+  if (baseUrlOptions.value.length === 0) return false
+  return !isOAuthProvider.value || props.mode === 'create'
+})
+
+/** Region choice sent with an OAuth login of a multi-region preset. */
+function oauthRegionPayload(): { baseUrl?: string } {
+  return isOAuthProvider.value && props.mode === 'create' && baseUrlOptions.value.length > 0 && form.baseUrl
+    ? { baseUrl: form.baseUrl }
+    : {}
+}
 
 const isOpenAiCompatibleProvider = computed(() => {
   return form.providerType === 'openai-compatible' || selectedPreset.value?.type === 'openai-compatible'
@@ -682,6 +713,7 @@ watch(() => [props.open, props.provider] as const, ([isOpen, entry]) => {
     oauthInProgress.value = false
     oauthError.value = null
     oauthLoginId.value = null
+    oauthUserCode.value = null
     manualCode.value = ''
   }
 }, { immediate: true })
@@ -852,6 +884,7 @@ function cancelOAuthRenew() {
   // and reset local OAuth state so the user can trigger a fresh renewal.
   oauthInProgress.value = false
   oauthLoginId.value = null
+  oauthUserCode.value = null
   manualCode.value = ''
   oauthError.value = null
 }
@@ -875,6 +908,7 @@ async function startOAuthRenew() {
 
     oauthLoginId.value = response.loginId
     oauthUsesCallback.value = response.usesCallbackServer
+    oauthUserCode.value = response.instructions?.trim() || null
 
     if (response.authUrl) {
       window.open(response.authUrl, '_blank')
@@ -901,10 +935,12 @@ async function startOAuth() {
       enabledModels: [...form.enabledModels],
       textVerbosity: normalizeTextVerbosityPayload(),
       transport: normalizeTransportPayload(),
+      ...oauthRegionPayload(),
     })
 
     oauthLoginId.value = response.loginId
     oauthUsesCallback.value = response.usesCallbackServer
+    oauthUserCode.value = response.instructions?.trim() || null
 
     // Open auth URL in new tab
     if (response.authUrl) {

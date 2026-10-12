@@ -15,6 +15,8 @@ export interface PendingOAuthLogin {
   enabledModels: string[]
   textVerbosity?: 'low' | 'medium' | 'high' | null
   transport?: 'sse' | 'websocket' | 'websocket-cached' | 'auto' | null
+  /** Region choice of a multi-region OAuth preset (validated before login). */
+  baseUrl?: string
   authUrl?: string
   instructions?: string
   credentials?: OAuthCredentials

@@ -299,6 +299,8 @@
     "modelsRetry": "↻ Retry loading models",
     "region": "Region",
     "regionHint": "Choose the region your account and API key belong to. A key only works in the region it was issued for.",
+    "regionHintOAuth": "Choose the region of your Kimi account before signing in. Sign-in host and API endpoint always use the same region; to switch, create a new provider.",
+    "oauthDeviceCode": "Confirm this code in the browser:",
     "ollamaUrlHint": "Default: http://localhost:11434/v1",
     "openaiCompatibleBaseUrlPlaceholder": "https://integrate.api.nvidia.com/v1",
     "openaiCompatibleBaseUrlHint": "Required. Endpoint root that exposes /v1/chat/completions (e.g. NVIDIA NIM, LM Studio, vLLM).",

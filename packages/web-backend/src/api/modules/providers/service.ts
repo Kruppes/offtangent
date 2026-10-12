@@ -35,7 +35,7 @@ import type {
   ProviderOAuthLoginStartPayloadContract,
   ProviderUpdatePayloadContract,
 } from '@axiom/core/contracts'
-import { getPiOAuthAuth } from '@axiom/core'
+import { getOAuthAuthForLogin, matchPresetBaseUrlOption } from '@axiom/core'
 import type { OAuthCredentials } from '@earendil-works/pi-ai/oauth'
 
 /**
@@ -206,7 +206,15 @@ export function createProvidersService(options: ProvidersRouterOptions = {}): Pr
       throw new ProvidersValidationError('This provider type does not use OAuth')
     }
 
-    const oauthAuth = getPiOAuthAuth(preset.oauthProviderId)
+    // Multi-region presets (Kimi Code): the region must be one of the preset's
+    // options, and it picks the auth host of this login.
+    if (payload.baseUrl && preset.baseUrlOptions?.length && !matchPresetBaseUrlOption(preset, payload.baseUrl)) {
+      throw new ProvidersValidationError('Invalid region for this provider type')
+    }
+    // A re-login ("Renew token") stays in the region the provider already uses.
+    const loginBaseUrl = payload.baseUrl
+      ?? (payload.providerId ? loadProviders().providers.find((entry) => entry.id === payload.providerId)?.baseUrl : undefined)
+    const oauthAuth = getOAuthAuthForLogin(payload.providerType as ProviderType, loginBaseUrl)
     if (!oauthAuth) {
       throw new ProvidersValidationError(`OAuth provider "${preset.oauthProviderId}" not found`)
     }
@@ -223,6 +231,7 @@ export function createProvidersService(options: ProvidersRouterOptions = {}): Pr
         : existing.existingProviderId == null
           && existing.providerType === payload.providerType
           && existing.name === payload.name
+          && existing.baseUrl === payload.baseUrl
       if (!sameTarget) continue
       if (existing.status === 'pending' && existing.authUrl) {
         return {
@@ -245,6 +254,7 @@ export function createProvidersService(options: ProvidersRouterOptions = {}): Pr
       enabledModels: payload.enabledModels,
       textVerbosity: payload.textVerbosity,
       transport: payload.transport,
+      baseUrl: payload.baseUrl,
       createdAt: Date.now(),
       existingProviderId: payload.providerId,
     }
@@ -367,6 +377,7 @@ export function createProvidersService(options: ProvidersRouterOptions = {}): Pr
             textVerbosity: loginState.textVerbosity ?? undefined,
             transport: loginState.transport ?? undefined,
             oauthCredentials: loginState.credentials,
+            baseUrl: loginState.baseUrl,
           })
           const afterActiveProvider = loadProviders().activeProvider ?? null
 

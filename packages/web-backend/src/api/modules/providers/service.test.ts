@@ -2,7 +2,7 @@ import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } 
 import fs from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
-import { addProvider, getAvailableModels } from '@axiom/core'
+import { addOAuthProvider, addProvider, getAvailableModels } from '@axiom/core'
 import {
   createProvidersService,
   ProvidersNotFoundError,
@@ -150,5 +150,91 @@ describe('GPT-6.1 Sol in the model picker', () => {
     const listed = mapProvidersListResponse(masked, decrypted).providers.find(p => p.id === provider.id)
     expect(listed?.modelCosts?.['gpt-6.1-sol']).toEqual({ input: 2, output: 10, cacheRead: 0.1, cacheWrite: 2.5 })
     expect(listed?.modelCosts?.['gpt-6-sol']).toEqual({ input: 2, output: 10, cacheRead: 0.2, cacheWrite: 2.5 })
+  })
+})
+
+describe('Kimi Code OAuth device login (region aware)', () => {
+  afterEach(() => {
+    vi.unstubAllGlobals()
+  })
+
+  function stubKimiAuth() {
+    const urls: string[] = []
+    vi.stubGlobal('fetch', vi.fn(async (input: Parameters<typeof fetch>[0]) => {
+      const url = String(input)
+      urls.push(url)
+      const host = new URL(url).origin
+      const body = url.endsWith('/device_authorization')
+        ? { device_code: 'dev', user_code: 'WXYZ-0001', verification_uri_complete: `${host}/device?user_code=WXYZ-0001`, interval: 0.001, expires_in: 60 }
+        : { access_token: 'kimi-access', refresh_token: 'kimi-refresh', expires_in: 3600 }
+      return new Response(JSON.stringify(body), { status: 200, headers: { 'content-type': 'application/json' } })
+    }))
+    return urls
+  }
+
+  async function waitForCompletion(service: ReturnType<typeof createProvidersService>, loginId: string) {
+    for (let i = 0; i < 200; i++) {
+      const status = await service.getOAuthStatus(loginId)
+      if (status.status !== 'pending') return status
+      await new Promise(resolve => setTimeout(resolve, 5))
+    }
+    throw new Error('login did not complete')
+  }
+
+  it.each([
+    ['China', 'https://api.kimi.com/coding', 'https://auth.kimi.com'],
+    ['International', 'https://api.kimi.ai/coding', 'https://auth.kimi.ai'],
+  ])('%s: device code from the regional auth host, provider on the matching API base', async (_label, baseUrl, authHost) => {
+    const urls = stubKimiAuth()
+    const service = createProvidersService()
+    const started = await service.startOAuthLogin({
+      providerType: 'kimi-coding-oauth', name: 'Kimi Code', enabledModels: ['k3'], baseUrl,
+    })
+    expect(started.authUrl).toBe(`${authHost}/device?user_code=WXYZ-0001`)
+    expect(started.instructions).toBe('WXYZ-0001')
+    expect(started.usesCallbackServer).toBe(false)
+
+    const done = await waitForCompletion(service, started.loginId)
+    expect(done.status).toBe('completed')
+    if (done.status !== 'completed') return
+    expect(done.provider.providerType).toBe('kimi-coding-oauth')
+    expect(done.provider.authMethod).toBe('oauth')
+    expect(done.provider.baseUrl).toBe(baseUrl)
+    expect(urls.every(url => url.startsWith(`${authHost}/`))).toBe(true)
+    expect(urls.some(url => url.endsWith('/api/oauth/token'))).toBe(true)
+  })
+
+  it('"Renew token" signs in again in the region the provider already uses', async () => {
+    const existing = addOAuthProvider({
+      name: 'Kimi Intl',
+      providerType: 'kimi-coding-oauth',
+      enabledModels: ['k3'],
+      baseUrl: 'https://api.kimi.ai/coding',
+      oauthCredentials: { access: 'old-access', refresh: 'old-refresh', expires: Date.now() - 1000, region: 'intl' },
+    })
+    const urls = stubKimiAuth()
+    const service = createProvidersService()
+    const started = await service.startOAuthLogin({
+      providerType: 'kimi-coding-oauth', name: 'Kimi Intl', enabledModels: ['k3'], providerId: existing.id,
+    })
+    expect(started.authUrl).toBe('https://auth.kimi.ai/device?user_code=WXYZ-0001')
+    // Let the background poll finish while fetch is still stubbed.
+    expect((await waitForCompletion(service, started.loginId)).status).toBe('completed')
+    expect(urls.length).toBeGreaterThan(1)
+    expect(urls.every(url => url.startsWith('https://auth.kimi.ai/'))).toBe(true)
+  })
+
+  it('rejects a region that is not one of the two official endpoints, before any request', async () => {
+    const urls = stubKimiAuth()
+    await expect(createProvidersService().startOAuthLogin({
+      providerType: 'kimi-coding-oauth', name: 'Kimi Code', enabledModels: ['k3'], baseUrl: 'https://proxy.example.invalid/coding',
+    })).rejects.toBeInstanceOf(ProvidersValidationError)
+    expect(urls).toEqual([])
+  })
+
+  it('the API-key kimi-coding type has no OAuth login', async () => {
+    await expect(createProvidersService().startOAuthLogin({
+      providerType: 'kimi-coding', name: 'Kimi Code', enabledModels: ['k3'],
+    })).rejects.toBeInstanceOf(ProvidersValidationError)
   })
 })

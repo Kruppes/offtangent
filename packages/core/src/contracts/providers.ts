@@ -285,6 +285,8 @@ export interface ProviderOAuthLoginStartPayloadContract {
   providerId?: string
   textVerbosity?: ProviderTextVerbosityContract | null
   transport?: ProviderTransportContract | null
+  /** Region choice of a multi-region OAuth preset (Kimi Code), one of its baseUrlOptions. */
+  baseUrl?: string
 }
 
 export interface ProviderOAuthCodePayloadContract {

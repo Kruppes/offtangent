@@ -278,6 +278,7 @@ export function parseOAuthLoginPayload(payload: unknown): ParseResult<ProviderOA
       providerId: asTrimmedString(body.providerId),
       textVerbosity: normalizeTextVerbosity(body.textVerbosity),
       transport: normalizeTransport(body.transport),
+      baseUrl: asTrimmedString(body.baseUrl),
     },
   }
 }
