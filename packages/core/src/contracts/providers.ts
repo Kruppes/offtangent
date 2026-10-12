@@ -142,6 +142,12 @@ export interface ProviderTypePresetContract {
   baseUrl: string
   requiresApiKey: boolean
   urlEditable: boolean
+  /**
+   * Fixed-URL presets served from several official regions (e.g. Kimi coding
+   * plan: China / international). The UI shows a region picker with exactly
+   * these URLs; the backend rejects any other URL.
+   */
+  baseUrlOptions?: Array<{ url: string; label: string }>
   piAiProvider: string | null
   /**
    * True if the provider type has a known catalog of models (either via

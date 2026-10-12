@@ -68,6 +68,24 @@
           </p>
         </div>
 
+        <!-- Region (fixed-URL presets served from several official endpoints, e.g. Kimi coding plan) -->
+        <div v-if="form.providerType && !isOAuthProvider && baseUrlOptions.length > 0" class="flex flex-col gap-2">
+          <Label for="provider-region">{{ $t('providers.region') }}</Label>
+          <Select v-model="form.baseUrl">
+            <SelectTrigger id="provider-region" class="w-full">
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem v-for="option in baseUrlOptions" :key="option.url" :value="option.url">
+                {{ option.label }}
+              </SelectItem>
+            </SelectContent>
+          </Select>
+          <p class="text-xs text-muted-foreground">
+            {{ $t('providers.regionHint') }}
+          </p>
+        </div>
+
         <!-- API Key (all non-OAuth providers; optional for providers that don't require it) -->
         <div v-if="form.providerType && !isOAuthProvider" class="flex flex-col gap-2">
           <Label for="provider-key">
@@ -507,6 +525,24 @@ const selectedPreset = computed(() => {
 type ExtraFieldDef = NonNullable<ProviderTypePreset['extraFields']>[number]
 
 const extraFieldDefs = computed<ExtraFieldDef[]>(() => selectedPreset.value?.extraFields ?? [])
+
+// Multi-region presets (e.g. Kimi coding plan) offer a closed list of official
+// endpoints instead of a free URL field; the backend rejects anything else.
+const baseUrlOptions = computed(() => selectedPreset.value?.baseUrlOptions ?? [])
+
+function normalizeUrlForCompare(url: string): string {
+  return url.trim().replace(/\/+$/, '').toLowerCase()
+}
+
+// Keep form.baseUrl on one of the allowed options: map a stored variant
+// (trailing slash) to its canonical option and fall back to the preset default
+// for anything else (e.g. after switching the type of an existing provider).
+watch([baseUrlOptions, () => form.baseUrl], ([options, current]) => {
+  if (options.length === 0) return
+  const match = options.find(o => normalizeUrlForCompare(o.url) === normalizeUrlForCompare(current ?? ''))
+  const next = match?.url ?? selectedPreset.value?.baseUrl ?? options[0]!.url
+  if (next !== current) form.baseUrl = next
+}, { immediate: true })
 
 const isOAuthProvider = computed(() => {
   return selectedPreset.value?.authMethod === 'oauth'

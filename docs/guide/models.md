@@ -29,7 +29,7 @@ The source of truth is the `ProviderType` union in `packages/core/src/provider-c
 | 5 | `openrouter` | OpenRouter | API key | `https://openrouter.ai/api/v1` | `openai-completions` | **yes** |
 | 6 | `deepseek` | DeepSeek | API key | `https://api.deepseek.com` | `openai-completions` | no |
 | 7 | `kimi` | Kimi / Moonshot | API key | `https://api.moonshot.ai/v1` | `openai-completions` | no |
-| 8 | `kimi-coding` | Kimi Coding (Subscription) | plan API key | `https://api.kimi.com/coding` | `anthropic-messages` | no |
+| 8 | `kimi-coding` | Kimi Coding (Subscription) | plan API key | `https://api.kimi.com/coding` (China, default) or `https://api.kimi.ai/coding` (international) | `anthropic-messages` | no |
 | 9 | `minimax` | MiniMax | API key | `https://api.minimax.io/anthropic` | `anthropic-messages` | no |
 | 10 | `zai` | z.ai | API key | `https://api.z.ai/api/paas/v4` | `openai-completions` | no |
 | 11 | `zai-coding` | z.ai (GLM Coding Plan) | plan API key | `https://api.z.ai/api/coding/paas/v4` | `openai-completions` | no |
@@ -42,6 +42,7 @@ The source of truth is the `ProviderType` union in `packages/core/src/provider-c
 Notes on the table:
 
 - **Base URL editable** only for `ollama` and `openai-compatible`. For every other type the URL is pinned by the preset so a typo cannot silently redirect your key to a third party.
+- `kimi-coding` is served from two official regions. The provider dialog shows a **Region** picker instead of a URL field: *China (kimi.com)* → `https://api.kimi.com/coding`, *International (kimi.ai)* → `https://api.kimi.ai/coding`. A plan key only works in the region it was issued in (keys from kimi.ai need *International*). No other URL is accepted; entries saved before the picker existed keep the China endpoint. The preset uses the plan API key; Kimi Code's OAuth login (used by Moonshot's own clients) is not wired up.
 - `opencode-zen` and `opencode-go` are gateways whose models span several wire APIs. They set `resolveModelsFromCatalog`, so each model keeps its own `api`, `baseUrl`, cost and limits instead of being pinned to one API type. `kimi` and `kimi-coding` use the same mechanism to inherit the maintained upstream catalog.
 - `openai-compatible` is the escape hatch for anything speaking the OpenAI completions protocol: LM Studio, vLLM, NVIDIA NIM, a Cloudflare AI Gateway, a self-hosted router. You supply base URL and (optionally) key.
 

@@ -34,6 +34,7 @@ import {
   refreshOAuthCredentialsLocked,
   recoverOAuthAfterAuthFailure,
   resolvePromptProfileOptions,
+  resolveEffectiveBaseUrl,
 } from './provider-config.js'
 import { SYSTEM_PROMPT_CACHE_MARKER } from './prompt-cache.js'
 import { getBuiltinModels } from '@earendil-works/pi-ai/providers/all'
@@ -1716,8 +1717,8 @@ describe('getAvailableModels', () => {
   })
 
   it('exposes the kimi-coding subscription preset backed by the pi-ai catalog', () => {
-    // Distinct api-key provider (Anthropic-messages endpoint), NOT OAuth —
-    // Moonshot has no OAuth flow. Models resolve from pi-ai's kimi-coding catalog.
+    // Distinct api-key provider (Anthropic-messages endpoint); the preset does
+    // not wire up Kimi Code's OAuth login. Models resolve from pi-ai's kimi-coding catalog.
     const models = getAvailableModels('kimi-coding')
     const ids = models.map(m => m.id)
     expect(ids).toContain('k3')
@@ -2179,5 +2180,129 @@ describe('GPT-6.1 Sol override (openai + openai-codex)', () => {
     })
     expect(calculateCost(model, usage(100_000)).total).toBeCloseTo(100_000 * 2 / 1e6 + 1_000 * 10 / 1e6, 9)
     expect(calculateCost(model, usage(300_000)).total).toBeCloseTo(300_000 * 4 / 1e6 + 1_000 * 15 / 1e6, 9)
+  })
+})
+
+describe('kimi-coding region (China / international endpoint)', () => {
+  const CN = 'https://api.kimi.com/coding'
+  const INTL = 'https://api.kimi.ai/coding'
+  let tmpDir: string
+  const originalDataDir = process.env.DATA_DIR
+
+  afterEach(() => {
+    if (tmpDir) fs.rmSync(tmpDir, { recursive: true, force: true })
+    if (originalDataDir !== undefined) process.env.DATA_DIR = originalDataDir
+    else delete process.env.DATA_DIR
+  })
+
+  function setup(providers: unknown[] = []): void {
+    tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'axiom-kimi-region-'))
+    const configDir = path.join(tmpDir, 'config')
+    fs.mkdirSync(configDir, { recursive: true })
+    fs.writeFileSync(path.join(configDir, 'providers.json'), JSON.stringify({ providers }, null, 2), 'utf-8')
+    process.env.DATA_DIR = tmpDir
+  }
+
+  function legacyKimiCoding(baseUrl?: string): Record<string, unknown> {
+    return {
+      id: 'kc-legacy', name: 'Kimi Code', type: 'anthropic-messages', providerType: 'kimi-coding',
+      provider: 'kimi-coding', ...(baseUrl !== undefined && { baseUrl }), apiKey: encrypt('sk-test'),
+      enabledModels: ['k3'], degradedThresholdMs: 5000, status: 'untested', authMethod: 'api-key',
+    }
+  }
+
+  it('the pi-ai catalog only carries the China URL (why buildModel must override it)', () => {
+    const catalog = getBuiltinModels('kimi-coding' as never) as Array<{ id: string; baseUrl: string }>
+    expect(catalog.length).toBeGreaterThan(0)
+    expect(catalog.every(m => m.baseUrl === CN)).toBe(true)
+  })
+
+  it('exposes exactly the two official endpoints, China as default', () => {
+    const preset = PROVIDER_TYPE_PRESETS['kimi-coding']
+    expect(preset.baseUrl).toBe(CN)
+    expect(preset.urlEditable).toBe(false)
+    expect(preset.baseUrlOptions?.map(o => o.url)).toEqual([CN, INTL])
+  })
+
+  it('international region: addProvider stores and buildModel uses api.kimi.ai for every catalog model', () => {
+    setup()
+    const p = addProvider({ name: 'Kimi Code', providerType: 'kimi-coding', baseUrl: INTL, apiKey: 'sk-test', enabledModels: ['k3'] })
+    expect(p.baseUrl).toBe(INTL)
+    const decrypted = loadProvidersDecrypted().providers[0]
+    expect(decrypted.baseUrl).toBe(INTL)
+    for (const id of ['k3', 'k3-256k', 'kimi-for-coding', 'kimi-for-coding-highspeed']) {
+      const model = buildModel(decrypted, id)
+      expect(model.baseUrl).toBe(INTL)
+      expect(model.api).toBe('anthropic-messages')
+    }
+  })
+
+  it('accepts the trailing-slash form from the docs and stores the canonical URL', () => {
+    setup()
+    const p = addProvider({ name: 'Kimi Code', providerType: 'kimi-coding', baseUrl: `${INTL}/`, apiKey: 'sk-test', enabledModels: ['k3'] })
+    expect(p.baseUrl).toBe(INTL)
+  })
+
+  it('China region (explicit and default) keeps api.kimi.com', () => {
+    setup()
+    const explicit = addProvider({ name: 'Kimi CN', providerType: 'kimi-coding', baseUrl: CN, apiKey: 'sk-test', enabledModels: ['k3'] })
+    const implicit = addProvider({ name: 'Kimi Default', providerType: 'kimi-coding', apiKey: 'sk-test', enabledModels: ['k3'] })
+    expect(explicit.baseUrl).toBe(CN)
+    expect(implicit.baseUrl).toBe(CN)
+    for (const p of loadProvidersDecrypted().providers) {
+      expect(buildModel(p, 'k3').baseUrl).toBe(CN)
+    }
+  })
+
+  it('legacy configs (no region / missing or foreign baseUrl) keep resolving to China', () => {
+    setup([legacyKimiCoding(CN), { ...legacyKimiCoding(), id: 'kc-none', name: 'No URL' }, { ...legacyKimiCoding('https://evil.example/coding'), id: 'kc-bad', name: 'Bad URL' }])
+    const providers = loadProvidersDecrypted().providers
+    expect(providers.map(p => p.baseUrl)).toEqual([CN, CN, CN])
+    for (const p of providers) expect(buildModel(p, 'k3').baseUrl).toBe(CN)
+    // buildModel on a raw (non-normalised) config must not leak the foreign URL either.
+    expect(buildModel({ ...providers[2], baseUrl: 'https://evil.example/coding' }, 'k3').baseUrl).toBe(CN)
+    expect(resolveEffectiveBaseUrl('kimi-coding', undefined)).toBe(CN)
+  })
+
+  it('rejects any URL outside the two official endpoints on add and update', () => {
+    setup()
+    expect(() => addProvider({ name: 'Bad', providerType: 'kimi-coding', baseUrl: 'https://api.kimi.ai/coding/v1', apiKey: 'sk', enabledModels: [] }))
+      .toThrow(/Invalid base URL/)
+    expect(() => addProvider({ name: 'Bad2', providerType: 'kimi-coding', baseUrl: 'https://api.moonshot.ai/anthropic', apiKey: 'sk', enabledModels: [] }))
+      .toThrow(/Invalid base URL/)
+    expect(loadProviders().providers).toHaveLength(0)
+
+    const p = addProvider({ name: 'Kimi Code', providerType: 'kimi-coding', apiKey: 'sk', enabledModels: ['k3'] })
+    expect(() => updateProvider(p.id, { baseUrl: 'https://proxy.example.invalid/coding' })).toThrow(/Invalid base URL/)
+    expect(loadProviders().providers[0].baseUrl).toBe(CN)
+  })
+
+  it('switching region via updateProvider round-trips China -> international -> China', () => {
+    setup()
+    const p = addProvider({ name: 'Kimi Code', providerType: 'kimi-coding', apiKey: 'sk', enabledModels: ['k3'] })
+    expect(updateProvider(p.id, { baseUrl: INTL }).baseUrl).toBe(INTL)
+    expect(buildModel(loadProvidersDecrypted().providers[0], 'k3').baseUrl).toBe(INTL)
+    // An update without baseUrl keeps the chosen region.
+    expect(updateProvider(p.id, { name: 'Kimi Code Intl' }).baseUrl).toBe(INTL)
+    expect(updateProvider(p.id, { baseUrl: CN }).baseUrl).toBe(CN)
+    expect(buildModel(loadProvidersDecrypted().providers[0], 'k3').baseUrl).toBe(CN)
+  })
+
+  it('validates against the target type when the provider type changes', () => {
+    setup()
+    const p = addProvider({ name: 'Kimi Code', providerType: 'kimi-coding', baseUrl: INTL, apiKey: 'sk', enabledModels: ['k3'] })
+    // Leaving kimi-coding for an editable type accepts a free URL ...
+    const moved = updateProvider(p.id, { providerType: 'openai-compatible', baseUrl: 'https://llm.example.invalid/v1' })
+    expect(moved.baseUrl).toBe('https://llm.example.invalid/v1')
+    // ... and switching back without a URL lands on the China default.
+    expect(updateProvider(p.id, { providerType: 'kimi-coding' }).baseUrl).toBe(CN)
+    expect(() => updateProvider(p.id, { providerType: 'openai-compatible', baseUrl: 'https://llm.example.invalid/v1' })).not.toThrow()
+    expect(() => updateProvider(p.id, { providerType: 'kimi-coding', baseUrl: 'https://llm.example.invalid/v1' })).toThrow(/Invalid base URL/)
+  })
+
+  it('other fixed-URL presets are unaffected (still pinned to the preset URL)', () => {
+    setup()
+    const p = addProvider({ name: 'Moonshot', providerType: 'kimi', baseUrl: 'https://example.invalid/v1', apiKey: 'sk', enabledModels: [] })
+    expect(loadProvidersDecrypted().providers.find(x => x.id === p.id)?.baseUrl).toBe('https://api.moonshot.ai/v1')
   })
 })

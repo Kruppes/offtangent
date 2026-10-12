@@ -146,6 +146,23 @@ export interface ProviderTypePreset {
    * changes frequently and is authoritative at the source (e.g. OpenRouter).
    */
   dynamicCatalog?: boolean
+  /**
+   * Closed list of official endpoints for a preset with a fixed URL
+   * (`urlEditable: false`) that is served from more than one region, e.g.
+   * the Kimi coding plan (China `api.kimi.com` vs. international
+   * `api.kimi.ai`). The UI renders a region picker instead of a free URL
+   * field; any other URL is rejected on save and replaced by `baseUrl` (the
+   * default) on load. For catalog-resolved presets, `buildModel()` applies
+   * the selected URL to the catalog model, whose own `baseUrl` is fixed.
+   */
+  baseUrlOptions?: ProviderBaseUrlOption[]
+}
+
+/** One selectable official endpoint of a multi-region preset. */
+export interface ProviderBaseUrlOption {
+  url: string
+  /** Default English label (UIs may localize). */
+  label: string
 }
 
 export interface AvailableModel {
@@ -294,11 +311,15 @@ export const PROVIDER_TYPE_PRESETS: Record<ProviderType, ProviderTypePreset> = {
     authMethod: 'api-key',
     resolveModelsFromCatalog: true,
   },
-  // Kimi Coding plan (subscription). NOTE: despite being a "subscription",
-  // Moonshot exposes NO OAuth flow — access is a plan-scoped API key against
-  // the dedicated coding endpoint (Anthropic-messages wire API), distinct
-  // from the pay-per-token Moonshot Platform (`kimi` preset above). Models
-  // (incl. Kimi K3) come from pi-ai's maintained `kimi-coding` catalog.
+  // Kimi Coding plan (subscription). This preset uses a plan-scoped API key
+  // against the dedicated coding endpoint (Anthropic-messages wire API),
+  // distinct from the pay-per-token Moonshot Platform (`kimi` preset above).
+  // Kimi Code also offers an OAuth device login (used by Moonshot's official
+  // clients); this preset does not wire it up and covers the API-key path
+  // only. The plan is served from two regions: China (`api.kimi.com`, the
+  // default, so existing configs keep their endpoint) and international
+  // (`api.kimi.ai`); a key only works in the region it was issued for.
+  // Models (incl. Kimi K3) come from pi-ai's maintained `kimi-coding` catalog.
   'kimi-coding': {
     type: 'kimi-coding',
     label: 'Kimi Coding (Subscription)',
@@ -308,6 +329,10 @@ export const PROVIDER_TYPE_PRESETS: Record<ProviderType, ProviderTypePreset> = {
     baseUrl: 'https://api.kimi.com/coding',
     requiresApiKey: true,
     urlEditable: false,
+    baseUrlOptions: [
+      { url: 'https://api.kimi.com/coding', label: 'China (kimi.com)' },
+      { url: 'https://api.kimi.ai/coding', label: 'International (kimi.ai)' },
+    ],
     piAiProvider: 'kimi-coding',
     authMethod: 'api-key',
     resolveModelsFromCatalog: true,
@@ -1387,6 +1412,57 @@ export function saveProviders(data: ProvidersFile): void {
   fs.writeFileSync(filePath, JSON.stringify(data, null, 2) + '\n', 'utf-8')
 }
 
+function normalizeBaseUrlForCompare(url: string): string {
+  return url.trim().replace(/\/+$/, '').toLowerCase()
+}
+
+/**
+ * Returns the canonical option URL when `url` is one of the preset's
+ * `baseUrlOptions` (trailing slashes / case ignored), otherwise null.
+ */
+export function matchPresetBaseUrlOption(
+  preset: Pick<ProviderTypePreset, 'baseUrlOptions'> | undefined,
+  url: string | undefined | null,
+): string | null {
+  if (!preset?.baseUrlOptions?.length || !url) return null
+  const wanted = normalizeBaseUrlForCompare(url)
+  return preset.baseUrlOptions.find(o => normalizeBaseUrlForCompare(o.url) === wanted)?.url ?? null
+}
+
+/**
+ * The base URL a provider actually talks to. Editable presets keep the stored
+ * URL; fixed presets use the preset URL, except multi-region presets
+ * (`baseUrlOptions`) which keep a stored URL from their allowed list and fall
+ * back to the preset default for anything else (incl. legacy configs).
+ */
+export function resolveEffectiveBaseUrl(
+  providerType: ProviderType,
+  storedBaseUrl: string | undefined | null,
+): string {
+  const preset = PROVIDER_TYPE_PRESETS[providerType]
+  if (!preset || preset.urlEditable) return storedBaseUrl ?? ''
+  return matchPresetBaseUrlOption(preset, storedBaseUrl) ?? preset.baseUrl
+}
+
+/**
+ * Validates a caller-supplied base URL for a multi-region preset. Returns the
+ * canonical option URL, the input unchanged when it is empty or the preset
+ * has no `baseUrlOptions`, and throws for a URL outside the allowed list.
+ */
+function validatePresetBaseUrlInput(
+  providerType: ProviderType,
+  baseUrl: string | undefined,
+): string | undefined {
+  const preset = PROVIDER_TYPE_PRESETS[providerType]
+  if (!preset?.baseUrlOptions?.length || !baseUrl) return baseUrl
+  const match = matchPresetBaseUrlOption(preset, baseUrl)
+  if (!match) {
+    const allowed = preset.baseUrlOptions.map(o => o.url).join(', ')
+    throw new Error(`Invalid base URL for ${preset.label}: must be one of ${allowed}`)
+  }
+  return match
+}
+
 /**
  * Get providers with API keys decrypted
  */
@@ -1397,7 +1473,7 @@ export function loadProvidersDecrypted(): ProvidersFile {
     providers: file.providers.map(p => {
       // Sync fixed URLs from presets (handles preset URL changes)
       const preset = PROVIDER_TYPE_PRESETS[p.providerType]
-      const baseUrl = (preset && !preset.urlEditable) ? preset.baseUrl : p.baseUrl
+      const baseUrl = (preset && !preset.urlEditable) ? resolveEffectiveBaseUrl(p.providerType, p.baseUrl) : p.baseUrl
 
       const decryptedApiKey = tryDecryptField(p.apiKey, `API key for provider "${p.name}"`) ?? p.apiKey
       const decryptedExtraFields = decryptExtraFields(p.providerType, p.extraFields, p.name)
@@ -1554,6 +1630,8 @@ export function addProvider(input: {
     throw new Error(`Provider with name "${input.name}" already exists`)
   }
 
+  const validatedBaseUrl = validatePresetBaseUrlInput(input.providerType, input.baseUrl)
+
   // Models may be added after creation via the "Add Model" flow, so a provider
   // can be created with no enabled models yet.
   const enabledModels = input.enabledModels ?? []
@@ -1564,7 +1642,7 @@ export function addProvider(input: {
     type: preset.apiType,
     providerType: input.providerType,
     provider: preset.providerName,
-    baseUrl: input.baseUrl || preset.baseUrl,
+    baseUrl: validatedBaseUrl || preset.baseUrl,
     apiKey: input.apiKey ? encrypt(input.apiKey) : '',
     enabledModels,
     degradedThresholdMs: input.degradedThresholdMs ?? 5000,
@@ -1709,7 +1787,9 @@ export function updateProvider(id: string, input: {
   }
 
   if (input.name !== undefined) existing.name = input.name
-  if (input.baseUrl !== undefined) existing.baseUrl = input.baseUrl
+  if (input.baseUrl !== undefined) {
+    existing.baseUrl = validatePresetBaseUrlInput(existing.providerType, input.baseUrl) ?? input.baseUrl
+  }
   if (input.apiKey !== undefined) existing.apiKey = input.apiKey ? encrypt(input.apiKey) : ''
   if (input.enabledModels !== undefined) {
     existing.enabledModels = input.enabledModels
@@ -1772,7 +1852,7 @@ export function updateProvider(id: string, input: {
   // For providers with fixed URLs, always sync from preset
   const currentPreset = PROVIDER_TYPE_PRESETS[existing.providerType]
   if (currentPreset && !currentPreset.urlEditable) {
-    existing.baseUrl = currentPreset.baseUrl
+    existing.baseUrl = resolveEffectiveBaseUrl(existing.providerType, existing.baseUrl)
   }
 
   // Reset status when config changes
@@ -2331,6 +2411,12 @@ export function buildModel(provider: ProviderConfig, modelId?: string): Model<Ap
 
       // `let` (not const): the resolvedAuth.baseUrl override below reassigns it.
       let piModel = models.find(m => m.id === id)
+
+      if (piModel && preset.baseUrlOptions?.length) {
+        // Multi-region preset (Kimi coding plan): the catalog pins one region's
+        // URL on every model, so apply the region the provider is configured for.
+        piModel = { ...piModel, baseUrl: resolveEffectiveBaseUrl(provider.providerType, provider.baseUrl) }
+      }
 
       if (piModel) {
         // Per-credential endpoint rewriting (GitHub Copilot proxy baseUrl)

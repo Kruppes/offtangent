@@ -297,6 +297,8 @@
     "loadingModels": "Loading models...",
     "modelsLoadError": "Failed to load models",
     "modelsRetry": "↻ Retry loading models",
+    "region": "Region",
+    "regionHint": "Choose the region your account and API key belong to. A key only works in the region it was issued for.",
     "ollamaUrlHint": "Default: http://localhost:11434/v1",
     "openaiCompatibleBaseUrlPlaceholder": "https://integrate.api.nvidia.com/v1",
     "openaiCompatibleBaseUrlHint": "Required. Endpoint root that exposes /v1/chat/completions (e.g. NVIDIA NIM, LM Studio, vLLM).",
