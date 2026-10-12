@@ -221,6 +221,28 @@ describe('getKimiCodingQuotaForProvider', () => {
     expect(result).toMatchObject({ quota: null, status: 429, retryAfterMs: 30_000 })
   })
 
+  it('a fetch exception carrying the token yields only a category (review finding 3)', async () => {
+    const provider = oauthProvider('intl', 'https://api.kimi.ai/coding')
+    const fetchImpl = vi.fn(async (_url: unknown, init?: RequestInit) => {
+      throw new TypeError(`fetch failed: ${new Headers(init?.headers).get('authorization')} oauth-access-intl`)
+    })
+    const result = await getKimiCodingQuotaForProvider(provider, fetchImpl as unknown as typeof fetch)
+    expect(fetchImpl).toHaveBeenCalledTimes(1)
+    expect(result).toEqual({ quota: null, error: 'Kimi Code usage request failed (network error)' })
+    expect(JSON.stringify(result)).not.toContain('oauth-access-intl')
+  })
+
+  it('an OAuth credential without region asks for a new sign-in and sends nothing (review finding 5)', async () => {
+    const provider = oauthProvider('intl', 'https://api.kimi.ai/coding')
+    provider.oauthCredentials = { ...provider.oauthCredentials!, extra: undefined }
+    expect(kimiQuotaRegion(provider)).toBeNull()
+    const fetchImpl = vi.fn()
+    const result = await getKimiCodingQuotaForProvider(provider, fetchImpl as unknown as typeof fetch)
+    expect(fetchImpl).not.toHaveBeenCalled()
+    expect(result.quota).toBeNull()
+    expect(result.error).toMatch(/Renew token/)
+  })
+
   it('broken bodies, non-JSON and network errors never throw', async () => {
     for (const make of [
       () => jsonResponse(200, 'not json at all'),

@@ -61,6 +61,28 @@ import type {
   ProvidersRouterOptions,
 } from './types.js'
 
+/** How long a finished login result stays fetchable after it was saved. */
+export const OAUTH_RESULT_RETENTION_MS = 10 * 60 * 1000
+/** Default lifetime of a pending login (callback flows, no announced expiry). */
+export const DEFAULT_PENDING_OAUTH_LOGIN_TTL_MS = 10 * 60 * 1000
+/** Upper bound for a device code's announced lifetime. */
+export const MAX_DEVICE_CODE_LIFETIME_SECONDS = 15 * 60
+/** Slack on top of the device-code lifetime (last poll, clock skew). */
+export const PENDING_OAUTH_LOGIN_BUFFER_MS = 2 * 60 * 1000
+
+/**
+ * Lifetime of a pending OAuth login in memory: the device code's own
+ * `expires_in` (capped at 15 min) plus a buffer, never shorter than the
+ * historical 10 minutes. Without an announced lifetime: 10 minutes.
+ */
+export function pendingOAuthLoginTtlMs(expiresInSeconds?: number): number {
+  if (typeof expiresInSeconds !== 'number' || !Number.isFinite(expiresInSeconds) || expiresInSeconds <= 0) {
+    return DEFAULT_PENDING_OAUTH_LOGIN_TTL_MS
+  }
+  const lifetimeMs = Math.min(expiresInSeconds, MAX_DEVICE_CODE_LIFETIME_SECONDS) * 1000
+  return Math.max(DEFAULT_PENDING_OAUTH_LOGIN_TTL_MS, lifetimeMs + PENDING_OAUTH_LOGIN_BUFFER_MS)
+}
+
 export class ProvidersValidationError extends Error {}
 export class ProvidersNotFoundError extends Error {}
 export class ProvidersRuntimeError extends Error {}
@@ -122,9 +144,9 @@ export function createProvidersService(options: ProvidersRouterOptions = {}): Pr
     if (oauthCleanupInterval) return
 
     oauthCleanupInterval = setInterval(() => {
-      const cutoff = Date.now() - 10 * 60 * 1000
+      const now = Date.now()
       for (const [id, login] of pendingOAuthLogins) {
-        if (login.createdAt < cutoff) {
+        if (login.expiresAt <= now) {
           pendingOAuthLogins.delete(id)
         }
       }
@@ -202,8 +224,23 @@ export function createProvidersService(options: ProvidersRouterOptions = {}): Pr
 
   async function startOAuthLogin(payload: ProviderOAuthLoginStartPayloadContract): Promise<OAuthLoginResponseContract> {
     const preset = PROVIDER_TYPE_PRESETS[payload.providerType as ProviderType]
-    if (preset.authMethod !== 'oauth' || !preset.oauthProviderId) {
+    if (!preset || preset.authMethod !== 'oauth' || !preset.oauthProviderId) {
       throw new ProvidersValidationError('This provider type does not use OAuth')
+    }
+
+    // "Renew token" writes into an existing entry: it must be the very same
+    // provider type, or the new login's token would land on a provider that
+    // sends it to another host (e.g. an Anthropic token on api.kimi.com).
+    if (payload.providerId) {
+      const target = loadProviders().providers.find((entry) => entry.id === payload.providerId)
+      if (!target) {
+        throw new ProvidersNotFoundError('Provider not found')
+      }
+      if (target.providerType !== payload.providerType) {
+        throw new ProvidersValidationError(
+          `Provider "${target.name}" is of type ${target.providerType}, not ${payload.providerType}. Save the type change first, then sign in.`,
+        )
+      }
     }
 
     // Multi-region presets (Kimi Code): the region must be one of the preset's
@@ -239,6 +276,7 @@ export function createProvidersService(options: ProvidersRouterOptions = {}): Pr
           authUrl: existing.authUrl,
           instructions: existing.instructions,
           usesCallbackServer,
+          ...(existing.expiresInSeconds !== undefined && { expiresInSeconds: existing.expiresInSeconds }),
         }
       }
       // Stale completed/errored entry for this target — drop it and start fresh.
@@ -256,6 +294,7 @@ export function createProvidersService(options: ProvidersRouterOptions = {}): Pr
       transport: payload.transport,
       baseUrl: payload.baseUrl,
       createdAt: Date.now(),
+      expiresAt: Date.now() + pendingOAuthLoginTtlMs(),
       existingProviderId: payload.providerId,
     }
     pendingOAuthLogins.set(loginId, loginState)
@@ -284,6 +323,9 @@ export function createProvidersService(options: ProvidersRouterOptions = {}): Pr
           } else if (event.type === 'device_code') {
             loginState.authUrl = event.verificationUri
             loginState.instructions = event.userCode
+            // Keep the login alive as long as its device code is valid.
+            loginState.expiresInSeconds = event.expiresInSeconds
+            loginState.expiresAt = loginState.createdAt + pendingOAuthLoginTtlMs(event.expiresInSeconds)
             resolveAuthInfo({ url: event.verificationUri, instructions: event.userCode })
           }
           // 'info'/'progress' events have no UI surface in this headless flow.
@@ -315,11 +357,21 @@ export function createProvidersService(options: ProvidersRouterOptions = {}): Pr
         },
       })
       .then((credential) => {
-        loginState.status = 'completed'
         // Strip the credential-store type tag; openagent persists the raw
         // token fields in its own encrypted store.
         const { type: _type, ...credentials } = credential
-        loginState.credentials = credentials as OAuthCredentials
+        // Save right away, on the server: a device login the user confirms
+        // after the browser tab stopped polling must not be lost.
+        try {
+          loginState.provider = persistCompletedOAuthLogin(loginState, credentials as OAuthCredentials)
+          loginState.status = 'completed'
+        } catch (err) {
+          loginState.status = 'error'
+          loginState.error = (err as Error).message
+        }
+        // Give the UI a window to fetch the result, then forget it (the token
+        // itself is not kept in memory; the saved provider carries it).
+        loginState.expiresAt = Math.max(loginState.expiresAt, Date.now() + OAUTH_RESULT_RETENTION_MS)
       })
       .catch((err: unknown) => {
         loginState.status = 'error'
@@ -343,7 +395,46 @@ export function createProvidersService(options: ProvidersRouterOptions = {}): Pr
       authUrl: authInfo.url,
       instructions: authInfo.instructions,
       usesCallbackServer,
+      ...(loginState.expiresInSeconds !== undefined && { expiresInSeconds: loginState.expiresInSeconds }),
     }
+  }
+
+  /** Stores the credential of a finished login (new provider or "Renew token"). */
+  function persistCompletedOAuthLogin(loginState: PendingOAuthLogin, credentials: OAuthCredentials): ProviderConfig {
+    if (loginState.existingProviderId) {
+      const target = loadProviders().providers.find((entry) => entry.id === loginState.existingProviderId)
+      if (!target) {
+        throw new ProvidersNotFoundError('Provider not found')
+      }
+      // The type may have changed while the login was running: never write a
+      // token into an entry of another type.
+      if (target.providerType !== loginState.providerType) {
+        throw new ProvidersValidationError(
+          `Provider "${target.name}" is no longer of type ${loginState.providerType}; sign-in discarded.`,
+        )
+      }
+      updateOAuthCredentials(loginState.existingProviderId, credentials)
+      const saved = loadProviders().providers.find((entry) => entry.id === loginState.existingProviderId)
+      if (!saved) {
+        throw new ProvidersNotFoundError('Provider not found')
+      }
+      return saved
+    }
+    const beforeActiveProvider = loadProviders().activeProvider ?? null
+    const provider = addOAuthProvider({
+      name: loginState.name,
+      providerType: loginState.providerType as ProviderType,
+      enabledModels: loginState.enabledModels,
+      textVerbosity: loginState.textVerbosity ?? undefined,
+      transport: loginState.transport ?? undefined,
+      oauthCredentials: credentials,
+      baseUrl: loginState.baseUrl,
+    })
+    const afterActiveProvider = loadProviders().activeProvider ?? null
+    if (beforeActiveProvider !== afterActiveProvider) {
+      options.onActiveProviderChanged?.()
+    }
+    return provider
   }
 
   async function getOAuthStatus(loginId: string): Promise<
@@ -356,45 +447,13 @@ export function createProvidersService(options: ProvidersRouterOptions = {}): Pr
       throw new ProvidersNotFoundError('Login session not found or expired')
     }
 
-    if (loginState.status === 'completed' && loginState.credentials) {
-      try {
-        let provider: ProviderConfig
-
-        if (loginState.existingProviderId) {
-          updateOAuthCredentials(loginState.existingProviderId, loginState.credentials)
-          const file = loadProviders()
-          const existing = file.providers.find((entry) => entry.id === loginState.existingProviderId)
-          if (!existing) {
-            throw new ProvidersNotFoundError('Provider not found')
-          }
-          provider = existing
-        } else {
-          const beforeActiveProvider = loadProviders().activeProvider ?? null
-          provider = addOAuthProvider({
-            name: loginState.name,
-            providerType: loginState.providerType as ProviderType,
-            enabledModels: loginState.enabledModels,
-            textVerbosity: loginState.textVerbosity ?? undefined,
-            transport: loginState.transport ?? undefined,
-            oauthCredentials: loginState.credentials,
-            baseUrl: loginState.baseUrl,
-          })
-          const afterActiveProvider = loadProviders().activeProvider ?? null
-
-          if (beforeActiveProvider !== afterActiveProvider) {
-            options.onActiveProviderChanged?.()
-          }
-        }
-
-        pendingOAuthLogins.delete(loginId)
-        maybeStopOAuthCleanupTimer()
-
-        return {
-          status: 'completed',
-          provider,
-        }
-      } catch (err) {
-        throw new ProvidersValidationError((err as Error).message)
+    if (loginState.status === 'completed' && loginState.provider) {
+      // Already saved by the server when the login finished.
+      pendingOAuthLogins.delete(loginId)
+      maybeStopOAuthCleanupTimer()
+      return {
+        status: 'completed',
+        provider: loginState.provider,
       }
     }
 

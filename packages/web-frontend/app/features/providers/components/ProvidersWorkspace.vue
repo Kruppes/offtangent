@@ -89,6 +89,10 @@
                           <span class="text-muted-foreground">·</span>
                           OAuth
                         </template>
+                        <template v-else-if="provider.authMethod === 'oauth'">
+                          <span class="text-muted-foreground">·</span>
+                          <span class="text-warning">{{ $t('providers.signInRequired') }}</span>
+                        </template>
                       </div>
                     </div>
                   </TableCell>

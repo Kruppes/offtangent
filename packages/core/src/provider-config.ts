@@ -21,6 +21,8 @@ import {
   kimiCliIdentityHeaders,
   kimiCodingRegionForBaseUrl,
   kimiCodingRegionOfCredential,
+  redactSecrets,
+  requireKimiCodingRegionOfCredential,
 } from './kimi-coding-oauth.js'
 import { getConfigDir, ensureConfigTemplates, loadConfig } from './config.js'
 // Type-only: `data-policy.ts` reads providers.json through this module, so a
@@ -1722,7 +1724,8 @@ function oauthProviderBaseUrl(
 ): string {
   const preset = PROVIDER_TYPE_PRESETS[providerType]
   if (preset?.oauthProviderId === 'kimi-coding') {
-    const region = kimiCodingRegionOfCredential(credentials as { region?: unknown }, resolveEffectiveBaseUrl(providerType, baseUrl))
+    // A fresh sign-in always records its region; no guessing from the URL.
+    const region = requireKimiCodingRegionOfCredential(credentials as { region?: unknown })
     return KIMI_CODING_REGIONS[region].apiBaseUrl
   }
   return resolveEffectiveBaseUrl(providerType, validatePresetBaseUrlInput(providerType, baseUrl)) || preset.baseUrl
@@ -1838,6 +1841,13 @@ export function updateProvider(id: string, input: {
     if (!input.baseUrl) {
       existing.baseUrl = preset.baseUrl
     }
+    // Credentials belong to the type (and host) that issued them. Carrying
+    // them over would send e.g. an Anthropic access token to api.kimi.com, so
+    // every type change drops them: OAuth types need a new sign-in, API-key
+    // types a key entered together with the change.
+    delete existing.oauthCredentials
+    lastResolvedModelAuth.delete(existing.id)
+    if (input.apiKey === undefined) existing.apiKey = ''
   }
 
   if (input.name !== undefined) existing.name = input.name
@@ -1907,6 +1917,27 @@ export function updateProvider(id: string, input: {
   const currentPreset = PROVIDER_TYPE_PRESETS[existing.providerType]
   if (currentPreset && !currentPreset.urlEditable) {
     existing.baseUrl = resolveEffectiveBaseUrl(existing.providerType, existing.baseUrl)
+  }
+
+  // Kimi Code OAuth: the token is bound to the region that issued it. A
+  // region (base URL) change keeps the token only if it still matches that
+  // region; otherwise the token is dropped and a new sign-in is needed —
+  // never silently sent to the other region's host.
+  if (currentPreset?.oauthProviderId === 'kimi-coding' && existing.oauthCredentials) {
+    const tokenRegion = (() => {
+      try {
+        return kimiCodingRegionOfCredential(
+          storedToOAuthCredentials(decryptOAuthCredentials(existing.oauthCredentials!)) as { region?: unknown },
+        )
+      } catch {
+        return null
+      }
+    })()
+    const urlRegion = kimiCodingRegionForBaseUrl(resolveEffectiveBaseUrl(existing.providerType, existing.baseUrl))
+    if (!tokenRegion || tokenRegion !== urlRegion) {
+      delete existing.oauthCredentials
+      lastResolvedModelAuth.delete(existing.id)
+    }
   }
 
   // Reset status when config changes
@@ -2272,6 +2303,21 @@ const lastResolvedModelAuth = new Map<string, ModelAuth>()
  */
 const inFlightOAuthRefresh = new Map<string, Promise<OAuthCredential>>()
 
+/** Error whose message no longer contains any access/refresh token of `creds`. */
+function redactOAuthError(err: unknown, creds: ReadonlyArray<Partial<OAuthCredential> | undefined>): Error {
+  const secrets = creds.flatMap(c => [c?.access, c?.refresh])
+  const error = err instanceof Error ? err : new Error(String(err))
+  const redacted = redactSecrets(error.message, secrets)
+  if (redacted !== error.message) {
+    try {
+      error.message = redacted
+    } catch {
+      return new Error(redacted)
+    }
+  }
+  return error
+}
+
 export async function refreshOAuthCredentialsLocked(
   providerId: string,
   oauthAuth: OAuthAuth,
@@ -2307,7 +2353,14 @@ export async function refreshOAuthCredentialsLocked(
 
     // pi-ai 0.84.1: OAuthAuth.refresh(credential, signal) requires an AbortSignal.
     // 30s cap mirrors upstream pi-oauth.ts; a hung refresh must not wedge the turn.
-    const rotated = await oauthAuth.refresh(base, AbortSignal.timeout(30_000))
+    let rotated: OAuthCredential
+    try {
+      rotated = await oauthAuth.refresh(base, AbortSignal.timeout(30_000))
+    } catch (err) {
+      // The message may end up in logs, the chat or the quota panel: strip any
+      // token a transport layer may have echoed into it.
+      throw redactOAuthError(err, [base, fallbackCreds])
+    }
     const { type: _type, ...toStore } = rotated
     updateOAuthCredentials(providerId, toStore as OAuthCredentials)
     return rotated
@@ -2371,7 +2424,15 @@ export async function recoverOAuthAfterAuthFailure(
     )
   } catch (err) {
     // A failed refresh is not a verdict about the stored token: retry anyway.
-    console.error(`[axiom] Forced OAuth refresh for ${providerId} failed: ${(err as Error).message}`)
+    const creds = (() => {
+      try {
+        return storedToOAuthCredentials(provider.oauthCredentials!)
+      } catch {
+        return undefined
+      }
+    })()
+    const message = redactSecrets((err as Error).message, [creds?.access, creds?.refresh])
+    console.error(`[axiom] Forced OAuth refresh for ${providerId} failed: ${message}`)
   }
   return true
 }
@@ -2380,6 +2441,12 @@ export async function recoverOAuthAfterAuthFailure(
  * Get API key for a provider, handling OAuth token refresh
  */
 export async function getApiKeyForProvider(provider: ProviderConfig): Promise<string> {
+  // An OAuth provider without a stored sign-in (e.g. after a type or region
+  // change dropped the old credentials) has no usable token: never fall back
+  // to a leftover API key or a placeholder.
+  if (provider.authMethod === 'oauth' && !provider.oauthCredentials) {
+    throw new Error(`Provider "${provider.name}" is not signed in. Use "Renew token" in the provider settings to sign in.`)
+  }
   // API key providers: return the key directly
   if (provider.authMethod !== 'oauth' || !provider.oauthCredentials) {
     // For providers that don't require an API key (e.g., local Ollama),
@@ -2500,10 +2567,12 @@ export function buildModel(provider: ProviderConfig, modelId?: string): Model<Ap
         // a possibly diverging base URL. Distinct provider id so pi-models.ts
         // sends the token as `Authorization: Bearer` (pi-ai's contract), and
         // the optional, default-off CLI identity headers.
+        // A credential without a region yields no token at all
+        // (`toAuth`/`refresh` demand a new sign-in), so the base-URL region
+        // below only shapes the model object and never carries a token.
         const region = kimiCodingRegionOfCredential(
           (provider.oauthCredentials ? storedToOAuthCredentials(provider.oauthCredentials) : undefined) as { region?: unknown } | undefined,
-          provider.baseUrl,
-        )
+        ) ?? kimiCodingRegionForBaseUrl(provider.baseUrl)
         const cliHeaders = kimiCliIdentityHeaders()
         piModel = {
           ...piModel,

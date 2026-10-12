@@ -235,6 +235,8 @@ export interface OAuthLoginResponseContract {
   authUrl: string
   instructions?: string
   usesCallbackServer: boolean
+  /** Device-code flows: lifetime of the code; the UI keeps polling that long. */
+  expiresInSeconds?: number
 }
 
 export interface OAuthStatusResponseContract {

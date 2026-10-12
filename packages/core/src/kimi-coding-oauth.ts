@@ -89,16 +89,29 @@ export function isKimiCodingRegion(value: unknown): value is KimiCodingRegion {
   return value === 'cn' || value === 'intl'
 }
 
-/** Region recorded in a credential; falls back to the provider's base URL. */
+/**
+ * Region recorded in a credential, or `null` when it carries none. There is
+ * deliberately NO fallback to the provider's (editable) base URL: a token
+ * belongs to the host that issued it, and guessing that host from a URL the
+ * user can change would send it to the wrong region.
+ */
 export function kimiCodingRegionOfCredential(
   credential: { region?: unknown } | undefined,
-  fallbackBaseUrl?: string,
-): KimiCodingRegion {
+): KimiCodingRegion | null {
   if (credential && isKimiCodingRegion(credential.region)) return credential.region
-  return kimiCodingRegionForBaseUrl(fallbackBaseUrl)
+  return null
 }
 
-const DEVICE_CODE_TIMEOUT_SECONDS = 15 * 60
+/** Like {@link kimiCodingRegionOfCredential}, but a missing region demands a new sign-in. */
+export function requireKimiCodingRegionOfCredential(credential: { region?: unknown } | undefined): KimiCodingRegion {
+  const region = kimiCodingRegionOfCredential(credential)
+  if (!region) throw new KimiCodingReloginRequiredError('the stored sign-in has no region')
+  return region
+}
+
+/** Hard cap on a device code's lifetime, whatever the server announces. */
+export const KIMI_DEVICE_CODE_MAX_SECONDS = 15 * 60
+const DEVICE_CODE_TIMEOUT_SECONDS = KIMI_DEVICE_CODE_MAX_SECONDS
 const DEFAULT_POLL_INTERVAL_SECONDS = 5
 const REQUEST_TIMEOUT_MS = 30_000
 const REFRESH_MAX_RETRIES = 3
@@ -136,6 +149,46 @@ function defaultSleep(ms: number, signal: AbortSignal): Promise<void> {
     }
     signal.addEventListener('abort', onAbort, { once: true })
   })
+}
+
+/**
+ * Category of a transport failure (fetch threw). The exception message itself
+ * is never passed on: custom fetch implementations, proxies or instrumentation
+ * may put the URL, headers or body (token material) into it.
+ */
+export function kimiTransportErrorCategory(err: unknown): 'timeout' | 'aborted' | 'network error' {
+  const name = err && typeof err === 'object' ? (err as { name?: unknown }).name : undefined
+  if (name === 'TimeoutError') return 'timeout'
+  if (name === 'AbortError') return 'aborted'
+  return 'network error'
+}
+
+/** fetch with a constant, token-free error on transport failure. */
+async function kimiFetch(
+  doFetch: typeof fetch,
+  url: string,
+  init: RequestInit,
+  operation: string,
+): Promise<Response> {
+  try {
+    return await doFetch(url, init)
+  } catch (err) {
+    throw new Error(`${operation} failed (${kimiTransportErrorCategory(err)})`)
+  }
+}
+
+/**
+ * Defensive redaction: replaces every given secret (access/refresh token, API
+ * key) inside a message. Secrets shorter than 8 characters are skipped so a
+ * placeholder cannot shred unrelated text.
+ */
+export function redactSecrets(message: string, secrets: ReadonlyArray<string | undefined | null>): string {
+  let out = message
+  for (const secret of secrets) {
+    if (typeof secret !== 'string' || secret.length < 8) continue
+    out = out.split(secret).join('[redacted]')
+  }
+  return out
 }
 
 function requestSignal(signal: AbortSignal): AbortSignal {
@@ -187,12 +240,12 @@ export async function startKimiDeviceAuthorization(
 ): Promise<KimiDeviceAuthorization> {
   const doFetch = deps.fetch ?? fetch
   const { authHost } = KIMI_CODING_REGIONS[region]
-  const response = await doFetch(`${authHost}/api/oauth/device_authorization`, {
+  const response = await kimiFetch(doFetch, `${authHost}/api/oauth/device_authorization`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/x-www-form-urlencoded', Accept: 'application/json' },
     body: new URLSearchParams({ client_id: KIMI_CODE_CLIENT_ID }).toString(),
     signal: requestSignal(signal),
-  })
+  }, 'Kimi Code device authorization')
   const json = await readJson(response)
   if (!response.ok) {
     const code = oauthErrorCode(json)
@@ -209,7 +262,7 @@ export async function startKimiDeviceAuthorization(
     userCode,
     verificationUri,
     intervalSeconds: positiveNumber(json?.interval, DEFAULT_POLL_INTERVAL_SECONDS),
-    expiresInSeconds: positiveNumber(json?.expires_in, DEVICE_CODE_TIMEOUT_SECONDS),
+    expiresInSeconds: Math.min(positiveNumber(json?.expires_in, DEVICE_CODE_TIMEOUT_SECONDS), KIMI_DEVICE_CODE_MAX_SECONDS),
   }
 }
 
@@ -249,7 +302,7 @@ export async function pollKimiDeviceToken(
 
   while (now() < deadline) {
     await sleep(intervalMs, signal)
-    const response = await doFetch(`${authHost}/api/oauth/token`, {
+    const response = await kimiFetch(doFetch, `${authHost}/api/oauth/token`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/x-www-form-urlencoded', Accept: 'application/json' },
       body: new URLSearchParams({
@@ -258,7 +311,7 @@ export async function pollKimiDeviceToken(
         grant_type: 'urn:ietf:params:oauth:grant-type:device_code',
       }).toString(),
       signal: requestSignal(signal),
-    })
+    }, 'Kimi Code device token request')
     const json = await readJson(response)
     if (response.ok && typeof json?.access_token === 'string') {
       return parseTokenResponse(json, 'exchange', now())
@@ -305,7 +358,8 @@ export async function refreshKimiToken(
         signal: requestSignal(signal),
       })
     } catch (err) {
-      lastError = new Error(`Kimi Code token refresh failed: ${(err as Error).message}`)
+      // Category only: the exception message may carry the refresh token.
+      lastError = new Error(`Kimi Code token refresh failed (${kimiTransportErrorCategory(err)})`)
       continue
     }
     const json = await readJson(response)
@@ -349,11 +403,14 @@ export function createKimiCodingOAuth(
       return { type: 'oauth', ...token, region: loginRegion }
     },
     async refresh(credential: OAuthCredential, signal: AbortSignal) {
-      const region = kimiCodingRegionOfCredential(credential as { region?: unknown }, KIMI_CODING_REGIONS[loginRegion].apiBaseUrl)
+      // The issuing region is authoritative; without one, sign in again.
+      const region = requireKimiCodingRegionOfCredential(credential as { region?: unknown })
       const token = await refreshKimiToken(region, credential.refresh, signal, deps)
       return { ...credential, type: 'oauth', ...token, region }
     },
     async toAuth(credential: OAuthCredential) {
+      // No region → no token: the API host would be a guess.
+      requireKimiCodingRegionOfCredential(credential as { region?: unknown })
       // Returned as apiKey so the existing OAuth plumbing (getApiKeyForProvider,
       // agent getApiKey callbacks) carries it; pi-models.ts sends it as Bearer.
       return { apiKey: credential.access }

@@ -5,6 +5,9 @@ import {
   KIMI_CODING_REGIONS,
   kimiCodingRegionForBaseUrl,
   kimiCodingRegionOfCredential,
+  kimiTransportErrorCategory,
+  KimiCodingReloginRequiredError,
+  redactSecrets,
   type KimiCodingRegion,
 } from './kimi-coding-oauth.js'
 import {
@@ -146,16 +149,20 @@ export function isKimiCodingQuotaProvider(provider: ProviderConfig): boolean {
   return provider.providerType === 'kimi-coding' && provider.authMethod !== 'oauth' && !!provider.apiKey
 }
 
-/** Region of the provider: OAuth follows the credential, API key the base URL. */
-export function kimiQuotaRegion(provider: ProviderConfig): KimiCodingRegion {
-  if (provider.providerType === 'kimi-coding-oauth' && provider.oauthCredentials) {
+/**
+ * Region of the provider: OAuth follows the credential, API key the base URL.
+ * `null` for an OAuth credential without a region: its host is unknown and is
+ * NOT guessed from the (editable) base URL — the user has to sign in again.
+ */
+export function kimiQuotaRegion(provider: ProviderConfig): KimiCodingRegion | null {
+  if (provider.providerType === 'kimi-coding-oauth') {
+    if (!provider.oauthCredentials) return null
     try {
       return kimiCodingRegionOfCredential(
         storedToOAuthCredentials(provider.oauthCredentials) as { region?: unknown },
-        provider.baseUrl,
       )
     } catch {
-      // fall through to the base URL
+      return null
     }
   }
   return kimiCodingRegionForBaseUrl(provider.baseUrl)
@@ -196,8 +203,25 @@ export async function fetchKimiUsage(
     }
     return { quota, status: response.status }
   } catch (err) {
-    return { quota: null, error: (err as Error).message || 'Network error' }
+    // Category only: the exception message may carry the Authorization header.
+    return { quota: null, error: `Kimi Code usage request failed (${kimiTransportErrorCategory(err)})` }
   }
+}
+
+const KIMI_RELOGIN_REQUIRED_MESSAGE = new KimiCodingReloginRequiredError('the stored sign-in has no region').message
+
+/** Every secret of a provider, for defensive redaction of error messages. */
+function providerSecrets(provider: ProviderConfig): string[] {
+  const secrets = [provider.apiKey]
+  if (provider.oauthCredentials) {
+    try {
+      const creds = storedToOAuthCredentials(provider.oauthCredentials)
+      secrets.push(creds.access, creds.refresh)
+    } catch {
+      // unreadable credentials: nothing to add
+    }
+  }
+  return secrets.filter((s): s is string => typeof s === 'string')
 }
 
 /** provider id → time until which an API key the endpoint refused is skipped. */
@@ -227,11 +251,15 @@ export async function getKimiCodingQuotaForProvider(
     // OAuth: refreshes an expiring token like a normal turn would.
     token = await getApiKeyForProvider(provider)
   } catch (err) {
-    return { quota: null, error: (err as Error).message || 'Failed to resolve credentials' }
+    // getApiKeyForProvider already redacts; redact again at this boundary.
+    const message = (err as Error).message || 'Failed to resolve credentials'
+    return { quota: null, error: redactSecrets(message, providerSecrets(provider)) }
   }
   if (!token) return { quota: null, error: 'No credentials available' }
 
-  const result = await fetchKimiUsage(kimiQuotaRegion(provider), token, fetchImpl)
+  const region = kimiQuotaRegion(provider)
+  if (!region) return { quota: null, error: KIMI_RELOGIN_REQUIRED_MESSAGE }
+  const result = await fetchKimiUsage(region, token, fetchImpl)
   if (isApiKey && (result.status === 401 || result.status === 403 || result.status === 404)) {
     unsupportedUntil.set(provider.id, now() + KIMI_QUOTA_UNSUPPORTED_RETRY_MS)
     return { quota: null, status: result.status, error: KIMI_QUOTA_UNAVAILABLE }

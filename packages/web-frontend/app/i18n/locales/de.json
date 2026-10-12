@@ -447,6 +447,7 @@
         }
       }
     },
+    "signInRequired": "Anmeldung nötig",
     "dataPolicy": {
       "region": "Datenregion",
       "training": "Training mit Daten",

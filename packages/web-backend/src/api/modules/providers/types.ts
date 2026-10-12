@@ -1,5 +1,6 @@
 import type { OAuthCredentials } from '@earendil-works/pi-ai/oauth'
 import type { ProviderQuotaContract } from '@axiom/core/contracts'
+import type { ProviderConfig } from '@axiom/core'
 
 export interface ProvidersRouterOptions {
   onActiveProviderChanged?: () => void
@@ -20,9 +21,15 @@ export interface PendingOAuthLogin {
   authUrl?: string
   instructions?: string
   credentials?: OAuthCredentials
+  /** Saved provider, set by the server as soon as the login completes. */
+  provider?: ProviderConfig
   error?: string
   resolveManualCode?: (code: string) => void
   createdAt: number
+  /** Dropped from memory after this instant (see `pendingOAuthLoginTtlMs`). */
+  expiresAt: number
+  /** Device-code lifetime announced by the auth server, if any. */
+  expiresInSeconds?: number
   existingProviderId?: string
 }
 

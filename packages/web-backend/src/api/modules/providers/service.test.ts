@@ -2,9 +2,11 @@ import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } 
 import fs from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
-import { addOAuthProvider, addProvider, getAvailableModels } from '@axiom/core'
+import { addOAuthProvider, addProvider, getAvailableModels, loadProvidersDecrypted, updateProvider } from '@axiom/core'
 import {
   createProvidersService,
+  DEFAULT_PENDING_OAUTH_LOGIN_TTL_MS,
+  pendingOAuthLoginTtlMs,
   ProvidersNotFoundError,
   ProvidersValidationError,
 } from './service.js'
@@ -236,5 +238,136 @@ describe('Kimi Code OAuth device login (region aware)', () => {
     await expect(createProvidersService().startOAuthLogin({
       providerType: 'kimi-coding', name: 'Kimi Code', enabledModels: ['k3'],
     })).rejects.toBeInstanceOf(ProvidersValidationError)
+  })
+})
+
+describe('"Renew token" only into an entry of the same type (review finding 2)', () => {
+  afterEach(() => {
+    vi.unstubAllGlobals()
+  })
+
+  const ANTHROPIC_ACCESS = 'sk-ant-oat01-svc'
+
+  function anthropicEntry() {
+    return addOAuthProvider({
+      name: 'Claude', providerType: 'anthropic-oauth', enabledModels: ['claude-sonnet-4-5'],
+      oauthCredentials: { access: ANTHROPIC_ACCESS, refresh: 'sk-ant-ort01-refresh', expires: Date.now() + 3_600_000 },
+    })
+  }
+
+  it('kimi-coding-oauth login with the id of an anthropic-oauth entry is rejected, nothing is requested or written', async () => {
+    const target = anthropicEntry()
+    const fetchSpy = vi.fn()
+    vi.stubGlobal('fetch', fetchSpy)
+    await expect(createProvidersService().startOAuthLogin({
+      providerType: 'kimi-coding-oauth', name: 'Claude', enabledModels: ['k3'], providerId: target.id,
+    })).rejects.toBeInstanceOf(ProvidersValidationError)
+    expect(fetchSpy).not.toHaveBeenCalled()
+    const after = loadProvidersDecrypted().providers.find(p => p.id === target.id)
+    expect(after?.providerType).toBe('anthropic-oauth')
+    expect(after?.oauthCredentials?.access).toBe(ANTHROPIC_ACCESS)
+  })
+
+  it('anthropic-oauth login with the id of a kimi-coding-oauth entry is rejected as well', async () => {
+    const target = addOAuthProvider({
+      name: 'Kimi Code', providerType: 'kimi-coding-oauth', enabledModels: ['k3'], baseUrl: 'https://api.kimi.com/coding',
+      oauthCredentials: { access: 'kimi-access', refresh: 'kimi-refresh', expires: Date.now() + 3_600_000, region: 'cn' },
+    })
+    await expect(createProvidersService().startOAuthLogin({
+      providerType: 'anthropic-oauth', name: 'Kimi Code', enabledModels: ['claude-sonnet-4-5'], providerId: target.id,
+    })).rejects.toThrow(/is of type kimi-coding-oauth, not anthropic-oauth/)
+  })
+
+  it('an unknown provider id is a not-found, not a silent new entry', async () => {
+    await expect(createProvidersService().startOAuthLogin({
+      providerType: 'kimi-coding-oauth', name: 'Kimi Code', enabledModels: ['k3'], providerId: 'does-not-exist',
+    })).rejects.toBeInstanceOf(ProvidersNotFoundError)
+  })
+
+  it('a type change while the login runs discards the new token instead of writing it into the changed entry', async () => {
+    const target = addOAuthProvider({
+      name: 'Kimi Code', providerType: 'kimi-coding-oauth', enabledModels: ['k3'], baseUrl: 'https://api.kimi.com/coding',
+      oauthCredentials: { access: 'old', refresh: 'old-r', expires: Date.now() - 1000, region: 'cn' },
+    })
+    let releaseToken!: () => void
+    const tokenGate = new Promise<void>(resolve => { releaseToken = resolve })
+    vi.stubGlobal('fetch', vi.fn(async (input: Parameters<typeof fetch>[0]) => {
+      const url = String(input)
+      if (url.endsWith('/device_authorization')) {
+        return new Response(JSON.stringify({ device_code: 'dev', user_code: 'U-1', verification_uri: 'https://auth.kimi.com/device', interval: 0.001, expires_in: 60 }), { status: 200 })
+      }
+      await tokenGate
+      return new Response(JSON.stringify({ access_token: 'new-kimi-access', refresh_token: 'new-kimi-refresh', expires_in: 3600 }), { status: 200 })
+    }))
+    const service = createProvidersService()
+    const started = await service.startOAuthLogin({ providerType: 'kimi-coding-oauth', name: 'Kimi Code', enabledModels: ['k3'], providerId: target.id })
+    updateProvider(target.id, { providerType: 'anthropic-oauth' })
+    releaseToken()
+    let status = await service.getOAuthStatus(started.loginId)
+    for (let i = 0; i < 200 && status.status === 'pending'; i++) {
+      await new Promise(resolve => setTimeout(resolve, 5))
+      status = await service.getOAuthStatus(started.loginId)
+    }
+    expect(status.status).toBe('error')
+    const after = loadProvidersDecrypted().providers.find(p => p.id === target.id)
+    expect(after?.providerType).toBe('anthropic-oauth')
+    expect(after?.oauthCredentials).toBeUndefined()
+  })
+})
+
+describe('device login lifetime follows the device code (review finding 4)', () => {
+  afterEach(() => {
+    vi.useRealTimers()
+    vi.unstubAllGlobals()
+  })
+
+  it('pendingOAuthLoginTtlMs: expires_in (capped at 15 min) plus 2 min buffer, never below 10 min', () => {
+    expect(pendingOAuthLoginTtlMs()).toBe(DEFAULT_PENDING_OAUTH_LOGIN_TTL_MS)
+    expect(pendingOAuthLoginTtlMs(Number.NaN)).toBe(10 * 60_000)
+    expect(pendingOAuthLoginTtlMs(0)).toBe(10 * 60_000)
+    expect(pendingOAuthLoginTtlMs(60)).toBe(10 * 60_000)
+    expect(pendingOAuthLoginTtlMs(600)).toBe(12 * 60_000)
+    expect(pendingOAuthLoginTtlMs(900)).toBe(17 * 60_000)
+    expect(pendingOAuthLoginTtlMs(86_400)).toBe(17 * 60_000)
+  })
+
+  it('a 15-minute device code is still pending after 11 minutes and gone after its lifetime', async () => {
+    vi.useFakeTimers({ toFake: ['setTimeout', 'setInterval', 'clearInterval', 'clearTimeout', 'Date'] })
+    vi.stubGlobal('fetch', vi.fn(async (input: Parameters<typeof fetch>[0]) => {
+      const url = String(input)
+      const body = url.endsWith('/device_authorization')
+        ? { device_code: 'dev', user_code: 'U-2', verification_uri: 'https://auth.kimi.ai/device', interval: 5, expires_in: 900 }
+        : { error: 'authorization_pending' }
+      return new Response(JSON.stringify(body), { status: url.endsWith('/device_authorization') ? 200 : 400 })
+    }))
+    const service = createProvidersService()
+    const started = await service.startOAuthLogin({ providerType: 'kimi-coding-oauth', name: 'Kimi Code', enabledModels: ['k3'], baseUrl: 'https://api.kimi.ai/coding' })
+    expect(started.expiresInSeconds).toBe(900)
+
+    await vi.advanceTimersByTimeAsync(11 * 60_000)
+    expect((await service.getOAuthStatus(started.loginId)).status).toBe('pending')
+
+    await vi.advanceTimersByTimeAsync(7 * 60_000)
+    await expect(service.getOAuthStatus(started.loginId)).rejects.toBeInstanceOf(ProvidersNotFoundError)
+  })
+
+  it('a completed login is saved by the server even if nobody polls the status', async () => {
+    vi.stubGlobal('fetch', vi.fn(async (input: Parameters<typeof fetch>[0]) => {
+      const url = String(input)
+      const body = url.endsWith('/device_authorization')
+        ? { device_code: 'dev', user_code: 'U-3', verification_uri: 'https://auth.kimi.com/device', interval: 0.001, expires_in: 900 }
+        : { access_token: 'kimi-access-unpolled', refresh_token: 'kimi-refresh-unpolled', expires_in: 3600 }
+      return new Response(JSON.stringify(body), { status: 200 })
+    }))
+    const service = createProvidersService()
+    await service.startOAuthLogin({ providerType: 'kimi-coding-oauth', name: 'Kimi Unpolled', enabledModels: ['k3'], baseUrl: 'https://api.kimi.com/coding' })
+    let saved
+    for (let i = 0; i < 200 && !saved; i++) {
+      await new Promise(resolve => setTimeout(resolve, 5))
+      saved = loadProvidersDecrypted().providers.find(p => p.name === 'Kimi Unpolled')
+    }
+    expect(saved?.providerType).toBe('kimi-coding-oauth')
+    expect(saved?.oauthCredentials?.access).toBe('kimi-access-unpolled')
+    expect(saved?.baseUrl).toBe('https://api.kimi.com/coding')
   })
 })

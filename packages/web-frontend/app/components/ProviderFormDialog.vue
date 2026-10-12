@@ -914,7 +914,7 @@ async function startOAuthRenew() {
       window.open(response.authUrl, '_blank')
     }
 
-    pollForCompletion(response.loginId)
+    pollForCompletion(response.loginId, response.expiresInSeconds)
   } catch (err) {
     oauthError.value = (err as Error).message
     oauthInProgress.value = false
@@ -948,15 +948,26 @@ async function startOAuth() {
     }
 
     // Start polling for completion
-    pollForCompletion(response.loginId)
+    pollForCompletion(response.loginId, response.expiresInSeconds)
   } catch (err) {
     oauthError.value = (err as Error).message
     oauthInProgress.value = false
   }
 }
 
-async function pollForCompletion(loginId: string) {
-  const maxAttempts = 120 // 2 minutes at 1s intervals
+/**
+ * Polling window of a login: a device code is polled for its announced
+ * lifetime (capped at 15 min) plus a minute; other flows keep the 2 minutes.
+ * The server saves a completed login on its own, so a later confirmation is
+ * not lost even after this loop gave up.
+ */
+function oauthPollAttempts(expiresInSeconds?: number): number {
+  if (typeof expiresInSeconds !== 'number' || !Number.isFinite(expiresInSeconds) || expiresInSeconds <= 0) return 120
+  return Math.max(120, Math.min(expiresInSeconds, 15 * 60) + 60)
+}
+
+async function pollForCompletion(loginId: string, expiresInSeconds?: number) {
+  const maxAttempts = oauthPollAttempts(expiresInSeconds) // 1s intervals
   for (let i = 0; i < maxAttempts; i++) {
     if (!oauthInProgress.value) return // cancelled
 
@@ -989,7 +1000,7 @@ async function pollForCompletion(loginId: string) {
   }
 
   // Timeout
-  oauthError.value = 'Login timed out. Please try again.'
+  oauthError.value = 'Login timed out. If you confirmed the sign-in in the meantime, reload the provider list; otherwise try again.'
   oauthInProgress.value = false
   oauthLoginId.value = null
 }

@@ -11,7 +11,9 @@ import {
   kimiCodingRegionForBaseUrl,
   kimiCodingRegionOfCredential,
   pollKimiDeviceToken,
+  redactSecrets,
   refreshKimiToken,
+  requireKimiCodingRegionOfCredential,
   startKimiDeviceAuthorization,
   type KimiCodingRegion,
 } from './kimi-coding-oauth.js'
@@ -70,11 +72,16 @@ describe('region table (auth host and API base stay consistent)', () => {
     expect(kimiCodingRegionForBaseUrl('https://kimi.ai.evil.example/coding')).toBe('cn')
   })
 
-  it('a credential region wins over the base URL', () => {
-    expect(kimiCodingRegionOfCredential({ region: 'intl' }, 'https://api.kimi.com/coding')).toBe('intl')
-    expect(kimiCodingRegionOfCredential({ region: 'cn' }, 'https://api.kimi.ai/coding')).toBe('cn')
-    expect(kimiCodingRegionOfCredential({ region: 'mars' }, 'https://api.kimi.ai/coding')).toBe('intl')
-    expect(kimiCodingRegionOfCredential(undefined)).toBe('cn')
+  it('the credential region is authoritative; a missing/unknown one is never guessed', () => {
+    expect(kimiCodingRegionOfCredential({ region: 'intl' })).toBe('intl')
+    expect(kimiCodingRegionOfCredential({ region: 'cn' })).toBe('cn')
+    // Review finding 5: no fallback to the (editable) base URL.
+    expect(kimiCodingRegionOfCredential({ region: 'mars' })).toBeNull()
+    expect(kimiCodingRegionOfCredential({})).toBeNull()
+    expect(kimiCodingRegionOfCredential(undefined)).toBeNull()
+    expect(() => requireKimiCodingRegionOfCredential({})).toThrow(KimiCodingReloginRequiredError)
+    expect(() => requireKimiCodingRegionOfCredential({})).toThrow(/no region.*Renew token/)
+    expect(requireKimiCodingRegionOfCredential({ region: 'intl' })).toBe('intl')
   })
 })
 
@@ -93,6 +100,20 @@ describe('device authorization (RFC 8628)', () => {
       deviceCode: 'dev-1', userCode: 'ABCD-EFGH',
       verificationUri: `${authHost}/device?user_code=ABCD-EFGH`, intervalSeconds: 3, expiresInSeconds: 600,
     })
+  })
+
+  it('caps an announced lifetime at 15 minutes (pending-login TTL builds on it)', async () => {
+    const { fetch } = scriptedFetch([jsonResponse(200, {
+      device_code: 'dev-1', user_code: 'X', verification_uri: 'https://auth.kimi.com/device', interval: 5, expires_in: 86_400,
+    })])
+    const device = await startKimiDeviceAuthorization('cn', signal(), { fetch })
+    expect(device.expiresInSeconds).toBe(15 * 60)
+  })
+
+  it('a transport failure carries only a category, never the request details', async () => {
+    const fn = vi.fn(async () => { throw new TypeError(`fetch failed: client_id=${KIMI_CODE_CLIENT_ID} ${REFRESH}`) })
+    const err = (await startKimiDeviceAuthorization('cn', signal(), { fetch: fn as unknown as typeof fetch }).catch((e: unknown) => e)) as Error
+    expect(err.message).toBe('Kimi Code device authorization failed (network error)')
   })
 
   it('rejects a non-https verification URI', async () => {
@@ -172,6 +193,30 @@ describe('token refresh', () => {
     expect(calls).toHaveLength(3)
     // Short lifetimes: skew is capped at half the lifetime.
     expect(token.expires).toBe(30_000)
+  })
+
+  it('a fetch exception that echoes the token never reaches the error (review finding 3)', async () => {
+    const echo = vi.fn(async (_url: unknown, init?: RequestInit) => {
+      throw new TypeError(`request to https://auth.kimi.ai failed, body=${String(init?.body)} Authorization: Bearer ${ACCESS}`)
+    })
+    const err = (await refreshKimiToken('intl', REFRESH, signal(), { fetch: echo as unknown as typeof fetch, sleep: noSleep })
+      .catch((e: unknown) => e)) as Error
+    expect(echo).toHaveBeenCalledTimes(4)
+    expect(err.message).toBe('Kimi Code token refresh failed (network error)')
+    expect(`${err.message}\n${err.stack ?? ''}`).not.toContain(REFRESH)
+    expect(`${err.message}\n${err.stack ?? ''}`).not.toContain(ACCESS)
+  })
+
+  it('timeouts are reported as such, still without the exception text', async () => {
+    const timeout = vi.fn(async () => { throw new DOMException(`timed out ${REFRESH}`, 'TimeoutError') })
+    const err = (await refreshKimiToken('cn', REFRESH, signal(), { fetch: timeout as unknown as typeof fetch, sleep: noSleep })
+      .catch((e: unknown) => e)) as Error
+    expect(err.message).toBe('Kimi Code token refresh failed (timeout)')
+  })
+
+  it('redactSecrets replaces every token occurrence and ignores short/empty values', () => {
+    expect(redactSecrets(`a ${ACCESS} b ${REFRESH} c ${ACCESS}`, [ACCESS, REFRESH, '', undefined, 'abc']))
+      .toBe('a [redacted] b [redacted] c [redacted]')
   })
 
   it.each([401, 403])('a dead refresh token (%i) asks for a re-login, without retry and without token material', async (status) => {

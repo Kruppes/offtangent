@@ -144,6 +144,10 @@ export function createProvidersController(options: ProvidersRouterOptions = {}):
         const response = await service.startOAuthLogin(parsed.value)
         res.json(response)
       } catch (err) {
+        if (err instanceof ProvidersNotFoundError) {
+          res.status(404).json({ error: err.message })
+          return
+        }
         if (err instanceof ProvidersValidationError) {
           res.status(400).json({ error: err.message })
           return
