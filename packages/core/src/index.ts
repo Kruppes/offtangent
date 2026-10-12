@@ -325,6 +325,7 @@ export { createProviderQuotaTool } from './quota-tool.js'
 export type { QuotaServiceLike, ProviderQuotaToolOptions } from './quota-tool.js'
 export {
   parseRetryAfterMs,
+  clampWaitMs,
   normalizeUtilization,
   limitWindowLabel,
 } from './provider-quota.js'

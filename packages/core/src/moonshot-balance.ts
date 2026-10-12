@@ -4,6 +4,7 @@ import { getApiKeyForProvider } from './provider-config.js'
 import type { ProviderQuotaBalanceContract, ProviderQuotaContract } from './contracts/providers.js'
 import { redactSecrets } from './kimi-coding-oauth.js'
 import {
+  clampWaitMs,
   parseRetryAfterMs,
   type ProviderQuotaFetchResult,
   type QuotaFetchOptions,
@@ -193,12 +194,54 @@ function keyTag(apiKey: string): string {
   return createHash('sha256').update(apiKey).digest('hex').slice(0, 16)
 }
 
+/**
+ * Fingerprint of the configured key for the monitor's backoff: the same
+ * shortened SHA-256 as the adapter's own pauses, never the key itself.
+ */
+export function moonshotCredentialFingerprint(provider: ProviderConfig): string | undefined {
+  return provider.apiKey ? keyTag(provider.apiKey) : undefined
+}
+
 /** provider id → time until which the balance is not requested again. */
 const pausedUntil = new Map<string, ProviderPause>()
+
+/**
+ * Running requests per `providerId:keyTag` (single flight): a call that comes
+ * while a request for the same provider and key is still open waits for that
+ * request instead of sending a second one — a forced call included.
+ */
+const inFlight = new Map<string, Promise<ProviderQuotaFetchResult>>()
 
 /** Test hook. */
 export function resetMoonshotBalanceState(): void {
   pausedUntil.clear()
+  inFlight.clear()
+}
+
+function pauseUntil(nowMs: number, waitMs: number): number {
+  return nowMs + clampWaitMs(waitMs, nowMs)
+}
+
+/** Answer from a running pause, without a request; null when none applies. */
+function answerFromPause(
+  providerId: string,
+  tag: string,
+  nowMs: number,
+  force: boolean,
+): ProviderQuotaFetchResult | null {
+  const pause = pausedUntil.get(providerId)
+  if (!pause || pause.keyTag !== tag || nowMs >= pause.until) return null
+  if (pause.reason === 'rate-limit') {
+    return {
+      quota: null,
+      status: 429,
+      retryAfterMs: pause.until - nowMs,
+      error: 'Moonshot balance paused after a rate limit',
+    }
+  }
+  // Only a manual refresh may test a refused key again (one request).
+  if (pause.reason === 'refused' && force) return null
+  return { quota: null, error: 'Moonshot balance paused after an earlier failure' }
 }
 
 function nextBackoff(previous: ProviderPause | undefined, reason: PauseReason, tag: string, initialMs: number): number {
@@ -235,22 +278,35 @@ export async function getMoonshotBalanceForProvider(
   if (!apiKey) return { quota: null, error: 'No credentials available' }
 
   const tag = keyTag(apiKey)
-  const pause = pausedUntil.get(provider.id)
-  if (pause && pause.keyTag === tag && now() < pause.until) {
-    if (pause.reason === 'rate-limit') {
-      return {
-        quota: null,
-        status: 429,
-        retryAfterMs: pause.until - now(),
-        error: 'Moonshot balance paused after a rate limit',
-      }
-    }
-    // Only a manual refresh may test a refused key again (one request).
-    if (!(pause.reason === 'refused' && options.force)) {
-      return { quota: null, error: 'Moonshot balance paused after an earlier failure' }
-    }
+  const flightKey = `${provider.id}:${tag}`
+  const running = inFlight.get(flightKey)
+  if (running) {
+    const shared = await running
+    // Same result; after a 429 the joined call is answered from the new pause.
+    if (shared.status === 429) return answerFromPause(provider.id, tag, now(), false) ?? shared
+    return shared
   }
 
+  const paused = answerFromPause(provider.id, tag, now(), !!options.force)
+  if (paused) return paused
+
+  const flight = requestAndPause(provider, apiKey, tag, fetchImpl, now, logger)
+  inFlight.set(flightKey, flight)
+  try {
+    return await flight
+  } finally {
+    if (inFlight.get(flightKey) === flight) inFlight.delete(flightKey)
+  }
+}
+
+async function requestAndPause(
+  provider: ProviderConfig,
+  apiKey: string,
+  tag: string,
+  fetchImpl: typeof fetch,
+  now: () => number,
+  logger: Pick<typeof console, 'warn'>,
+): Promise<ProviderQuotaFetchResult> {
   const region = moonshotRegionForBaseUrl(provider.baseUrl)
   const result = await fetchMoonshotBalance(region, apiKey, fetchImpl)
   if (result.quota) {
@@ -258,27 +314,32 @@ export async function getMoonshotBalanceForProvider(
     return result
   }
 
+  // Read after the answer: the pause may have changed while the request ran.
+  const pause = pausedUntil.get(provider.id)
   const status = result.status
   const error = redactSecrets(result.error ?? 'Failed to fetch balance', [apiKey, provider.apiKey])
   // Provider name and region only — never the key or the request headers.
   logger.warn(`[axiom] Moonshot balance for "${provider.name}" (${region}) unavailable: ${error}`)
+  const nowMs = now()
   if (status === 401 || status === 403 || status === 404) {
     pausedUntil.set(provider.id, {
-      until: now() + MOONSHOT_BALANCE_REFUSED_RETRY_MS,
+      until: pauseUntil(nowMs, MOONSHOT_BALANCE_REFUSED_RETRY_MS),
       reason: 'refused',
       backoffMs: MOONSHOT_BALANCE_REFUSED_RETRY_MS,
       keyTag: tag,
     })
   } else if (status === 429) {
     const backoffMs = nextBackoff(pause, 'rate-limit', tag, MOONSHOT_BALANCE_RATE_LIMIT_INITIAL_BACKOFF_MS)
-    const waitMs = Math.max(backoffMs, result.retryAfterMs ?? 0)
-    pausedUntil.set(provider.id, { until: now() + waitMs, reason: 'rate-limit', backoffMs, keyTag: tag })
+    const retryAfterMs = result.retryAfterMs
+    const validRetryAfter = typeof retryAfterMs === 'number' && Number.isFinite(retryAfterMs) && retryAfterMs > 0
+    const waitMs = clampWaitMs(Math.max(backoffMs, validRetryAfter ? retryAfterMs : 0), nowMs)
+    pausedUntil.set(provider.id, { until: nowMs + waitMs, reason: 'rate-limit', backoffMs, keyTag: tag })
     // The monitor's own 429 backoff follows the same pause.
     return { ...result, retryAfterMs: waitMs, error }
   } else {
     // 5xx / network / timeout / unusable body: exponential backoff.
     const backoffMs = nextBackoff(pause, 'error', tag, MOONSHOT_BALANCE_INITIAL_BACKOFF_MS)
-    pausedUntil.set(provider.id, { until: now() + backoffMs, reason: 'error', backoffMs, keyTag: tag })
+    pausedUntil.set(provider.id, { until: pauseUntil(nowMs, backoffMs), reason: 'error', backoffMs, keyTag: tag })
   }
   return { ...result, error }
 }
@@ -287,5 +348,6 @@ export const moonshotBalanceAdapter: QuotaProviderAdapter = {
   kind: 'moonshot',
   quietErrors: true,
   matches: isMoonshotBalanceProvider,
+  credentialFingerprint: moonshotCredentialFingerprint,
   fetch: (provider, fetchImpl, options) => getMoonshotBalanceForProvider(provider, fetchImpl, Date.now, console, options),
 }

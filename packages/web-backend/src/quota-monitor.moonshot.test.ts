@@ -15,9 +15,11 @@ const provider: ProviderConfig = {
   authMethod: 'api-key',
 }
 
+let currentProviders: ProviderConfig[] = [provider]
+
 vi.mock('@axiom/core', async (importOriginal) => {
   const actual = await importOriginal<typeof import('@axiom/core')>()
-  return { ...actual, loadProvidersDecrypted: () => ({ providers: [provider] }) }
+  return { ...actual, loadProvidersDecrypted: () => ({ providers: currentProviders }) }
 })
 
 const { QuotaMonitorService } = await import('./quota-monitor.js')
@@ -44,6 +46,7 @@ describe('QuotaMonitorService with the Moonshot balance adapter', () => {
   const T0 = Date.parse('2026-10-12T10:00:00Z')
 
   beforeEach(() => {
+    currentProviders = [provider]
     vi.useFakeTimers()
     vi.setSystemTime(T0)
     resetMoonshotBalanceState()
@@ -106,5 +109,29 @@ describe('QuotaMonitorService with the Moonshot balance adapter', () => {
     const refreshed = await monitor.refreshProvider(provider.id)
     expect(fetchImpl).toHaveBeenCalledTimes(2)
     expect(refreshed?.balance?.amount).toBe(11.33)
+  })
+
+  it('a new key is asked by the next automatic poll despite the monitor 429 backoff', async () => {
+    const fetchImpl = vi.fn(async () => response(429))
+    const monitor = new QuotaMonitorService({
+      pollIntervalMs: 60_000,
+      fetchImpl: fetchImpl as unknown as typeof fetch,
+      logger: { error: vi.fn() },
+    })
+    monitor.start()
+    await vi.advanceTimersByTimeAsync(0)
+    expect(fetchImpl).toHaveBeenCalledTimes(1)
+
+    // Same key, next poll: both pauses hold, no request.
+    await vi.advanceTimersByTimeAsync(60_000)
+    expect(fetchImpl).toHaveBeenCalledTimes(1)
+
+    // The user enters a new key: the next poll asks it right away.
+    currentProviders = [{ ...provider, apiKey: 'sk_another-moonshot-key-987654' }]
+    fetchImpl.mockImplementation(async () => response(200, VALID_BODY))
+    await vi.advanceTimersByTimeAsync(60_000)
+    monitor.stop()
+    expect(fetchImpl).toHaveBeenCalledTimes(2)
+    expect(monitor.getSnapshot()[provider.id]?.balance?.amount).toBe(11.33)
   })
 })

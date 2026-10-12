@@ -1,4 +1,5 @@
 import {
+  clampWaitMs,
   getQuotaAdapter,
   isQuotaProvider,
   loadProvidersDecrypted,
@@ -13,6 +14,11 @@ const MAX_BACKOFF_MS = 2 * 60 * 60 * 1000
 interface ProviderBackoff {
   rateLimitedUntil: number
   currentBackoffMs: number
+  /**
+   * Credential fingerprint from the adapter (non-reversible), when it offers
+   * one. A different fingerprint means a new key: the backoff is dropped.
+   */
+  credential?: string
 }
 
 export interface QuotaMonitorServiceOptions {
@@ -141,7 +147,13 @@ export class QuotaMonitorService {
     if (!adapter) return
 
     const now = this.now()
-    const state = this.backoff.get(provider.id)
+    const credential = adapter.credentialFingerprint?.(provider)
+    let state = this.backoff.get(provider.id)
+    if (state && state.credential !== credential) {
+      // The key changed since the backoff was set: ask the new key right away.
+      this.backoff.delete(provider.id)
+      state = undefined
+    }
 
     // Respect per-provider rate-limit backoff (unless forced by a manual
     // refresh); keep the stale cached value in the meantime.
@@ -157,10 +169,15 @@ export class QuotaMonitorService {
 
     if (result.status === 429) {
       const previous = state?.currentBackoffMs ?? INITIAL_BACKOFF_MS
-      const backoffMs = result.retryAfterMs ?? previous
+      const retryAfterMs =
+        typeof result.retryAfterMs === 'number' && Number.isFinite(result.retryAfterMs) && result.retryAfterMs >= 0
+          ? result.retryAfterMs
+          : undefined
+      const backoffMs = clampWaitMs(retryAfterMs ?? previous, now)
       this.backoff.set(provider.id, {
         rateLimitedUntil: now + backoffMs,
-        currentBackoffMs: result.retryAfterMs ? previous : Math.min(previous * 2, MAX_BACKOFF_MS),
+        currentBackoffMs: retryAfterMs ? previous : Math.min(previous * 2, MAX_BACKOFF_MS),
+        credential,
       })
     }
 

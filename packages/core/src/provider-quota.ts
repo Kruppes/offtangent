@@ -38,29 +38,56 @@ export interface QuotaProviderAdapter {
   quietErrors?: boolean
   /** Whether this adapter handles the given provider. */
   matches: (provider: ProviderConfig) => boolean
+  /**
+   * Optional non-reversible fingerprint of the credential the adapter uses
+   * (e.g. a shortened SHA-256 of the API key). The monitor binds its
+   * rate-limit backoff to it and drops the backoff when it changes, so a new
+   * key is asked right away. Adapters without it (OAuth, subscriptions) keep
+   * a backoff bound to the provider id only.
+   */
+  credentialFingerprint?: (provider: ProviderConfig) => string | undefined
   /** Resolve credentials, fetch, and normalize the provider's usage quota. */
   fetch: (provider: ProviderConfig, fetchImpl?: typeof fetch, options?: QuotaFetchOptions) => Promise<ProviderQuotaFetchResult>
 }
 
 /**
  * Parse an HTTP `Retry-After` header (seconds or HTTP-date) into milliseconds.
- * Returns undefined when the header is absent or unparseable.
+ * Returns undefined when the header is absent, unparseable, not positive, or
+ * not a finite number of milliseconds (e.g. `1e309`, `-5`, `NaN`, a date in
+ * the past). Callers fall back to their own backoff then.
  */
-export function parseRetryAfterMs(header: string | null): number | undefined {
+export function parseRetryAfterMs(header: string | null, nowMs: number = Date.now()): number | undefined {
   if (!header) return undefined
+  const trimmed = header.trim()
+  if (!trimmed) return undefined
 
-  const seconds = Number(header)
-  if (!Number.isNaN(seconds) && seconds > 0) {
-    return Math.round(seconds * 1000)
+  const seconds = Number(trimmed)
+  if (!Number.isNaN(seconds)) {
+    // A numeric header is never read as a date, even when it is unusable.
+    if (!Number.isFinite(seconds) || seconds <= 0) return undefined
+    const ms = seconds * 1000
+    if (!Number.isFinite(ms)) return undefined
+    const rounded = Math.round(ms)
+    return rounded > 0 ? rounded : undefined
   }
 
-  const retryAt = new Date(header).getTime()
-  if (!Number.isNaN(retryAt)) {
-    const diff = retryAt - Date.now()
-    if (diff > 0) return diff
+  const retryAt = new Date(trimmed).getTime()
+  if (Number.isFinite(retryAt)) {
+    const diff = retryAt - nowMs
+    if (Number.isFinite(diff) && diff > 0) return diff
   }
 
   return undefined
+}
+
+/**
+ * Wait time that can be added to `nowMs` without leaving the safe integer
+ * range: non-finite or negative values become 0, huge ones are capped so that
+ * `nowMs + result <= Number.MAX_SAFE_INTEGER`.
+ */
+export function clampWaitMs(waitMs: number, nowMs: number): number {
+  if (Number.isNaN(waitMs) || waitMs <= 0) return 0
+  return Math.min(waitMs, Math.max(0, Number.MAX_SAFE_INTEGER - nowMs))
 }
 
 /** Clamp a raw utilization value to an integer percentage in [0, 100]. */

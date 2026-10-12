@@ -373,4 +373,102 @@ describe('getMoonshotBalanceForProvider (throttling, logging)', () => {
     expect(String(warn.mock.calls[0]?.[0])).not.toContain(KEY)
     warn.mockRestore()
   })
+
+  it('an unusable Retry-After (1e309, negative, NaN) falls back to the 20 min pause, never Infinity', async () => {
+    for (const header of ['1e309', '-5', 'NaN', 'Infinity']) {
+      resetMoonshotBalanceState()
+      const fetchImpl = vi.fn(async () => mockResponse({ ok: false, status: 429, headers: { 'retry-after': header } }))
+      const f = fetchImpl as unknown as typeof fetch
+      const first = await getMoonshotBalanceForProvider(provider, f, now, logger)
+      expect(first.retryAfterMs).toBe(MOONSHOT_BALANCE_RATE_LIMIT_INITIAL_BACKOFF_MS)
+      clock += MOONSHOT_BALANCE_RATE_LIMIT_INITIAL_BACKOFF_MS - 1
+      await getMoonshotBalanceForProvider(provider, f, now, logger)
+      expect(fetchImpl).toHaveBeenCalledTimes(1)
+      clock += 1
+      await getMoonshotBalanceForProvider(provider, f, now, logger)
+      expect(fetchImpl).toHaveBeenCalledTimes(2)
+    }
+  })
+
+  it('a huge Retry-After keeps the pause end inside the safe integer range', async () => {
+    clock = Number.MAX_SAFE_INTEGER - 10_000
+    const fetchImpl = vi.fn(async () => mockResponse({ ok: false, status: 429, headers: { 'retry-after': '1e300' } }))
+    const result = await getMoonshotBalanceForProvider(provider, fetchImpl as unknown as typeof fetch, now, logger)
+    expect(Number.isFinite(result.retryAfterMs)).toBe(true)
+    expect(clock + (result.retryAfterMs as number)).toBeLessThanOrEqual(Number.MAX_SAFE_INTEGER)
+  })
+
+  describe('single flight', () => {
+    function deferredFetch() {
+      const pending: Array<(r: Response) => void> = []
+      const fetchImpl = vi.fn(
+        () =>
+          new Promise<Response>((resolve) => {
+            pending.push(resolve)
+          }),
+      )
+      return { fetchImpl, f: fetchImpl as unknown as typeof fetch, pending }
+    }
+
+    it('parallel calls for the same provider and key share one request and one result', async () => {
+      const { fetchImpl, f, pending } = deferredFetch()
+      const a = getMoonshotBalanceForProvider(provider, f, now, logger)
+      const b = getMoonshotBalanceForProvider(provider, f, now, logger)
+      await vi.waitFor(() => expect(pending.length).toBe(1))
+      pending[0]?.(mockResponse({ ok: true, status: 200, json: VALID_BODY }))
+      const [ra, rb] = await Promise.all([a, b])
+      expect(fetchImpl).toHaveBeenCalledTimes(1)
+      expect(ra.quota?.balance?.amount).toBe(13.505731)
+      expect(rb).toEqual(ra)
+      // Once the request is done the next call asks again.
+      const c = getMoonshotBalanceForProvider(provider, f, now, logger)
+      await vi.waitFor(() => expect(pending.length).toBe(2))
+      pending[1]?.(mockResponse({ ok: true, status: 200, json: VALID_BODY }))
+      await c
+      expect(fetchImpl).toHaveBeenCalledTimes(2)
+    })
+
+    it('after a 429 the joined call is answered from the pause', async () => {
+      const { fetchImpl, f, pending } = deferredFetch()
+      const a = getMoonshotBalanceForProvider(provider, f, now, logger)
+      const b = getMoonshotBalanceForProvider(provider, f, now, logger)
+      await vi.waitFor(() => expect(pending.length).toBe(1))
+      pending[0]?.(mockResponse({ ok: false, status: 429 }))
+      const [ra, rb] = await Promise.all([a, b])
+      expect(fetchImpl).toHaveBeenCalledTimes(1)
+      expect(ra).toMatchObject({ quota: null, status: 429, retryAfterMs: MOONSHOT_BALANCE_RATE_LIMIT_INITIAL_BACKOFF_MS })
+      expect(rb).toMatchObject({ quota: null, status: 429, retryAfterMs: MOONSHOT_BALANCE_RATE_LIMIT_INITIAL_BACKOFF_MS })
+      expect(logger.warn).toHaveBeenCalledTimes(1)
+    })
+
+    it('a forced call during a running request sends no second request', async () => {
+      const { fetchImpl, f, pending } = deferredFetch()
+      const a = getMoonshotBalanceForProvider(provider, f, now, logger)
+      const forced = getMoonshotBalanceForProvider(provider, f, now, logger, { force: true })
+      await vi.waitFor(() => expect(pending.length).toBe(1))
+      pending[0]?.(mockResponse({ ok: false, status: 401 }))
+      const [ra, rf] = await Promise.all([a, forced])
+      expect(fetchImpl).toHaveBeenCalledTimes(1)
+      expect(rf).toEqual(ra)
+      expect(rf).toMatchObject({ quota: null, status: 401 })
+    })
+
+    it('a different key is not joined to the running request', async () => {
+      const { fetchImpl, f, pending } = deferredFetch()
+      const a = getMoonshotBalanceForProvider(provider, f, now, logger)
+      const b = getMoonshotBalanceForProvider({ ...provider, apiKey: 'sk_another-moonshot-key-987654' }, f, now, logger)
+      await vi.waitFor(() => expect(pending.length).toBe(2))
+      for (const resolve of pending) resolve(mockResponse({ ok: true, status: 200, json: VALID_BODY }))
+      await Promise.all([a, b])
+      expect(fetchImpl).toHaveBeenCalledTimes(2)
+    })
+  })
+
+  it('the registered adapter offers a key fingerprint without the key', () => {
+    const fp = moonshotBalanceAdapter.credentialFingerprint?.(provider)
+    expect(fp).toMatch(/^[0-9a-f]{16}$/)
+    expect(fp).not.toContain(KEY)
+    expect(moonshotBalanceAdapter.credentialFingerprint?.({ ...provider, apiKey: 'sk_another-moonshot-key-987654' })).not.toBe(fp)
+    expect(moonshotBalanceAdapter.credentialFingerprint?.(provider)).toBe(fp)
+  })
 })
