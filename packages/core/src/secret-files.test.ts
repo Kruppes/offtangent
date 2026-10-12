@@ -11,8 +11,9 @@ import os from 'node:os'
 import path from 'node:path'
 import { describe, it, expect, beforeEach, afterEach } from 'vitest'
 import { secretFileDirs, secretFileValues, secretFilesSignature, invalidateSecretFilesSignature, SECRET_FILE_DIRS_ENV } from './secret-files.js'
-import { invalidateKnownValues, redactKnown, REDACTED_HANDLE } from './secret-boundary.js'
+import { invalidateKnownValues, redactKnown, redactMessages, REDACTED_HANDLE } from './secret-boundary.js'
 import { invalidateSecretHandleCache } from './secret-store.js'
+import { extractInteractionBlocks } from './contracts/interaction-blocks.js'
 
 /** Canary values, built at runtime — never a literal in the repo. */
 const canary = (label: string, length = 14): string =>
@@ -140,6 +141,29 @@ describe('secret-files — what counts as a value', () => {
 })
 
 describe('secret-files — wired into redactKnown', () => {
+  it('preserves the interactive question fence while masking a real file-backed credential', () => {
+    const credential = canary('QUESTIONTOKEN', 40)
+    fs.writeFileSync(
+      path.join(secretsDir(), 'service.env'),
+      `MQTT_USER=offtangent\nSERVICE_TOKEN=${credential}\n`,
+    )
+    invalidateKnownValues()
+
+    const question = [
+      'Which option?',
+      '```offtangent',
+      JSON.stringify({ block: 'choice', id: 'q1', question: 'Pick one', options: [
+        { id: 'a', label: 'A' }, { id: 'b', label: 'B' },
+      ] }),
+      '```',
+    ].join('\n')
+    const [assistant] = redactMessages([{ role: 'assistant', content: question }])
+    expect(assistant.content).toBe(question)
+    expect(extractInteractionBlocks(assistant.content)).toHaveLength(1)
+    const [withCredential] = redactMessages([{ role: 'assistant', content: `credential=${credential}` }])
+    expect(withCredential.content).toBe(`credential=${REDACTED_HANDLE}`)
+  })
+
   it('redacts a value from a synthetic .env in a cat output', () => {
     const master = canary('CATTEST')
     fs.writeFileSync(path.join(secretsDir(), 'vaultwarden.env'), `BW_PASSWORD=${master}\n`)

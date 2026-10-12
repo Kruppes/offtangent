@@ -69,6 +69,13 @@ export interface SealTextResult {
 const MIN_HANDLE_VALUE_LENGTH = SECRET_HANDLE_MIN_VALUE_LENGTH
 const MIN_ENV_VALUE_LENGTH = 8
 
+/** Protocol identifiers must remain intact even if reused as a credential value.
+ * A global substring replacement of the interaction fence language breaks
+ * parsing on every client. Explicit handles still resolve short/ambiguous
+ * credentials; only the indiscriminate outgoing search excludes this token.
+ */
+const RESERVED_OUTPUT_VALUES = new Set(['offtangent'])
+
 /** Env var names whose values count as known secrets (D4). */
 const SECRET_ENV_NAME_RE = /KEY|SECRET|TOKEN|PASSWORD/i
 
@@ -207,12 +214,12 @@ function buildIndex(): KnownIndex {
 
   // 1. Sealed handles — these have a slug, so the text keeps its meaning.
   for (const [value, slug] of knownSecretValues()) {
-    if (value.length < MIN_HANDLE_VALUE_LENGTH) continue
+    if (value.length < MIN_HANDLE_VALUE_LENGTH || RESERVED_OUTPUT_VALUES.has(value)) continue
     replacements.set(value, secretHandle(slug))
   }
 
   const addOpaque = (value: string | undefined): void => {
-    if (!value || value.length < MIN_ENV_VALUE_LENGTH) return
+    if (!value || value.length < MIN_ENV_VALUE_LENGTH || RESERVED_OUTPUT_VALUES.has(value)) return
     if (replacements.has(value)) return
     replacements.set(value, REDACTED_HANDLE)
   }

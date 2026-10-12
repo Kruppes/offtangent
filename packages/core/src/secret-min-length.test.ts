@@ -60,6 +60,13 @@ describe('F5: minimum length of a globally redacted value', () => {
     expect(redactKnown('the value abcdef goes')).toBe(`the value ${secretHandle(slug)} goes`)
   })
 
+  it('keeps a reserved UI token intact even when it is a sealed value', () => {
+    const slug = sealSecret('offtangent', 'username', 'form')
+    invalidateKnownValues()
+    expect(redactKnown('```offtangent\n{}\n```')).toBe('```offtangent\n{}\n```')
+    expect(resolveHandles(`user ${secretHandle(slug)}`).text).toBe('user offtangent')
+  })
+
   it('resolves a short value through its handle regardless of the floor', () => {
     const slug = sealSecret('1234', 'password', 'form')
     invalidateKnownValues()
