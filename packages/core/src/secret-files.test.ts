@@ -194,6 +194,25 @@ describe('secret-files — wired into redactKnown', () => {
     expect(sealToolText(uppercaseFence, 'test')).toBe(maskedFence)
   })
 
+  it('redacts a sealed multiline PEM value across a fence opener without breaking a later card', () => {
+    const pem = [
+      '-----BEGIN ' + 'PRIVATE KEY-----',
+      'c3ludGhldGljLWtleS1ub3QtYS1yZWFsLWtleQ==',
+      '```offtangent',
+      '-----END ' + 'PRIVATE KEY-----',
+    ].join('\n')
+    const handle = sealToolText(pem, 'test')
+    expect(handle).toMatch(/^\{\{secret:[a-z0-9-]+\}\}$/)
+    const card = '```offtangent\n{"block":"choice","id":"q1","question":"Pick","options":[{"id":"a","label":"A"}]}\n```'
+    const text = `${pem}\n${card}`
+    const expected = `${handle}\n${card}`
+    expect(redactKnown(text)).toBe(expected)
+    const [assistant] = redactMessages([{ role: 'assistant', content: text }])
+    expect(assistant.content).toBe(expected)
+    expect(assistant.content).not.toContain('PRIVATE KEY')
+    expect(extractInteractionBlocks(assistant.content)).toHaveLength(1)
+  })
+
   it('seals a PEM detector span across an interactive fence opener', () => {
     const pem = [
       '-----BEGIN ' + 'PRIVATE KEY-----',
@@ -229,6 +248,10 @@ describe('secret-files — wired into redactKnown', () => {
     expect(redacted).toContain(`credential=${REDACTED_HANDLE}`)
     expect(extractInteractionBlocks(redacted)).toHaveLength(1)
     expect(sealToolText(`${question}\ncredential=${substring}`, 'test')).toBe(redacted)
+    // Known prose on both sides of the protected opener must still be replaced.
+    const adjacent = `${substring}\n\`\`\`offtangent\n${substring}\n\`\`\`\n${substring}`
+    const maskedAdjacent = `${REDACTED_HANDLE}\n\`\`\`offtangent\n${REDACTED_HANDLE}\n\`\`\`\n${REDACTED_HANDLE}`
+    expect(redactKnown(adjacent)).toBe(maskedAdjacent)
     const nested = `\`\`\`offtangent\n\`\`\`offtangent\n\`\`\``
     expect(redactKnown(nested)).toBe(`\`\`\`offtangent\n\`\`\`${REDACTED_HANDLE}t\n\`\`\``)
     expect(redactKnown(`ordinary=${substring}\n\`\`\`offtangent trailing ${substring}`))

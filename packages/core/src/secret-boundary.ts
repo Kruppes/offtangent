@@ -356,13 +356,17 @@ export function redactKnown(text: string): string {
   if (!index.regex) return text
   const ranges = protectedOutputRanges(text)
   if (ranges.length === 0) return replaceKnown(text, index)
-  let out = ''
-  let cursor = 0
-  for (const range of ranges) {
-    out += replaceKnown(text.slice(cursor, range.start), index) + text.slice(range.start, range.end)
-    cursor = range.end
-  }
-  return out + replaceKnown(text.slice(cursor), index)
+  const handles = handleRanges(text)
+  // Match over the entire input: a known multiline value can cross a fence
+  // opener. Only values wholly inside the opener are protocol text; a match
+  // touching a handle must never rewrite that handle, even across its edges.
+  index.regex.lastIndex = 0
+  return text.replace(index.regex, (match, offset: number) => {
+    const end = offset + match.length
+    if (overlapsRange(handles, offset, end)
+      || ranges.some(range => offset >= range.start && end <= range.end)) return match
+    return index.replacements.get(match) ?? REDACTED_HANDLE
+  })
 }
 
 function replaceKnown(text: string, index: KnownIndex): string {
