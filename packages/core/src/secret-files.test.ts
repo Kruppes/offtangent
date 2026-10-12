@@ -11,7 +11,7 @@ import os from 'node:os'
 import path from 'node:path'
 import { describe, it, expect, beforeEach, afterEach } from 'vitest'
 import { secretFileDirs, secretFileValues, secretFilesSignature, invalidateSecretFilesSignature, SECRET_FILE_DIRS_ENV } from './secret-files.js'
-import { invalidateKnownValues, redactKnown, redactMessages, REDACTED_HANDLE } from './secret-boundary.js'
+import { invalidateKnownValues, redactKnown, redactMessages, sealToolText, REDACTED_HANDLE } from './secret-boundary.js'
 import { invalidateSecretHandleCache } from './secret-store.js'
 import { extractInteractionBlocks } from './contracts/interaction-blocks.js'
 
@@ -162,6 +162,40 @@ describe('secret-files — wired into redactKnown', () => {
     expect(extractInteractionBlocks(assistant.content)).toHaveLength(1)
     const [withCredential] = redactMessages([{ role: 'assistant', content: `credential=${credential}` }])
     expect(withCredential.content).toBe(`credential=${REDACTED_HANDLE}`)
+  })
+
+  it('redacts credentials containing the reserved token without damaging the fence', () => {
+    const credential = ['prod', 'offtangent', '7f3a9'].join('-')
+    const variants = ['OFFTANGENT', 'Offtangent']
+    fs.writeFileSync(path.join(secretsDir(), 'variants.env'),
+      [credential, ...variants].map((value, i) => `TOKEN_${i}=${value}`).join('\n'))
+    invalidateKnownValues()
+
+    const question = '```offtangent\n{"block":"choice","id":"q1","question":"Pick","options":[{"id":"a","label":"A"}]}\n```'
+    for (const value of [credential, ...variants]) {
+      const text = `${question}\ncredential=${value}`
+      const redacted = redactKnown(text)
+      expect(redacted).toBe(`${question}\ncredential=${REDACTED_HANDLE}`)
+      expect(extractInteractionBlocks(redacted)).toHaveLength(1)
+    }
+  })
+
+  it('protects only the interactive fence header against substring credentials', () => {
+    const substring = 'offtangen' // a genuine substring of the fence language
+    fs.writeFileSync(path.join(secretsDir(), 'substring.env'), `TOKEN=${substring}\n`)
+    invalidateKnownValues()
+
+    const question = `  \`\`\`offtangent  \n{"block":"choice","id":"q1","question":"${substring}","options":[{"id":"a","label":"A"}]}\n\`\`\``
+    const redacted = redactKnown(`${question}\ncredential=${substring}`)
+    expect(redacted).toContain('```offtangent  \n')
+    expect(redacted).toContain(`"question":"${REDACTED_HANDLE}"`)
+    expect(redacted).toContain(`credential=${REDACTED_HANDLE}`)
+    expect(extractInteractionBlocks(redacted)).toHaveLength(1)
+    expect(sealToolText(`${question}\ncredential=${substring}`, 'test')).toBe(redacted)
+    const nested = `\`\`\`offtangent\n\`\`\`offtangent\n\`\`\``
+    expect(redactKnown(nested)).toBe(`\`\`\`offtangent\n\`\`\`${REDACTED_HANDLE}t\n\`\`\``)
+    expect(redactKnown(`ordinary=${substring}\n\`\`\`offtangent trailing ${substring}`))
+      .toBe(`ordinary=${REDACTED_HANDLE}\n\`\`\`${REDACTED_HANDLE}t trailing ${REDACTED_HANDLE}`)
   })
 
   it('redacts a value from a synthetic .env in a cat output', () => {

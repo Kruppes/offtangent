@@ -296,6 +296,28 @@ function handleRanges(text: string): Range[] {
   return ranges
 }
 
+/** Protect only opening lines of interactive fences, not their body or
+ * arbitrary trailing content. Like handles, the opener is output protocol
+ * structure and must survive detection and known-value replacement.
+ */
+function protectedOutputRanges(text: string): Range[] {
+  const ranges = handleRanges(text)
+  if (!text.includes('```')) return ranges
+  let offset = 0
+  let inFence = false
+  for (const line of text.split('\n')) {
+    const trimmed = line.trim()
+    if (!inFence && /^`{3,}\s*offtangent\s*$/i.test(trimmed)) {
+      ranges.push({ start: offset, end: offset + line.length })
+      inFence = true
+    } else if (inFence && /^`{3,}\s*$/.test(trimmed)) {
+      inFence = false
+    }
+    offset += line.length + 1
+  }
+  return ranges.sort((a, b) => a.start - b.start)
+}
+
 /**
  * Blank out the handles, keeping every offset: the detector then runs over a
  * text of the same length in which no rule can see a slug. Spaces are the
@@ -332,7 +354,7 @@ export function redactKnown(text: string): string {
   if (!text) return text
   const index = getIndex()
   if (!index.regex) return text
-  const ranges = handleRanges(text)
+  const ranges = protectedOutputRanges(text)
   if (ranges.length === 0) return replaceKnown(text, index)
   let out = ''
   let cursor = 0
@@ -360,7 +382,7 @@ export function sealText(text: string, options: SealTextOptions): SealTextResult
   // Integration, open point 2). Offsets stay valid because the mask has the
   // same length; a span that still overlaps a handle (a multi-line rule such
   // as the PEM block could span the gap) is dropped instead of nested.
-  const protectedRanges = handleRanges(text)
+  const protectedRanges = protectedOutputRanges(text)
   const detectable = maskRanges(text, protectedRanges)
   const spans = detectSecrets(detectable, { tier: options.tier })
     .filter(span => !overlapsRange(protectedRanges, span.start, span.end))
