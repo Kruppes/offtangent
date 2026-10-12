@@ -180,6 +180,43 @@ describe('secret-files — wired into redactKnown', () => {
     }
   })
 
+  it('masks an uppercase fence label when it is a known value, but keeps the protocol opener', () => {
+    const uppercase = 'OFFTANGENT'
+    fs.writeFileSync(path.join(secretsDir(), 'uppercase.env'), `TOKEN=${uppercase}\n`)
+    invalidateKnownValues()
+
+    const lower = '```offtangent\n{"block":"choice","id":"q1","question":"Pick","options":[{"id":"a","label":"A"}]}\n```'
+    expect(redactKnown(lower)).toBe(lower)
+    expect(extractInteractionBlocks(redactKnown(lower))).toHaveLength(1)
+    const uppercaseFence = `\`\`\`${uppercase}\nbody\n\`\`\``
+    const maskedFence = `\`\`\`${REDACTED_HANDLE}\nbody\n\`\`\``
+    expect(redactKnown(uppercaseFence)).toBe(maskedFence)
+    expect(sealToolText(uppercaseFence, 'test')).toBe(maskedFence)
+  })
+
+  it('seals a PEM detector span across an interactive fence opener', () => {
+    const pem = [
+      '-----BEGIN ' + 'PRIVATE KEY-----',
+      'c3ludGhldGljLWtleS1ub3QtYS1yZWFsLWtleQ==',
+      '```offtangent',
+      '-----END ' + 'PRIVATE KEY-----',
+    ].join('\n')
+    const result = sealToolText(pem, 'test')
+    expect(result).toMatch(/^\{\{secret:[a-z0-9-]+\}\}$/)
+    expect(result).not.toContain('PRIVATE KEY')
+    expect(result).not.toContain('```offtangent')
+  })
+
+  it('seals detector canaries both inside and after the interactive fence', () => {
+    const inside = ['ghp', '_', 'A'.repeat(36)].join('')
+    const after = ['ghp', '_', 'B'.repeat(36)].join('')
+    const input = `\`\`\`offtangent\n${inside}\n\`\`\`\n${after}`
+    const result = sealToolText(input, 'test')
+    expect(result).toMatch(/^```offtangent\n\{\{secret:[a-z0-9-]+\}\}\n```\n\{\{secret:[a-z0-9-]+\}\}$/)
+    expect(result).not.toContain(inside)
+    expect(result).not.toContain(after)
+  })
+
   it('protects only the interactive fence header against substring credentials', () => {
     const substring = 'offtangen' // a genuine substring of the fence language
     fs.writeFileSync(path.join(secretsDir(), 'substring.env'), `TOKEN=${substring}\n`)

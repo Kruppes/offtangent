@@ -296,9 +296,9 @@ function handleRanges(text: string): Range[] {
   return ranges
 }
 
-/** Protect only opening lines of interactive fences, not their body or
- * arbitrary trailing content. Like handles, the opener is output protocol
- * structure and must survive detection and known-value replacement.
+/** Protect only opening lines of interactive fences from known-value
+ * replacement, not their body or arbitrary trailing content. Detector spans
+ * must still be allowed to cross the opener (e.g. a multi-line PEM key).
  */
 function protectedOutputRanges(text: string): Range[] {
   const ranges = handleRanges(text)
@@ -307,7 +307,7 @@ function protectedOutputRanges(text: string): Range[] {
   let inFence = false
   for (const line of text.split('\n')) {
     const trimmed = line.trim()
-    if (!inFence && /^`{3,}\s*offtangent\s*$/i.test(trimmed)) {
+    if (!inFence && /^`{3,}\s*offtangent\s*$/.test(trimmed)) {
       ranges.push({ start: offset, end: offset + line.length })
       inFence = true
     } else if (inFence && /^`{3,}\s*$/.test(trimmed)) {
@@ -382,7 +382,7 @@ export function sealText(text: string, options: SealTextOptions): SealTextResult
   // Integration, open point 2). Offsets stay valid because the mask has the
   // same length; a span that still overlaps a handle (a multi-line rule such
   // as the PEM block could span the gap) is dropped instead of nested.
-  const protectedRanges = protectedOutputRanges(text)
+  const protectedRanges = handleRanges(text)
   const detectable = maskRanges(text, protectedRanges)
   const spans = detectSecrets(detectable, { tier: options.tier })
     .filter(span => !overlapsRange(protectedRanges, span.start, span.end))
