@@ -360,13 +360,27 @@ export function redactKnown(text: string): string {
   // Match over the entire input: a known multiline value can cross a fence
   // opener. Only values wholly inside the opener are protocol text; a match
   // touching a handle must never rewrite that handle, even across its edges.
-  index.regex.lastIndex = 0
-  return text.replace(index.regex, (match, offset: number) => {
-    const end = offset + match.length
-    if (overlapsRange(handles, offset, end)
-      || ranges.some(range => offset >= range.start && end <= range.end)) return match
-    return index.replacements.get(match) ?? REDACTED_HANDLE
-  })
+  const skip = (start: number, end: number): boolean => overlapsRange(handles, start, end)
+    || ranges.some(range => start >= range.start && end <= range.end)
+  const byLength = [...index.replacements.keys()].sort((a, b) => b.length - a.length)
+  const re = new RegExp(index.regex.source, index.regex.flags.includes('g') ? index.regex.flags : index.regex.flags + 'g')
+  let out = ''
+  let copied = 0
+  let m: RegExpExecArray | null
+  re.lastIndex = 0
+  while ((m = re.exec(text)) !== null) {
+    const offset = m.index
+    let value: string | undefined = m[0]
+    if (skip(offset, offset + value.length)) {
+      // Longest-first alternation hid any shorter value at this offset; try those.
+      value = byLength.find(v => v.length < m![0].length && text.startsWith(v, offset) && !skip(offset, offset + v.length))
+      if (value === undefined) { re.lastIndex = offset + 1; continue }
+    }
+    out += text.slice(copied, offset) + (index.replacements.get(value) ?? REDACTED_HANDLE)
+    copied = offset + value.length
+    re.lastIndex = copied
+  }
+  return out + text.slice(copied)
 }
 
 function replaceKnown(text: string, index: KnownIndex): string {

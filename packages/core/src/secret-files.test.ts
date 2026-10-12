@@ -258,6 +258,32 @@ describe('secret-files — wired into redactKnown', () => {
       .toBe(`ordinary=${REDACTED_HANDLE}\n\`\`\`${REDACTED_HANDLE}t trailing ${REDACTED_HANDLE}`)
   })
 
+  it('does not let a longer known value overlapping a handle shadow a shorter one at the same offset', () => {
+    const short = ['Kb', 'Zq', 'shadow'].join('-')
+    const trail = ['Kb', 'Zq', 'trail'].join('-')
+    // Longer siblings reaching into the handle: prefix-into-handle and suffix-out-of-handle.
+    fs.writeFileSync(
+      path.join(secretsDir(), 'shadow.env'),
+      [`A=${short}`, `B=${short}{{`, `C=${trail}`, `D=}}${trail}`].join('\n') + '\n',
+    )
+    invalidateKnownValues()
+    const handle = sealToolText(['ghp', '_', 'C'.repeat(36)].join(''), 'test')
+    expect(handle).toMatch(/^\{\{[a-z]+:[a-z0-9-]+\}\}$/)
+    const card = '```offtangent\n{"block":"choice","id":"q1","question":"Pick","options":[{"id":"a","label":"A"}]}\n```'
+    const text = `pre ${short}${handle}${trail}\n${card}`
+    const expected = `pre ${REDACTED_HANDLE}${handle}${REDACTED_HANDLE}\n${card}`
+    const redacted = redactKnown(text)
+    expect(redacted).toBe(expected)
+    expect(redacted).not.toContain(short)
+    expect(redacted).not.toContain(trail)
+    expect(extractInteractionBlocks(redacted)).toHaveLength(1)
+    // Each direction on its own.
+    expect(redactKnown(`${short}${handle}\n${card}`)).toBe(`${REDACTED_HANDLE}${handle}\n${card}`)
+    expect(redactKnown(`${handle}${trail}\n${card}`)).toBe(`${handle}${REDACTED_HANDLE}\n${card}`)
+    const [assistant] = redactMessages([{ role: 'assistant', content: text }])
+    expect(assistant.content).toBe(expected)
+  })
+
   it('redacts a value from a synthetic .env in a cat output', () => {
     const master = canary('CATTEST')
     fs.writeFileSync(path.join(secretsDir(), 'vaultwarden.env'), `BW_PASSWORD=${master}\n`)
