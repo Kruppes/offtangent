@@ -14,6 +14,14 @@ import type { OAuthCredentials } from '@earendil-works/pi-ai/oauth'
 import { anthropicProvider } from '@earendil-works/pi-ai/providers/anthropic'
 import { githubCopilotProvider } from '@earendil-works/pi-ai/providers/github-copilot'
 import { openaiCodexProvider } from '@earendil-works/pi-ai/providers/openai-codex'
+import {
+  KIMI_CODING_OAUTH_MODEL_PROVIDER,
+  KIMI_CODING_REGIONS,
+  createKimiCodingOAuth,
+  kimiCliIdentityHeaders,
+  kimiCodingRegionForBaseUrl,
+  kimiCodingRegionOfCredential,
+} from './kimi-coding-oauth.js'
 import { getConfigDir, ensureConfigTemplates, loadConfig } from './config.js'
 // Type-only: `data-policy.ts` reads providers.json through this module, so a
 // value import would be a runtime cycle.
@@ -49,7 +57,7 @@ export type ProviderType =
   | 'openai' | 'anthropic' | 'mistral' | 'ollama' | 'ollama-native' | 'openrouter' | 'deepseek' | 'kimi' | 'kimi-coding' | 'minimax' | 'zai' | 'zai-coding' | 'xai' | 'opencode-go' | 'opencode-zen' | 'openai-compatible' | 'google'
   // Legacy aliases kept for migration
   | 'ollama-local' | 'ollama-cloud'
-  | 'openai-codex' | 'github-copilot' | 'anthropic-oauth'
+  | 'openai-codex' | 'github-copilot' | 'anthropic-oauth' | 'kimi-coding-oauth'
 
 export type AuthMethod = 'api-key' | 'oauth'
 export type TextVerbosity = 'low' | 'medium' | 'high'
@@ -485,6 +493,32 @@ export const PROVIDER_TYPE_PRESETS: Record<ProviderType, ProviderTypePreset> = {
     piAiProvider: 'anthropic',
     authMethod: 'oauth',
     oauthProviderId: 'anthropic',
+  },
+  // Kimi Code subscription signed in with OAuth (device code) instead of a
+  // plan API key. A separate type, like anthropic / anthropic-oauth, because
+  // the auth method is a property of the preset everywhere (form, OAuth
+  // routes, refresh, quota); existing `kimi-coding` API-key providers keep
+  // their type and behaviour unchanged. The region picked at login fixes the
+  // auth host AND the API base together (see kimi-coding-oauth.ts). The
+  // token is sent as `Authorization: Bearer` to the same Anthropic-messages
+  // endpoint `/coding` the plan key uses (pi-ai's contract).
+  'kimi-coding-oauth': {
+    type: 'kimi-coding-oauth',
+    label: 'Kimi Code (Subscription, OAuth)',
+    description: 'Sign in with your Kimi Code account (device code)',
+    apiType: 'anthropic-messages',
+    providerName: KIMI_CODING_OAUTH_MODEL_PROVIDER,
+    baseUrl: KIMI_CODING_REGIONS.cn.apiBaseUrl,
+    requiresApiKey: false,
+    urlEditable: false,
+    baseUrlOptions: [
+      { url: KIMI_CODING_REGIONS.cn.apiBaseUrl, label: 'China (kimi.com)' },
+      { url: KIMI_CODING_REGIONS.intl.apiBaseUrl, label: 'International (kimi.ai)' },
+    ],
+    piAiProvider: 'kimi-coding',
+    authMethod: 'oauth',
+    oauthProviderId: 'kimi-coding',
+    subscription: true,
   },
 }
 
@@ -1677,6 +1711,24 @@ export function addProvider(input: {
 }
 
 /**
+ * Base URL of an OAuth provider. Kimi Code: the region recorded in the
+ * credential wins, so auth host and API base always match; other presets use
+ * the validated region choice or the preset default.
+ */
+function oauthProviderBaseUrl(
+  providerType: ProviderType,
+  baseUrl: string | undefined,
+  credentials: OAuthCredentials,
+): string {
+  const preset = PROVIDER_TYPE_PRESETS[providerType]
+  if (preset?.oauthProviderId === 'kimi-coding') {
+    const region = kimiCodingRegionOfCredential(credentials as { region?: unknown }, resolveEffectiveBaseUrl(providerType, baseUrl))
+    return KIMI_CODING_REGIONS[region].apiBaseUrl
+  }
+  return resolveEffectiveBaseUrl(providerType, validatePresetBaseUrlInput(providerType, baseUrl)) || preset.baseUrl
+}
+
+/**
  * Add a new OAuth-authenticated provider
  */
 export function addOAuthProvider(input: {
@@ -1688,6 +1740,8 @@ export function addOAuthProvider(input: {
   textVerbosity?: TextVerbosity
   transport?: ProviderTransport
   oauthCredentials: OAuthCredentials
+  /** Region choice of a multi-region preset (validated against its options). */
+  baseUrl?: string
 }): ProviderConfig {
   const preset = PROVIDER_TYPE_PRESETS[input.providerType]
   if (!preset) {
@@ -1712,7 +1766,7 @@ export function addOAuthProvider(input: {
     type: preset.apiType,
     providerType: input.providerType,
     provider: preset.providerName,
-    baseUrl: preset.baseUrl,
+    baseUrl: oauthProviderBaseUrl(input.providerType, input.baseUrl, input.oauthCredentials),
     apiKey: '',
     enabledModels,
     degradedThresholdMs: input.degradedThresholdMs ?? 5000,
@@ -1975,6 +2029,10 @@ export function updateOAuthCredentials(id: string, credentials: OAuthCredentials
   const provider = file.providers.find(p => p.id === id)
   if (!provider) return
   provider.oauthCredentials = encryptOAuthCredentials(credentials)
+  if (PROVIDER_TYPE_PRESETS[provider.providerType]?.oauthProviderId === 'kimi-coding') {
+    // Keep the API base on the region of the (re-)issued token.
+    provider.baseUrl = oauthProviderBaseUrl(provider.providerType, provider.baseUrl, credentials)
+  }
   saveProviders(file)
 }
 
@@ -2162,6 +2220,9 @@ const PI_OAUTH_PROVIDER_FACTORIES: Record<string, () => { auth?: { oauth?: OAuth
   'anthropic': anthropicProvider,
   'github-copilot': githubCopilotProvider,
   'openai-codex': openaiCodexProvider,
+  // Own region-aware device flow (pi-ai's is pinned to the China host). The
+  // shared instance refreshes against the region stored in each credential.
+  'kimi-coding': () => ({ auth: { oauth: createKimiCodingOAuth() } }),
 }
 
 const piOAuthAuthCache = new Map<string, OAuthAuth | null>()
@@ -2174,6 +2235,21 @@ export function getPiOAuthAuth(oauthProviderId: string): OAuthAuth | null {
     piOAuthAuthCache.set(oauthProviderId, cached)
   }
   return cached
+}
+
+/**
+ * The OAuth flow for a NEW sign-in. Region-aware flows (Kimi Code) need the
+ * region before the device code is requested; it is derived from the chosen
+ * base URL so auth host and API base can never diverge. All other providers
+ * get the shared {@link getPiOAuthAuth} instance.
+ */
+export function getOAuthAuthForLogin(providerType: ProviderType, baseUrl?: string | null): OAuthAuth | null {
+  const preset = PROVIDER_TYPE_PRESETS[providerType]
+  if (!preset?.oauthProviderId) return null
+  if (preset.oauthProviderId === 'kimi-coding') {
+    return createKimiCodingOAuth(kimiCodingRegionForBaseUrl(resolveEffectiveBaseUrl(providerType, baseUrl)))
+  }
+  return getPiOAuthAuth(preset.oauthProviderId)
 }
 
 /**
@@ -2416,6 +2492,25 @@ export function buildModel(provider: ProviderConfig, modelId?: string): Model<Ap
         // Multi-region preset (Kimi coding plan): the catalog pins one region's
         // URL on every model, so apply the region the provider is configured for.
         piModel = { ...piModel, baseUrl: resolveEffectiveBaseUrl(provider.providerType, provider.baseUrl) }
+      }
+
+      if (piModel && preset.oauthProviderId === 'kimi-coding') {
+        // Kimi Code OAuth: the token belongs to the region that issued it, so
+        // the API base follows the credential's region (stored at login), not
+        // a possibly diverging base URL. Distinct provider id so pi-models.ts
+        // sends the token as `Authorization: Bearer` (pi-ai's contract), and
+        // the optional, default-off CLI identity headers.
+        const region = kimiCodingRegionOfCredential(
+          (provider.oauthCredentials ? storedToOAuthCredentials(provider.oauthCredentials) : undefined) as { region?: unknown } | undefined,
+          provider.baseUrl,
+        )
+        const cliHeaders = kimiCliIdentityHeaders()
+        piModel = {
+          ...piModel,
+          provider: KIMI_CODING_OAUTH_MODEL_PROVIDER,
+          baseUrl: KIMI_CODING_REGIONS[region].apiBaseUrl,
+          ...(Object.keys(cliHeaders).length > 0 && { headers: { ...piModel.headers, ...cliHeaders } }),
+        }
       }
 
       if (piModel) {

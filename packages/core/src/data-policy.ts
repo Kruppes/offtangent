@@ -118,7 +118,7 @@ export interface GateDecision {
  * spelling slips through.
  */
 export const CN_PROVIDER_TYPES: ReadonlySet<string> = new Set([
-  'zai', 'zai-coding', 'zai-coding-plan', 'moonshot', 'kimi', 'kimi-coding',
+  'zai', 'zai-coding', 'zai-coding-plan', 'moonshot', 'kimi', 'kimi-coding', 'kimi-coding-oauth',
 ])
 
 /**

@@ -155,6 +155,8 @@ export {
   getApiKeyForProvider,
   recoverOAuthAfterAuthFailure,
   getPiOAuthAuth,
+  getOAuthAuthForLogin,
+  matchPresetBaseUrlOption,
   getAvailableModels,
   syncNewCatalogModels,
   isDynamicCatalogProvider,

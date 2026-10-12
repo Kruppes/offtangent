@@ -16,6 +16,7 @@ import type {
 import { anthropicMessagesApi } from '@earendil-works/pi-ai/api/anthropic-messages.lazy'
 import { googleGenerativeAIApi } from '@earendil-works/pi-ai/api/google-generative-ai.lazy'
 import { OLLAMA_CHAT_API, ollamaChatStreams } from './ollama-native/chat-stream.js'
+import { KIMI_CODING_OAUTH_MODEL_PROVIDER } from './kimi-coding-oauth.js'
 import { mistralConversationsApi } from '@earendil-works/pi-ai/api/mistral-conversations.lazy'
 import { openAICodexResponsesApi } from '@earendil-works/pi-ai/api/openai-codex-responses.lazy'
 import { openAICompletionsApi } from '@earendil-works/pi-ai/api/openai-completions.lazy'
@@ -114,12 +115,38 @@ function getModelsInstance(): MutableModels {
  */
 function ensureProvider(models: MutableModels, providerId: string): void {
   if (models.getProvider(providerId)) return
+  if (providerId === KIMI_CODING_OAUTH_MODEL_PROVIDER) {
+    // Bearer-header provider: the key arrives as an Authorization header (see
+    // withBearerAuth), so the auth layer only has to accept the request.
+    models.setProvider(createProvider({
+      id: providerId,
+      auth: { apiKey: { name: `${providerId} bearer`, resolve: async () => ({ auth: {}, source: 'request header' }) } },
+      models: [],
+      api: buildApiMap(),
+    }))
+    return
+  }
   models.setProvider(createProvider({
     id: providerId,
     auth: { apiKey: envApiKeyAuth(`${providerId} API key`, []) },
     models: [],
     api: buildApiMap(),
   }))
+}
+
+/**
+ * Kimi Code OAuth tokens authenticate as `Authorization: Bearer` (pi-ai's
+ * `kimi-coding` OAuth contract), not as the `x-api-key` the Anthropic wire
+ * derives from `options.apiKey`. The per-request key (invariant 3) is moved
+ * into that header for those models only; every other provider is untouched.
+ */
+export function withBearerAuth(
+  model: Pick<Model<Api>, 'provider'>,
+  options: SimpleStreamOptions | undefined,
+): SimpleStreamOptions | undefined {
+  if (model.provider !== KIMI_CODING_OAUTH_MODEL_PROVIDER || !options?.apiKey) return options
+  const { apiKey, ...rest } = options
+  return { ...rest, headers: { ...rest.headers, Authorization: `Bearer ${apiKey}` } }
 }
 
 /**
@@ -133,7 +160,7 @@ export function streamSimple(
 ): AssistantMessageEventStream {
   const models = getModelsInstance()
   ensureProvider(models, model.provider)
-  return models.streamSimple(model, context, options)
+  return models.streamSimple(model, context, withBearerAuth(model, options))
 }
 
 /**
@@ -147,5 +174,5 @@ export function completeSimple(
 ): Promise<AssistantMessage> {
   const models = getModelsInstance()
   ensureProvider(models, model.provider)
-  return models.completeSimple(model, context, options)
+  return models.completeSimple(model, context, withBearerAuth(model, options))
 }

@@ -238,7 +238,7 @@ describe('deriveDataPolicy', () => {
     )).toEqual({ region: 'local', training: 'no', source: 'derived' })
   })
 
-  it.each(['zai', 'zai-coding', 'zai-coding-plan', 'moonshot', 'kimi', 'kimi-coding'])(
+  it.each(['zai', 'zai-coding', 'zai-coding-plan', 'moonshot', 'kimi', 'kimi-coding', 'kimi-coding-oauth'])(
     'files provider type %s as cn/unknown',
     providerType => {
       expect(deriveDataPolicy({ providerType }, 'any-model')).toEqual({
