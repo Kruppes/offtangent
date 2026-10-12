@@ -296,6 +296,9 @@ export function createProvidersService(options: ProvidersRouterOptions = {}): Pr
       createdAt: Date.now(),
       expiresAt: Date.now() + pendingOAuthLoginTtlMs(),
       existingProviderId: payload.providerId,
+      ...(payload.providerId && {
+        existingBaseUrl: loadProviders().providers.find((entry) => entry.id === payload.providerId)?.baseUrl ?? null,
+      }),
     }
     pendingOAuthLogins.set(loginId, loginState)
     ensureOAuthCleanupTimer()
@@ -413,7 +416,16 @@ export function createProvidersService(options: ProvidersRouterOptions = {}): Pr
           `Provider "${target.name}" is no longer of type ${loginState.providerType}; sign-in discarded.`,
         )
       }
-      updateOAuthCredentials(loginState.existingProviderId, credentials)
+      // Conditional write: type and region must still be those the sign-in
+      // started from; a late login never moves the entry back to its region.
+      try {
+        updateOAuthCredentials(loginState.existingProviderId, credentials, {
+          expectedProviderType: loginState.providerType,
+          expectedBaseUrl: loginState.existingBaseUrl ?? null,
+        })
+      } catch (err) {
+        throw new ProvidersValidationError((err as Error).message)
+      }
       const saved = loadProviders().providers.find((entry) => entry.id === loginState.existingProviderId)
       if (!saved) {
         throw new ProvidersNotFoundError('Provider not found')

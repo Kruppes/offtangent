@@ -1846,7 +1846,7 @@ export function updateProvider(id: string, input: {
     // every type change drops them: OAuth types need a new sign-in, API-key
     // types a key entered together with the change.
     delete existing.oauthCredentials
-    lastResolvedModelAuth.delete(existing.id)
+    invalidateOAuthCredentialState(existing.id)
     if (input.apiKey === undefined) existing.apiKey = ''
   }
 
@@ -1936,7 +1936,7 @@ export function updateProvider(id: string, input: {
     const urlRegion = kimiCodingRegionForBaseUrl(resolveEffectiveBaseUrl(existing.providerType, existing.baseUrl))
     if (!tokenRegion || tokenRegion !== urlRegion) {
       delete existing.oauthCredentials
-      lastResolvedModelAuth.delete(existing.id)
+      invalidateOAuthCredentialState(existing.id)
     }
   }
 
@@ -2053,17 +2053,62 @@ export function updateProviderModel(
 }
 
 /**
- * Update OAuth credentials for a provider
+ * Kimi Code region of a provider entry, derived from its effective base URL.
+ * `null` for every other provider type.
  */
-export function updateOAuthCredentials(id: string, credentials: OAuthCredentials): void {
+function kimiRegionOfEntry(provider: Pick<ProviderConfig, 'providerType' | 'baseUrl'>): string | null {
+  if (PROVIDER_TYPE_PRESETS[provider.providerType]?.oauthProviderId !== 'kimi-coding') return null
+  return kimiCodingRegionForBaseUrl(resolveEffectiveBaseUrl(provider.providerType, provider.baseUrl))
+}
+
+/**
+ * Store the credentials of a completed sign-in (new login / "Renew token").
+ *
+ * The write is conditional: `expectedProviderType` and `expectedBaseUrl`
+ * describe the entry as it was when the sign-in started. If the type or the
+ * (Kimi) region changed in the meantime the sign-in is discarded with an error
+ * instead of being written into an entry it was not issued for. A Kimi token
+ * is only stored together with the region that issued it: the base URL follows
+ * the token only when the entry still has the region the login started from
+ * (a deliberate region change via "Renew token"); without `expectedBaseUrl` a
+ * token of another region is refused instead of silently moving the entry.
+ *
+ * Any in-flight refresh of the previous sign-in is invalidated, so its late
+ * result can never overwrite the new credentials.
+ */
+export function updateOAuthCredentials(
+  id: string,
+  credentials: OAuthCredentials,
+  options?: { expectedProviderType?: ProviderType | string; expectedBaseUrl?: string | null },
+): void {
   const file = loadProviders()
   const provider = file.providers.find(p => p.id === id)
   if (!provider) return
-  provider.oauthCredentials = encryptOAuthCredentials(credentials)
-  if (PROVIDER_TYPE_PRESETS[provider.providerType]?.oauthProviderId === 'kimi-coding') {
-    // Keep the API base on the region of the (re-)issued token.
-    provider.baseUrl = oauthProviderBaseUrl(provider.providerType, provider.baseUrl, credentials)
+  if (options?.expectedProviderType && provider.providerType !== options.expectedProviderType) {
+    throw new Error(
+      `Provider "${provider.name}" is no longer of type ${options.expectedProviderType}; sign-in discarded.`,
+    )
   }
+  if (PROVIDER_TYPE_PRESETS[provider.providerType]?.oauthProviderId === 'kimi-coding') {
+    const tokenRegion = requireKimiCodingRegionOfCredential(credentials as { region?: unknown })
+    const entryRegion = kimiRegionOfEntry(provider)
+    if (options?.expectedBaseUrl !== undefined) {
+      const startRegion = kimiRegionOfEntry({ providerType: provider.providerType, baseUrl: options.expectedBaseUrl ?? '' })
+      if (entryRegion !== startRegion) {
+        throw new Error(
+          `The region of provider "${provider.name}" changed while signing in; sign-in discarded. Sign in again.`,
+        )
+      }
+      // Keep the API base on the region of the (re-)issued token.
+      provider.baseUrl = oauthProviderBaseUrl(provider.providerType, provider.baseUrl, credentials)
+    } else if (tokenRegion !== entryRegion) {
+      throw new Error(
+        `The sign-in for provider "${provider.name}" belongs to another region; sign-in discarded. Sign in again.`,
+      )
+    }
+  }
+  provider.oauthCredentials = encryptOAuthCredentials(credentials)
+  invalidateOAuthCredentialState(id)
   saveProviders(file)
 }
 
@@ -2089,6 +2134,7 @@ export function deleteProvider(id: string): void {
   }
 
   file.providers.splice(index, 1)
+  invalidateOAuthCredentialState(id)
   saveProviders(file)
 }
 
@@ -2318,11 +2364,153 @@ function redactOAuthError(err: unknown, creds: ReadonlyArray<Partial<OAuthCreden
   return error
 }
 
+/**
+ * Generation of the stored OAuth sign-in per provider id. Bumped whenever the
+ * credential is replaced or invalidated outside a refresh: type change, region
+ * change that drops the token, provider deletion, new sign-in. A refresh that
+ * started under an older generation must not persist or hand out its result.
+ */
+const oauthCredentialGeneration = new Map<string, number>()
+
+/**
+ * Invalidate everything derived from the current OAuth sign-in of a provider:
+ * bump its generation, forget the cached request auth and detach a running
+ * refresh, so later callers start from the new state instead of joining (and
+ * receiving the token of) the old one.
+ */
+function invalidateOAuthCredentialState(providerId: string): void {
+  oauthCredentialGeneration.set(providerId, (oauthCredentialGeneration.get(providerId) ?? 0) + 1)
+  lastResolvedModelAuth.delete(providerId)
+  inFlightOAuthRefresh.delete(providerId)
+}
+
+/** Thrown when the provider entry changed while its OAuth token was refreshed. */
+export class OAuthCredentialsChangedError extends Error {
+  constructor(providerId: string, detail: string) {
+    super(
+      `OAuth sign-in of provider ${providerId} changed during the token refresh (${detail}); `
+      + 'the refreshed token was discarded. Sign in again via "Renew token" if the provider stays unavailable.',
+    )
+    this.name = 'OAuthCredentialsChangedError'
+  }
+}
+
+/** State of a stored OAuth entry a refresh result is bound to. */
+interface OAuthRefreshSnapshot {
+  generation: number
+  providerType: ProviderType
+  authMethod: ProviderConfig['authMethod']
+  /** Effective API base URL (for Kimi Code: the region). */
+  baseUrl: string
+  /** Hash of the stored credential; never the token itself. */
+  credentialFingerprint: string
+}
+
+function oauthCredentialFingerprint(credentials: OAuthCredentials): string {
+  return crypto.createHash('sha256').update(JSON.stringify(credentials)).digest('hex')
+}
+
+/**
+ * Read the stored entry of `providerId` with its decrypted credential.
+ * `undefined` when there is no such entry. Throws when the stored credential
+ * cannot be decrypted (a refresh with a guessed credential would be wrong).
+ */
+function readOAuthRefreshState(providerId: string):
+  | { snapshot: OAuthRefreshSnapshot | null; credentials: OAuthCredentials | null; entry: ProviderConfig }
+  | undefined {
+  const entry = loadProviders().providers.find(p => p.id === providerId)
+  if (!entry) return undefined
+  const credentials = entry.oauthCredentials
+    ? storedToOAuthCredentials(decryptOAuthCredentials(entry.oauthCredentials))
+    : null
+  return {
+    entry,
+    credentials,
+    snapshot: credentials
+      ? {
+          generation: oauthCredentialGeneration.get(providerId) ?? 0,
+          providerType: entry.providerType,
+          authMethod: entry.authMethod,
+          baseUrl: resolveEffectiveBaseUrl(entry.providerType, entry.baseUrl),
+          credentialFingerprint: oauthCredentialFingerprint(credentials),
+        }
+      : null,
+  }
+}
+
+/** Why `current` is not the state `expected` was taken from, or null if it still is. */
+function oauthSnapshotMismatch(expected: OAuthRefreshSnapshot, current: OAuthRefreshSnapshot | null): string | null {
+  if (!current) return 'credentials removed'
+  if (current.providerType !== expected.providerType || current.authMethod !== expected.authMethod) return 'provider type changed'
+  if (current.baseUrl !== expected.baseUrl) return 'region or base URL changed'
+  if (current.generation !== expected.generation || current.credentialFingerprint !== expected.credentialFingerprint) {
+    return 'credentials replaced'
+  }
+  return null
+}
+
+/**
+ * Compare-and-set for a refresh result: persist `rotated` only if the entry is
+ * still exactly the one the refresh started from (same type, base URL/region,
+ * credential and generation). Load, compare and save run synchronously, so no
+ * other write can interleave. The base URL is never touched here.
+ */
+function persistRefreshedOAuthCredentials(
+  providerId: string,
+  expected: OAuthRefreshSnapshot | null,
+  rotated: OAuthCredentials,
+): void {
+  const file = loadProviders()
+  const entry = file.providers.find(p => p.id === providerId)
+  if (!expected) {
+    // No stored entry when the refresh started (caller-supplied credential):
+    // nothing to persist — unless an entry appeared meanwhile, which the
+    // rotated token was not issued for.
+    if (entry) throw new OAuthCredentialsChangedError(providerId, 'provider created')
+    return
+  }
+  if (!entry) throw new OAuthCredentialsChangedError(providerId, 'provider deleted')
+  // Report the most specific cause: a type or region switch also drops the
+  // credentials, but the switch is what the user did.
+  if (entry.providerType !== expected.providerType || entry.authMethod !== expected.authMethod) {
+    throw new OAuthCredentialsChangedError(providerId, 'provider type changed')
+  }
+  if (resolveEffectiveBaseUrl(entry.providerType, entry.baseUrl) !== expected.baseUrl) {
+    throw new OAuthCredentialsChangedError(providerId, 'region or base URL changed')
+  }
+  let current: OAuthRefreshSnapshot | null = null
+  if (entry.oauthCredentials) {
+    let stored: OAuthCredentials
+    try {
+      stored = storedToOAuthCredentials(decryptOAuthCredentials(entry.oauthCredentials))
+    } catch {
+      throw new OAuthCredentialsChangedError(providerId, 'stored credentials unreadable')
+    }
+    current = {
+      generation: oauthCredentialGeneration.get(providerId) ?? 0,
+      providerType: entry.providerType,
+      authMethod: entry.authMethod,
+      baseUrl: resolveEffectiveBaseUrl(entry.providerType, entry.baseUrl),
+      credentialFingerprint: oauthCredentialFingerprint(stored),
+    }
+  }
+  const mismatch = oauthSnapshotMismatch(expected, current)
+  if (mismatch) throw new OAuthCredentialsChangedError(providerId, mismatch)
+  // A Kimi token is bound to its region: never store one whose region is not
+  // the entry's (the refresh follows the stored region, so this is a guard).
+  const entryRegion = kimiRegionOfEntry(entry)
+  if (entryRegion !== null && kimiCodingRegionOfCredential(rotated as { region?: unknown }) !== entryRegion) {
+    throw new OAuthCredentialsChangedError(providerId, 'token region does not match the provider region')
+  }
+  entry.oauthCredentials = encryptOAuthCredentials(rotated)
+  saveProviders(file)
+}
+
 export async function refreshOAuthCredentialsLocked(
   providerId: string,
   oauthAuth: OAuthAuth,
   fallbackCreds: OAuthCredential,
-  options?: { force?: boolean },
+  options?: { force?: boolean; expectedProviderType?: ProviderType },
 ): Promise<OAuthCredential> {
   const existing = inFlightOAuthRefresh.get(providerId)
   if (existing) return existing
@@ -2330,16 +2518,22 @@ export async function refreshOAuthCredentialsLocked(
   const run = (async (): Promise<OAuthCredential> => {
     // Re-read the freshest stored credential: a refresh that JUST completed (in
     // this process) may already have rotated the token, in which case we must
-    // not refresh again with the now-stale one.
+    // not refresh again with the now-stale one. The state read here is what the
+    // result will be bound to (compare-and-set below).
     let base = fallbackCreds
-    try {
-      const file = loadProvidersDecrypted()
-      const p = file.providers.find(x => x.id === providerId)
-      if (p?.oauthCredentials) {
-        base = { type: 'oauth', ...storedToOAuthCredentials(p.oauthCredentials) }
+    let snapshot: OAuthRefreshSnapshot | null = null
+    const state = readOAuthRefreshState(providerId)
+    if (state) {
+      if (options?.expectedProviderType && state.entry.providerType !== options.expectedProviderType) {
+        throw new OAuthCredentialsChangedError(providerId, 'provider type changed')
       }
-    } catch {
-      // fall back to the caller's credential
+      if (state.entry.authMethod !== 'oauth' || !state.credentials || !state.snapshot) {
+        // The sign-in was removed (type/region change) after the caller loaded
+        // it: refreshing the caller's stale copy would resurrect it.
+        throw new OAuthCredentialsChangedError(providerId, 'credentials removed')
+      }
+      base = { type: 'oauth', ...state.credentials }
+      snapshot = state.snapshot
     }
     // `force` (the provider rejected the token before it expired on paper)
     // skips the expiry gate — but only if nobody else rotated in the
@@ -2362,12 +2556,21 @@ export async function refreshOAuthCredentialsLocked(
       throw redactOAuthError(err, [base, fallbackCreds])
     }
     const { type: _type, ...toStore } = rotated
-    updateOAuthCredentials(providerId, toStore as OAuthCredentials)
+    // The entry may have changed while the refresh was running (type or region
+    // switch, credentials removed, new sign-in, provider deleted). Then the
+    // rotated token is discarded — neither stored nor handed to any waiter.
+    persistRefreshedOAuthCredentials(providerId, snapshot, toStore as OAuthCredentials)
     return rotated
   })()
 
   inFlightOAuthRefresh.set(providerId, run)
-  void run.finally(() => inFlightOAuthRefresh.delete(providerId)).catch(() => {})
+  // Only clear our own slot: an invalidation may have detached this run and a
+  // newer refresh may already occupy it.
+  void run
+    .finally(() => {
+      if (inFlightOAuthRefresh.get(providerId) === run) inFlightOAuthRefresh.delete(providerId)
+    })
+    .catch(() => {})
   return run
 }
 
@@ -2416,7 +2619,10 @@ export async function recoverOAuthAfterAuthFailure(
 
   try {
     const creds: OAuthCredential = { type: 'oauth', ...storedToOAuthCredentials(provider.oauthCredentials) }
-    const refreshed = await refreshOAuthCredentialsLocked(provider.id, oauthAuth, creds, { force: true })
+    const refreshed = await refreshOAuthCredentialsLocked(provider.id, oauthAuth, creds, {
+      force: true,
+      expectedProviderType: provider.providerType,
+    })
     // Never log token material, only the new lifetime.
     console.warn(
       `[axiom] Provider ${providerId} rejected the access token; OAuth credentials re-resolved `
@@ -2473,6 +2679,9 @@ export async function getApiKeyForProvider(provider: ProviderConfig): Promise<st
 
   // Convert stored credentials to pi-ai format
   let creds: OAuthCredential = { type: 'oauth', ...storedToOAuthCredentials(provider.oauthCredentials) }
+  // Sign-in generation this resolution belongs to; a type/region change or new
+  // sign-in during the awaits below must not leave its stale request auth behind.
+  const generation = oauthCredentialGeneration.get(provider.id) ?? 0
 
   // Refresh when expired — serialized per provider so concurrent turns never
   // present the same rotated refresh token twice (which revokes the whole
@@ -2486,10 +2695,15 @@ export async function getApiKeyForProvider(provider: ProviderConfig): Promise<st
   // guarantee that two concurrent turns never present the same rotated refresh
   // token (the exact failure that caused 4× Anthropic OAuth revokes in July).
   if (Date.now() >= creds.expires) {
-    creds = await refreshOAuthCredentialsLocked(provider.id, oauthAuth, creds)
+    creds = await refreshOAuthCredentialsLocked(provider.id, oauthAuth, creds, {
+      expectedProviderType: provider.providerType,
+    })
   }
 
   const modelAuth = await oauthAuth.toAuth(creds)
+  if ((oauthCredentialGeneration.get(provider.id) ?? 0) !== generation) {
+    throw new OAuthCredentialsChangedError(provider.id, 'provider changed while resolving the token')
+  }
   lastResolvedModelAuth.set(provider.id, modelAuth)
 
   if (!modelAuth.apiKey) {

@@ -31,6 +31,11 @@ export interface PendingOAuthLogin {
   /** Device-code lifetime announced by the auth server, if any. */
   expiresInSeconds?: number
   existingProviderId?: string
+  /**
+   * Stored base URL (Kimi Code: region) of the existing provider when the
+   * re-login started. The credential is only written if it is unchanged.
+   */
+  existingBaseUrl?: string | null
 }
 
 export interface OllamaTagsResponse {

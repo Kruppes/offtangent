@@ -142,6 +142,7 @@ export {
   updateProvider,
   updateProviderModel,
   ProviderNotFoundError,
+  OAuthCredentialsChangedError,
   deleteProvider,
   setActiveProvider,
   setActiveModel,

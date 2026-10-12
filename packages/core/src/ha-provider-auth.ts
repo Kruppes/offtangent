@@ -62,7 +62,7 @@ async function repair(provider: ProviderConfig, rejectedAccess: string): Promise
     throw new HaProviderFault(503, 'provider_relogin_required', 'relogin_required')
   }
   try {
-    await refreshOAuthCredentialsLocked(provider.id, auth, { type: 'oauth', ...storedToOAuthCredentials(fresh.oauthCredentials), access: rejectedAccess }, { force: true })
+    await refreshOAuthCredentialsLocked(provider.id, auth, { type: 'oauth', ...storedToOAuthCredentials(fresh.oauthCredentials), access: rejectedAccess }, { force: true, expectedProviderType: provider.providerType })
   } catch (e) { throw refreshFault(provider.id, e) }
   observe(loadProvidersDecrypted().providers.find(p => p.id === provider.id) ?? fresh)
   recordHaAuthState(provider.id, 'access_rejected')

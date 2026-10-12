@@ -61,7 +61,7 @@ describe('HA central auth lifecycle, no independent token keeper or inference re
     expect(results.every(x => x.status==='rejected' && x.reason.code==='provider_access_rejected')).toBe(true)
     expect(central.refresh).toHaveBeenCalledTimes(1)
     expect(central.refresh).toHaveBeenCalledWith(provider.id, central.auth.mock.results[0].value,
-      expect.objectContaining({access:rejected}), {force:true})
+      expect.objectContaining({access:rejected}), {force:true, expectedProviderType: provider.providerType})
     await expect(repairHaRejectedAccess(provider,rejected)).rejects.toMatchObject({code:'provider_access_rejected'})
     expect(central.refresh).toHaveBeenCalledTimes(1)
     expect(central.key).not.toHaveBeenCalled()
