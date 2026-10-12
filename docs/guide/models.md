@@ -15,7 +15,7 @@ For the click-by-click UI (Add Provider, Test Connection, Add Model, quota displ
 The source of truth is the `ProviderType` union in `packages/core/src/provider-config.ts` and its presets in `PROVIDER_TYPE_PRESETS`. The union has three groups:
 
 - **16 API-key provider types** — the table below.
-- **3 OAuth / subscription types** — `anthropic-oauth`, `openai-codex`, `github-copilot`. They do not take a key at all and are covered in [Subscription and OAuth paths](#subscription-and-oauth-paths).
+- **4 OAuth / subscription types** — `anthropic-oauth`, `openai-codex`, `github-copilot`, `kimi-coding-oauth`. They do not take a key at all and are covered in [Subscription and OAuth paths](#subscription-and-oauth-paths).
 - **2 legacy aliases** — `ollama-local` and `ollama-cloud`, kept only so older `providers.json` files keep loading. Both resolve to the `ollama` preset. Do not use them for new entries.
 
 "Dynamic catalog" means the Add Model dialog fetches the model list live from the provider's own `/models` endpoint instead of the bundled `@earendil-works/pi-ai` catalog (`isDynamicCatalogProvider`).
@@ -42,7 +42,7 @@ The source of truth is the `ProviderType` union in `packages/core/src/provider-c
 Notes on the table:
 
 - **Base URL editable** only for `ollama` and `openai-compatible`. For every other type the URL is pinned by the preset so a typo cannot silently redirect your key to a third party.
-- `kimi-coding` is served from two official regions. The provider dialog shows a **Region** picker instead of a URL field: *China (kimi.com)* → `https://api.kimi.com/coding`, *International (kimi.ai)* → `https://api.kimi.ai/coding`. A plan key only works in the region it was issued in (keys from kimi.ai need *International*). No other URL is accepted; entries saved before the picker existed keep the China endpoint. The preset uses the plan API key; Kimi Code's OAuth login (used by Moonshot's own clients) is not wired up.
+- `kimi-coding` is served from two official regions. The provider dialog shows a **Region** picker instead of a URL field: *China (kimi.com)* → `https://api.kimi.com/coding`, *International (kimi.ai)* → `https://api.kimi.ai/coding`. A plan key only works in the region it was issued in (keys from kimi.ai need *International*). No other URL is accepted; entries saved before the picker existed keep the China endpoint. This preset uses the plan API key and is unchanged by the OAuth variant `kimi-coding-oauth` (see [Subscription and OAuth paths](#subscription-and-oauth-paths)).
 - `opencode-zen` and `opencode-go` are gateways whose models span several wire APIs. They set `resolveModelsFromCatalog`, so each model keeps its own `api`, `baseUrl`, cost and limits instead of being pinned to one API type. `kimi` and `kimi-coding` use the same mechanism to inherit the maintained upstream catalog.
 - `openai-compatible` is the escape hatch for anything speaking the OpenAI completions protocol: LM Studio, vLLM, NVIDIA NIM, a Cloudflare AI Gateway, a self-hosted router. You supply base URL and (optionally) key.
 
@@ -75,13 +75,14 @@ affected: it lists whatever the endpoint reports.
 
 ## Subscription and OAuth paths
 
-Three further provider types authenticate with an OAuth login instead of an API key. They are deliberately kept out of the table above, because there is no key to enter and no base URL to set — the preset manages both. What you are buying here is a **consumer subscription**, not metered API credit:
+Four further provider types authenticate with an OAuth login instead of an API key. They are deliberately kept out of the table above, because there is no key to enter and no base URL to set — the preset manages both. What you are buying here is a **consumer subscription**, not metered API credit:
 
 | Type id | Label | Subscription | Wire API |
 |---|---|---|---|
 | `anthropic-oauth` | Anthropic (Claude Pro/Max) | Claude Pro / Max | `anthropic-messages` |
 | `openai-codex` | ChatGPT Plus/Pro (Codex) | ChatGPT Plus / Pro | `openai-codex-responses` |
 | `github-copilot` | GitHub Copilot | GitHub Copilot | `openai-completions` |
+| `kimi-coding-oauth` | Kimi Code (Subscription, OAuth) | Kimi Code membership | `anthropic-messages` |
 
 Practical consequences:
 
@@ -89,6 +90,21 @@ Practical consequences:
 - **You pay a flat fee, not per token.** Cost columns stay meaningless for these rows; the limit you hit is the subscription's usage window, not a bill.
 - **Quotas are visible.** For quota-capable subscription providers the instance polls the usage endpoint in the background and shows the remaining allowance per window (e.g. rolling 5h and 7d) directly on the provider row and, for the active provider, in the top bar. The exact windows per provider are listed in [Providers → Subscriber usage quota](../web-ui/providers#subscriber-usage-quota).
 - **Refresh tokens expire.** When they do, the model status flips to `Error`; the edit dialog has a *Renew Token* button that re-runs the flow on the existing record.
+
+### Kimi Code with OAuth (`kimi-coding-oauth`)
+
+`kimi-coding-oauth` is the OAuth twin of `kimi-coding`: same models, same Anthropic wire, same endpoint path, but no plan key. It is a separate provider type (like `anthropic` / `anthropic-oauth`), so existing `kimi-coding` providers with an API key are not touched.
+
+- **Region first, then sign in.** The dialog shows the same **Region** picker as `kimi-coding`. The choice fixes both hosts together: *China (kimi.com)* signs in at `auth.kimi.com` and calls `https://api.kimi.com/coding`; *International (kimi.ai)* signs in at `auth.kimi.ai` and calls `https://api.kimi.ai/coding`. The region is stored with the token, so auth host and API base cannot drift apart; to switch region, create a new provider.
+- **Device code login.** *Login & Connect* opens Kimi's verification page in a new tab and shows the user code in the dialog; confirm it there with your Kimi account. The dialog completes on its own, no redirect URL to paste.
+- **Tokens.** Access and refresh token are stored encrypted like every other OAuth credential and refreshed five minutes before expiry against the auth host of the token's region. If the refresh token is rejected, requests fail with *"Kimi Code sign-in expired … sign in again"*; use *Renew token* in the edit dialog.
+- **Requests.** The access token is sent as `Authorization: Bearer` to `{region}/coding` (Anthropic messages). By default no client identity headers are sent (same as the upstream pi-ai library). Moonshot's own CLI additionally sends `User-Agent: kimi-code-cli/<version>` and `X-Msh-Platform`, `X-Msh-Version`, `X-Msh-Device-Name`, `X-Msh-Device-Model`, `X-Msh-Os-Version`, `X-Msh-Device-Id`. Only if the endpoint starts rejecting requests without them, the environment variable `KIMI_CODING_CLI_HEADERS=1` adds a minimal subset (`User-Agent`, `X-Msh-Platform`, `X-Msh-Version`; never device name, model, OS version or device id). It is off by default.
+- **Quota.** Usage is read from `GET {region}/coding/v1/usages` (5h, 7d and, if reported, monthly windows). The endpoint is undocumented; a parse failure only hides the quota and never affects requests. The same adapter is tried for `kimi-coding` API keys and quietly reports *not available* if the key is not accepted there.
+- **Data policy.** Like every Kimi type it is classified `cn`, and the `kimi` model family is blocked from automatic choice by default. It is used only when you pick it explicitly.
+
+::: warning Terms of use risk
+The login uses the OAuth client id of Moonshot's official Kimi Code CLI (the same one the pi-ai library ships). Moonshot's membership guide expects third-party tools to use a plan API key and states that benefits can be suspended for clients that present a false identity. Using this login in Offtangent can therefore violate Kimi's terms and put the subscription at risk. The API-key type `kimi-coding` is the compliant path.
+:::
 
 Two further types are flat-fee subscriptions that nevertheless authenticate with a plan-scoped API key, and are therefore grouped with the subscription entries in the UI (`subscription: true`) without using OAuth: `kimi-coding` and `zai-coding`. `opencode-go` is also a flat-fee plan with an API key; its quota is read from the dashboard rather than an official API and needs two extra fields (workspace id, dashboard cookie).
 

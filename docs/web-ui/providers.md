@@ -216,6 +216,8 @@ The full flow:
 3. Complete the login. The dialog updates to *"Waiting for authentication…"* with a spinner.
 4. Once the redirect comes back, the dialog closes and the provider appears in the list.
 
+**Device-code providers (Kimi Code, GitHub Copilot).** There is no redirect: the dialog shows the user code next to the spinner, you confirm it on the opened page, and the dialog completes by itself. For *Kimi Code (Subscription, OAuth)* choose the **Region** before clicking *Login & Connect*; it decides both the sign-in host and the API endpoint (see [Kimi Code with OAuth](../guide/models#kimi-code-with-oauth-kimi-coding-oauth), including the terms-of-use risk).
+
 **Remote server fallback.** If your Offtangent instance runs on a remote box where the OAuth callback URL can't reach you, a manual-code field appears below the spinner: *"Or paste the redirect URL here (for remote servers)"*. Complete the login locally, copy the full redirect URL from the browser, paste it in, and click **Submit**.
 
 ### Subscriber usage quota
@@ -226,6 +228,7 @@ For subscription-style providers that expose a usage endpoint, the provider head
 - **OpenAI ChatGPT Plus/Pro (Codex)** (`openai-codex`)
 - **OpenCode Go** (`opencode-go`) — see the credential note below
 - **z.ai (GLM Coding Plan)** (`zai-coding`) — read from the subscription API key; the pay-per-token `z.ai` (`zai`) provider has no quota endpoint
+- **Kimi Code** (`kimi-coding-oauth`, and `kimi-coding` if the plan key is accepted) — read from the undocumented `/coding/v1/usages` endpoint of the provider's region; with an API key that the endpoint rejects, the quota quietly shows as not available
 
 Other provider types never show quota — they have no usage endpoint.
 
@@ -246,6 +249,7 @@ Each usage window appears on its own line as `<window>: <utilization>% (<reset>)
 | OpenAI ChatGPT (Codex)| Primary + secondary rate-limit windows (labelled by their length, e.g. `5h`, `7d`). | Primary relative; secondary weekday + time. |
 | OpenCode Go           | `5h` (rolling), `7d` (weekly), `30d` (monthly). | `5h` relative; `7d`/`30d` weekday + time. |
 | z.ai (GLM Coding Plan)| `5h` (rolling), `7d` (weekly). | `5h` relative; `7d` weekday + time. |
+| Kimi Code             | `5h` (rolling), `7d` (weekly), `Month` / `Month (code)` (only if reported). | `5h` relative; others weekday + time. |
 
 The percentage is colour-coded: green below 70%, amber at 70–89%, red at 90%+. Reset times follow your browser's regional settings.
 

@@ -60,6 +60,7 @@ Any file type may be attached — there is no MIME whitelist. What is capped is 
 | `GITHUB_TOKEN` | _(unset)_ | When set, used as `Authorization: token <value>` for skill downloads from GitHub (avoids unauthenticated rate limits when installing many skills from public repos). |
 | `AXIOM_TURN_CONCURRENCY` | `3` | How many agent turns may run at the same time across all personas. Queues are per persona (2026-09-19), so this is the only global cap left; values below 1 or non-numeric fall back to the default. |
 | `AXIOM_QUEUE_TURN_MAX_MS` | `1800000` (30 min) | Idle window of the queue watchdog: a turn that produces NO output for this long is abandoned and its queue slot (and concurrency slot) is released. Not a total-runtime cap. |
+| `KIMI_CODING_CLI_HEADERS` | _(unset = off)_ | Only for `kimi-coding-oauth`. `1`/`true` adds a minimal client identity (`User-Agent: kimi-code-cli/<version>`, `X-Msh-Platform`, `X-Msh-Version`) to Kimi Code requests, in case the endpoint starts rejecting requests without it. Never sends device name, device model, OS version or device id. See [Kimi Code with OAuth](../guide/models#kimi-code-with-oauth-kimi-coding-oauth). |
 | `AXIOM_PROJECT_DIR` | _(auto-detected)_ | Overrides the resolved repo root for `getDocsPath()`/`getReadmePath()`/`getAgentDocsPath()`. Only needed for unusual deployments where source files don't live next to the running code (e.g. read-only image overlays). |
 
 ## Compose-file convention
