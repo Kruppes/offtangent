@@ -105,6 +105,7 @@ export type {
   ProviderTransportContract,
   ProviderPromptProfileContract,
   ProviderQuotaKindContract,
+  ProviderQuotaBalanceContract,
   ProviderQuotaWindowContract,
   ProviderQuotaContract,
   ProviderContract,

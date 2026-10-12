@@ -22,6 +22,11 @@ export interface ProviderQuotaFetchResult {
  */
 export interface QuotaProviderAdapter {
   kind: ProviderQuotaContract['kind']
+  /**
+   * Failures are not shown: the monitor stores no error entry for this
+   * adapter (a balance is a nice-to-have, not something the user must fix).
+   */
+  quietErrors?: boolean
   /** Whether this adapter handles the given provider. */
   matches: (provider: ProviderConfig) => boolean
   /** Resolve credentials, fetch, and normalize the provider's usage quota. */

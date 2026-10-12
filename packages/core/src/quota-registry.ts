@@ -5,6 +5,7 @@ import { openaiCodexQuotaAdapter } from './openai-codex-quota.js'
 import { opencodeGoQuotaAdapter } from './opencode-go-quota.js'
 import { zaiQuotaAdapter } from './zai-quota.js'
 import { kimiCodingQuotaAdapter } from './kimi-coding-quota.js'
+import { moonshotBalanceAdapter } from './moonshot-balance.js'
 
 /**
  * Registered subscriber-quota adapters. To add a new provider family, implement
@@ -17,6 +18,7 @@ const QUOTA_ADAPTERS: QuotaProviderAdapter[] = [
   opencodeGoQuotaAdapter,
   zaiQuotaAdapter,
   kimiCodingQuotaAdapter,
+  moonshotBalanceAdapter,
 ]
 
 /** Resolve the quota adapter that handles a provider, or null if none does. */

@@ -307,6 +307,14 @@ export {
   zaiQuotaAdapter,
 } from './zai-quota.js'
 export {
+  fetchMoonshotBalance,
+  getMoonshotBalanceForProvider,
+  isMoonshotBalanceProvider,
+  moonshotBalanceAdapter,
+  moonshotRegionForBaseUrl,
+  parseMoonshotBalancePayload,
+} from './moonshot-balance.js'
+export {
   getQuotaAdapter,
   isQuotaProvider,
 } from './quota-registry.js'

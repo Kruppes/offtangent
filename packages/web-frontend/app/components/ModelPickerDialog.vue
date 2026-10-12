@@ -10,6 +10,8 @@ const props = defineProps<{
   saving?: boolean
 }>()
 const emit = defineEmits<{ close: []; retry: []; select: [selection: ModelSelection | null] }>()
+const { t, locale } = useI18n()
+const { formatBalanceAmount } = useQuotaFormat()
 const grouped = computed(() => {
   const groups: Record<string, SelectableModel[]> = {}
   for (const model of props.models) (groups[model.providerName] ??= []).push(model)
@@ -18,6 +20,8 @@ const grouped = computed(() => {
 function quotaLine(model: SelectableModel) {
   if (!model.quota) return ''
   if (model.quota.error) return model.quota.error
+  const balance = model.quota.windows.length === 0 ? formatBalanceAmount(model.quota.balance, locale.value) : ''
+  if (balance) return t('providers.quota.balance', { amount: balance })
   return model.quota.windows.map(window => `${window.label}: ${window.utilization}%${window.resetsAt ? ` · Reset ${new Date(window.resetsAt).toLocaleString()}` : ''}`).join(' · ')
 }
 </script>

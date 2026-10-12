@@ -325,6 +325,7 @@
     "statusError": "Fehler",
     "statusUntested": "Ungetestet",
     "quota": {
+      "balance": "Guthaben {amount}",
       "unavailable": "Kontingent nicht verfügbar",
       "rateLimited": "Rate-Limit — bitte gleich erneut versuchen",
       "refresh": "Kontingent aktualisieren",

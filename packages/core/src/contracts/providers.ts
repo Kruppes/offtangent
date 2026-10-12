@@ -3,7 +3,23 @@ import type { ProviderType } from '../provider-config.js'
 export type ProviderStatusContract = 'connected' | 'error' | 'untested'
 
 /** Provider families that expose a subscriber usage quota endpoint. */
-export type ProviderQuotaKindContract = 'anthropic' | 'openai-codex' | 'opencode-go' | 'zai' | 'kimi-coding'
+export type ProviderQuotaKindContract = 'anthropic' | 'openai-codex' | 'opencode-go' | 'zai' | 'kimi-coding' | 'moonshot'
+
+/**
+ * A prepaid account balance (pay-as-you-go API keys such as the Moonshot
+ * platform). It has no time window and no percentage: the UI shows the amount
+ * in its currency instead of usage bars.
+ */
+export interface ProviderQuotaBalanceContract {
+  /** Spendable balance (cash + voucher), in `currency`. May be negative. */
+  amount: number
+  /** ISO-4217 code, e.g. 'USD' or 'CNY'. */
+  currency: string
+  /** Paid part of the balance, if the provider reports it. */
+  cash: number | null
+  /** Voucher/credit part of the balance, if the provider reports it. */
+  voucher: number | null
+}
 
 /**
  * A single normalized usage window, provider-agnostic. Each window carries its
@@ -25,8 +41,13 @@ export interface ProviderQuotaWindowContract {
 
 export interface ProviderQuotaContract {
   kind: ProviderQuotaKindContract
-  /** Normalized usage windows in display order. */
+  /** Normalized usage windows in display order (empty for a balance-only quota). */
   windows: ProviderQuotaWindowContract[]
+  /**
+   * Prepaid balance instead of (or next to) usage windows. Absent for the
+   * subscription families; clients that do not know it simply ignore it.
+   */
+  balance?: ProviderQuotaBalanceContract | null
   /** Optional human-readable plan label (e.g. 'Plus', 'Pro', 'Max'). */
   plan?: string | null
   fetchedAt: string

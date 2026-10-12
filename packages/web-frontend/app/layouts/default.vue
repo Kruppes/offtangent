@@ -198,7 +198,10 @@
         </Tooltip>
 
         <!-- Subscriber quota (desktop, wide viewports only) -->
-        <div v-if="quotaTopBarParts.length > 0" class="hidden items-center gap-2 lg:flex">
+        <div v-if="quotaTopBarBalance" class="hidden items-center gap-2 lg:flex">
+          <span class="text-xs font-medium text-foreground">{{ quotaTopBarBalance }}</span>
+        </div>
+        <div v-else-if="quotaTopBarParts.length > 0" class="hidden items-center gap-2 lg:flex">
           <template v-for="(part, idx) in quotaTopBarParts" :key="part.key">
             <span v-if="idx > 0" class="text-muted-foreground">·</span>
             <span class="text-xs">
@@ -405,12 +408,20 @@ const statusText = computed(() => {
   }
 })
 
-const { quotaWindowParts } = useQuotaFormat()
+const { quotaWindowParts, formatBalanceAmount } = useQuotaFormat()
 
 const quotaTopBarParts = computed(() => {
   const q = globalQuota.value
   if (!q || q.error) return []
   return quotaWindowParts(q)
+})
+
+// Prepaid balance (pay-as-you-go keys) instead of usage windows.
+const quotaTopBarBalance = computed(() => {
+  const q = globalQuota.value
+  if (!q || q.error || q.windows.length > 0) return ''
+  const amount = formatBalanceAmount(q.balance, locale.value)
+  return amount ? t('providers.quota.balance', { amount }) : ''
 })
 
 onMounted(() => {

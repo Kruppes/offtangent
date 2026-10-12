@@ -159,6 +159,12 @@
                       >
                         {{ quotaErrorLabel(getQuota(provider)!.error) }}
                       </span>
+                      <span
+                        v-else-if="balanceLabel(getQuota(provider)!)"
+                        class="whitespace-nowrap font-medium text-foreground"
+                      >
+                        {{ balanceLabel(getQuota(provider)!) }}
+                      </span>
                       <template v-else>
                         <div
                           v-for="part in quotaWindowParts(getQuota(provider)!)"
@@ -385,8 +391,8 @@ import Label from '~/components/ui/Label.vue'
 const DATA_REGION_OPTIONS = ['local', 'eu', 'us', 'cn'] as const
 const DATA_TRAINING_OPTIONS = ['no', 'yes', 'unknown'] as const
 
-const { t } = useI18n()
-const { quotaWindowParts } = useQuotaFormat()
+const { t, locale } = useI18n()
+const { quotaWindowParts, formatBalanceAmount } = useQuotaFormat()
 
 const {
   providers,
@@ -466,6 +472,12 @@ function getQuota(provider: Provider): ProviderQuota | null {
 
 function isRefreshingQuota(providerId: string): boolean {
   return refreshingQuotaIds.value.has(providerId)
+}
+
+/** "Guthaben 13,51 $" / "Balance $13.51" for a prepaid balance, '' otherwise. */
+function balanceLabel(quota: ProviderQuota): string {
+  const amount = formatBalanceAmount(quota.balance, locale.value)
+  return amount ? t('providers.quota.balance', { amount }) : ''
 }
 
 function quotaErrorLabel(rawError?: string): string {

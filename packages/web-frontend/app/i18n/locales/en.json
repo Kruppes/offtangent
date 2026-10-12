@@ -325,6 +325,7 @@
     "statusError": "Error",
     "statusUntested": "Untested",
     "quota": {
+      "balance": "Balance {amount}",
       "unavailable": "Quota unavailable",
       "rateLimited": "Rate-limited — try again shortly",
       "refresh": "Refresh quota",

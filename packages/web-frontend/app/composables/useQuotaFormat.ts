@@ -1,4 +1,4 @@
-import type { ProviderQuotaWindowContract } from '@axiom/core/contracts'
+import type { ProviderQuotaBalanceContract, ProviderQuotaWindowContract } from '@axiom/core/contracts'
 
 export interface QuotaDisplayPart {
   key: string
@@ -77,7 +77,27 @@ export function useQuotaFormat() {
     }))
   }
 
+  /**
+   * A prepaid balance as a localized currency amount ("13,51 $" in German,
+   * "$13.51" in English). Returns '' for anything unusable, so the caller
+   * shows nothing rather than an error.
+   */
+  function formatBalanceAmount(
+    balance: ProviderQuotaBalanceContract | null | undefined,
+    locale?: string,
+  ): string {
+    if (!balance || typeof balance.amount !== 'number' || !Number.isFinite(balance.amount)) return ''
+    const currency = typeof balance.currency === 'string' && /^[A-Z]{3}$/.test(balance.currency) ? balance.currency : ''
+    if (!currency) return balance.amount.toFixed(2)
+    try {
+      return new Intl.NumberFormat(locale, { style: 'currency', currency }).format(balance.amount)
+    } catch {
+      return `${balance.amount.toFixed(2)} ${currency}`
+    }
+  }
+
   return {
+    formatBalanceAmount,
     quotaColorClass,
     formatQuotaResetRelative,
     formatQuotaResetNice,

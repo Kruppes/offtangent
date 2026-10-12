@@ -173,6 +173,12 @@ export class QuotaMonitorService {
       result.status === 429 ||
       result.status === undefined ||
       (typeof result.status === 'number' && result.status >= 500)
+    if (adapter.quietErrors) {
+      // Quiet adapters (e.g. a prepaid balance) never surface an error entry:
+      // keep the last good value on a transient failure, otherwise show nothing.
+      if (!isTransient) this.cache.delete(provider.id)
+      return
+    }
     if (!hasGoodData || !isTransient) {
       this.cache.set(provider.id, {
         kind: adapter.kind,

@@ -160,6 +160,10 @@ function formatProviderQuota(providerId: string, quota: ProviderQuotaContract): 
     return `${header}\nError: ${quota.error}\nFetched: ${quota.fetchedAt}`
   }
 
+  if (quota.balance && (!quota.windows || quota.windows.length === 0)) {
+    return `${header}\nBalance: ${quota.balance.amount.toFixed(2)} ${quota.balance.currency}\nFetched: ${quota.fetchedAt}`
+  }
+
   if (!quota.windows || quota.windows.length === 0) {
     return `${header}\nNo usage windows available.\nFetched: ${quota.fetchedAt}`
   }
