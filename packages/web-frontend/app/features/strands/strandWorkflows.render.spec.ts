@@ -12,13 +12,16 @@ import * as strandEco from '~/api/strandEco'
 
 // The existing render config compiles imports for SSR. Compile these four
 // SFCs for Vue's client renderer instead, so onMounted and clicks really run.
+/** What the strand header told the top-bar quota (`useActiveStrandProvider`). */
+const topBarCalls: Array<[string, string, string | null]> = []
+const topBarQuota = { useActiveStrandProvider: () => ({ publish: (strandId: string, providerId: string | null) => { topBarCalls.push(['publish', strandId, providerId]) }, release: (strandId: string) => { topBarCalls.push(['release', strandId, null]) } }) }
 function loadPage(path: string, overrides: Record<string, unknown> = {}): Component {
   const filename = new URL(path, import.meta.url)
   const { descriptor } = parse(readFileSync(filename, 'utf8'))
   const script = compileScript(descriptor, { id: path, inlineTemplate: true })
   const { outputText } = transpileModule(script.content, { compilerOptions: { module: ModuleKind.CommonJS } })
   const exports: { default?: Component } = {}
-  const modules: Record<string, unknown> = { vue: Vue, '~/composables/useShellCommands': shellCommands, './detailApi': detailApi, '~/api/strandW5b': strandW5b, '~/api/models': { useModelsApi: () => ({ listModels: async () => [] }) }, '~/api/projects': { useProjectsApi: () => ({ list: async () => [] }) }, '~/api/personas': { usePersonasApi: () => ({ listPersonas: async () => [{ id: 'main', displayName: 'Main' }, { id: 'coder', displayName: 'Coder' }] }) }, './StrandActions.vue': { default: defineComponent({ render: () => h('aside') }) }, './EcoModeSwitch.vue': { default: defineComponent({ render: () => h('span') }) }, '~/api/strandEco': strandEco, ...overrides }
+  const modules: Record<string, unknown> = { vue: Vue, '~/composables/useShellCommands': shellCommands, './detailApi': detailApi, '~/api/strandW5b': strandW5b, '~/api/models': { useModelsApi: () => ({ listModels: async () => [] }) }, '~/api/projects': { useProjectsApi: () => ({ list: async () => [] }) }, '~/api/personas': { usePersonasApi: () => ({ listPersonas: async () => [{ id: 'main', displayName: 'Main' }, { id: 'coder', displayName: 'Coder' }] }) }, './StrandActions.vue': { default: defineComponent({ render: () => h('aside') }) }, './EcoModeSwitch.vue': { default: defineComponent({ render: () => h('span') }) }, '~/api/strandEco': strandEco, '~/composables/useTopBarQuota': topBarQuota, ...overrides }
   new Function('require', 'exports', outputText)((name: string) => {
     if (!(name in modules)) throw new Error(`Unexpected import: ${name}`)
     return modules[name]
@@ -186,6 +189,24 @@ describe('strand mutation workflows', () => {
     expect(api.mock.calls).toEqual([['/api/strands/s'], ['/api/strands/s']])
     expect(text(root)).toContain('gpt-6-astra')
     expect(text(root)).not.toContain('strandDetail.answeringWith')
+  })
+
+  it('tells the top bar which provider the strand runs on, following the running turn', async () => {
+    topBarCalls.splice(0)
+    const base = { id: 's', title: 'Quota', tags: [], projectId: null, pinned: false }
+    const api = setup({ s: { state: 'running' } })
+    api.mockResolvedValueOnce({ strand: { ...base, effectiveModel: { providerId: 'kimi', modelId: 'kimi-k2', source: 'strand' }, runningTurnModel: { providerId: 'anthropic', modelId: 'claude-x', source: 'global' } } })
+    const { app } = mount(Header, { strandId: 's' }); await flush()
+    expect(topBarCalls).toEqual([['publish', 's', null], ['publish', 's', 'anthropic']])
+
+    api.mockResolvedValueOnce({ strand: { ...base, effectiveModel: { providerId: 'kimi', modelId: 'kimi-k2', source: 'strand' }, runningTurnModel: null } })
+    api.sessionActivity.value = {}
+    await flush()
+    expect(topBarCalls.at(-1)).toEqual(['publish', 's', 'kimi'])
+
+    trees.splice(trees.findIndex(tree => tree.app === app), 1)
+    app.unmount()
+    expect(topBarCalls.at(-1)).toEqual(['release', 's', null])
   })
 
   it('W5b: shows the lineage both ways, linked, only when present', async () => {

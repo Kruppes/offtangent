@@ -3,19 +3,21 @@ import {
   fetchMoonshotBalance,
   getMoonshotBalanceForProvider,
   isMoonshotBalanceProvider,
+  isOfficialMoonshotBaseUrl,
   moonshotBalanceAdapter,
   moonshotRegionForBaseUrl,
   parseMoonshotBalancePayload,
   resetMoonshotBalanceState,
   MOONSHOT_BALANCE_INITIAL_BACKOFF_MS,
   MOONSHOT_BALANCE_MAX_BACKOFF_MS,
+  MOONSHOT_BALANCE_MAX_RETRY_AFTER_MS,
   MOONSHOT_BALANCE_RATE_LIMIT_INITIAL_BACKOFF_MS,
   MOONSHOT_BALANCE_REFUSED_RETRY_MS,
 } from './moonshot-balance.js'
 import { getQuotaAdapter } from './quota-registry.js'
 import type { ProviderConfig } from './provider-config.js'
 
-const KEY = 'sk_moonshot-test-key-0123456789'
+const KEY = 'test-moonshot-key-1234567890'
 
 /** The literal answer of the live endpoint (amount values only). */
 const VALID_BODY = {
@@ -141,6 +143,33 @@ describe('isMoonshotBalanceProvider / registry', () => {
     expect(isMoonshotBalanceProvider({ ...provider, providerType: 'kimi-coding-oauth', authMethod: 'oauth' })).toBe(false)
   })
 
+  it('only matches the official Moonshot API hosts, so the key never goes to the balance endpoint otherwise', () => {
+    expect(isMoonshotBalanceProvider({ ...provider, baseUrl: 'https://api.moonshot.cn/v1' })).toBe(true)
+    expect(isMoonshotBalanceProvider({ ...provider, baseUrl: 'https://API.Moonshot.AI./v1' })).toBe(true)
+    for (const baseUrl of [
+      'https://gateway.example.com/v1',
+      'https://api.moonshot.ai.example.com/v1',
+      'https://xapi.moonshot.cn/v1',
+      'http://api.moonshot.ai/v1',
+      'not a url',
+      '',
+    ]) {
+      expect(isOfficialMoonshotBaseUrl(baseUrl)).toBe(false)
+      expect(isMoonshotBalanceProvider({ ...provider, baseUrl })).toBe(false)
+      expect(getQuotaAdapter({ ...provider, baseUrl })).toBeFalsy()
+    }
+  })
+
+  it('sends no request (and no key) for a kimi provider on another host', async () => {
+    const fetchImpl = vi.fn(async () => mockResponse({ ok: true, status: 200, json: VALID_BODY }))
+    const result = await getMoonshotBalanceForProvider(
+      { ...provider, baseUrl: 'https://gateway.example.com/v1' },
+      fetchImpl as unknown as typeof fetch,
+    )
+    expect(result.quota).toBeNull()
+    expect(fetchImpl).not.toHaveBeenCalled()
+  })
+
   it('is resolved by the quota registry', () => {
     expect(getQuotaAdapter(provider)?.kind).toBe('moonshot')
     expect(moonshotBalanceAdapter.quietErrors).toBe(true)
@@ -238,7 +267,7 @@ describe('getMoonshotBalanceForProvider (throttling, logging)', () => {
     await getMoonshotBalanceForProvider(provider, f, now, logger)
     expect(fetchImpl).toHaveBeenCalledTimes(1)
 
-    await getMoonshotBalanceForProvider({ ...provider, apiKey: 'sk_another-moonshot-key-987654' }, f, now, logger)
+    await getMoonshotBalanceForProvider({ ...provider, apiKey: 'test-moonshot-key-other-0987654321' }, f, now, logger)
     expect(fetchImpl).toHaveBeenCalledTimes(2)
   })
 
@@ -288,7 +317,7 @@ describe('getMoonshotBalanceForProvider (throttling, logging)', () => {
 
     // A new key is not bound by the pause.
     const calls = fetchImpl.mock.calls.length
-    await getMoonshotBalanceForProvider({ ...provider, apiKey: 'sk_another-moonshot-key-987654' }, f, now, logger)
+    await getMoonshotBalanceForProvider({ ...provider, apiKey: 'test-moonshot-key-other-0987654321' }, f, now, logger)
     expect(fetchImpl).toHaveBeenCalledTimes(calls + 1)
   })
 
@@ -390,6 +419,20 @@ describe('getMoonshotBalanceForProvider (throttling, logging)', () => {
     }
   })
 
+  it('caps a Retry-After of days at 24 h', async () => {
+    const fetchImpl = vi.fn(async () => mockResponse({ ok: false, status: 429, headers: { 'retry-after': String(30 * 24 * 3600) } }))
+    const f = fetchImpl as unknown as typeof fetch
+    const result = await getMoonshotBalanceForProvider(provider, f, now, logger)
+    expect(MOONSHOT_BALANCE_MAX_RETRY_AFTER_MS).toBe(24 * 60 * 60 * 1000)
+    expect(result.retryAfterMs).toBe(MOONSHOT_BALANCE_MAX_RETRY_AFTER_MS)
+    clock += MOONSHOT_BALANCE_MAX_RETRY_AFTER_MS - 1
+    await getMoonshotBalanceForProvider(provider, f, now, logger)
+    expect(fetchImpl).toHaveBeenCalledTimes(1)
+    clock += 1
+    await getMoonshotBalanceForProvider(provider, f, now, logger)
+    expect(fetchImpl).toHaveBeenCalledTimes(2)
+  })
+
   it('a huge Retry-After keeps the pause end inside the safe integer range', async () => {
     clock = Number.MAX_SAFE_INTEGER - 10_000
     const fetchImpl = vi.fn(async () => mockResponse({ ok: false, status: 429, headers: { 'retry-after': '1e300' } }))
@@ -456,7 +499,7 @@ describe('getMoonshotBalanceForProvider (throttling, logging)', () => {
     it('a different key is not joined to the running request', async () => {
       const { fetchImpl, f, pending } = deferredFetch()
       const a = getMoonshotBalanceForProvider(provider, f, now, logger)
-      const b = getMoonshotBalanceForProvider({ ...provider, apiKey: 'sk_another-moonshot-key-987654' }, f, now, logger)
+      const b = getMoonshotBalanceForProvider({ ...provider, apiKey: 'test-moonshot-key-other-0987654321' }, f, now, logger)
       await vi.waitFor(() => expect(pending.length).toBe(2))
       for (const resolve of pending) resolve(mockResponse({ ok: true, status: 200, json: VALID_BODY }))
       await Promise.all([a, b])
@@ -468,7 +511,7 @@ describe('getMoonshotBalanceForProvider (throttling, logging)', () => {
     const fp = moonshotBalanceAdapter.credentialFingerprint?.(provider)
     expect(fp).toMatch(/^[0-9a-f]{16}$/)
     expect(fp).not.toContain(KEY)
-    expect(moonshotBalanceAdapter.credentialFingerprint?.({ ...provider, apiKey: 'sk_another-moonshot-key-987654' })).not.toBe(fp)
+    expect(moonshotBalanceAdapter.credentialFingerprint?.({ ...provider, apiKey: 'test-moonshot-key-other-0987654321' })).not.toBe(fp)
     expect(moonshotBalanceAdapter.credentialFingerprint?.(provider)).toBe(fp)
   })
 })

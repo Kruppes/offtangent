@@ -104,4 +104,21 @@ describe('QuotaMonitorService backoff without a credential fingerprint', () => {
     expect(Number.isFinite(state?.rateLimitedUntil)).toBe(true)
     expect(state?.rateLimitedUntil).toBeLessThanOrEqual(Number.MAX_SAFE_INTEGER)
   })
+
+  it('adapters without quietErrors (e.g. Anthropic) still store an error entry', async () => {
+    expect(fakeAdapter.quietErrors).toBeUndefined()
+    // Hard failure: the user must act on it, so it is surfaced.
+    nextResult = () => ({ quota: null, status: 401, error: 'Unauthorized' })
+    const monitor = new QuotaMonitorService({ logger: { error: vi.fn() } })
+    const hard = await monitor.refreshProvider(oauthProvider.id)
+    expect(hard).toMatchObject({ kind: 'anthropic', windows: [], error: 'Unauthorized' })
+    expect(monitor.getSnapshot()[oauthProvider.id]?.error).toBe('Unauthorized')
+
+    // Transient failure without any good data yet: also an error entry.
+    const fresh = new QuotaMonitorService({ logger: { error: vi.fn() } })
+    nextResult = () => ({ quota: null, status: 503, error: 'Service unavailable' })
+    const transient = await fresh.refreshProvider(oauthProvider.id)
+    expect(transient).toMatchObject({ kind: 'anthropic', error: 'Service unavailable' })
+    expect(fresh.getSnapshot()[oauthProvider.id]?.error).toBe('Service unavailable')
+  })
 })

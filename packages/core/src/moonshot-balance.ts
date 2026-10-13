@@ -64,6 +64,11 @@ export const MOONSHOT_BALANCE_MAX_BACKOFF_MS = 2 * 60 * 60 * 1000
  * pause also holds for a manual refresh.
  */
 export const MOONSHOT_BALANCE_RATE_LIMIT_INITIAL_BACKOFF_MS = 20 * 60 * 1000
+/**
+ * Upper bound for a Retry-After the balance endpoint sends. A broken or
+ * hostile header (days, years) must not silence the balance indefinitely.
+ */
+export const MOONSHOT_BALANCE_MAX_RETRY_AFTER_MS = 24 * 60 * 60 * 1000
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value)
@@ -126,8 +131,24 @@ export function parseMoonshotBalancePayload(
   }
 }
 
+/**
+ * True only when the configured base URL is the official Moonshot API host
+ * (`api.moonshot.ai` / `api.moonshot.cn`). A key configured for any other host
+ * (proxy, gateway, self-hosted) is never sent to the Moonshot balance endpoint.
+ */
+export function isOfficialMoonshotBaseUrl(baseUrl: string | undefined | null): boolean {
+  if (!baseUrl) return false
+  try {
+    const url = new URL(baseUrl)
+    return url.protocol === 'https:' && Object.hasOwn(KNOWN_REGION_HOSTS, canonicalHost(url.hostname))
+  } catch {
+    return false
+  }
+}
+
 export function isMoonshotBalanceProvider(provider: ProviderConfig): boolean {
   return provider.providerType === 'kimi' && provider.authMethod !== 'oauth' && !!provider.apiKey
+    && isOfficialMoonshotBaseUrl(provider.baseUrl)
 }
 
 /** Category of a transport failure; the message itself may carry headers. */
@@ -332,7 +353,8 @@ async function requestAndPause(
     const backoffMs = nextBackoff(pause, 'rate-limit', tag, MOONSHOT_BALANCE_RATE_LIMIT_INITIAL_BACKOFF_MS)
     const retryAfterMs = result.retryAfterMs
     const validRetryAfter = typeof retryAfterMs === 'number' && Number.isFinite(retryAfterMs) && retryAfterMs > 0
-    const waitMs = clampWaitMs(Math.max(backoffMs, validRetryAfter ? retryAfterMs : 0), nowMs)
+    const boundedRetryAfter = validRetryAfter ? Math.min(retryAfterMs, MOONSHOT_BALANCE_MAX_RETRY_AFTER_MS) : 0
+    const waitMs = clampWaitMs(Math.max(backoffMs, boundedRetryAfter), nowMs)
     pausedUntil.set(provider.id, { until: nowMs + waitMs, reason: 'rate-limit', backoffMs, keyTag: tag })
     // The monitor's own 429 backoff follows the same pause.
     return { ...result, retryAfterMs: waitMs, error }

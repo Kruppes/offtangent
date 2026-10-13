@@ -28,7 +28,7 @@ beforeAll(async () => {
   })
   const app = express()
   app.use('/api/models', createModelsRouter(() => ({
-    openai: { kind: 'openai-codex', windows: [{ key: 'weekly', label: '7d', utilization: 42, resetsAt: null, resetDisplay: 'absolute' }], fetchedAt: '2026-09-15T00:00:00Z' },
+    openai: { kind: 'openai-codex', windows: [{ key: 'weekly', label: '7d', utilization: 42, resetsAt: null, resetDisplay: 'absolute' }], balance: { amount: 13.5, currency: 'USD', cash: 13.5, voucher: 0 }, fetchedAt: '2026-09-15T00:00:00Z' },
   })))
   server = app.listen(0)
   await new Promise<void>(resolve => server.once('listening', resolve))
@@ -54,5 +54,20 @@ describe('GET /api/models', () => {
     expect(body.models[1]).toMatchObject({ modelId: 'bad', status: 'error', selectable: false })
     expect(JSON.stringify(body)).not.toContain('test-placeholder')
     expect(body.models[0]?.quota).toMatchObject({ windows: [{ utilization: 42 }] })
+  })
+
+  it('ships the prepaid balance only to admins; usage windows stay visible to members', async () => {
+    const get = async (role: string) => {
+      const token = generateAccessToken({ userId: role === 'admin' ? 1 : 7, username: role, role })
+      const response = await fetch(`${baseUrl}/api/models`, { headers: { Authorization: `Bearer ${token}` } })
+      expect(response.status).toBe(200)
+      return await response.json() as { models: Array<{ quota?: Record<string, unknown> | null }> }
+    }
+    const admin = await get('admin')
+    expect(admin.models[0]?.quota).toMatchObject({ windows: [{ utilization: 42 }], balance: { amount: 13.5, currency: 'USD' } })
+    const member = await get('user')
+    expect(member.models[0]?.quota).toMatchObject({ windows: [{ utilization: 42 }] })
+    for (const model of member.models) expect(model.quota ?? {}).not.toHaveProperty('balance')
+    expect(JSON.stringify(member)).not.toContain('13.5')
   })
 })

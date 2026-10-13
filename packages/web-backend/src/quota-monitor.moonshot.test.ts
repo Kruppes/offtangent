@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { ProviderConfig } from '@axiom/core'
 
-const KEY = 'sk_moonshot-test-key-0123456789'
+const KEY = 'test-moonshot-key-1234567890'
 
 const provider: ProviderConfig = {
   id: 'moonshot-1',
@@ -127,7 +127,7 @@ describe('QuotaMonitorService with the Moonshot balance adapter', () => {
     expect(fetchImpl).toHaveBeenCalledTimes(1)
 
     // The user enters a new key: the next poll asks it right away.
-    currentProviders = [{ ...provider, apiKey: 'sk_another-moonshot-key-987654' }]
+    currentProviders = [{ ...provider, apiKey: 'test-moonshot-key-other-0987654321' }]
     fetchImpl.mockImplementation(async () => response(200, VALID_BODY))
     await vi.advanceTimersByTimeAsync(60_000)
     monitor.stop()

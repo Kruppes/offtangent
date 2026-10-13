@@ -198,16 +198,25 @@
         </Tooltip>
 
         <!-- Subscriber quota (desktop, wide viewports only) -->
-        <div v-if="quotaTopBarBalance" class="hidden items-center gap-2 lg:flex">
-          <span class="text-xs font-medium text-foreground">{{ quotaTopBarBalance }}</span>
-        </div>
-        <div v-else-if="quotaTopBarParts.length > 0" class="hidden items-center gap-2 lg:flex">
-          <template v-for="(part, idx) in quotaTopBarParts" :key="part.key">
-            <span v-if="idx > 0" class="text-muted-foreground">·</span>
-            <span class="text-xs">
-              <span class="font-medium" :class="part.colorClass">{{ part.label }}: {{ part.utilization }}%</span>
-              <span v-if="part.reset" class="text-muted-foreground"> ({{ part.reset }})</span>
-            </span>
+        <div v-if="quotaTopBarBalance || quotaTopBarParts.length > 0" class="hidden items-center gap-2 lg:flex" data-testid="topbar-quota">
+          <span
+            v-if="quotaTopBarProvider"
+            class="max-w-40 truncate text-xs font-medium text-muted-foreground"
+            :title="quotaTopBarProvider"
+          >{{ quotaTopBarProvider }}</span>
+          <span
+            v-if="quotaTopBarBalance"
+            class="text-xs font-medium text-foreground"
+            data-testid="topbar-quota-balance"
+          >{{ quotaTopBarBalance }}</span>
+          <template v-else>
+            <template v-for="(part, idx) in quotaTopBarParts" :key="part.key">
+              <span v-if="idx > 0" class="text-muted-foreground">·</span>
+              <span class="text-xs">
+                <span class="font-medium" :class="part.colorClass">{{ part.label }}: {{ part.utilization }}%</span>
+                <span v-if="part.reset" class="text-muted-foreground"> ({{ part.reset }})</span>
+              </span>
+            </template>
           </template>
         </div>
 
@@ -284,6 +293,8 @@ import SidebarStateIcon from '~/components/shell/SidebarStateIcon.vue'
 import { useMediaQuery } from '@vueuse/core'
 import { useEmailApi } from '~/api/email'
 import { useShellLayout } from '~/composables/useShellLayout'
+import { useTopBarQuota } from '~/composables/useTopBarQuota'
+import { topBarBalanceOf } from '~/utils/topBarQuota'
 import { onShortcut } from '~/composables/useShortcuts'
 import { isMacPlatform } from '~/utils/shortcuts'
 
@@ -292,7 +303,7 @@ const runtimeConfig = useRuntimeConfig()
 const appVersion = runtimeConfig.public.appVersion as string
 const buildSha = (runtimeConfig.public.buildSha as string | undefined) ?? ''
 const { user, logout } = useAuth()
-const { status: globalStatus, providerName: globalProviderName, operatingMode: globalOperatingMode, fallbackProviderName: globalFallbackProviderName, healthMonitorEnabled: globalHealthMonitorEnabled, quota: globalQuota, start: startStatusPolling, stop: stopStatusPolling } = useConnectionStatus()
+const { status: globalStatus, providerName: globalProviderName, operatingMode: globalOperatingMode, fallbackProviderName: globalFallbackProviderName, healthMonitorEnabled: globalHealthMonitorEnabled, start: startStatusPolling, stop: stopStatusPolling } = useConnectionStatus()
 
 const isInFallbackMode = computed(() => globalOperatingMode.value === 'fallback')
 const { isDark, toggle: toggleTheme } = useTheme()
@@ -410,17 +421,19 @@ const statusText = computed(() => {
 
 const { quotaWindowParts, formatBalanceAmount } = useQuotaFormat()
 
+// On a strand page: the quota of the strand's own provider; elsewhere the global default.
+const { source: quotaTopBarSource } = useTopBarQuota()
 const quotaTopBarParts = computed(() => {
-  const q = globalQuota.value
+  const q = quotaTopBarSource.value?.quota
   if (!q || q.error) return []
   return quotaWindowParts(q)
 })
+const quotaTopBarProvider = computed(() => quotaTopBarSource.value?.providerName ?? '')
 
-// Prepaid balance (pay-as-you-go keys) instead of usage windows.
+// Prepaid balance (pay-as-you-go keys) instead of usage windows, from the
+// same strand-aware source: on a strand page only that strand's provider.
 const quotaTopBarBalance = computed(() => {
-  const q = globalQuota.value
-  if (!q || q.error || q.windows.length > 0) return ''
-  const amount = formatBalanceAmount(q.balance, locale.value)
+  const amount = formatBalanceAmount(topBarBalanceOf(quotaTopBarSource.value), locale.value)
   return amount ? t('providers.quota.balance', { amount }) : ''
 })
 

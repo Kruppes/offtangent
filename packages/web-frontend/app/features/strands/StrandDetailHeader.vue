@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onMounted, ref, watch } from 'vue'
+import { computed, onMounted, onUnmounted, ref, watch } from 'vue'
 import type { Thread, Project } from '@axiom/core'
 import { useModelsApi, type ModelSelection, type SelectableModel } from '~/api/models'
 import { useProjectsApi } from '~/api/projects'
@@ -8,6 +8,7 @@ import StrandActions from './StrandActions.vue'
 import EcoModeSwitch from './EcoModeSwitch.vue'
 import { strandErrorKey, useStrandDetailApi, type StrandDetail } from './detailApi'
 import { messageRoute } from '~/api/strandW5b'
+import { useActiveStrandProvider } from '~/composables/useTopBarQuota'
 const props = withDefaults(defineProps<{ strandId: string; showBack?: boolean }>(), { showBack: true })
 const emit = defineEmits<{ back: []; updated: [strand: StrandDetail]; deleted: [id: string] }>()
 const { t } = useI18n()
@@ -60,6 +61,10 @@ const modelDiffers = computed(() => {
   return running.providerId !== effective?.providerId || running.modelId !== effective?.modelId
 })
 watch(turnActive, () => { void load() })
+// The top bar shows the subscriber quota of the provider this strand runs on.
+const topBarProvider = useActiveStrandProvider()
+watch(() => displayedModel.value?.providerId ?? null, providerId => { topBarProvider.publish(props.strandId, providerId) }, { immediate: true })
+onUnmounted(() => { topBarProvider.release(props.strandId) })
 function update(patch: Partial<StrandDetail>) {
   if (!strand.value) return
   strand.value = { ...strand.value, ...patch }
