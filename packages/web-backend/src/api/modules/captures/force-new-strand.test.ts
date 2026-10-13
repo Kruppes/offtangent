@@ -14,6 +14,10 @@
  *     recent strand
  *   - `forceNewStrand` plus `strandId` and a non-boolean flag are refused
  *   - `forceNewStrand: false` leaves the capture on the router path
+ *   - the flag outranks the filler guard: a "Danke dir!" with the toggle set
+ *     opens a new strand, without the toggle it is still dismissed unrouted
+ *   - the flag does NOT outrank the silence guard: a bare "Danke!" is a known
+ *     Whisper silence artefact, and an empty recording never creates a strand
  */
 import { describe, it, expect, beforeAll, afterAll, beforeEach } from 'vitest'
 import http from 'node:http'
@@ -21,7 +25,7 @@ import fs from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
 import express from 'express'
-import { initDatabase, SessionManager } from '@axiom/core'
+import { initDatabase, SessionManager, FILLER_GUARD_MARKER } from '@axiom/core'
 import type { AgentCore, Capture, Database, Decision, ResolvedRouterModel } from '@axiom/core'
 import { createCapturesRouters } from './route.js'
 import { FORCED_NEW_STRAND_RATIONALE, NEW_STRAND_RATIONALE } from './service.js'
@@ -177,6 +181,50 @@ describe('POST /api/captures with forceNewStrand', () => {
     const row = db.prepare('SELECT model, rationale FROM router_decisions WHERE capture_id = ?').get(res.capture.id) as { model: string; rationale: string }
     expect(row.model).toBe('explicit-new-strand')
     expect(row.rationale).toBe(FORCED_NEW_STRAND_RATIONALE)
+  })
+
+  it('outranks the filler guard: "Danke dir!" with the toggle opens a new strand', async () => {
+    const existing = sessionManager.createThread('1', 'main', 'Some strand')
+    const res = await force('Danke dir!')
+
+    expect(res.status).toBe(201)
+    expect(routerCalls).toBe(0)
+    expect(res.capture.status).toBe('filed')
+    expect(res.capture.strandId).toBeTruthy()
+    expect(res.capture.strandId).not.toBe(existing.id)
+    expect(res.decision.action).toBe('new_strand')
+    const row = db.prepare('SELECT model, rationale FROM router_decisions WHERE capture_id = ?').get(res.capture.id) as { model: string; rationale: string }
+    expect(row.model).toBe('explicit-new-strand')
+    expect(row.rationale).toBe(FORCED_NEW_STRAND_RATIONALE)
+    expect(turns).toHaveLength(1)
+    expect(turns[0]!.sessionId).toBe(res.capture.strandId)
+  })
+
+  it('still dismisses "Danke dir!" without the toggle, unrouted', async () => {
+    sessionManager.createThread('1', 'main', 'Some strand')
+    const res = await api('POST', '/api/captures', { text: 'Danke dir!', source: 'web' })
+
+    expect(res.status).toBe(201)
+    expect(routerCalls).toBe(0)
+    const capture = res.body.capture as Capture
+    const decision = res.body.decision as Decision
+    expect(capture.status).toBe('dismissed')
+    expect(capture.strandId ?? null).toBeNull()
+    expect(decision.model).toBe('filler-guard')
+    expect(decision.rationale).toBe(FILLER_GUARD_MARKER)
+    expect(turns).toHaveLength(0)
+  })
+
+  it('stays behind the silence guard: a bare "Danke!" artefact opens no strand', async () => {
+    const res = await force('Danke!')
+
+    expect(res.status).toBe(201)
+    expect(routerCalls).toBe(0)
+    expect(res.capture.status).toBe('dismissed')
+    expect(res.capture.strandId ?? null).toBeNull()
+    expect(res.decision.model).toBe('silence-guard')
+    expect(db.prepare('SELECT COUNT(*) AS n FROM sessions').get() as { n: number }).toEqual({ n: 0 })
+    expect(turns).toHaveLength(0)
   })
 
   it('refuses forceNewStrand together with a named strand', async () => {

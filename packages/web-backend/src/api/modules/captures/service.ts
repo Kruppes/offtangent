@@ -1064,12 +1064,22 @@ export function createCapturesService(options: CapturesServiceOptions) {
       return { capture: filed, decision: current, created: true, turn: takeTurn(filed.id) }
     }
 
+    // The home toggle "New strand (skip router)" is a user gesture just like
+    // an explicit strand, so it runs BEFORE the filler guard below: a "Danke!"
+    // sent with the toggle set opens the new strand the user asked for, the
+    // server does not overrule that. It stays AFTER the silence guard: an
+    // empty recording never creates a strand. It also outranks the quick
+    // mode: that mode would continue its own recent strand, and the user said
+    // explicitly that this capture starts something new.
+    if (body.forceNewStrand) return createInNewStrand(userId, body, selection.value)
+
     // Pure courtesy never reaches the router. A model asked where a thank you
     // belongs answers with a strand and a confidence, and both are fiction:
     // a courtesy capture ("Vielen Dank.", voice) was appended to an unrelated
     // strand with 0.87. Not asking is cheaper than distrusting the answer.
     //
-    // Deliberately AFTER the explicit branch above, unlike the silence guard:
+    // Deliberately AFTER the explicit branch and the force-new-strand branch
+    // above, unlike the silence guard:
     // a "Danke!" typed into a strand the user picked himself is a line in a
     // conversation he is having, and throwing that away would be the server
     // overruling a gesture. Without a strand there is no conversation it could
@@ -1089,11 +1099,8 @@ export function createCapturesService(options: CapturesServiceOptions) {
     //
     // Deliberately AFTER both guards: a silent recording and a bare "Danke"
     // are not questions, and the mode buys no exemption from the two rules
-    // that exist to keep pointless turns from running at all.
-    // The home toggle "New strand (skip router)" outranks the quick mode as
-    // well: the quick mode would continue its own recent strand, and the user
-    // said explicitly that this capture starts something new.
-    if (body.forceNewStrand) return createInNewStrand(userId, body, selection.value)
+    // that exist to keep pointless turns from running at all. (The home toggle
+    // "New strand" has already returned above and is not affected by this.)
 
     if (body.mode === 'quick' && !body.strandId) return createQuick(userId, body)
 
