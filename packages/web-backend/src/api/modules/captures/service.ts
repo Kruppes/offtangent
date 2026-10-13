@@ -18,6 +18,7 @@ import {
   CLIENT_TARGET_RATIONALE,
   confidenceBand,
   createStrandLink,
+  deriveStrandTitle,
   explicitTargetVerdict,
   findDeviceAffinity,
   FILLER_GUARD_MARKER,
@@ -47,6 +48,7 @@ import {
   loadCaptureDefaultAgentId,
   CAPTURE_DEFAULT_AGENT_AUTO,
   resolveAssignableProjectId,
+  ROUTED_INTENT,
   runRouter,
   sealText,
   serializeUploadsMetadata,
@@ -65,37 +67,13 @@ import { CAPTURE_STRAND_TITLE_MAX } from './schema.js'
 /** Decision row markers for a capture the client sent as "start a new strand". */
 export const NEW_STRAND_MODEL = 'explicit-new-strand'
 export const NEW_STRAND_RATIONALE = 'New strand chosen by the user, no router'
+/**
+ * Rationale of a capture sent with the home toggle "New strand (skip router)"
+ * (`forceNewStrand: true`). Same model marker as every explicit new strand, its
+ * own rationale so `router_decisions` shows the bypass for what it was.
+ */
+export const FORCED_NEW_STRAND_RATIONALE = 'Router skipped: the user forced a new strand'
 import { findQuickStrand, planAssistMode, planQuickMode, planSourceStyle, QUICK_MODE_MODEL, QUICK_MODE_RATIONALE } from './quick-mode.js'
-
-/**
- * Marker written into the rationale of a decision whose `note` the guard below
- * turned into an `ask`. It keeps the `router_decisions` row honest — the stored
- * intent is what happened, this sentence says what the model proposed — and it
- * makes the guard countable (`WHERE rationale LIKE 'capture guard: note%'`).
- */
-export const NOTE_IN_DIALOG_MARKER = 'capture guard: note into a live dialog'
-
-/**
- * Marker of the text backstop below, deliberately a different sentence than
- * {@link NOTE_IN_DIALOG_MARKER}: the two mechanisms catch different shapes of
- * the same mistake, and counting them apart in `router_decisions` is the only
- * way to see which one is actually carrying the load
- * (`WHERE rationale LIKE 'capture guard: a note that addresses%'`).
- */
-export const ADDRESSED_NOTE_MARKER = 'capture guard: a note that addresses you'
-
-/**
- * Marker of the doubt band, again its own sentence so the three mechanisms can
- * be told apart in `router_decisions`
- * (`WHERE rationale LIKE 'capture guard: a note that may address%'`). Counting
- * this one answers the question the band was built for: how often does the
- * server have to ask, and is that often enough to annoy?
- *
- * It is only written when a question was really written into a strand, never
- * for a capture that stayed unsorted — the count is the number of questions,
- * not the number of doubts.
- */
-export const DOUBTFUL_NOTE_MARKER = 'capture guard: a note that may address you'
 
 /**
  * Marker of a router filing into a strand whose turn was still running. The
@@ -550,76 +528,6 @@ export function createCapturesService(options: CapturesServiceOptions) {
     ).run(delta, strand.id)
   }
 
-  /**
-   * Has a persona ever answered in this strand? Then it is a live dialog.
-   *
-   * The server's own question (the doubt band) does not count. It is not an
-   * answer, and counting it would make every strand that ever got one a live
-   * dialog: the next note filed there would be upgraded to `ask` and answered
-   * — exactly the unsolicited reply this band exists to avoid.
-   */
-  function isLiveDialog(strandId: string): boolean {
-    const row = db.prepare(
-      `SELECT 1 FROM chat_messages WHERE session_id = ? AND role = 'assistant' AND ${NOT_A_NUDGE} LIMIT 1`,
-    ).get(strandId)
-    return !!row
-  }
-
-  /**
-   * A `note` that lands in a strand where a persona has already answered is
-   * practically never what the user meant: they are talking to someone, and a
-   * filed note runs no turn, so the chat stays silent and no doorbell rings.
-   * A wrong `note` therefore costs the whole answer, a wrong `ask` one
-   * superfluous reply — the cheap mistake wins and the intent is upgraded.
-   *
-   * The guard cannot cover `new_strand`: a strand that does not exist yet has
-   * no history to judge. That case belongs to {@link guardAddressedNote},
-   * which reads the capture's text instead of the strand's history.
-   */
-  function guardNoteIntoLiveDialog(proposal: RouterProposal): RouterProposal {
-    if (proposal.intent !== 'note' || proposal.action === 'new_strand') return proposal
-    if (!proposal.strandId || !isLiveDialog(proposal.strandId)) return proposal
-    const marker = `${NOTE_IN_DIALOG_MARKER} (${proposal.strandId}), intent note became ask.`
-    const rationale = proposal.rationale ? `${marker} Model: ${proposal.rationale}` : marker
-    console.warn(`[captures] ${marker}`)
-    return { ...proposal, intent: 'ask', rationale: rationale.slice(0, 400) }
-  }
-
-  /**
-   * The backstop for the case the guard above cannot see: a capture that talks
-   * to the persona while opening a brand new strand. That is exactly the shape
-   * of the incident this whole mechanism exists for — no history to judge, so
-   * the only evidence left is the text itself, and `addressStrength` reads it
-   * server side instead of trusting the model's label.
-   *
-   * Three bands, because the evidence has three strengths (SPEC 4.1):
-   *
-   *  * `strong` (two marker classes or more) — the intent becomes `ask`, the
-   *    turn runs, the user gets an answer. Same behaviour as before.
-   *  * `weak` (exactly one class) — the intent STAYS `note`. One marker fires
-   *    on ordinary self-notes ("Termin beim Zahnarzt am Montag?"), so guessing
-   *    `ask` here answers a shopping list. Instead the caller writes one short
-   *    question into the strand: no turn, no model call, and the user decides.
-   *  * `none` — nothing happens, the note is filed in silence.
-   *
-   * It runs after {@link guardNoteIntoLiveDialog} and therefore only ever sees
-   * a `note` that guard left alone: whichever guard fires first owns the
-   * rationale, and the row never carries two markers. Independent of the
-   * action on purpose — `new_strand` is the case it is here for.
-   */
-  function guardAddressedNote(proposal: RouterProposal, text: string): { proposal: RouterProposal; doubtful: boolean } {
-    if (proposal.intent !== 'note') return { proposal, doubtful: false }
-    const strength = addressStrength(text)
-    if (strength === 'none') return { proposal, doubtful: false }
-    if (strength === 'strong') {
-      const marker = `${ADDRESSED_NOTE_MARKER}, intent note became ask.`
-      const rationale = proposal.rationale ? `${marker} Model: ${proposal.rationale}` : marker
-      console.warn(`[captures] ${marker}`)
-      return { proposal: { ...proposal, intent: 'ask', rationale: rationale.slice(0, 400) }, doubtful: false }
-    }
-    return { proposal, doubtful: true }
-  }
-
   /** Stamp the busy strand marker onto a router filing whose answer will queue. */
   function markQueuedBehindBusyStrand(proposal: RouterProposal): RouterProposal {
     const marker = `${BUSY_STRAND_QUEUED_MARKER}.`
@@ -666,75 +574,6 @@ export function createCapturesService(options: CapturesServiceOptions) {
       if (!isCoreMissing(err)) throw err
       return { filed: parkUnfiledPart(userId, capture, decision, 1, err), pending: true }
     }
-  }
-
-  /** Stamp the doubt band's marker onto a decision that stays a `note`. */
-  function markDoubtful(proposal: RouterProposal): RouterProposal {
-    const marker = `${DOUBTFUL_NOTE_MARKER}, filed as a note and asked back.`
-    const rationale = proposal.rationale ? `${marker} Model: ${proposal.rationale}` : marker
-    console.warn(`[captures] ${marker}`)
-    return { ...proposal, rationale: rationale.slice(0, 400) }
-  }
-
-  /**
-   * Write the confirmation card into the strand the capture was just filed
-   * into: "Als Notiz abgelegt." plus a `choice` block with "keep" and
-   * "answer".
-   *
-   * Written ONLY for the doubt band — a text with exactly one address marker,
-   * where the server genuinely cannot tell a memo from a request. A note with
-   * no marker at all is filed in silence, because a card on every note is the
-   * failure this was measured to produce: of the twelve cards the blanket rule
-   * wrote, eleven landed on automated test notes from a device and not one
-   * carried textual evidence that anybody was being addressed (zero
-   * `router_decisions` rows with {@link DOUBTFUL_NOTE_MARKER}). A question
-   * nobody needs teaches the user to stop reading questions, and then the one
-   * that matters is gone too.
-   *
-   * An ordinary `assistant` row, because that is what it is: the persona
-   * saying something. It carries the capture id, so the row travels with the
-   * capture through {@link move} and is removed with it, and the
-   * `capture_nudge` metadata tag, which keeps it out of {@link isLiveDialog}
-   * and {@link answerExists} — the card is not an answer, and a strand that
-   * only ever got one is not a live dialog.
-   *
-   * Idempotent by database index, not by a check: `client_message_id` carries
-   * {@link captureConfirmKey}, so a second routing of the same capture, a
-   * retried request or a reconnect inserts nothing. Returns false in that
-   * case, and then nothing is bumped and nothing rings either.
-   *
-   * The activity bump is the same one a filed capture gets, so the strand
-   * sorts to the top and reads as "something is waiting".
-   *
-   * The doorbell rings for it: a card the user never sees is the silence this
-   * mechanism exists against, and since only the doubt band gets a card at
-   * all, ringing it is at most a handful of pushes a week rather than one per
-   * note.
-   */
-  function askBack(userId: number, capture: Capture, strand: Thread, ring: boolean): boolean {
-    const language = captureLanguage(capture.text)
-    const messageId = writeConfirmationCard(db, {
-      userId,
-      strandId: strand.id,
-      agentId: strand.agentId,
-      captureId: capture.id,
-      content: captureConfirmContent(language),
-    })
-    if (messageId === null) {
-      // The card is already there. Bumping or ringing again would turn a
-      // retry into noise, which is the failure this guard exists for.
-      console.warn(`[captures] confirmation card for capture ${capture.id} already exists, nothing written`)
-      return false
-    }
-    bumpStrandActivity(userId, strand, 1)
-    if (!ring) return true
-    try {
-      options.sendDoorbell?.({ userId, strandId: strand.id, agentId: strand.agentId, messageId })
-    } catch (err) {
-      // A doorbell must never cost a filing.
-      console.error(`[captures] Doorbell for capture ${capture.id} failed: ${(err as Error).message}`)
-    }
-    return true
   }
 
   /**
@@ -1203,37 +1042,25 @@ export function createCapturesService(options: CapturesServiceOptions) {
       // The mode travels with the capture even on the explicit path: the strand
       // decides where the answer goes, the mode still decides how it sounds.
       rememberSelection(capture, selection.value, body.mode)
-      // No router runs on this path, so the text backstop is the only thing
-      // between a sentence that clearly addresses the persona and a silent
-      // filing. Two marker classes or more get an `ask` and therefore a turn;
-      // without this, "schau dir das bitte an" typed into a strand the user
-      // picked himself would be filed and answered by nobody — the exact
-      // incident the backstop was built for, one path over.
-      const addressed = !body.intent && addressStrength(capture.text) === 'strong'
-      const intent: RouterIntent = body.intent ?? (addressed ? 'ask' : 'note')
+      // Without a stated intent the capture is an `ask`: there is no silent
+      // "note" default any more, on this path as little as on the router path.
+      // A text typed into a strand the user picked is a line in a conversation
+      // and gets its answer. Only a client that STATES `intent: 'note'` files
+      // silently (explicit beats heuristic, SPEC 4.1).
+      const intent: RouterIntent = body.intent ?? ROUTED_INTENT
       // The rationale has to survive being read a month later, so it states
       // who actually chose: a person on a user surface, or the client itself.
       const chose = verdict.kind === 'user' ? 'Strand chosen by the user' : `${CLIENT_TARGET_RATIONALE} (${body.source})`
       const proposal: RouterProposal = {
         action: 'append', strandId: strand.id, secondaryStrandId: null, newStrand: null, intent,
         confidence: 1, tags: [],
-        rationale: addressed ? `${chose}. ${ADDRESSED_NOTE_MARKER}, intent note became ask.` : chose,
+        rationale: chose,
         alternatives: [], projectSuggestion: null,
       }
       const decision = persistProposal(capture.id, proposal, {
         model: verdict.kind === 'user' ? 'explicit' : CLIENT_TARGET_MODEL, latencyMs: 0,
       })
       const filed = file(userId, capture, proposal, decision.id, 'filed', true)
-      // The strand was the user's choice, the intent was not: without
-      // `body.intent` the `note` above is this server's default, and a default
-      // is a guess. The text decides how loud that guess may be — the same
-      // three bands the router path uses (SPEC 4.1), because the mistake is
-      // the same one on both paths and a capture typed into a chosen strand
-      // must not go silent just because no router ran. `strong` already became
-      // an `ask` above and answered; `weak` gets the card; `none` stays a
-      // silent note. A client that STATED the intent has decided already and
-      // is never asked (explicit beats heuristic).
-      if (!body.intent && addressStrength(capture.text) === 'weak') askBack(userId, filed, strand, true)
       const current = getDecision(db, decision.id)!
       emitRouted(userId, filed, current)
       return { capture: filed, decision: current, created: true, turn: takeTurn(filed.id) }
@@ -1265,6 +1092,11 @@ export function createCapturesService(options: CapturesServiceOptions) {
     // Deliberately AFTER both guards: a silent recording and a bare "Danke"
     // are not questions, and the mode buys no exemption from the two rules
     // that exist to keep pointless turns from running at all.
+    // The home toggle "New strand (skip router)" outranks the quick mode as
+    // well: the quick mode would continue its own recent strand, and the user
+    // said explicitly that this capture starts something new.
+    if (body.forceNewStrand) return createInNewStrand(userId, body, selection.value)
+
     if (body.mode === 'quick' && !body.strandId) return createQuick(userId, body)
 
     // "This starts something new": the mirror image of an explicit strand, and
@@ -1353,18 +1185,11 @@ export function createCapturesService(options: CapturesServiceOptions) {
       const result = await runRouter(partInput, { chain: options.routerChain?.(), complete: options.routerComplete })
       for (const note of result.notes) console.warn(`[router] capture ${capture.id} part ${part.index}: ${note}`)
       // Explicit beats heuristic (SPEC 4.1): an intent the client states itself
-      // is taken as it is, the guards only correct the router's own verdict.
-      const guarded = body.intent
-        ? { proposal: { ...result.proposal, intent: body.intent }, doubtful: false }
-        : guardAddressedNote(guardNoteIntoLiveDialog(result.proposal), part.text)
-      let proposal = guarded.proposal
+      // is taken as it is. Without one the router's proposal is always an
+      // `ask` (there is no silent "note" category any more), so no guard has
+      // to second-guess it.
+      let proposal: RouterProposal = body.intent ? { ...result.proposal, intent: body.intent } : result.proposal
       const band = confidenceBand(proposal.confidence)
-      // The doubt band only exists where there is a strand to ask in. A low band
-      // capture is not filed at all, it waits in the inbox with the user looking
-      // at it, so neither the marker nor the question is written — that keeps the
-      // marker count equal to the number of questions asked.
-      const doubtful = guarded.doubtful && band !== 'low'
-      if (doubtful) proposal = markDoubtful(proposal)
       if (band !== 'low' && proposal.action !== 'new_strand' && proposal.strandId && strandBusy(userId, proposal.strandId)) {
         proposal = markQueuedBehindBusyStrand(proposal)
       }
@@ -1403,21 +1228,6 @@ export function createCapturesService(options: CapturesServiceOptions) {
           filed = parkUnfiledPart(userId, capture, decision, count, err)
           if (isCoreMissing(err)) routingPending = true
           continue
-        }
-        // Only the doubt band asks. `doubtful` already carries every condition
-        // that may produce a card — intent `note`, no stated intent from the
-        // client, exactly one address marker in the text, a band that files
-        // somewhere — so this is the whole rule and not a second one next to it.
-        //
-        // A note WITHOUT any marker is filed in silence on purpose. It was
-        // briefly the other way round ("every note the router decided ends in a
-        // card"), and the measurement of that week is the reason it is not:
-        // eleven of twelve cards fired on machine written test notes, none on a
-        // sentence addressed to anyone.
-        const cardStrandId = count > 1 ? decision.strandId ?? partFiling(capture.id, part.index)?.strandId ?? null : filed.strandId
-        if (doubtful && cardStrandId) {
-          const strand = manager().getThread(userKey, cardStrandId)
-          if (strand) askBack(userId, filed, strand, true)
         }
       }
     }
@@ -1501,7 +1311,7 @@ export function createCapturesService(options: CapturesServiceOptions) {
     const proposal: RouterProposal = {
       action: 'new_strand', strandId: null, secondaryStrandId: null, intent: body.intent ?? 'ask',
       newStrand: { title: newStrandTitle(body), personaId: agentId, tags: [], projectId: null },
-      confidence: 1, tags: [], rationale: NEW_STRAND_RATIONALE,
+      confidence: 1, tags: [], rationale: body.forceNewStrand ? FORCED_NEW_STRAND_RATIONALE : NEW_STRAND_RATIONALE,
       alternatives: [], projectSuggestion: null,
     }
     const decision = persistProposal(capture.id, proposal, { model: NEW_STRAND_MODEL, latencyMs: 0 })
@@ -1511,12 +1321,15 @@ export function createCapturesService(options: CapturesServiceOptions) {
     return { capture: filed, decision: current, created: true, turn: takeTurn(filed.id), ...(pending ? { routingPending: true } : {}) }
   }
 
-  /** The client's proposed title, else the first line of the capture. */
+  /**
+   * The client's proposed title, else the first line of the capture, cut on a
+   * word boundary like every other derived strand title.
+   */
   function newStrandTitle(body: CreateCaptureBody): string {
     const proposed = body.strandTitle?.trim()
     if (proposed) return proposed
     const firstLine = body.text.split('\n').map(line => line.trim()).find(line => line.length > 0) ?? ''
-    return (firstLine.slice(0, CAPTURE_STRAND_TITLE_MAX) || 'New strand').trim()
+    return deriveStrandTitle(firstLine, CAPTURE_STRAND_TITLE_MAX) || 'New strand'
   }
 
   /**

@@ -339,19 +339,16 @@ export function buildRouterInput(
 }
 
 /**
- * The intent half of the prompt (SPEC 4.3). Split out so a test can hold it
- * against the rules instead of grepping the whole system prompt: a wrong
- * `note` costs the user the entire answer (the capture is filed in silence, no
- * turn, no doorbell), a wrong `ask` costs one superfluous reply.
+ * The router no longer classifies an intent. Every routed capture is an `ask`:
+ * the user talks to the tool, and a capture filed as a silent "note" (no turn,
+ * no answer, no doorbell) was a category the user never wanted and kept
+ * losing real prompts to. The model is therefore not asked for an intent, and
+ * whatever it volunteers is ignored by {@link parseRouterResponse}.
+ *
+ * `note` survives only as a stored value: old decision rows keep it, and a
+ * client may still state it explicitly for a capture it files itself.
  */
-export const ROUTER_INTENT_RULES = `Intent:
-- "intent" is "ask" whenever the capture expects something from you, "note" only for a pure self-note with no addressee. When unsure, choose "ask": a superfluous answer costs one paragraph, a missing one leaves the user waiting in silence in front of a chat that never replies.
-- Markers of "ask", in German and in English: the user addresses you in the second person ("du", "dir", "dich", "dein", "you", "your"); an imperative or request ("schau dir das an", "mach mal", "pruef das", "have a look", "check this", "please fix"); a direct question ("warum ...?", "kannst du ...?", "why ...?"); a bug report, a complaint or a wish about something you built, which carries the expectation that you act on it.
-- A real question is "ask" NO MATTER WHAT IT IS ABOUT. A question word plus a verb ("wie/was/wann/wo/warum/wieviel/welche ... ?", "how/what/when/where/why/which ... ?") or a yes-no question is somebody asking somebody, and you are the only one here — the subject being the user's private life, their house or their money changes nothing: "Wie viel kostet eigentlich ein neuer Dachstuhl?" is "ask". The one exception is a fragment with a question mark and no verb, which is a memo the user wrote for themselves: "Termin beim Zahnarzt am Montag?" stays "note".
-- Examples of "ask": "Ich habe keine Push Notification bekommen, schau dir das bitte mal an." / "Kannst du den Zeilenumbruch im Recorder fixen?" / "Why is the deploy still red?" / "Wie viel kostet eigentlich ein neuer Dachstuhl?"
-- Examples of "note": "Winterreifen kaufen." / "Bremsbelaege hinten sind durch." / "Call the roofer back next week, 4200 for the north side."
-- A capture that reports a problem with your own work, or wishes for something in it ("X waere gut", "wir sollten X", "it would be nice if X"), is "ask", not "note", unless it says outright that it is only for the record ("nur als Notiz", "just for the record").
-- The intent is independent of the action: a capture that opens a new strand can very well be an "ask", and an "ask" filed into an existing strand stays an "ask".`
+export const ROUTED_INTENT: RouterIntent = 'ask'
 
 /**
  * Words that put a listener into the sentence. Second person only: "du" is not
@@ -553,7 +550,6 @@ Schema:
   "strandId": string | null,
   "secondaryStrandId": string | null,
   "newStrand": { "title": string, "personaId": string, "tags": string[], "projectId": string | null } | null,
-  "intent": "note" | "ask",
   "confidence": number,
   "tags": string[],
   "rationale": string,
@@ -578,9 +574,7 @@ Projects:
 - A project is a long lived container above the strands: one product, one vehicle, one house, alive for months, while a strand is a single thread of thought inside it. Every project the user has is listed at the top of the task with its id and name; when no list is there, the user has no projects and every project field stays null.
 - "newStrand.projectId": an id from that list, and only when the new strand unmistakably belongs to that project. "no project" (null or omitted) is the right answer whenever nothing fits clearly, and it is the most common one. A wrong container is worse than none, and doing nothing costs nothing: the user can attach the strand later in one tap.
 - The list gives you project names, not their contents. A name that merely sounds related to the capture is not evidence. Name a project when the capture mentions it, or when a candidate strand that already carries that project is about the same matter; otherwise null.
-- "projectSuggestion": only for "append" or "link", only when the chosen candidate has "projectId": null, and only when the WHOLE strand belongs to a project from the list. Never for a candidate that already has a project, never as a way to move a strand. Confidence is your own honest estimate, below 0.55 it is thrown away, so send null instead of guessing. This suggestion is never applied automatically, the user taps it or ignores it.
-
-${ROUTER_INTENT_RULES}`
+- "projectSuggestion": only for "append" or "link", only when the chosen candidate has "projectId": null, and only when the WHOLE strand belongs to a project from the list. Never for a candidate that already has a project, never as a way to move a strand. Confidence is your own honest estimate, below 0.55 it is thrown away, so send null instead of guessing. This suggestion is never applied automatically, the user taps it or ignores it.`
 
 /**
  * The user prompt. The project list is the FIRST block and carries no volatile
@@ -731,7 +725,8 @@ export function parseRouterOutput(text: string, input: RouterInput): ParseRouter
   const confidence = clamp01(obj.confidence)
   if (confidence === null) return { ok: false, error: 'confidence must be a number' }
 
-  const intent: RouterIntent = obj.intent === 'ask' ? 'ask' : 'note'
+  // No intent is read from the model: routing never yields a silent note.
+  const intent: RouterIntent = ROUTED_INTENT
   const tags = cleanTags(obj.tags)
   if (newStrand) {
     for (const t of tags) if (!newStrand.tags.includes(t)) newStrand.tags.push(t)
@@ -854,7 +849,7 @@ export function syntheticProposal(input: RouterInput, reason: string): RouterPro
     strandId: null,
     secondaryStrandId: null,
     newStrand: { title, personaId, tags: [], projectId: null },
-    intent: 'note',
+    intent: ROUTED_INTENT,
     confidence: 0,
     tags: [],
     rationale: reason,

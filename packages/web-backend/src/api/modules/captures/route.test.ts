@@ -14,7 +14,7 @@ import { initDatabase, saveProviders, SessionManager, findInteractionBlock } fro
 import type { AgentCore, Capture, Database, Decision, ResolvedRouterModel } from '@axiom/core'
 import { createCapturesRouters } from './route.js'
 import {
-  createCapturesService, NOTE_IN_DIALOG_MARKER, ADDRESSED_NOTE_MARKER, DOUBTFUL_NOTE_MARKER, CAPTURE_NUDGE_TEXT,
+  createCapturesService, CAPTURE_NUDGE_TEXT,
   CAPTURE_CONFIRM_BLOCK_ID, CAPTURE_CONFIRM_QUESTION, CAPTURE_CONFIRM_LABELS,
   CAPTURE_CONFIRM_KEEP, CAPTURE_CONFIRM_ANSWER,
 } from './service.js'
@@ -175,7 +175,9 @@ describe('POST /api/captures', () => {
     const strand = sessionManager.createThread('1', 'main', 'Haus Dach')
     answer({ action: 'append', strandId: strand.id, intent: 'note', confidence: 0.82, tags: ['haus', 'handwerker'], rationale: 'roofer' })
 
-    const res = await api('POST', '/api/captures', { text: 'roofer called back, 4200 for the north side', clientMessageId: 'c-1' })
+    // A silent filing needs the client to say so: the router alone never
+    // produces a note any more.
+    const res = await api('POST', '/api/captures', { text: 'roofer called back, 4200 for the north side', clientMessageId: 'c-1', intent: 'note' })
     expect(res.status).toBe(201)
     const capture = res.body.capture as Capture
     const decision = res.body.decision as Decision
@@ -202,7 +204,7 @@ describe('POST /api/captures', () => {
     expect((events[2].decision as Decision).id).toBe(decision.id)
 
     // Idempotent retry: same key, no second router call, 200.
-    const again = await api('POST', '/api/captures', { text: 'roofer called back, 4200 for the north side', clientMessageId: 'c-1' })
+    const again = await api('POST', '/api/captures', { text: 'roofer called back, 4200 for the north side', clientMessageId: 'c-1', intent: 'note' })
     expect(again.status).toBe(200)
     expect((again.body.capture as Capture).id).toBe(capture.id)
     expect(calls).toBe(1)
@@ -444,7 +446,9 @@ describe('an ask is answered whatever the confidence band says', () => {
       action: 'new_strand', newStrand: { title: 'Personas', personaId: 'coder', tags: [] },
       intent: 'note', confidence: 0.55, rationale: 'unsicher wohin',
     })
-    const res = await api('POST', '/api/captures', { text: 'winterreifen kaufen' })
+    // The old rows were notes; the router no longer produces one, so the
+    // client states it to recreate that row.
+    const res = await api('POST', '/api/captures', { text: 'winterreifen kaufen', intent: 'note' })
     const capture = res.body.capture as Capture
     expect(capture.status).toBe('needs_review')
     expect(turns).toEqual([])
@@ -480,9 +484,8 @@ describe('an ask is answered whatever the confidence band says', () => {
 
   it('answers a synthetic proposal too: the first capture of an empty instance', async () => {
     // No candidates at all, so `runRouter` short circuits to the synthetic
-    // proposal (intent `note`, confidence forced to 0.5) without a model call.
-    // `guardAddressedNote` upgrades the intent from the text, which is why
-    // `syntheticProposal` itself does not need to guess one.
+    // proposal (confidence forced to 0.5) without a model call. Its intent is
+    // `ask` like every routed capture: there is no silent note category.
     const res = await api('POST', '/api/captures', { text: 'Kannst du mir bitte die Personas Seite bauen?' })
     const capture = res.body.capture as Capture
     const decision = res.body.decision as Decision
@@ -490,7 +493,6 @@ describe('an ask is answered whatever the confidence band says', () => {
     expect(decision.model).toBe('synthetic')
     expect(decision.confidence).toBe(0.5)
     expect(decision.intent).toBe('ask')
-    expect(decision.rationale).toContain(ADDRESSED_NOTE_MARKER)
     expect(capture.status).toBe('needs_review')
     expect(turns).toEqual([{ sessionId: capture.strandId, text: 'Kannst du mir bitte die Personas Seite bauen?', agentId: 'main' }])
   })
@@ -499,9 +501,10 @@ describe('an ask is answered whatever the confidence band says', () => {
     candidate()
     answer({
       action: 'new_strand', newStrand: { title: 'Wartung', personaId: 'main', tags: [] },
-      intent: 'note', confidence: 0.55, rationale: 'eigene Liste',
+      intent: 'ask', confidence: 0.55, rationale: 'eigene Liste',
     })
-    const res = await api('POST', '/api/captures', { text: 'Winterreifen kaufen. Bremsbeläge hinten sind durch.' })
+    // Only a client can still state a note; the router never proposes one.
+    const res = await api('POST', '/api/captures', { text: 'Winterreifen kaufen. Bremsbeläge hinten sind durch.', intent: 'note' })
     const capture = res.body.capture as Capture
     expect(capture.status).toBe('needs_review')
     expect(turns).toEqual([])
@@ -511,466 +514,84 @@ describe('an ask is answered whatever the confidence band says', () => {
   })
 })
 
-describe('note into a live dialog', () => {
-  /** A strand a persona has already answered in: the interactive dialog case. */
-  function dialogStrand(title: string, agentId = 'coder'): string {
-    const strand = sessionManager.createThread('1', agentId, title)
-    db.prepare("INSERT INTO chat_messages (session_id, user_id, role, content) VALUES (?, 1, 'user', 'der zeilenumbruch im recorder ist komisch')").run(strand.id)
-    db.prepare("INSERT INTO chat_messages (session_id, user_id, role, content) VALUES (?, 1, 'assistant', 'ich schau es mir an')").run(strand.id)
-    return strand.id
-  }
-
-  it('upgrades a note into a strand with assistant history to ask, starts the turn and says so in the rationale', async () => {
-    const strandId = dialogStrand('Recorder UI')
-    answer({ action: 'append', strandId, intent: 'note', confidence: 0.9, rationale: 'gleicher Recorder Bug' })
-
-    const text = 'Ich habe keine Push Notification bekommen. Schau dir den Zeilenumbruch bitte nochmal an.'
-    const res = await api('POST', '/api/captures', { text })
-    const capture = res.body.capture as Capture
-    const decision = res.body.decision as Decision
-
-    expect(decision.intent).toBe('ask')
-    expect(decision.rationale).toContain(NOTE_IN_DIALOG_MARKER)
-    expect(decision.rationale).toContain('gleicher Recorder Bug')
-    expect(capture.status).toBe('filed')
-    expect(turns).toEqual([{ sessionId: strandId, text, agentId: 'coder' }])
-
-    // The applied intent is what the stored row and the API payload carry, so
-    // `router_decisions` stays countable and the app can label the capture.
-    const stored = db.prepare('SELECT intent, rationale FROM router_decisions WHERE id = ?').get(decision.id) as { intent: string; rationale: string }
-    expect(stored.intent).toBe('ask')
-    expect(stored.rationale).toContain(NOTE_IN_DIALOG_MARKER)
-    const list = await api('GET', '/api/captures?status=filed')
-    expect((list.body.decisions as Decision[])[0].intent).toBe('ask')
-    const routed = events.find(e => e.type === 'capture_routed')
-    expect((routed?.decision as Decision).intent).toBe('ask')
-  })
-
-  it('leaves a note in a strand without any assistant answer alone', async () => {
-    const strand = sessionManager.createThread('1', 'main', 'Wartung')
-    db.prepare("INSERT INTO chat_messages (session_id, user_id, role, content) VALUES (?, 1, 'user', 'winterreifen kaufen')").run(strand.id)
-    answer({ action: 'append', strandId: strand.id, intent: 'note', confidence: 0.9, rationale: 'gleiche Wartungsliste' })
-
-    const res = await api('POST', '/api/captures', { text: 'Bremsbelaege hinten sind durch' })
-    const decision = res.body.decision as Decision
-    expect(decision.intent).toBe('note')
-    expect(decision.rationale).toBe('gleiche Wartungsliste')
-    expect(turns.length).toBe(0)
-  })
-
-  it('does not claim a new_strand: that one belongs to the text backstop, not to this guard', async () => {
-    dialogStrand('Recorder UI')
-    answer({
-      action: 'new_strand', newStrand: { title: 'Push fehlt + Recorder Bug', personaId: 'coder', tags: [] },
-      intent: 'note', confidence: 0.8, rationale: 'eigenes Thema',
-    })
-    const res = await api('POST', '/api/captures', { text: 'Schau dir den Recorder bitte mal an, da fehlt die Push' })
-    const decision = res.body.decision as Decision
-    expect(decision.action).toBe('new_strand')
-    // A strand that does not exist yet has no history, so this guard stays
-    // out; the text backstop below is what answers the capture.
-    expect(decision.rationale).not.toContain(NOTE_IN_DIALOG_MARKER)
-    expect(decision.intent).toBe('ask')
-  })
-
-  it('respects an intent the client states itself, in both paths', async () => {
-    const strandId = dialogStrand('Recorder UI', 'main')
-    answer({ action: 'append', strandId, intent: 'ask', confidence: 0.9, rationale: 'x' })
-    const routed = await api('POST', '/api/captures', { text: 'nur fuers Protokoll', intent: 'note' })
-    expect((routed.body.decision as Decision).intent).toBe('note')
-    expect((routed.body.decision as Decision).rationale).not.toContain(NOTE_IN_DIALOG_MARKER)
-    expect(turns.length).toBe(0)
-
-    const explicit = await api('POST', '/api/captures', { text: 'auch nur fuers Protokoll', strandId, intent: 'note' })
-    expect((explicit.body.decision as Decision).intent).toBe('note')
-    expect(turns.length).toBe(0)
-  })
-
-  it('does not reach an append the low confidence guard already turned into a new strand (known gap)', async () => {
-    const strandId = dialogStrand('Recorder UI')
-    answer({ action: 'append', strandId, intent: 'note', confidence: 0.5, rationale: 'vielleicht dort' })
-    const res = await api('POST', '/api/captures', { text: 'und der Umbruch ist immer noch komisch' })
-    const capture = res.body.capture as Capture
-    const decision = res.body.decision as Decision
-    // SPEC 4.4 turns the sub-0.7 append into a new strand before this guard
-    // sees it, and a fresh strand has no history to judge. Documented in
-    // FOLLOWUPS.md. The text of this capture names no addressee either, so
-    // the backstop stays out as well and the note survives.
-    expect(decision.action).toBe('new_strand')
-    expect(decision.intent).toBe('note')
-    expect(capture.status).toBe('needs_review')
-    expect(turns.length).toBe(0)
-  })
-
-  it('starts the turn on confirmation when the guard upgraded a medium band append into the dialog', async () => {
-    const strandId = dialogStrand('Recorder UI')
-    // 0.7 keeps the append (the low confidence guard starts below it) and the
-    // band is high, so this is the guard's own path end to end.
-    answer({ action: 'append', strandId, intent: 'note', confidence: 0.7, rationale: 'gleicher Bug' })
-    const res = await api('POST', '/api/captures', { text: 'und der Umbruch ist immer noch komisch' })
-    const decision = res.body.decision as Decision
-    expect(decision.action).toBe('append')
-    expect(decision.intent).toBe('ask')
-    expect(turns.length).toBe(1)
-  })
-})
-
-describe('a note that talks to you (text backstop)', () => {
-  /** A synthetic capture of the incident class, dictated in the same shape. */
-  const INCIDENT = 'Ich habe keine Push-Benachrichtigung bekommen, nachdem du die Aufgabe abgeschlossen hattest. Und der Zeilenumbruch in der Eingabe sieht immer noch komisch aus. Schau dir das bitte mal auf einem Screenshot in Originalgröße an.'
-
+describe('the router has no note category', () => {
   /**
-   * One strand with substance, so the router is really asked: without a single
-   * candidate `runRouter` short circuits to the synthetic proposal and the
-   * stubbed answer below would never be read.
+   * "Notes" was removed as a routing category: the user never wanted a silent
+   * filing and kept losing prompts to it. Whatever the model says about an
+   * intent, a routed capture is an `ask` and gets its answer. The old guards
+   * that corrected a wrong `note` afterwards are gone with it, so no
+   * `capture guard: ... note ...` marker is written any more.
    */
   function candidate(): string {
     return sessionManager.createThread('1', 'main', 'Irgendein anderes Thema').id
   }
 
-  it('answers the incident capture even though it opens a fresh strand', async () => {
+  function candidateWithAnswer(): string {
+    const strand = sessionManager.createThread('1', 'main', 'Recorder')
+    db.prepare("INSERT INTO chat_messages (session_id, user_id, role, content) VALUES (?, 1, 'user', 'recorder bug')").run(strand.id)
+    db.prepare("INSERT INTO chat_messages (session_id, user_id, role, content) VALUES (?, 1, 'assistant', 'fixed')").run(strand.id)
+    return strand.id
+  }
+
+  it('answers a capture the model labels "note" when it opens a new strand', async () => {
     candidate()
     answer({
-      action: 'new_strand', newStrand: { title: 'Push fehlt + Recorder Umbruch', personaId: 'coder', tags: ['bug'] },
-      intent: 'note', confidence: 0.8, rationale: 'eigenes Thema, keine passende Strand-Historie',
-    })
-
-    const res = await api('POST', '/api/captures', { text: INCIDENT })
-    const capture = res.body.capture as Capture
-    const decision = res.body.decision as Decision
-
-    expect(decision.action).toBe('new_strand')
-    expect(decision.intent).toBe('ask')
-    expect(decision.rationale).toContain(ADDRESSED_NOTE_MARKER)
-    // The model keeps its own words behind the marker.
-    expect(decision.rationale).toContain('eigenes Thema')
-    expect(capture.status).toBe('filed')
-    expect(turns).toEqual([{ sessionId: capture.strandId, text: INCIDENT, agentId: 'main' }])
-
-    // Countable in router_decisions, and separable from the dialog guard.
-    const stored = db.prepare('SELECT intent, rationale FROM router_decisions WHERE id = ?').get(decision.id) as { intent: string; rationale: string }
-    expect(stored.intent).toBe('ask')
-    expect(stored.rationale).toContain(ADDRESSED_NOTE_MARKER)
-    expect(stored.rationale).not.toContain(NOTE_IN_DIALOG_MARKER)
-    const routed = events.find(e => e.type === 'capture_routed')
-    expect((routed?.decision as Decision).intent).toBe('ask')
-  })
-
-  it('leaves a real self-note in a new strand a note, without a turn', async () => {
-    candidate()
-    answer({
-      action: 'new_strand', newStrand: { title: 'Wartung', personaId: 'main', tags: ['auto'] },
+      action: 'new_strand', newStrand: { title: 'Wartung', personaId: 'main', tags: [] },
       intent: 'note', confidence: 0.8, rationale: 'eigene Liste',
     })
-    const res = await api('POST', '/api/captures', { text: 'Winterreifen kaufen. Bremsbeläge hinten sind durch.' })
-    const decision = res.body.decision as Decision
-    expect(decision.intent).toBe('note')
-    expect(decision.rationale).toBe('eigene Liste')
-    expect(turns.length).toBe(0)
-  })
-
-  it('keeps a capture that calls itself a note a note, second person and all', async () => {
-    candidate()
-    answer({
-      action: 'new_strand', newStrand: { title: 'Reifen', personaId: 'main', tags: [] },
-      intent: 'note', confidence: 0.8, rationale: 'Merkzettel',
-    })
-    const res = await api('POST', '/api/captures', { text: 'Nur als Notiz: du musst noch die Reifen wechseln.' })
-    const decision = res.body.decision as Decision
-    expect(decision.intent).toBe('note')
-    expect(decision.rationale).not.toContain(ADDRESSED_NOTE_MARKER)
-    expect(turns.length).toBe(0)
-  })
-
-  it('never overrides an intent the client states itself (SPEC 4.1)', async () => {
-    candidate()
-    answer({
-      action: 'new_strand', newStrand: { title: 'Recorder', personaId: 'main', tags: [] },
-      intent: 'ask', confidence: 0.8, rationale: 'x',
-    })
-    const res = await api('POST', '/api/captures', { text: 'Schau dir den Recorder bitte mal an', intent: 'note' })
-    const decision = res.body.decision as Decision
-    expect(decision.intent).toBe('note')
-    expect(decision.rationale).not.toContain(ADDRESSED_NOTE_MARKER)
-    expect(turns.length).toBe(0)
-  })
-
-  it('writes exactly one marker when the capture drops into a live dialog', async () => {
-    const strand = sessionManager.createThread('1', 'coder', 'Recorder UI')
-    db.prepare("INSERT INTO chat_messages (session_id, user_id, role, content) VALUES (?, 1, 'user', 'umbruch')").run(strand.id)
-    db.prepare("INSERT INTO chat_messages (session_id, user_id, role, content) VALUES (?, 1, 'assistant', 'schau ich mir an')").run(strand.id)
-    answer({ action: 'append', strandId: strand.id, intent: 'note', confidence: 0.9, rationale: 'gleicher Bug' })
-
-    const res = await api('POST', '/api/captures', { text: 'Kannst du den Zeilenumbruch fixen?' })
-    const decision = res.body.decision as Decision
-    expect(decision.intent).toBe('ask')
-    // The first guard that fires owns the rationale, the second stays silent.
-    expect(decision.rationale).toContain(NOTE_IN_DIALOG_MARKER)
-    expect(decision.rationale).not.toContain(ADDRESSED_NOTE_MARKER)
-    expect(turns.length).toBe(1)
-  })
-
-  it('also catches the note the low confidence guard turned into a new strand', async () => {
-    const strand = sessionManager.createThread('1', 'main', 'Recorder UI')
-    db.prepare("INSERT INTO chat_messages (session_id, user_id, role, content) VALUES (?, 1, 'user', 'umbruch')").run(strand.id)
-    answer({ action: 'append', strandId: strand.id, intent: 'note', confidence: 0.5, rationale: 'vielleicht dort' })
-    // Second person plus question mark: two classes, no doubt left.
-    const res = await api('POST', '/api/captures', { text: 'Kannst du mal nachsehen, warum der Deploy rot ist?' })
+    const res = await api('POST', '/api/captures', { text: 'Winterreifen kaufen.' })
     const capture = res.body.capture as Capture
     const decision = res.body.decision as Decision
-    expect(decision.action).toBe('new_strand')
     expect(decision.intent).toBe('ask')
-    expect(decision.rationale).toContain(ADDRESSED_NOTE_MARKER)
-    // Medium band: the filing is reviewable, the answer is not deferred, and
-    // confirming the filing afterwards does not answer a second time.
-    expect(capture.status).toBe('needs_review')
-    expect(turns).toEqual([{ sessionId: capture.strandId, text: 'Kannst du mal nachsehen, warum der Deploy rot ist?', agentId: 'main' }])
-    await api('POST', `/api/captures/${capture.id}/apply`, {})
-    expect(turns.length).toBe(1)
+    expect(decision.rationale).not.toMatch(/capture guard: (a )?note/)
+    expect(turns).toEqual([{ sessionId: capture.strandId, text: 'Winterreifen kaufen.', agentId: 'main' }])
+    const stored = db.prepare('SELECT intent FROM router_decisions WHERE id = ?').get(decision.id) as { intent: string }
+    expect(stored.intent).toBe('ask')
   })
-})
 
-describe('the doubt band: a note that might be addressed at you', () => {
-  /** The capture of the incident, verbatim. Two marker classes, so: strong. */
-  const INCIDENT = 'Ich habe keine Push-Benachrichtigung bekommen, nachdem du die Aufgabe abgeschlossen hattest. Und der Zeilenumbruch in der Eingabe sieht immer noch komisch aus. Schau dir das bitte mal auf einem Screenshot in Originalgröße an.'
+  it('answers a capture the model labels "note" when it appends to an existing strand', async () => {
+    const strandId = candidateWithAnswer()
+    answer({ action: 'append', strandId, intent: 'note', confidence: 0.9, rationale: 'gleicher Bug' })
+    const res = await api('POST', '/api/captures', { text: 'Der Recorder bricht wieder ab.' })
+    const decision = res.body.decision as Decision
+    expect(decision.action).toBe('append')
+    expect(decision.intent).toBe('ask')
+    expect(turns).toEqual([{ sessionId: strandId, text: 'Der Recorder bricht wieder ab.', agentId: 'main' }])
+  })
 
-  /** One strand with substance so the router is really asked (see above). */
-  function candidate(): string {
-    return sessionManager.createThread('1', 'main', 'Irgendein anderes Thema').id
-  }
-
-  function assistantRows(strandId: string) {
-    return messagesIn(strandId).filter(m => m.role === 'assistant')
-  }
-
-  it('files the note, starts no turn, asks once and rings once', async () => {
+  it('writes no confirmation card for any routed capture', async () => {
     candidate()
     answer({
-      action: 'new_strand', newStrand: { title: 'Zahnarzt', personaId: 'coder', tags: ['termin'] },
+      action: 'new_strand', newStrand: { title: 'Termin', personaId: 'main', tags: [] },
       intent: 'note', confidence: 0.8, rationale: 'eigener Termin',
     })
-
     const res = await api('POST', '/api/captures', { text: 'Termin beim Zahnarzt am Montag?' })
     const capture = res.body.capture as Capture
-    const decision = res.body.decision as Decision
-
-    // The band does NOT upgrade the intent: no turn, no unsolicited answer.
-    expect(decision.intent).toBe('note')
-    expect(capture.status).toBe('filed')
-    expect(turns).toEqual([])
-
-    // Exactly one question, in the strand the capture was filed into, German
-    // because the capture is German.
-    const rows = messagesIn(capture.strandId!)
-    expect(rows.map(r => r.role)).toEqual(['user', 'assistant'])
-    expect(rows[1].content).toContain(CAPTURE_NUDGE_TEXT.de)
-    expect(findInteractionBlock(rows[1].content, CAPTURE_CONFIRM_BLOCK_ID)?.question).toBe(CAPTURE_CONFIRM_QUESTION.de)
-    expect(rows[1].capture_id).toBe(capture.id)
-
-    // Countable in router_decisions, separate from both other guards.
-    const stored = db.prepare('SELECT intent, rationale FROM router_decisions WHERE id = ?').get(decision.id) as { intent: string; rationale: string }
-    expect(stored.intent).toBe('note')
-    expect(stored.rationale).toContain(DOUBTFUL_NOTE_MARKER)
-    expect(stored.rationale).toContain('eigener Termin')
-    expect(stored.rationale).not.toContain(ADDRESSED_NOTE_MARKER)
-    expect(stored.rationale).not.toContain(NOTE_IN_DIALOG_MARKER)
-
-    // The doorbell: a real question, so it must survive suppress-when-online=turn.
-    expect(doorbells).toHaveLength(1)
-    expect(doorbells[0]).toMatchObject({ kind: 'question', strandId: capture.strandId, agentId: 'main', userId: 1 })
-    expect(doorbells[0].messageId).toBe(rows[1].id)
-
-    // And the strand looks like something is waiting: activity was bumped for
-    // both rows, so it sorts to the top of the list.
-    const row = db.prepare('SELECT message_count FROM sessions WHERE id = ?').get(capture.strandId) as { message_count: number }
-    expect(row.message_count).toBe(2)
+    const assistant = messagesIn(capture.strandId!).filter(m => m.role === 'assistant')
+    expect(assistant.some(m => m.content.startsWith(CAPTURE_NUDGE_TEXT.de))).toBe(false)
+    expect(assistant).toEqual([])
+    expect((res.body.decision as Decision).intent).toBe('ask')
   })
 
-  it('asks in English when the capture is English', async () => {
+  it('still honours a note the client states itself (explicit beats heuristic)', async () => {
     candidate()
     answer({
-      action: 'new_strand', newStrand: { title: 'Dentist', personaId: 'main', tags: [] },
-      intent: 'note', confidence: 0.8, rationale: 'own appointment',
+      action: 'new_strand', newStrand: { title: 'Protokoll', personaId: 'main', tags: [] },
+      intent: 'ask', confidence: 0.8, rationale: 'x',
     })
-    const res = await api('POST', '/api/captures', { text: 'Dentist appointment on the 4th of November?' })
-    const capture = res.body.capture as Capture
-    const rows = assistantRows(capture.strandId!)
-    expect(rows).toHaveLength(1)
-    expect(rows[0].content).toContain(CAPTURE_NUDGE_TEXT.en)
-    const block = findInteractionBlock(rows[0].content, CAPTURE_CONFIRM_BLOCK_ID)
-    expect(block?.question).toBe(CAPTURE_CONFIRM_QUESTION.en)
-    expect(block?.options.map(o => o.label)).toEqual([
-      CAPTURE_CONFIRM_LABELS.en[CAPTURE_CONFIRM_KEEP], CAPTURE_CONFIRM_LABELS.en[CAPTURE_CONFIRM_ANSWER],
-    ])
-  })
-
-  it('says nothing for a strong capture: that one gets a real answer', async () => {
-    candidate()
-    answer({
-      action: 'new_strand', newStrand: { title: 'Push fehlt + Recorder Umbruch', personaId: 'coder', tags: ['bug'] },
-      intent: 'note', confidence: 0.8, rationale: 'eigenes Thema',
-    })
-    const res = await api('POST', '/api/captures', { text: INCIDENT })
-    const capture = res.body.capture as Capture
-    const decision = res.body.decision as Decision
-    expect(decision.intent).toBe('ask')
-    expect(decision.rationale).toContain(ADDRESSED_NOTE_MARKER)
-    expect(decision.rationale).not.toContain(DOUBTFUL_NOTE_MARKER)
-    expect(turns).toHaveLength(1)
-    expect(assistantRows(capture.strandId!)).toEqual([])
-    expect(doorbells).toEqual([])
-  })
-
-  it('files a capture without a single marker in silence: no turn, no card, no doorbell', async () => {
-    candidate()
-    answer({
-      action: 'new_strand', newStrand: { title: 'Wartung', personaId: 'main', tags: ['auto'] },
-      intent: 'note', confidence: 0.8, rationale: 'eigene Liste',
-    })
-    const res = await api('POST', '/api/captures', { text: 'Winterreifen kaufen. Bremsbeläge hinten sind durch.' })
-    const capture = res.body.capture as Capture
-    const decision = res.body.decision as Decision
-    expect(decision.intent).toBe('note')
-    // No marker means no doubt: nothing in the rationale, nothing in the
-    // strand, nothing on the phone. This is the regression guard for the week
-    // in which every note got a card and eleven of twelve landed on machine
-    // written test notes.
-    expect(decision.rationale).toBe('eigene Liste')
-    expect(doorbells).toEqual([])
-    expect(turns).toEqual([])
-    expect(assistantRows(capture.strandId!)).toEqual([])
-  })
-
-  it('says nothing for a capture that declares itself a note', async () => {
-    candidate()
-    answer({
-      action: 'new_strand', newStrand: { title: 'Reifen', personaId: 'main', tags: [] },
-      intent: 'note', confidence: 0.8, rationale: 'Merkzettel',
-    })
-    const res = await api('POST', '/api/captures', { text: 'Nur als Notiz: du musst noch die Reifen wechseln.' })
-    const capture = res.body.capture as Capture
-    expect((res.body.decision as Decision).intent).toBe('note')
-    // Not even the confirmation card: the capture says in prose what it is,
-    // and that beats the heuristic exactly like a client-set intent does.
-    expect(assistantRows(capture.strandId!)).toEqual([])
-    expect(doorbells).toEqual([])
-  })
-
-  it('yields to the live dialog guard: an upgraded note is answered, not asked about', async () => {
-    const strand = sessionManager.createThread('1', 'coder', 'Recorder UI')
-    db.prepare("INSERT INTO chat_messages (session_id, user_id, role, content) VALUES (?, 1, 'user', 'umbruch')").run(strand.id)
-    db.prepare("INSERT INTO chat_messages (session_id, user_id, role, content) VALUES (?, 1, 'assistant', 'schau ich mir an')").run(strand.id)
-    // Only a question mark: weak on its own, but the strand is a live dialog.
-    answer({ action: 'append', strandId: strand.id, intent: 'note', confidence: 0.9, rationale: 'gleicher Bug' })
-    const res = await api('POST', '/api/captures', { text: 'Und der Umbruch?' })
-    const decision = res.body.decision as Decision
-    expect(decision.intent).toBe('ask')
-    expect(decision.rationale).toContain(NOTE_IN_DIALOG_MARKER)
-    expect(decision.rationale).not.toContain(DOUBTFUL_NOTE_MARKER)
-    expect(turns).toHaveLength(1)
-    expect(assistantRows(strand.id).map(r => r.content)).toEqual(['schau ich mir an'])
-    expect(doorbells).toEqual([])
-  })
-
-  it('never asks about an intent the client states itself (SPEC 4.1)', async () => {
-    candidate()
-    answer({
-      action: 'new_strand', newStrand: { title: 'Zahnarzt', personaId: 'main', tags: [] },
-      intent: 'note', confidence: 0.8, rationale: 'x',
-    })
-    const res = await api('POST', '/api/captures', { text: 'Termin beim Zahnarzt am Montag?', intent: 'note' })
-    const capture = res.body.capture as Capture
-    expect((res.body.decision as Decision).rationale).not.toContain(DOUBTFUL_NOTE_MARKER)
-    expect(assistantRows(capture.strandId!)).toEqual([])
-    expect(doorbells).toEqual([])
-  })
-
-  it('does not turn the strand into a live dialog: the next note stays a note', async () => {
-    candidate()
-    answer({
-      action: 'new_strand', newStrand: { title: 'Zahnarzt', personaId: 'main', tags: [] },
-      intent: 'note', confidence: 0.8, rationale: 'termin',
-    })
-    const first = await api('POST', '/api/captures', { text: 'Termin beim Zahnarzt am Montag?' })
-    const strandId = (first.body.capture as Capture).strandId!
-    expect(assistantRows(strandId)).toHaveLength(1)
-
-    answer({ action: 'append', strandId, intent: 'note', confidence: 0.9, rationale: 'gleicher Termin' })
-    const second = await api('POST', '/api/captures', { text: 'Zahnarzt Adresse Hauptstrasse 4' })
-    const decision = second.body.decision as Decision
-    expect(decision.intent).toBe('note')
-    expect(decision.rationale).not.toContain(NOTE_IN_DIALOG_MARKER)
+    const routed = await api('POST', '/api/captures', { text: 'nur fuers Protokoll', intent: 'note' })
+    expect((routed.body.decision as Decision).intent).toBe('note')
+    const strandId = candidateWithAnswer()
+    const explicit = await api('POST', '/api/captures', { text: 'auch nur fuers Protokoll', strandId, intent: 'note' })
+    expect((explicit.body.decision as Decision).intent).toBe('note')
     expect(turns).toEqual([])
   })
 
-  it('leaves an unsorted capture alone: there is no strand to ask in', async () => {
-    candidate()
-    answer({
-      action: 'new_strand', newStrand: { title: 'Zahnarzt', personaId: 'main', tags: [] },
-      intent: 'note', confidence: 0.2, rationale: 'rate nur',
-    })
-    const res = await api('POST', '/api/captures', { text: 'Termin beim Zahnarzt am Montag?' })
-    const capture = res.body.capture as Capture
-    expect(capture.status).toBe('unsorted')
-    expect(capture.strandId).toBe(null)
-    expect((res.body.decision as Decision).rationale).not.toContain(DOUBTFUL_NOTE_MARKER)
-    expect(doorbells).toEqual([])
-  })
-
-  it('asks in the medium band too: the review card is not a doorbell', async () => {
-    candidate()
-    answer({
-      action: 'new_strand', newStrand: { title: 'Zahnarzt', personaId: 'main', tags: [] },
-      intent: 'note', confidence: 0.5, rationale: 'unsicher',
-    })
-    const res = await api('POST', '/api/captures', { text: 'Termin beim Zahnarzt am Montag?' })
-    const capture = res.body.capture as Capture
-    // Filed for review, so the strand exists and the question can be asked in
-    // it. The review card only exists inside the app; the doorbell is what
-    // reaches a phone that is in a pocket.
-    expect(capture.status).toBe('needs_review')
-    const rows = assistantRows(capture.strandId!)
-    expect(rows).toHaveLength(1)
-    expect(rows[0].content).toContain(CAPTURE_NUDGE_TEXT.de)
-    expect(doorbells).toHaveLength(1)
-    expect(turns).toEqual([])
-  })
-
-  it('takes the question with the capture when the filing is undone', async () => {
-    candidate()
-    answer({
-      action: 'new_strand', newStrand: { title: 'Zahnarzt', personaId: 'main', tags: [] },
-      intent: 'note', confidence: 0.8, rationale: 'termin',
-    })
-    const res = await api('POST', '/api/captures', { text: 'Termin beim Zahnarzt am Montag?' })
-    const capture = res.body.capture as Capture
-    const strandId = capture.strandId!
-    expect(messagesIn(strandId)).toHaveLength(2)
-
-    // No persona ever answered here (the question is not an answer), so this
-    // is a true move and the created strand goes away with it.
-    const undone = await api('POST', `/api/captures/${capture.id}/undo`, {})
-    expect((undone.body.capture as Capture).status).toBe('unsorted')
-    expect(messagesIn(strandId)).toEqual([])
-    expect(db.prepare('SELECT id FROM sessions WHERE id = ?').get(strandId)).toBeUndefined()
-  })
-
-  it('runs an ordinary turn when the user answers the question in the strand', async () => {
-    candidate()
-    answer({
-      action: 'new_strand', newStrand: { title: 'Zahnarzt', personaId: 'main', tags: [] },
-      intent: 'note', confidence: 0.8, rationale: 'termin',
-    })
-    const first = await api('POST', '/api/captures', { text: 'Termin beim Zahnarzt am Montag?' })
-    const strandId = (first.body.capture as Capture).strandId!
-    expect(turns).toEqual([])
-
-    // The answer is an ordinary message in the strand. Over the web socket
-    // that is `turnRunner.startTurn` unconditionally (ws-chat.ts); the same
-    // shape through the explicit strand path of the captures API:
-    const reply = await api('POST', '/api/captures', { text: 'Ja, ruf da mal an', strandId, intent: 'ask' })
-    expect(reply.status).toBe(201)
-    expect(turns).toEqual([{ sessionId: strandId, text: 'Ja, ruf da mal an', agentId: 'main' }])
+  it('answers a text typed into a chosen strand without a stated intent', async () => {
+    const strand = sessionManager.createThread('1', 'main', 'Explizit')
+    const res = await api('POST', '/api/captures', { text: 'und das hier auch noch', strandId: strand.id })
+    expect((res.body.decision as Decision).intent).toBe('ask')
+    expect(turns).toEqual([{ sessionId: strand.id, text: 'und das hier auch noch', agentId: 'main' }])
   })
 })
 
@@ -983,8 +604,9 @@ describe('the applied intent in the API payload', () => {
    */
   it('ships the applied intent next to the capture on every captures response', async () => {
     const strand = sessionManager.createThread('1', 'main', 'Wartung')
-    answer({ action: 'append', strandId: strand.id, intent: 'note', confidence: 0.9, rationale: 'liste' })
-    const created = await api('POST', '/api/captures', { text: 'Winterreifen kaufen' })
+    answer({ action: 'append', strandId: strand.id, intent: 'ask', confidence: 0.9, rationale: 'liste' })
+    // A note only exists when the client states it; the router never makes one.
+    const created = await api('POST', '/api/captures', { text: 'Winterreifen kaufen', intent: 'note' })
     const capture = created.body.capture as Capture
     expect((created.body.decision as Decision).intent).toBe('note')
 
@@ -1294,7 +916,7 @@ describe('capture model selection', () => {
 
   it('restores the override from storage when a note is confirmed after service recreation', async () => {
     const strand = sessionManager.createThread('1', 'main', 'Existing')
-    const res = await api('POST', '/api/captures', { text: 'some thought', strandId: strand.id, ...selection })
+    const res = await api('POST', '/api/captures', { text: 'some thought', strandId: strand.id, intent: 'note', ...selection })
     const capture = res.body.capture as Capture
     expect(turns).toHaveLength(0)
     const restarted = createCapturesService({ db, getAgentCore: () => ({ getSessionManager: () => sessionManager }) as unknown as AgentCore,
@@ -1319,7 +941,7 @@ describe('capture model selection', () => {
 
   it('rejects a persisted selection that becomes unavailable before note confirmation', async () => {
     const strand = sessionManager.createThread('1', 'main', 'Existing')
-    const res = await api('POST', '/api/captures', { text: 'some thought', strandId: strand.id, ...selection })
+    const res = await api('POST', '/api/captures', { text: 'some thought', strandId: strand.id, intent: 'note', ...selection })
     const capture = res.body.capture as Capture
     saveProviders({ providers: [] })
     const restarted = createCapturesService({ db, getAgentCore: () => ({ getSessionManager: () => sessionManager }) as unknown as AgentCore,

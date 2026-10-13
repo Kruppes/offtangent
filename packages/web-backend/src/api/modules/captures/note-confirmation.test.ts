@@ -1,24 +1,22 @@
 /**
- * "A note always asks before it counts as done" — the captures path and
+ * The "filed as a note" confirmation card — the captures path and
  * `POST /api/interactions` wired together the way `app.ts` wires them, against
  * a real SessionManager and a real database.
  *
- * The incident this pins: captures with `intent=note`, `confidence=0.55`,
- * `status=needs_review`, `state=applied` sat in a strand and nothing ever
- * asked about them or answered them. For the product owner that is a dead
- * strand — reported twice, in those words.
- *
- * The second incident it pins, from the opposite direction: for a week EVERY
- * note the router decided got a card. Eleven of the twelve cards that rule
- * produced landed on machine written test notes, and not one of them was
- * addressed to anybody. So the card belongs to the doubt band alone.
+ * The router no longer has a "note" category: every capture it routes is an
+ * `ask` and gets its answer, so no new capture ever produces this card. The
+ * cards that already exist in strands from before still have to work, though:
+ * a tap on "answer it" or "keep the note" must still resolve the capture. That
+ * is why the card is written here directly through `writeConfirmationCard`,
+ * exactly as an old row looks, on top of a capture the client filed with an
+ * explicit `intent: 'note'` (the only way a note can still come into being).
  *
  * What is proven here:
- *   - a note whose text MIGHT address the persona produces exactly one card
- *   - a note without a single address marker produces none, and rings nothing
- *   - a note the CLIENT declared produces none (explicit beats heuristic)
- *   - "answer it" starts the ordinary answer run on the CAPTURE text
- *   - "keep the note" starts nothing but still resolves the capture
+ *   - a capture the router labels `note` becomes an `ask`: answered, no card
+ *   - a capture typed into a chosen strand is answered, never asked about
+ *   - a note the CLIENT declared stays silent (explicit beats heuristic)
+ *   - on an existing card, "answer it" starts the ordinary answer run on the
+ *     CAPTURE text and "keep the note" starts nothing but resolves the capture
  *   - the card exists exactly once, whatever retries happen
  *   - a low band capture has no strand, so it waits in the tray instead
  */
@@ -155,12 +153,11 @@ function cards(captureId: string): Array<{ id: number; content: string; metadata
 }
 
 /**
- * File a note through the router and hand back capture, decision and card id.
- *
- * The default text carries exactly one address marker (the question mark),
- * because that is the only band that produces a card: it reads as a memo just
- * as easily as as a question to the persona, which is the doubt the card is
- * for.
+ * A note as it still exists in old strands: a capture the client filed with an
+ * explicit `intent: 'note'` in the medium band, plus the confirmation card the
+ * server used to write next to it. The router itself never writes this card
+ * any more (see the first describe block), so the card is written the way the
+ * old code wrote it.
  */
 async function fileNote(text = 'Winterreifen kaufen?', confidence = 0.55, clientMessageId?: string) {
   candidate()
@@ -168,82 +165,52 @@ async function fileNote(text = 'Winterreifen kaufen?', confidence = 0.55, client
     action: 'new_strand', newStrand: { title: 'Wartung', personaId: 'coder', tags: [] },
     intent: 'note', confidence, rationale: 'eigene Liste',
   })
-  const res = await api('POST', '/api/captures', { text, ...(clientMessageId ? { clientMessageId } : {}) })
+  const res = await api('POST', '/api/captures', { text, intent: 'note', ...(clientMessageId ? { clientMessageId } : {}) })
   const capture = res.body.capture as Capture
   const decision = res.body.decision as Decision
+  const strand = sessionManager.getThread('1', capture.strandId!)!
+  writeConfirmationCard(db, {
+    userId: 1, strandId: strand.id, agentId: strand.agentId, captureId: capture.id, content: captureConfirmContent('de'),
+  })
   const card = cards(capture.id)[0]
   return { res, capture, decision, card }
 }
 
-describe('a note asks for confirmation before it counts as done', () => {
-  it('writes exactly one choice card into the strand and runs no turn', async () => {
-    const { capture, decision, card } = await fileNote()
+describe('the router never files a silent note', () => {
+  it('turns a router "note" into an ask: answered, no card, no doorbell', async () => {
+    candidate()
+    answer({
+      action: 'new_strand', newStrand: { title: 'Wartung', personaId: 'coder', tags: [] },
+      intent: 'note', confidence: 0.55, rationale: 'eigene Liste',
+    })
+    const res = await api('POST', '/api/captures', { text: 'Winterreifen kaufen?' })
+    const capture = res.body.capture as Capture
+    const decision = res.body.decision as Decision
 
-    // The reported state, verbatim: note, medium band, filed for review.
-    expect(decision.intent).toBe('note')
-    expect(decision.confidence).toBe(0.55)
-    expect(capture.status).toBe('needs_review')
-    // ... and the answer to it: no turn, but not silence either.
-    expect(turns).toEqual([])
-    expect(cards(capture.id)).toHaveLength(1)
-
-    const block = findInteractionBlock(card.content, CAPTURE_CONFIRM_BLOCK_ID)
-    expect(block).not.toBeNull()
-    expect(block!.kind).toBe('choice')
-    expect(block!.supported).toBe(true)
-    expect(block!.question).toBe(CAPTURE_CONFIRM_QUESTION.de)
-    expect(block!.options.map(o => o.id)).toEqual([CAPTURE_CONFIRM_KEEP, CAPTURE_CONFIRM_ANSWER])
-    expect(block!.options.map(o => o.label)).toEqual([
-      CAPTURE_CONFIRM_LABELS.de[CAPTURE_CONFIRM_KEEP], CAPTURE_CONFIRM_LABELS.de[CAPTURE_CONFIRM_ANSWER],
-    ])
-
-    // The prose above the card carries the fact for every surface without a
-    // card renderer, and the degradation never shows raw JSON.
-    expect(card.content.startsWith(CAPTURE_NUDGE_TEXT.de)).toBe(true)
-    const asText = renderInteractionMessageAsText(card.content)
-    expect(asText).toContain(CAPTURE_NUDGE_TEXT.de)
-    expect(asText).toContain(`1. ${CAPTURE_CONFIRM_LABELS.de[CAPTURE_CONFIRM_KEEP]}`)
-    expect(asText).toContain(`2. ${CAPTURE_CONFIRM_LABELS.de[CAPTURE_CONFIRM_ANSWER]}`)
-    expect(asText).not.toContain('```')
-    expect(asText).not.toContain('"block"')
-
-    // It hangs off the capture and is marked as the server's own question, so
-    // it never counts as a persona answer.
-    expect(card.metadata).toContain('capture_nudge')
-    const strandRows = rowsIn(capture.strandId!)
-    expect(strandRows.map(r => r.role)).toEqual(['user', 'assistant'])
-    expect(strandRows[1].capture_id).toBe(capture.id)
-
-    // The card is worth a push: it is rare by construction, and one the user
-    // never sees is the silence this mechanism exists against.
-    expect(doorbells).toBe(1)
-  })
-
-  it('stays silent for a note that addresses nobody', async () => {
-    // The regression this pins, measured in production: a card on every note
-    // fired eleven times out of twelve on automated test notes from a device.
-    // No marker in the text means no doubt, and no doubt means no question.
-    const { capture, decision } = await fileNote('Puck firmware validation: persistent queue delivery works. Test note 000049')
-
-    expect(decision.intent).toBe('note')
+    expect(decision.intent).toBe('ask')
     expect(cards(capture.id)).toEqual([])
-    expect(turns).toEqual([])
     expect(doorbells).toBe(0)
-    // Filed, and filed silently: the strand holds the note and nothing else.
-    expect(rowsIn(capture.strandId!).map(r => r.role)).toEqual(['user'])
-    // The doubt band marker counts questions asked, so it stays unwritten.
-    const stored = db.prepare('SELECT rationale FROM router_decisions WHERE id = ?').get(decision.id) as { rationale: string }
-    expect(stored.rationale).not.toContain('may address you')
+    expect(turns).toEqual([{ sessionId: capture.strandId, text: 'Winterreifen kaufen?', agentId: 'main' }])
+    // No guard marker either: there is nothing left to correct.
+    const stored = db.prepare('SELECT intent, rationale FROM router_decisions WHERE id = ?').get(decision.id) as { intent: string; rationale: string }
+    expect(stored.intent).toBe('ask')
+    expect(stored.rationale).not.toContain('capture guard: a note')
   })
 
-  it('does not ask about a capture that calls itself a note', async () => {
-    // One marker plus the user's own word about their text: the word wins.
-    const { capture } = await fileNote('Nur als Notiz: Winterreifen kaufen?')
+  it('answers a text without any address marker too, instead of filing it silently', async () => {
+    candidate()
+    answer({
+      action: 'new_strand', newStrand: { title: 'Puck', personaId: 'coder', tags: [] },
+      intent: 'note', confidence: 0.9, rationale: 'self note',
+    })
+    const res = await api('POST', '/api/captures', { text: 'Puck firmware validation: persistent queue delivery works.' })
+    const capture = res.body.capture as Capture
+    expect((res.body.decision as Decision).intent).toBe('ask')
     expect(cards(capture.id)).toEqual([])
-    expect(turns).toEqual([])
+    expect(turns).toHaveLength(1)
   })
 
-  it('asks nothing when the client stated the intent itself', async () => {
+  it('stays silent only when the client stated the note itself', async () => {
     candidate()
     answer({
       action: 'new_strand', newStrand: { title: 'Wartung', personaId: 'coder', tags: [] },
@@ -259,35 +226,57 @@ describe('a note asks for confirmation before it counts as done', () => {
     const strand = sessionManager.createThread('1', 'main', 'Explizit')
     const second = await api('POST', '/api/captures', { text: 'auch nur fuers Protokoll', strandId: strand.id, intent: 'note' })
     expect(cards((second.body.capture as Capture).id)).toEqual([])
+    expect(turns).toEqual([])
 
-    // Without a stated intent the text decides, on this path too: a plain
-    // note stays silent ...
+    // Without a stated intent a text typed into a chosen strand is a line in
+    // a conversation and gets its answer, whatever it looks like: no card, no
+    // silent filing.
     const third = await api('POST', '/api/captures', { text: 'und das hier auch noch', strandId: strand.id })
     expect(cards((third.body.capture as Capture).id)).toEqual([])
-    expect(turns).toEqual([])
-
-    // ... one that might be a question gets the card ...
+    expect((third.body.decision as Decision).intent).toBe('ask')
     const fourth = await api('POST', '/api/captures', { text: 'und der Termin am Montag?', strandId: strand.id })
-    expect(cards((fourth.body.capture as Capture).id)).toHaveLength(1)
-    expect(turns).toEqual([])
-
-    // ... and one that clearly talks to the persona gets an answer instead of
-    // a card. Without this, a sentence typed into a strand the user picked
-    // himself would be filed and answered by nobody.
-    const fifth = await api('POST', '/api/captures', { text: 'Schau dir das bitte nochmal an', strandId: strand.id })
-    const addressed = fifth.body.capture as Capture
-    expect(cards(addressed.id)).toEqual([])
-    expect((fifth.body.decision as Decision).intent).toBe('ask')
-    expect(turns).toEqual([{ sessionId: strand.id, text: 'Schau dir das bitte nochmal an', agentId: 'main' }])
+    expect(cards((fourth.body.capture as Capture).id)).toEqual([])
+    expect(turns).toEqual([
+      { sessionId: strand.id, text: 'und das hier auch noch', agentId: 'main' },
+      { sessionId: strand.id, text: 'und der Termin am Montag?', agentId: 'main' },
+    ])
   })
 
-  it('answers nothing for an ask: an answer needs no permission', async () => {
+  it('answers an ask without a card: an answer needs no permission', async () => {
     candidate()
     answer({ action: 'new_strand', newStrand: { title: 'Deploy', personaId: 'main', tags: [] }, intent: 'ask', confidence: 0.9 })
     const res = await api('POST', '/api/captures', { text: 'ist der deploy gruen' })
     const capture = res.body.capture as Capture
     expect(cards(capture.id)).toEqual([])
     expect(turns).toHaveLength(1)
+  })
+})
+
+describe('an existing card still renders and points at its capture', () => {
+  it('is one choice card with prose above it, tagged as the server\'s own question', async () => {
+    const { capture, decision, card } = await fileNote()
+    expect(decision.intent).toBe('note')
+    expect(capture.status).toBe('needs_review')
+    expect(turns).toEqual([])
+    expect(cards(capture.id)).toHaveLength(1)
+
+    const block = findInteractionBlock(card.content, CAPTURE_CONFIRM_BLOCK_ID)
+    expect(block).not.toBeNull()
+    expect(block!.kind).toBe('choice')
+    expect(block!.supported).toBe(true)
+    expect(block!.question).toBe(CAPTURE_CONFIRM_QUESTION.de)
+    expect(block!.options.map(o => o.id)).toEqual([CAPTURE_CONFIRM_KEEP, CAPTURE_CONFIRM_ANSWER])
+    expect(block!.options.map(o => o.label)).toEqual([
+      CAPTURE_CONFIRM_LABELS.de[CAPTURE_CONFIRM_KEEP], CAPTURE_CONFIRM_LABELS.de[CAPTURE_CONFIRM_ANSWER],
+    ])
+    expect(card.content.startsWith(CAPTURE_NUDGE_TEXT.de)).toBe(true)
+    const asText = renderInteractionMessageAsText(card.content)
+    expect(asText).toContain(CAPTURE_NUDGE_TEXT.de)
+    expect(asText).not.toContain('```')
+    expect(card.metadata).toContain('capture_nudge')
+    const strandRows = rowsIn(capture.strandId!)
+    expect(strandRows.map(r => r.role)).toEqual(['user', 'assistant'])
+    expect(strandRows[1].capture_id).toBe(capture.id)
   })
 })
 
@@ -418,7 +407,7 @@ describe('exactly one card per capture', () => {
     expect(stored.client_message_id).toBe(captureConfirmKey(capture.id))
   })
 
-  it('takes the card with the capture when the filing is undone, and asks again when it is re-routed', async () => {
+  it('takes the card with the capture when the filing is undone', async () => {
     const { capture } = await fileNote()
     const strandId = capture.strandId!
     expect(rowsIn(strandId)).toHaveLength(2)

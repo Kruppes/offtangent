@@ -19,7 +19,7 @@ import {
   ROUTER_LAST_MESSAGE_CHARS,
   PROJECT_SUGGESTION_MIN_CONFIDENCE,
   LOW_CONFIDENCE_APPEND_MARKER,
-  ROUTER_INTENT_RULES,
+  ROUTED_INTENT,
   ROUTER_SYSTEM_PROMPT,
   addressStrength,
   declaresSelfNote,
@@ -120,7 +120,8 @@ describe('parseRouterOutput', () => {
     expect(parsed.proposal.newStrand?.personaId).toBe('coder')
     expect(parsed.proposal.newStrand?.tags).toEqual(['a', 'b'])
     expect(parsed.proposal.confidence).toBe(1)
-    expect(parsed.proposal.intent).toBe('note')
+    // No intent in the answer: routing never files a silent note.
+    expect(parsed.proposal.intent).toBe('ask')
   })
 
   it('accepts a new_strand project from the list and rejects an unknown one (SPEC 4.2b)', () => {
@@ -401,58 +402,33 @@ describe('runRouter', () => {
   })
 })
 
-describe('ROUTER_INTENT_RULES', () => {
-  it('is part of the system prompt', () => {
-    expect(ROUTER_SYSTEM_PROMPT).toContain(ROUTER_INTENT_RULES)
+describe('router output without notes', () => {
+  // The "note" category is gone (product decision 2026-10-13): prompts that
+  // used to be filed in silence take the normal way, an existing strand or a
+  // new one, and always get their turn.
+  it('never asks the model for an intent', () => {
+    expect(ROUTER_SYSTEM_PROMPT).not.toMatch(/"intent"/)
+    expect(ROUTER_SYSTEM_PROMPT).not.toMatch(/"note"/)
+    expect(ROUTER_SYSTEM_PROMPT.toLowerCase()).not.toContain('self-note')
   })
 
-  it('names direct address, imperative, question and bug report as "ask" markers in both languages', () => {
-    // German second person, the language the product owner actually dictates in.
-    for (const marker of ['"du"', '"dir"', '"dich"']) expect(ROUTER_INTENT_RULES).toContain(marker)
-    // English second person, the language the prompt itself is written in.
-    expect(ROUTER_INTENT_RULES).toContain('"you"')
-    expect(ROUTER_INTENT_RULES.toLowerCase()).toContain('imperative')
-    expect(ROUTER_INTENT_RULES.toLowerCase()).toContain('bug report')
+  it('ignores a "note" the model still volunteers, for every action', () => {
+    const answers = [
+      { action: 'append', strandId: 's1', intent: 'note', confidence: 0.9 },
+      { action: 'link', strandId: 's1', secondaryStrandId: 's2', intent: 'note', confidence: 0.9 },
+      { action: 'new_strand', newStrand: { title: 'Winterreifen', personaId: 'main' }, intent: 'note', confidence: 0.9 },
+      { action: 'append', strandId: 's1', confidence: 0.9 },
+    ]
+    for (const answer of answers) {
+      const parsed = parseRouterOutput(JSON.stringify(answer), input())
+      expect(parsed.ok).toBe(true)
+      if (parsed.ok) expect(parsed.proposal.intent).toBe('ask')
+    }
+    expect(ROUTED_INTENT).toBe('ask')
   })
 
-  it('carries at least two "ask" and two "note" examples, German and English', () => {
-    const askBlock = ROUTER_INTENT_RULES.split('Examples of "note"')[0]
-    const noteBlock = ROUTER_INTENT_RULES.split('Examples of "note"')[1] ?? ''
-    const quoted = (block: string) => block.match(/"[^"]{12,}"/g) ?? []
-    expect(quoted(askBlock).length).toBeGreaterThanOrEqual(2)
-    expect(quoted(noteBlock).length).toBeGreaterThanOrEqual(2)
-    // Both languages are covered on both sides, the capture box is mixed.
-    expect(askBlock).toMatch(/Push Notification|schau dir/i)
-    expect(askBlock).toMatch(/why|can you|is the/i)
-    expect(noteBlock).toMatch(/Winterreifen|Bremsbel/i)
-    expect(noteBlock).toMatch(/call|buy|book/i)
-  })
-
-  it('makes a real question an "ask" whatever it is about, and keeps the memo fragment a note', () => {
-    // Measured on the live router (claude-sonnet-5, POST /api/router/preview,
-    // 2026-09-15): "Wie viel kostet eigentlich ein neuer Dachstuhl?" came back
-    // as intent=note, confidence=0.55 — a question filed in silence, which is
-    // the complaint this rule answers. The instruction now says the subject
-    // does not matter, and names the one exception that must stay a note.
-    expect(ROUTER_INTENT_RULES).toContain('Wie viel kostet eigentlich ein neuer Dachstuhl?')
-    expect(ROUTER_INTENT_RULES).toContain('Termin beim Zahnarzt am Montag?')
-    expect(ROUTER_INTENT_RULES.toUpperCase()).toContain('NO MATTER WHAT IT IS ABOUT')
-    // The question rule and its exception live in the same bullet, so a model
-    // cannot read one without the other.
-    const bullet = ROUTER_INTENT_RULES.split('\n').find(line => line.includes('NO MATTER WHAT IT IS ABOUT')) ?? ''
-    expect(bullet).toContain('Termin beim Zahnarzt am Montag?')
-  })
-
-  it('counts a wish about your own work as an "ask", like a bug report', () => {
-    expect(ROUTER_INTENT_RULES.toLowerCase()).toContain('wish')
-    expect(ROUTER_INTENT_RULES).toContain('wir sollten X')
-  })
-
-  it('flips the tie break to "ask": silence is the expensive mistake', () => {
-    expect(ROUTER_INTENT_RULES.toLowerCase()).toContain('when unsure, choose "ask"')
-    expect(ROUTER_SYSTEM_PROMPT.toLowerCase()).not.toContain('when unsure, use "note"')
-    // "note" only for a self-note without an addressee.
-    expect(ROUTER_INTENT_RULES.toLowerCase()).toContain('no addressee')
+  it('degrades to an unsorted ask, not a note', () => {
+    expect(syntheticProposal(input(), 'router failed').intent).toBe('ask')
   })
 })
 

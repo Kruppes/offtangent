@@ -64,6 +64,12 @@ export interface CreateCaptureBody {
   mode: CaptureMode
   /** Absent means `router`: every client that predates the field is unchanged. */
   destination?: CaptureDestination
+  /**
+   * The home toggle "New strand (skip router)". Implies `destination:
+   * 'new_strand'`; kept as its own flag so the decision row can tell a forced
+   * bypass from a news handoff (see `FORCED_NEW_STRAND_RATIONALE`).
+   */
+  forceNewStrand?: boolean
   strandTitle?: string | null
   turnOverride?: ModelSelection
 }
@@ -126,7 +132,16 @@ export function parseCreateCaptureBody(body: unknown): ParseResult<CreateCapture
   if (typeof rawDestination !== 'string' || !(CAPTURE_DESTINATIONS as readonly string[]).includes(rawDestination)) {
     return { ok: false, error: `destination must be one of ${CAPTURE_DESTINATIONS.join(', ')}`, code: 'invalid_destination' }
   }
-  const destination = rawDestination as CaptureDestination
+  if (b.forceNewStrand !== undefined && b.forceNewStrand !== null && typeof b.forceNewStrand !== 'boolean') {
+    return { ok: false, error: 'forceNewStrand must be a boolean', code: 'invalid_destination' }
+  }
+  const forceNewStrand = b.forceNewStrand === true
+  // The flag is the user's "skip the router" switch; it can only mean a new
+  // strand, so it settles the destination instead of being a second one.
+  const destination: CaptureDestination = forceNewStrand ? 'new_strand' : rawDestination as CaptureDestination
+  if (forceNewStrand && strandId) {
+    return { ok: false, error: 'forceNewStrand cannot be combined with strandId', code: 'invalid_destination' }
+  }
   if (destination === 'new_strand' && strandId) {
     return { ok: false, error: 'destination new_strand cannot be combined with strandId', code: 'invalid_destination' }
   }
@@ -139,7 +154,7 @@ export function parseCreateCaptureBody(body: unknown): ParseResult<CreateCapture
 
   return {
     ok: true,
-    value: { turnOverride: selection.value, text, clientMessageId: clientMessageId ?? null, agentId, strandId: strandId ?? null, kind: kind as CaptureKind, source, attachments, intent, mode: mode as CaptureMode, destination, strandTitle },
+    value: { turnOverride: selection.value, text, clientMessageId: clientMessageId ?? null, agentId, strandId: strandId ?? null, kind: kind as CaptureKind, source, attachments, intent, mode: mode as CaptureMode, destination, ...(forceNewStrand ? { forceNewStrand } : {}), strandTitle },
   }
 }
 

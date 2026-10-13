@@ -182,10 +182,16 @@ describe('split on intake', () => {
     expect(view.capture.text).toBe(TEXT)
   })
 
-  it('starts a turn per ask part with the fragment line in the prompt', async () => {
+  it('starts a turn per part with the fragment line in the prompt, a part the model calls a note included', async () => {
+    // The router has no note category any more: the part the model labels
+    // `note` is answered like the other one instead of being filed silently.
     const result = await createSplitCapture({ intents: ['note', 'ask'] })
-    expect(turns).toHaveLength(1)
-    expect(turns[0].text).toBe(`[Teil 2 von 2 einer Sprachnotiz; Original: capture ${result.capture.id}]\n${AUTO_PART}`)
+    expect(turns).toHaveLength(2)
+    const texts = turns.map(t => t.text).sort()
+    expect(texts).toEqual([
+      `[Teil 1 von 2 einer Sprachnotiz; Original: capture ${result.capture.id}]\n${DACH_PART}`,
+      `[Teil 2 von 2 einer Sprachnotiz; Original: capture ${result.capture.id}]\n${AUTO_PART}`,
+    ].sort())
     // The stored row never carries the line.
     const stored = db.prepare('SELECT content FROM chat_messages WHERE part_index = 1').get() as { content: string }
     expect(stored.content).toBe(AUTO_PART)

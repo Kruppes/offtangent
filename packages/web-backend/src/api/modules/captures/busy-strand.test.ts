@@ -154,12 +154,27 @@ describe('router append into a strand with a running turn', () => {
     expect(events.some(e => e.type === 'capture_routed')).toBe(true)
   })
 
-  it('files a note into a busy strand without starting a turn', async () => {
+  it('queues an answer for a capture the model calls a note: there is no silent note category', async () => {
     const strand = sessionManager.createThread('1', 'main', 'Garden watering plan')
     busySessions.push(strand.id)
     answer({ action: 'append', strandId: strand.id, intent: 'note', confidence: 0.9, tags: [], rationale: 'watering detail' })
 
     const res = await post('/api/captures', { text: 'hedge along the fence was dry again today', source: 'android' })
+
+    expect(res.status).toBe(201)
+    const capture = res.body.capture as Capture
+    expect(capture.status).toBe('filed')
+    expect(capture.strandId).toBe(strand.id)
+    expect((res.body.decision as Decision).intent).toBe('ask')
+    expect(turns.map(t => t.sessionId)).toEqual([strand.id])
+  })
+
+  it('files a note the client states itself into a busy strand without starting a turn', async () => {
+    const strand = sessionManager.createThread('1', 'main', 'Garden watering plan')
+    busySessions.push(strand.id)
+    answer({ action: 'append', strandId: strand.id, intent: 'ask', confidence: 0.9, tags: [], rationale: 'watering detail' })
+
+    const res = await post('/api/captures', { text: 'hedge along the fence was dry again today', source: 'android', intent: 'note' })
 
     expect(res.status).toBe(201)
     const capture = res.body.capture as Capture

@@ -111,7 +111,9 @@ describe('single part capture behaves exactly as before the split', () => {
     expect(result.capture.messageId).not.toBeNull()
     expect(result.decision.action).toBe('new_strand')
     expect(result.decision.confidence).toBe(0.86)
-    expect(result.decision.intent).toBe('note')
+    // The model still says `note`; the router has no note category any more,
+    // so what is stored and applied is an `ask`.
+    expect(result.decision.intent).toBe('ask')
     expect(result.decision.state).toBe('applied')
     expect(result.decision.partIndex).toBe(0)
     expect(result.decision.partCount).toBe(1)
@@ -125,7 +127,7 @@ describe('single part capture behaves exactly as before the split', () => {
     expect(decisionRows).toEqual([{
       capture_id: result.capture.id,
       action: 'new_strand',
-      intent: 'note',
+      intent: 'ask',
       confidence: 0.86,
       state: 'applied',
       part_index: 0,
@@ -155,8 +157,8 @@ describe('single part capture behaves exactly as before the split', () => {
     const routed = events[2] as ChatEvent & { capture: { id: string }; decision: { action: string } }
     expect(routed.capture.id).toBe(result.capture.id)
     expect(routed.decision.action).toBe('new_strand')
-    // A note starts no turn.
-    expect(turns).toHaveLength(0)
+    // The model's `note` is an `ask` now: the capture gets its answer.
+    expect(turns).toHaveLength(1)
   })
 
   it('applies and undoes without a partIndex exactly as before', async () => {

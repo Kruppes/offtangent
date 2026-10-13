@@ -1476,6 +1476,7 @@ export {
   CONFIDENCE_HIGH,
   CONFIDENCE_MEDIUM,
   ROUTER_SYSTEM_PROMPT,
+  ROUTED_INTENT,
   confidenceBand,
   captureKeywords,
   selectCandidates,
