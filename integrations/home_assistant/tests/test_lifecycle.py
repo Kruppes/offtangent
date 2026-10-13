@@ -84,7 +84,7 @@ class LifecycleTests(unittest.IsolatedAsyncioTestCase):
     async def test_config_rejects_bad_allowlists_controls_credentials_and_urls(self):
         base = {**self.entry.data, "control": True, "allowed_tools": '["homeassistant__HassTurnOff"]'}
         _validate(base)
-        bad = [{"allowed_tools": "[]"}, {"allowed_tools": '["bash"]'},
+        bad = [{"allowed_tools": "[]"}, {"allowed_tools": '["bash;rm"]'},
                {"allowed_tools": '["HassTurnOff","HassTurnOff"]'},
                {"control": "false"}, {"adapter_token": "short"},
                {"url": "http://synthetic.invalid/v1"}, {"model": "any/model"},

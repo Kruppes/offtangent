@@ -12,8 +12,10 @@ import { completeHaAnthropic } from './ha-anthropic-relay.js'
 import { HaProviderFault, inspectHaAuth, recordHaAuthState, resolveHaCredential, repairHaRejectedAccess } from './ha-provider-auth.js'
 
 export interface HaTool { name: string; description: string; parameters: Record<string, unknown> }
+/** Bounded relay-side validation copy for ha-assist tools; kept off the object so it never reaches a provider. */
+const CHECK_SCHEMA=new WeakMap<HaTool, Record<string, unknown>>()
 export interface HaInferenceConfig {
-  enabled: true; tokenSha256: string; providerId: string; model: string; tools: HaTool[]
+  enabled: true; tokenSha256: string; providerId: string; model: string; tools: HaTool[]; toolPolicy?: 'pinned'|'ha-assist'
   timeoutMs: number; maxBodyBytes: number; maxCallsPerHour: number
   /** Uses the normal central subscription provider; no additional identity/header alterations. */
   transport?: 'codex' | 'anthropic-oauth'; thinking?: 'low'
@@ -36,12 +38,85 @@ function canonical(x: unknown): string {
 function args(tool: HaTool, raw: unknown): Extract<AssistantMessage['content'][number], {type: 'toolCall'}>['arguments'] {
   const value = obj(typeof raw === 'string' ? parseHaJson(str(raw, 16384)) : raw)
   if (JSON.stringify(value).length > 16384) fail('invalid_tool_arguments')
-  if (!Check(tool.parameters, value)) fail('invalid_tool_arguments')
+  if (!Check(CHECK_SCHEMA.get(tool)??tool.parameters, value)) fail('invalid_tool_arguments')
   return value as Extract<AssistantMessage['content'][number], {type: 'toolCall'}>['arguments']
+}
+/** Provider wire constraint for function names, NOT a namespace allowlist: OpenAI ^[a-zA-Z0-9_-]{1,64}$,
+ * Anthropic client tools ^[a-zA-Z0-9_-]{1,128}$ (docs.claude.com "Define tools"); the common subset is used.
+ * Which tools exist is decided by HA's api.tools (exposure, custom-integration llm platforms, script__1_x,
+ * intent_script__*). HA executes only its own api.tools after voluptuous validation. */
+export const HA_ASSIST_TOOL_NAME=/^[A-Za-z0-9_-]{1,64}$/
+/** Structural keywords the relay evaluates itself. Everything else HA's to_openapi can emit
+ * (pattern, format, $ref "#", not, dependentRequired, propertyNames, multipleOf, uniqueItems, ...)
+ * is forwarded to the model verbatim but NEVER evaluated here: no regex (ReDoS), no $ref
+ * resolution, no unbounded recursion. HA's voluptuous schema stays authoritative before execution.
+ * Known parity gap F6 (deliberately not fixed): there is no vol.Coerce here. probatio renders
+ * vol.Coerce(int) as type:integer, so a model string "50" is rejected (502) BEFORE any dispatch and
+ * the HA component makes exactly one local fallback; HA's own agents would coerce it. Safe, rare. */
+const CHECK_KEYS=new Set(['type','properties','required','items','enum','const','minimum','maximum','exclusiveMinimum','exclusiveMaximum','minLength','maxLength','minItems','maxItems','additionalProperties','anyOf','oneOf','allOf'])
+const SCHEMA_MAX_DEPTH=16, SCHEMA_MAX_NODES=2000, TYPES=new Set(['object','array','string','number','integer','boolean','null'])
+function validationSchema(x: unknown, depth=0, budget={nodes:0}): Record<string, unknown> {
+  if(depth>SCHEMA_MAX_DEPTH||++budget.nodes>SCHEMA_MAX_NODES)fail('tool_schema_too_complex')
+  if(x===true||x===undefined)return {}
+  if(!x||typeof x!=='object'||Array.isArray(x))fail('invalid_tool_schema')
+  const s=x as Record<string, unknown>, out: Record<string, unknown>={}, combined={allOf:[] as unknown[],anyOf:[] as unknown[][]}
+  if('$ref' in s)return {} // HA emits only {"$ref":"#"} for recursive Self; accept, HA validates
+  for(const k of Object.keys(s)){
+    if(!CHECK_KEYS.has(k))continue
+    const v=s[k]
+    if(k==='type'){
+      const list=Array.isArray(v)?v:[v]
+      if(!list.length||list.length>7||list.some(t=>typeof t!=='string'||!TYPES.has(t)))fail('invalid_tool_schema')
+      out.type=v
+    } else if(k==='properties'){
+      const p=obj(v),r: Record<string, unknown>={}
+      for(const [n,sub] of Object.entries(p)){if(n.length>256)fail('invalid_tool_schema');r[n]=validationSchema(sub,depth+1,budget)}
+      out.properties=r
+    } else if(k==='items'||(k==='additionalProperties'&&typeof v==='object')) out[k]=validationSchema(v,depth+1,budget)
+    else if(k==='additionalProperties'){if(typeof v!=='boolean')fail('invalid_tool_schema');out[k]=v}
+    else if(k==='anyOf'||k==='oneOf'||k==='allOf'){
+      if(!Array.isArray(v)||!v.length||v.length>64)fail('invalid_tool_schema')
+      const subs=v.map(sub=>validationSchema(sub,depth+1,budget))
+      // oneOf => anyOf: dropping unevaluated keywords (e.g. "not") only loosens under anyOf/allOf;
+      // under oneOf it could make two branches match and reject a valid call (probatio Inclusive).
+      if(k==='allOf')combined.allOf.push(...subs); else combined.anyOf.push(subs)
+    }
+    else if(k==='exclusiveMinimum'||k==='exclusiveMaximum'){
+      // Draft 2020 number => keep; OpenAPI 3.0 boolean => normalised below; anything else => not evaluated.
+      if(typeof v==='number'&&Number.isFinite(v))out[k]=v
+    } else if(k==='required'){if(!Array.isArray(v)||v.some(n=>typeof n!=='string'))fail('invalid_tool_schema');out[k]=v}
+    else if(k==='enum'){if(!Array.isArray(v)||v.length>4096)fail('invalid_tool_schema');out[k]=v}
+    else if(k==='const')out[k]=v
+    else {if(typeof v!=='number'||!Number.isFinite(v))fail('invalid_tool_schema');out[k]=v}
+  }
+  // OpenAPI 3.0 (HA's to_openapi default): exclusiveMinimum/Maximum are booleans modifying minimum/maximum.
+  // true => the bound is exclusive (Draft 2020 number form); false => plain inclusive bound.
+  for(const [ex,bound] of [['exclusiveMinimum','minimum'],['exclusiveMaximum','maximum']] as const){
+    if(s[ex]===true&&typeof out[bound]==='number'){out[ex]=out[bound];delete out[bound]}
+  }
+  // Each former oneOf/anyOf list stays its own anyOf constraint (conjunction via allOf), so none overwrites another.
+  const all=[...combined.allOf,...combined.anyOf.map(a=>({anyOf:a}))]
+  if(all.length)out.allOf=all
+  // OpenAPI 3.0 "nullable" (emitted by HA) => also accept null.
+  return s.nullable===true?{anyOf:[out,{type:'null'}]}:out
+}
+function depthOk(x: unknown, depth=0): boolean { // iterative-safe bound before canonical()/JSON work
+  if(depth>SCHEMA_MAX_DEPTH+8)return false
+  if(x&&typeof x==='object')for(const v of Object.values(x))if(!depthOk(v,depth+1))return false
+  return true
+}
+function dynamicTool(f: Record<string, unknown>): HaTool|undefined {
+  if(typeof f.name!=='string'||!HA_ASSIST_TOOL_NAME.test(f.name))return undefined
+  const parameters=obj(f.parameters)
+  if(parameters.type!=='object'||!depthOk(parameters)||canonical(parameters).length>20000)fail('tool_schema_too_complex')
+  const tool={name:f.name,description:f.description===undefined?'Home Assistant Assist tool':str(f.description,2048),parameters}
+  CHECK_SCHEMA.set(tool,validationSchema(parameters)); return tool
 }
 export function validateHaConfig(raw: unknown): HaInferenceConfig {
   const c = obj(raw)
-  keys(c, ['enabled','tokenSha256','providerId','model','tools','timeoutMs','maxBodyBytes','maxCallsPerHour','transport','thinking'])
+  keys(c, ['enabled','tokenSha256','providerId','model','tools','toolPolicy','timeoutMs','maxBodyBytes','maxCallsPerHour','transport','thinking'])
+  if(c.toolPolicy!==undefined&&!['pinned','ha-assist'].includes(c.toolPolicy as string))fail('invalid_config')
+  if(c.toolPolicy==='ha-assist'&&Array.isArray(c.tools)&&c.tools.length)fail('invalid_config')
   if (c.enabled !== true || typeof c.tokenSha256!=='string' || !/^[a-f0-9]{64}$/.test(c.tokenSha256) || typeof c.model!=='string' || !/^[a-zA-Z0-9-]{1,128}$/.test(c.model)) fail('invalid_config')
   if(!str(c.providerId,128))fail('invalid_config')
   if(c.transport!==undefined&&(typeof c.transport!=='string'||!['codex','anthropic-oauth'].includes(c.transport)))fail('invalid_config')
@@ -77,11 +152,14 @@ function requestContext(body: unknown, c: HaInferenceConfig): { context: Context
   if (b.stream_options !== undefined) { const o=obj(b.stream_options); keys(o,['include_usage']); if (typeof o.include_usage !== 'boolean') fail() }
   const tools: Tool[] = []; const byName = new Map<string,HaTool>()
   if (b.tools !== undefined) {
-    if (!Array.isArray(b.tools) || b.tools.length>32) fail()
+    // ha-assist: no tool-count cap (HA's exposure decides); bounded by maxBodyBytes and per-schema limits.
+    if (!Array.isArray(b.tools) || (c.toolPolicy!=='ha-assist'&&b.tools.length>32)) fail()
     for (const t0 of b.tools) {
       const t=obj(t0); keys(t,['type','function']); if (t.type!=='function') fail('unsupported_tool')
       const f=obj(t.function); keys(f,['name','description','parameters','strict'])
-      const trusted=c.tools.find(t=>t.name===f.name)
+      // 'ha-assist': HA's native Assist API owns the dynamic tool list/schemas (exposure-dependent
+      // enums). HA re-validates every call with the real voluptuous schema before execution.
+      const trusted=c.toolPolicy==='ha-assist'?dynamicTool(f):c.tools.find(t=>t.name===f.name)
       if (!trusted || byName.has(trusted.name) || canonical(f.parameters)!==canonical(trusted.parameters)) fail('tool_not_allowed')
       if (f.description!==undefined) str(f.description,2048)
       if (f.strict!==undefined && typeof f.strict!=='boolean') fail()
@@ -105,6 +183,11 @@ function requestContext(body: unknown, c: HaInferenceConfig): { context: Context
       keys(m,['role','content','tool_calls']); if(pending.size) fail('missing_tool_result')
       const content: AssistantMessage['content']=[]
       if(m.content!==null && m.content!==undefined) content.push({type:'text',text:str(m.content)})
+      // Trust boundary (Codex transport): unlike anthropic-oauth (server-side single-use ha_session
+      // vault), Codex continuations carry the raw client history. Assistant tool_calls are only
+      // checked against the tool names/schemas offered in THIS request; a holder of the adapter
+      // token could invent earlier tool calls. Accepted: the relay never executes anything, and the
+      // token holder (HA) executes every tool itself anyway, so this grants no additional rights.
       if(m.tool_calls!==undefined) {
         if(!Array.isArray(m.tool_calls) || m.tool_calls.length>16) fail()
         for(const rawCall of m.tool_calls) {
@@ -237,7 +320,7 @@ export function createHaInferenceHandler(config: HaInferenceConfig, complete: Ha
       for(const block of result.message.content){
         if(block.type==='text') text+=block.text
         else if(block.type==='toolCall') {
-          const t=c.tools.find(t=>t.name===block.name && context.tools?.some(s=>s.name===block.name)); if(!t || seen.has(block.id) || typeof block.id!=='string' || !block.id || block.id.length>128 || toolCalls.length>=16)throw new Fault(502,'invalid_output_tool')
+          const t=(c.toolPolicy==='ha-assist'?context.tools as HaTool[]|undefined:c.tools)?.find(t=>t.name===block.name && context.tools?.some(s=>s.name===block.name)); if(!t || seen.has(block.id) || typeof block.id!=='string' || !block.id || block.id.length>128 || toolCalls.length>=16)throw new Fault(502,'invalid_output_tool')
           try {args(t,block.arguments)}catch {throw new Fault(502,'invalid_output_arguments')}
           seen.add(block.id);toolCalls.push({id:block.id,type:'function',function:{name:block.name,arguments:JSON.stringify(block.arguments)}})
         } // reasoning/signatures are never emitted

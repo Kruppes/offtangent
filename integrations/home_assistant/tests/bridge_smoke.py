@@ -45,7 +45,8 @@ async def main():
         result = await run_turn(client, "Nur synthetische HA Werkzeuge, kein Offtangent-Agent.",
                                 "Schalte simuliertes Licht aus.", [tool], validate, simulate)
         assert len(calls) == 1 and not result.failed
-        assert result.text == "Home Assistant hat die Aktion bestätigt."
+        # F7: after the confirmed action the model answers from HA's result (or HA confirmation).
+        assert isinstance(result.text, str) and result.text.strip()
         print(json.dumps({"mode": "OFFLINE ONLY", "transport": "Python aiohttp -> real loopback Node HTTP -> intercepted real pi-ai SDK",
                           "model": client.model, "simulated_calls": calls, "final": result.text,
                           "messages": result.messages}, ensure_ascii=False))

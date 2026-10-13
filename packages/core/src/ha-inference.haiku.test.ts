@@ -177,8 +177,11 @@ describe('real pi-ai Anthropic SDK with entirely simulated wire',()=>{
     'integrations/home_assistant/tests/bridge_smoke.py',`http://127.0.0.1:${port}/v1`,
    ],{timeout:10000,maxBuffer:16384,env:{PYTHONPATH:process.cwd()+'/integrations/home_assistant',PYTHONDONTWRITEBYTECODE:'1'}})
    const bridge=JSON.parse(stdout);expect(bridge.simulated_calls).toHaveLength(1)
-   expect(bridge.final).toBe('Home Assistant hat die Aktion bestätigt.');expect(f.captures).toHaveLength(1)
-   // Successful action is locally confirmed: no redundant inference POST.
+   // F7: after HA's confirmed result the model gets one native follow-up round (signed vault continuation),
+   // like HA's own LLM agents; the action itself is still executed exactly once.
+   expect(bridge.final).toBe('Home Assistant hat die simulierte Aktion bestätigt.');expect(f.captures).toHaveLength(2)
+   expect(f.captures[1].payload.messages[2].content).toContainEqual(expect.objectContaining({type:'tool_result',tool_use_id:'call_synthetic1',is_error:false}))
+   expect(f.captures[1].payload.messages[1].content).toContainEqual(expect.objectContaining({type:'thinking',signature:'synthetic-signed-opaque'}))
    expect(fetch).not.toHaveBeenCalled()
    if(process.env.HA_BRIDGE_EVIDENCE_PATH)writeFileSync(process.env.HA_BRIDGE_EVIDENCE_PATH,JSON.stringify(bridge,null,2)+'\n')
   } finally {server.closeAllConnections();await new Promise<void>(resolve=>server.close(()=>resolve()))}

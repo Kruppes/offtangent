@@ -1,0 +1,110 @@
+{
+ "_ha_version": "2026.9.4",
+ "excl": {
+  "additionalProperties": false,
+  "properties": {
+   "temp": {
+    "exclusiveMinimum": true,
+    "minimum": 0,
+    "type": "number"
+   }
+  },
+  "type": "object"
+ },
+ "exclgrp": {
+  "additionalProperties": false,
+  "allOf": [
+   {
+    "not": {
+     "anyOf": [
+      {
+       "required": [
+        "a",
+        "b"
+       ]
+      }
+     ]
+    }
+   }
+  ],
+  "properties": {
+   "a": {
+    "type": "string"
+   },
+   "b": {
+    "type": "string"
+   }
+  },
+  "type": "object"
+ },
+ "exclmax": {
+  "additionalProperties": false,
+  "properties": {
+   "pct": {
+    "exclusiveMaximum": true,
+    "exclusiveMinimum": true,
+    "maximum": 100,
+    "minimum": 0,
+    "type": "integer"
+   }
+  },
+  "required": [
+   "pct"
+  ],
+  "type": "object"
+ },
+ "incl": {
+  "additionalProperties": false,
+  "allOf": [
+   {
+    "oneOf": [
+     {
+      "required": [
+       "lat",
+       "lon"
+      ]
+     },
+     {
+      "not": {
+       "anyOf": [
+        {
+         "required": [
+          "lat"
+         ]
+        },
+        {
+         "required": [
+          "lon"
+         ]
+        }
+       ]
+      }
+     }
+    ]
+   }
+  ],
+  "properties": {
+   "lat": {
+    "type": "number"
+   },
+   "lon": {
+    "type": "number"
+   }
+  },
+  "type": "object"
+ },
+ "inclrange": {
+  "additionalProperties": false,
+  "properties": {
+   "pct": {
+    "maximum": 100,
+    "minimum": 0,
+    "type": "integer"
+   }
+  },
+  "required": [
+   "pct"
+  ],
+  "type": "object"
+ }
+}

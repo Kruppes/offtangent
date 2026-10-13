@@ -1,6 +1,7 @@
 """HA 2026.9 ChatLog agent; executes only selected Assist tools, never services directly."""
 import asyncio
 import json
+import logging
 import time
 from dataclasses import replace
 from uuid import uuid4
@@ -13,9 +14,11 @@ from homeassistant.core import HomeAssistantError
 from homeassistant.helpers import intent, llm
 from homeassistant.helpers.event import async_track_time_interval
 
-from .client import AdapterError, TOOL_NAME, TurnProgress, decode_json, run_turn
+from .client import AdapterError, TurnProgress, decode_json, run_turn, select_tools
 from .const import DEFAULT_PROMPT, DOMAIN
 from .fallback import local_fallback_entry
+
+_LOGGER = logging.getLogger(__name__)
 
 
 def _error_result(user_input, conversation_id, text):
@@ -207,10 +210,11 @@ class OfftangentConversationEntity(conversation.ConversationEntity, conversation
             )
             api = chat_log.llm_api
             allowed = set(json.loads(self._settings["allowed_tools"]))
-            selected = {
-                tool.name: tool for tool in (api.tools if api else [])
-                if tool.name in allowed and TOOL_NAME.fullmatch(tool.name)
-            }
+            selected, unsendable = select_tools(api.tools if api else [], allowed)
+            if unsendable:
+                # Counted and logged, never silently lost (see diagnostics "unsendable_tools").
+                _LOGGER.warning("%d Assist tool(s) have names the provider cannot carry: %s",
+                                len(unsendable), ", ".join(sorted(unsendable))[:512])
             tools = [{"type": "function", "function": {
                 "name": tool.name, "description": tool.description or "Home Assistant Assist tool",
                 "parameters": to_openapi(tool.parameters, custom_serializer=api.custom_serializer),
@@ -232,7 +236,9 @@ class OfftangentConversationEntity(conversation.ConversationEntity, conversation
 
             history = self._history.get(key, (0, []))[1]
             outcome = await run_turn(self._client, prompt, user_input.text, tools, validate_args, dispatch,
-                                     history=history, progress=progress)
+                                     history=history, progress=progress,
+                                     # Stay inside the 105 s turn guard of _async_handle_message.
+                                     deadline=asyncio.get_running_loop().time() + 100)
             self._history[key] = (time.monotonic(), (history + [
                 {"role": "user", "content": user_input.text[:8192]},
                 {"role": "assistant", "content": outcome.text[:8192]},

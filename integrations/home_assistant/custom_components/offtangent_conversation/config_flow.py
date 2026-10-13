@@ -6,7 +6,7 @@ from homeassistant import config_entries
 from homeassistant.core import callback
 from homeassistant.helpers import selector
 
-from .client import TOOL_NAME, validate_url
+from .client import ALL_ASSIST_TOOLS, TOOL_NAME, validate_url
 from .const import DEFAULT_MODEL, DOMAIN
 from .fallback import local_fallback_entry
 
@@ -37,7 +37,8 @@ def _validate(data):
         raise ValueError()
     names = json.loads(data["allowed_tools"])
     if (not isinstance(names, list) or len(names) > 32
-        or any(not isinstance(n, str) or not TOOL_NAME.fullmatch(n) for n in names)
+        or any(not isinstance(n, str) or not (TOOL_NAME.fullmatch(n) or n == ALL_ASSIST_TOOLS) for n in names)
+        or (ALL_ASSIST_TOOLS in names and (names != [ALL_ASSIST_TOOLS] or not data["control"]))
         or len(set(names)) != len(names) or (data["control"] and not names)):
         raise ValueError()
 

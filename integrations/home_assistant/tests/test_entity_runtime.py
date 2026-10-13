@@ -126,8 +126,12 @@ class ActualHAEntityTests(unittest.IsolatedAsyncioTestCase):
         self.assertIsNone(log.content[2].content)
         self.assertTrue(log.content[2].tool_calls[0].external)
         self.assertEqual(log.content[3].tool_result, SUCCESS)
-        self.assertEqual(log.content[-1].content, "Home Assistant hat die Aktion bestätigt.")
-        self.assertEqual(result.response.speech["plain"]["speech"], "Home Assistant hat die Aktion bestätigt.")
+        # F7: second model round sees HA's native result; its answer is the turn answer (like HA agents).
+        self.assertEqual(len(adapter.requests), 2)
+        self.assertEqual(adapter.requests[1]["messages"][-1]["role"], "tool")
+        self.assertEqual(json.loads(adapter.requests[1]["messages"][-1]["content"]), SUCCESS)
+        self.assertEqual(log.content[-1].content, "Modellbehauptung: alles ist aus!")
+        self.assertEqual(result.response.speech["plain"]["speech"], "Modellbehauptung: alles ist aus!")
         self.assertFalse(agent._attr_supports_streaming)
 
     async def test_diagnostics_exports_exact_allowlisted_schemas_without_secrets_or_execution(self):
@@ -155,6 +159,24 @@ class ActualHAEntityTests(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(len(self.tool.calls), 1)
             self.assertEqual(len(adapter.requests), 1)
             self.assertIn("nicht eindeutig bestätigt", result.response.speech["plain"]["speech"])
+
+    async def test_partial_success_kept_in_answer_and_local_history(self):
+        class Flaky(SyntheticTool):
+            async def async_call(self, hass, tool_input, llm_context):
+                self.calls.append((tool_input, llm_context))
+                if len(self.calls) == 1:
+                    return {**SUCCESS, "speech": {"plain": {"speech": "Simulierte Küche an."}}}
+                raise TimeoutError()
+        self.tool.__class__ = Flaky
+        adapter = MockAdapter([reply(calls=[call("one", {"name": "Küche"}), call("two", {"name": "Flur"})])])
+        agent = self.agent(adapter)
+        result = await agent._async_handle_message(self.input, self.log())
+        self.assertEqual(len(self.tool.calls), 2); self.assertEqual(len(adapter.requests), 1)
+        speech = result.response.speech["plain"]["speech"]
+        self.assertTrue(speech.startswith("Simulierte Küche an."))
+        self.assertIn("nicht eindeutig bestätigt", speech)
+        history = [m for _, hist in agent._history.values() for m in hist]
+        self.assertIn({"role": "assistant", "content": speech}, history)  # next turn knows the real partial success
 
     async def test_control_off_requests_no_assist_api_and_no_tools(self):
         adapter = MockAdapter([reply({"role": "assistant", "content": "Kurze Wissensantwort."})])
@@ -188,7 +210,7 @@ class ActualHAEntityTests(unittest.IsolatedAsyncioTestCase):
 
 
     async def test_multiturn_pronoun_receives_only_own_history_and_same_device_context(self):
-        adapter = MockAdapter([reply({"role": "assistant", "content": "Gemeint ist das simulierte Küchenlicht."}), reply(calls=[call(args={"name": "Küchenlicht"})])])
+        adapter = MockAdapter([reply({"role": "assistant", "content": "Gemeint ist das simulierte Küchenlicht."}), reply(calls=[call(args={"name": "Küchenlicht"})]), reply()])
         agent = self.agent(adapter); log = self.log()
         await agent._async_handle_message(self.input, log)
         log.async_add_assistant_content_without_tools(conversation.AssistantContent(agent_id="foreign-agent", content="FOREIGN_PRIVATE_SECRET"))
@@ -361,7 +383,41 @@ class ActualHAEntityTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(self.tool.calls, [])
 
 
+    async def test_full_assist_allowlist_forwards_every_ha_offered_tool_without_namespace_filter(self):
+        native = [SyntheticTool(n) for n in ("homeassistant__GetLiveContext", "llm__GetDateTime", "todo__get_items",
+                                             "todo__HassListAddItem", "script__abendstimmung", "intent__HassTurnOn",
+                                             "light__HassLightSet", "media_player__HassMediaPause", "vacuum__HassVacuumStart")]
+        native += [SyntheticTool(n) for n in ("script__1_morgens", "intent_script__Abendmodus", "my_custom__do",
+                                              "shell__exec", "custom__run")]
+        # Whatever HA's api.tools offers (core, custom integrations, scripts with leading digits,
+        # intent_script) is forwarded (F2). Only wire-unsendable names are dropped, and reported.
+        self.api.tools = [self.tool, *native, SyntheticTool("bad name")]
+        adapter = MockAdapter([reply(calls=[call(name="llm__GetDateTime", args={})]), reply()])
+        agent = self.agent(adapter, allowed=["*"])
+        await agent._async_handle_message(self.input, self.log())
+        sent = [t["function"]["name"] for t in adapter.requests[0]["tools"]]
+        self.assertEqual(sent, [NAME, *[t.name for t in native]])
+        self.assertEqual([t.name for t in native if t.calls], ["llm__GetDateTime"])
+        self.assertEqual(self.tool.calls, [])
+        diag = await diagnostics.async_get_config_entry_diagnostics(self.hass, agent.entry)
+        self.assertEqual([t["name"] for t in diag["tools"]], sent)
+        self.assertEqual(diag["unsendable_tools"], ["bad name"])
+        self.assertEqual(diag["tool_count"], len(sent))
+        self.assertGreater(diag["tool_payload_bytes"], 0)
+
+
 class ActualHAConfigFlowTests(unittest.TestCase):
+    def test_config_flow_full_assist_allowlist_only_alone_and_with_control(self):
+        data = {"url": "https://example.invalid/v1", "adapter_token": "synthetic-token-only", "model": "another-model-1",
+                "control": True, "allowed_tools": '["*"]'}
+        config_flow._validate(data)
+        config_flow._validate({**data, "allowed_tools": '["llm__GetDateTime","todo__get_items","script__x"]'})
+        config_flow._validate({**data, "allowed_tools": '["my_custom__do","script__1_morgens","intent_script__X"]'})
+        for value, control in [('["*","homeassistant__HassTurnOff"]', True), ('["*"]', False), ('["**"]', True),
+                               ('["bad name"]', True), ('["a.b"]', True)]:
+            with self.subTest(value=value), self.assertRaises(ValueError):
+                config_flow._validate({**data, "allowed_tools": value, "control": control})
+
     def test_config_flow_accepts_generic_model_and_explicit_restricted_allowlist(self):
         data = {"url": "https://example.invalid/v1", "adapter_token": "synthetic-token-only", "model": "another-model-1",
                 "control": True, "allowed_tools": '["homeassistant__HassTurnOff"]'}
@@ -369,7 +425,7 @@ class ActualHAConfigFlowTests(unittest.TestCase):
         config_flow._validate({**data, "url": "https://example.invalid/ha-relay/v1", "fallback_agent": ""})
         config_flow._validate({**data, "fallback_agent": "conversation.local_ollama"})
         for key, value in [("url", "http://insecure.invalid/v1"), ("adapter_token", "short"),
-                           ("allowed_tools", "[]"), ("allowed_tools", '["shell__exec"]'),
+                           ("allowed_tools", "[]"), ("allowed_tools", '["shell exec"]'),
                            ("allowed_tools", '["HassTurnOff","HassTurnOff"]'), ("model", "bad/model"),
                            ("fallback_agent", "remote.agent"), ("fallback_agent", 1)]:
             with self.subTest(key=key), self.assertRaises(ValueError):
