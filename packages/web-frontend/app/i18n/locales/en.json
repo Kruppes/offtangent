@@ -2014,6 +2014,8 @@
     "textLimit": "{count} / 20,000 characters · Text is required, including with attachments.",
     "persona": "Persona hint",
     "model": "Answer model",
+    "forceNewStrand": "New strand (skip router)",
+    "forceNewStrandHint": "Start a new strand with this capture instead of letting the router pick one. Switches off again after sending.",
     "automatic": "Automatic",
     "optionsError": "Could not load persona/model choices. Automatic is still available.",
     "removeFile": "Remove {name}",

@@ -231,6 +231,47 @@ describe('Capture Home rendered', () => {
   const second = JSON.parse((posts[posts.length - 1]![1] as RequestInit).body as string)
   expect(second.destination).toBeUndefined()
  })
+ /**
+  * The "New strand (skip router)" toggle: off by default, sends
+  * `forceNewStrand: true` for exactly one capture and switches itself off
+  * again after a successful send. A failed send keeps it with the draft.
+  */
+ it('offers the skip-router toggle, sends forceNewStrand once and switches it off after the send', async () => {
+  const { root } = mount(Home); await flush()
+  const toggle = () => byTestId(root, 'capture-force-new-strand')[0]!
+  expect(toggle()).toBeTruthy()
+  expect(toggle().props.type).toBe('checkbox')
+  expect(toggle().props.checked).toBe(false)
+  expect(text(root)).toContain('capture.forceNewStrand')
+
+  ;(toggle().props.onChange as (e: unknown) => void)({ target: { checked: true } })
+  await nextTick()
+  expect(toggle().props.checked).toBe(true)
+  await draft(root, 'Start something new')
+  await send(root)
+  const [first] = captureBodies()
+  expect(first).toMatchObject({ text: 'Start something new', source: 'web', forceNewStrand: true })
+  expect(first!.destination).toBeUndefined()
+  expect(toggle().props.checked).toBe(false)
+
+  await draft(root, 'A routed thought')
+  await send(root)
+  const bodies = captureBodies()
+  expect(bodies).toHaveLength(2)
+  expect(bodies[1]!.forceNewStrand).toBeUndefined()
+ })
+ it('keeps the skip-router toggle on when the send fails', async () => {
+  const { root } = mount(Home); await flush()
+  const toggle = () => byTestId(root, 'capture-force-new-strand')[0]!
+  ;(toggle().props.onChange as (e: unknown) => void)({ target: { checked: true } })
+  await nextTick()
+  const ok = request.getMockImplementation()!
+  request.mockImplementation(async (url: string, options?: RequestInit) => url === 'https://test.example/api/captures' && options?.method === 'POST' ? new Response('{}', { status: 500 }) : ok(url, options))
+  await draft(root, 'Will fail')
+  await send(root)
+  expect(text(root)).toContain('capture.sendError')
+  expect(toggle().props.checked).toBe(true)
+ })
  it('undo returns to the unsorted tray and can be applied again', async () => {
   const { root } = mount(Home); await flush(); await draft(root); await send(root); await click(root, 'capture.undo')
   expect(text(root)).toContain('capture.undone'); expect(text(root)).toContain('capture.status.unsorted')
@@ -648,6 +689,18 @@ describe('Capture Home dictation', () => {
   expect(byTestId(root, 'capture-dictated')).toHaveLength(0)
  })
 
+ it('sends a dictated capture with the skip-router toggle as forceNewStrand voice capture', async () => {
+  sttConfigured = true
+  stubMicrophone()
+  const { root } = mount(Home); await flush()
+  ;(byTestId(root, 'capture-force-new-strand')[0]!.props.onChange as (e: unknown) => void)({ target: { checked: true } })
+  await nextTick()
+  await dictate(root)
+  await send(root)
+  const [body] = captureBodies()
+  expect(body).toMatchObject({ text: 'Synthetic spoken words.', kind: 'voice', forceNewStrand: true })
+  expect(byTestId(root, 'capture-force-new-strand')[0]!.props.checked).toBe(false)
+ })
  it('Ctrl+M starts and stops the recording inside the capture form', async () => {
   sttConfigured = true
   stubMicrophone()

@@ -5,9 +5,9 @@ export interface CapturePart { index: number; title: string | null; text: string
 /** `parts`/`partCount` are additive: an older backend omits them, which means one part. */
 /** `code: 'routing_pending'` (HTTP 202): stored, but filing waits for the agent core. */
 export interface CaptureResult { capture: Capture; decision: Decision; parts?: CapturePart[]; partCount?: number; code?: 'routing_pending' }
-/** `destination: 'new_strand'` makes the server open a strand instead of routing; `strandTitle` names it. */
+/** `destination: 'new_strand'` makes the server open a strand instead of routing; `strandTitle` names it. `forceNewStrand` is the home toggle "New strand (skip router)": the same bypass, logged as such in the router decision. */
 /** `kind: 'voice'` marks a dictated capture (only the transcript is stored, never audio); absent means typed text. */
-export interface CaptureInput { text: string; clientMessageId: string; source: 'web'; attachments: UploadDescriptor[]; kind?: 'text' | 'voice'; agentId?: string; modelProviderId?: string; modelId?: string; destination?: 'new_strand'; strandTitle?: string }
+export interface CaptureInput { text: string; clientMessageId: string; source: 'web'; attachments: UploadDescriptor[]; kind?: 'text' | 'voice'; agentId?: string; modelProviderId?: string; modelId?: string; destination?: 'new_strand'; forceNewStrand?: boolean; strandTitle?: string }
 export interface ApplyCaptureInput { decisionId?: string; action?: Decision['action']; strandId?: string; title?: string; partIndex?: number }
 /** `total` is additive: captures matching the status filter across all pages (an older backend omits it). */
 export interface CaptureListPage { captures: Capture[]; decisions: Decision[]; parts?: Record<string, CapturePart[]>; total?: number }

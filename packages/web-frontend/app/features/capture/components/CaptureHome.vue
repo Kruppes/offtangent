@@ -37,6 +37,13 @@ const latest = ref<CaptureResult | null>(null)
  * ask the server for a new strand instead of letting the router pick one.
  */
 const handoffTarget = ref<{ title: string | null } | null>(null)
+/**
+ * The "New strand (skip router)" toggle. Off by default and switched off again
+ * after a successful send: it is a one-off gesture for the capture at hand,
+ * and a forgotten switch would silently keep every later capture out of the
+ * strands it belongs to. A failed send keeps it, like the draft itself.
+ */
+const forceNewStrand = ref(false)
 const tray = ref<CaptureResult[]>([])
 /** Resurface row: optional, so its failure never blocks Home. */
 const resurface = ref<ResurfaceItem[]>([])
@@ -145,13 +152,13 @@ async function send() {
   if (!canSend.value) return
   busy.value = true; sending.value = true; error.value = ''; errorDetail.value = ''; notice.value = ''
   const model = models.value.find(m => JSON.stringify([m.providerId, m.modelId]) === modelKey.value)
-  const draft = { text: text.value.trim(), source: 'web' as const, attachments: attachments.value, ...dictationFields(dictated.value), ...(agentId.value ? { agentId: agentId.value } : {}), ...(model ? { modelProviderId: model.providerId, modelId: model.modelId } : {}), ...(handoffTarget.value ? { destination: 'new_strand' as const, ...(handoffTarget.value.title ? { strandTitle: handoffTarget.value.title } : {}) } : {}) }
+  const draft = { text: text.value.trim(), source: 'web' as const, attachments: attachments.value, ...dictationFields(dictated.value), ...(agentId.value ? { agentId: agentId.value } : {}), ...(model ? { modelProviderId: model.providerId, modelId: model.modelId } : {}), ...(forceNewStrand.value ? { forceNewStrand: true } : {}), ...(handoffTarget.value ? { destination: 'new_strand' as const, ...(handoffTarget.value.title ? { strandTitle: handoffTarget.value.title } : {}) } : {}) }
   const signature = JSON.stringify(draft)
   try {
     if (pending?.signature !== signature) pending = { signature, key: captureClientKey() }
     latest.value = await api.create({ ...draft, clientMessageId: pending.key } satisfies CaptureInput)
     sending.value = false; refreshing.value = true
-    text.value = ''; attachments.value = []; fileAnnouncement.value = 0; pending = null; handoffTarget.value = null
+    text.value = ''; attachments.value = []; fileAnnouncement.value = 0; pending = null; handoffTarget.value = null; forceNewStrand.value = false
     if (latest.value?.code === 'routing_pending') notice.value = 'capture.routingPending'
     await load()
     await resolveTitles()
@@ -270,6 +277,10 @@ onMounted(() => {
     <form class="space-y-3 rounded-xl border bg-card p-4" @submit.prevent="send" @keydown="handleDictationKeydown">
       <label for="capture-text" class="block font-medium">{{ $t('capture.prompt') }}</label>
       <textarea id="capture-text" ref="textarea" v-model="text" :disabled="busy" rows="4" class="focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 w-full resize-y rounded-md border border-input bg-background p-3" :placeholder="$t('capture.placeholder')" @paste="handlePaste" @keydown="(e: KeyboardEvent) => { if (e.key === 'Enter' && (e.ctrlKey || e.metaKey) && !e.isComposing) { e.preventDefault(); send() } }" />
+      <label class="flex min-h-11 w-fit cursor-pointer items-center gap-2 text-sm" :title="$t('capture.forceNewStrandHint')">
+        <input type="checkbox" data-testid="capture-force-new-strand" class="h-5 w-5 rounded border-input accent-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2" :checked="forceNewStrand" :disabled="busy" @change="(e: Event) => { forceNewStrand = (e.target as HTMLInputElement).checked }" />
+        <span>{{ $t('capture.forceNewStrand') }}</span>
+      </label>
       <DictationBar
         v-if="sttEnabled && dictationPhase !== 'idle'"
         :phase="dictationPhase"

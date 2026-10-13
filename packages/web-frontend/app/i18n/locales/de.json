@@ -2014,6 +2014,8 @@
     "textLimit": "{count} / 20.000 Zeichen · Text ist auch mit Anhängen erforderlich.",
     "persona": "Persona-Hinweis",
     "model": "Antwortmodell",
+    "forceNewStrand": "Neuer Strang (Router überspringen)",
+    "forceNewStrandHint": "Startet mit dieser Eingabe einen neuen Strang, statt den Router entscheiden zu lassen. Schaltet sich nach dem Senden wieder aus.",
     "automatic": "Automatisch",
     "optionsError": "Persona- und Modellauswahl konnten nicht geladen werden. Automatisch bleibt verfügbar.",
     "removeFile": "{name} entfernen",
