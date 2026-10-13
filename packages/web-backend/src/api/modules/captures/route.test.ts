@@ -10,13 +10,12 @@ import fs from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
 import express from 'express'
-import { initDatabase, saveProviders, SessionManager, findInteractionBlock } from '@axiom/core'
+import { initDatabase, saveProviders, SessionManager } from '@axiom/core'
 import type { AgentCore, Capture, Database, Decision, ResolvedRouterModel } from '@axiom/core'
 import { createCapturesRouters } from './route.js'
 import {
   createCapturesService, CAPTURE_NUDGE_TEXT,
-  CAPTURE_CONFIRM_BLOCK_ID, CAPTURE_CONFIRM_QUESTION, CAPTURE_CONFIRM_LABELS,
-  CAPTURE_CONFIRM_KEEP, CAPTURE_CONFIRM_ANSWER,
+  CAPTURE_CONFIRM_BLOCK_ID, CAPTURE_CONFIRM_ANSWER,
 } from './service.js'
 import { sendCaptureDoorbell } from '../../../push/triggers.js'
 import type { PushDoorbell, PushSender } from '../../../push/sender.js'

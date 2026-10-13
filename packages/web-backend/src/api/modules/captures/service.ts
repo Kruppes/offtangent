@@ -10,10 +10,8 @@ import type { AgentCore, Capture, CaptureLanguage, CaptureSplit, Database, Model
 import {
   addStrandTags,
   formatInteractionBlockFence,
-  addressStrength,
   addToNowSetIfRoom,
   buildRouterInput,
-  captureLanguage,
   CLIENT_TARGET_MODEL,
   CLIENT_TARGET_RATIONALE,
   confidenceBand,
