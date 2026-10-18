@@ -841,12 +841,6 @@ export function initDatabase(dbPath?: string): Database {
   if (!projectCols.find(c => c.name === 'context_origin_scope')) {
     db.exec('ALTER TABLE sessions ADD COLUMN context_origin_scope TEXT')
   }
-  if (!projectCols.find(c => c.name === 'context_scope_revision')) {
-    db.exec('ALTER TABLE sessions ADD COLUMN context_scope_revision INTEGER NOT NULL DEFAULT 0')
-  }
-  if (!projectCols.find(c => c.name === 'context_identity_changed')) {
-    db.exec('ALTER TABLE sessions ADD COLUMN context_identity_changed INTEGER NOT NULL DEFAULT 0')
-  }
   // Original project/user cannot be reconstructed reliably for legacy tasks.
   // Retain their transcripts/results, but never reclassify them on resume.
   db.exec("UPDATE sessions SET context_origin_scope = 'legacy-unclassified' WHERE type IN ('task', 'consolidation') AND context_origin_scope IS NULL")
@@ -858,7 +852,24 @@ export function initDatabase(dbPath?: string): Database {
   // may receive an initial project without tainting its (nonexistent) history.
   // NULL alone is NOT evidence of emptiness; archived chat/tool rows also count.
   const scopeMigrationDb = db
-  scopeMigrationDb.transaction(() => scopeMigrationDb.exec(`DROP TRIGGER IF EXISTS context_fact_scope_changed;
+  scopeMigrationDb.transaction(() => {
+    // Column creation, legacy quarantine, trigger replacement and the version
+    // marker must commit together. Old scope-changed markers have no reason:
+    // even an apparent project-only move may hide an owner/persona transfer.
+    // The version also repairs an interrupted/previous pre-fix migration where
+    // the columns already exist but the legacy quarantine never ran.
+    scopeMigrationDb.exec('CREATE TABLE IF NOT EXISTS context_scope_migrations (version TEXT PRIMARY KEY)')
+    const version = 'identity-quarantine-v1'
+    const columns = scopeMigrationDb.prepare('PRAGMA table_info(sessions)').all() as { name: string }[]
+    const missingRevision = !columns.some(c => c.name === 'context_scope_revision')
+    const missingIdentity = !columns.some(c => c.name === 'context_identity_changed')
+    const migrated = scopeMigrationDb.prepare('SELECT 1 FROM context_scope_migrations WHERE version = ?').get(version)
+    if (missingRevision) scopeMigrationDb.exec('ALTER TABLE sessions ADD COLUMN context_scope_revision INTEGER NOT NULL DEFAULT 0')
+    if (missingIdentity) scopeMigrationDb.exec('ALTER TABLE sessions ADD COLUMN context_identity_changed INTEGER NOT NULL DEFAULT 0')
+    if (!migrated || missingIdentity || missingRevision) {
+      scopeMigrationDb.exec("UPDATE sessions SET context_identity_changed = 1 WHERE context_origin_scope = 'scope-changed'")
+    }
+    scopeMigrationDb.exec(`DROP TRIGGER IF EXISTS context_fact_scope_changed;
     CREATE TRIGGER context_fact_scope_changed
     AFTER UPDATE OF project_id, context_policy, agent_id, session_user, user_id ON sessions
     WHEN (OLD.project_id IS NOT NEW.project_id OR OLD.context_policy IS NOT NEW.context_policy
@@ -882,7 +893,9 @@ export function initDatabase(dbPath?: string): Database {
             OR EXISTS (SELECT 1 FROM chat_messages WHERE session_id=OLD.id)
             OR EXISTS (SELECT 1 FROM tool_calls WHERE session_id=OLD.id)
             OR EXISTS (SELECT 1 FROM memories WHERE session_id=OLD.id))))
-      WHERE id = NEW.id; END;`))()
+      WHERE id = NEW.id; END;`)
+    scopeMigrationDb.prepare('INSERT OR IGNORE INTO context_scope_migrations(version) VALUES (?)').run(version)
+  })()
 
   // Fork: multi-persona scoping for memories and chat_messages.
   const memoryCols = db.prepare("PRAGMA table_info(memories)").all() as { name: string }[]
