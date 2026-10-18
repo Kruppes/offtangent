@@ -1,3 +1,4 @@
+import { resolveContextScope, contextFactPredicate } from './context-scope.js'
 /**
  * session-store.ts — Pure functions for topic-matching and sliding-window detection.
  * No class, no LLM, no embeddings — pure keyword extraction and Jaccard similarity.
@@ -382,6 +383,7 @@ export function queryMemoriesFts(
   keywords: string[],
   limit: number = 5,
   agentId?: string,
+  sessionId?: string,
 ): Array<{ id: number; content: string; source: string; timestamp: string }> {
   if (keywords.length === 0) return []
 
@@ -394,28 +396,13 @@ export function queryMemoriesFts(
   if (!ftsQuery) return []
 
   try {
-    let sql: string
-    let params: unknown[]
-
-    if (agentId) {
-      sql = `SELECT m.id, m.content, m.source, m.timestamp
-       FROM memories_fts fts
-       JOIN memories m ON m.rowid = fts.rowid
-       WHERE memories_fts MATCH ? AND m.agent_id IN (?, 'shared')
-         AND m.status = 'active' AND m.provenance IN ('owner','agent')
-       ORDER BY rank
-       LIMIT ?`
-      params = [ftsQuery, agentId, limit]
-    } else {
-      sql = `SELECT m.id, m.content, m.source, m.timestamp
-       FROM memories_fts fts
-       JOIN memories m ON m.rowid = fts.rowid
-       WHERE memories_fts MATCH ?
-         AND m.status = 'active' AND m.provenance IN ('owner','agent')
-       ORDER BY rank
-       LIMIT ?`
-      params = [ftsQuery, limit]
-    }
+    const scope = resolveContextScope(db, sessionId, agentId)
+    if (!scope) return []
+    const filter = contextFactPredicate(scope)
+    const sql = `SELECT m.id, m.content, m.source, m.timestamp FROM memories_fts fts
+      JOIN memories m ON m.rowid = fts.rowid WHERE memories_fts MATCH ? AND ${filter.sql}
+      AND m.status = 'active' AND m.provenance IN ('owner','agent') ORDER BY rank LIMIT ?`
+    const params = [ftsQuery, ...filter.params, limit]
 
     const rows = db.prepare(sql).all(...params) as Array<{ id: number; content: string; source: string; timestamp: string }>
 

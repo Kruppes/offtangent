@@ -1,8 +1,9 @@
+import { resolveContextScope, contextMemoryDir } from './context-scope.js'
 import { randomUUID } from 'node:crypto'
 import type { Database } from './database.js'
 import { maskTranscript, DEFAULT_MASK_OPTIONS, RECALLED_MARKER } from './message-digest.js'
 import type { DigestableMessage, MaskTranscriptOptions } from './message-digest.js'
-import { appendToDailyFile, resolveAgentMemoryDir } from './memory.js'
+import { appendToDailyFile, resolveAgentMemoryDir, getMemoryDir } from './memory.js'
 import { logToolCall } from './token-logger.js'
 import {
   extractTopicTags,
@@ -661,7 +662,7 @@ export class SessionManager {
         if (history) {
           summary = await this.onSummarize(row.id, userId, history)
           if (summary) {
-            this.writeSummaryToDailyFile(summary, lastActivity, row.agent_id ?? 'main')
+            this.writeSummaryToDailyFile(summary, lastActivity, row.agent_id ?? 'main', row.id)
             summaryWritten = true
             console.log(`[session] Summary written for orphaned session ${row.id} (at ${new Date(lastActivity).toISOString()})`)
           }
@@ -804,7 +805,7 @@ export class SessionManager {
    * scoped memory is enabled — NOT into main's shared daily files. Main and
    * legacy (scoping disabled) behavior is unchanged.
    */
-  private writeSummaryToDailyFile(summary: string, timestamp: number, agentId?: string): void {
+  private writeSummaryToDailyFile(summary: string, timestamp: number, agentId?: string, sessionId?: string): void {
     const activityDate = new Date(timestamp)
     const hh = String(activityDate.getHours()).padStart(2, '0')
     const mm = String(activityDate.getMinutes()).padStart(2, '0')
@@ -814,7 +815,9 @@ export class SessionManager {
       agentsBaseDir: this.agentsBaseDir,
       scopedAgentMemory: this.scopedAgentMemory,
     })
-    appendToDailyFile(formattedSummary, activityDate, targetDir)
+    const scope = resolveContextScope(this.db, sessionId, agentId)
+    if (!scope) return // no owner/scope: retain DB summary, never write shared memory
+    appendToDailyFile(formattedSummary, activityDate, contextMemoryDir(targetDir ?? getMemoryDir(), scope))
   }
 
   /**
@@ -1004,9 +1007,8 @@ export class SessionManager {
     const id = generateSessionId()
     const key = this.sessionKey(userId, agentId)
 
-    // Carry a verbatim tail of the previous session (if recent) into the
-    // first prompt of this one — consumed via consumeFactInjection.
-    this.prepareSessionTail(key, userId, agentId)
+    // A new strand starts without another strand's transcript. Only an
+    // explicit fork/resume carries continuity; recent persona activity does not.
 
     const session: SessionInfo = {
       id,
@@ -1073,7 +1075,7 @@ export class SessionManager {
       const keywords = extractTopicTags([messageText])
       if (keywords.length === 0) return
 
-      const facts = queryMemoriesFts(this.db, keywords, loadHeuristics().factInjection.limit, agentId)
+      const facts = queryMemoriesFts(this.db, keywords, loadHeuristics().factInjection.limit, agentId, this.sessions.get(key)?.id)
       if (facts.length === 0) return
 
       const injection = buildFactInjection(facts)
@@ -1087,33 +1089,6 @@ export class SessionManager {
       console.log(`[session] Injected ${facts.length} facts for key ${key} (keywords: ${keywords.join(', ')})`)
     } catch (err) {
       console.error('[session] Fact injection error:', err)
-    }
-  }
-
-  /**
-   * Store a compact verbatim tail of the user's PREVIOUS interactive session
-   * so the fresh session doesn't start with hard amnesia. Only when the
-   * previous session was recently active (stale tails are noise).
-   */
-  private prepareSessionTail(key: string, userId: string, agentId: string): void {
-    try {
-      const prev = this.db.prepare(
-        `SELECT id, last_activity FROM sessions
-         WHERE session_user = ? AND agent_id = ? AND type = 'interactive'
-         ORDER BY started_at DESC LIMIT 1`
-      ).get(userId, agentId) as { id: string; last_activity: string | null } | undefined
-      if (!prev) return
-
-      // Freshness window: 12h. `last_activity` is stored as UTC datetime text.
-      if (prev.last_activity) {
-        const lastMs = new Date(prev.last_activity.replace(' ', 'T') + 'Z').getTime()
-        if (Number.isFinite(lastMs) && Date.now() - lastMs > loadHeuristics().sessionTail.freshnessHours * 3600_000) return
-      }
-
-      const tail = this.buildSessionTail(prev.id)
-      if (tail) this.pendingSessionTail.set(key, tail)
-    } catch (err) {
-      console.error('[session] Session-tail carryover error:', err)
     }
   }
 
@@ -1370,7 +1345,7 @@ export class SessionManager {
         const history = this.buildConversationHistory(oldSessionId) ?? undefined
         summary = await this.onSummarize(oldSessionId, userId, history)
         if (summary) {
-          this.writeSummaryToDailyFile(summary, session.lastActivity, session.agentId)
+          this.writeSummaryToDailyFile(summary, session.lastActivity, session.agentId, session.id)
           session.summaryWritten = true
           console.log(
             `[session] Background summary written to daily log for session ${oldSessionId}`,
@@ -1464,7 +1439,7 @@ export class SessionManager {
 
         summary = await this.onSummarize(session.id, userId, history)
         if (summary) {
-          this.writeSummaryToDailyFile(summary, session.lastActivity, session.agentId)
+          this.writeSummaryToDailyFile(summary, session.lastActivity, session.agentId, session.id)
           session.summaryWritten = true
           console.log(`[session] Summary written to daily log for session ${session.id}`)
         }

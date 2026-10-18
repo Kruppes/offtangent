@@ -1180,7 +1180,8 @@ describe('TaskRunner', () => {
 
       // The PiAgent should have been created with the custom system prompt
       expect(capturedOptions).toBeTruthy()
-      expect(capturedOptions!.initialState.systemPrompt).toBe(customPrompt)
+      expect(capturedOptions!.initialState.systemPrompt).toContain(customPrompt)
+      expect(capturedOptions!.initialState.systemPrompt).toContain('<global_rules>')
 
       const updated = store.getById(task.id)!
       expect(updated.status).toBe('completed')

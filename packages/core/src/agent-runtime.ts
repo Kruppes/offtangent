@@ -1,3 +1,4 @@
+import { recordContextManifest } from './context-provenance.js'
 import { readStrandWorkingMode, strandWorkingModePrompt } from './strand-working-mode.js'
 import { spawn } from 'node:child_process'
 import { readStrandContextWindow, readStrandEcoMode } from './eco-mode-store.js'
@@ -17,6 +18,7 @@ import type { ProviderManager } from './provider-manager.js'
 import { createStreamActivityNotifier } from './provider-phase.js'
 import type { SettingsThinkingLevel } from './contracts/settings.js'
 import { normalizeThinkingLevel } from './thinking-level.js'
+import { resolveContextScope } from './context-scope.js'
 import { assembleSystemPrompt, ensureMemoryStructure, ensureConfigStructure, formatCurrentTimeContext } from './memory.js'
 import type { SkillPromptEntry, AvailableProviderModelPromptEntry, RuntimeInstanceIdentity } from './memory.js'
 import { loadMultiPersonaSettings } from './config.js'
@@ -100,6 +102,7 @@ export function createBaseAgentTools(options: BaseAgentToolsOptions): AgentTool[
     }),
     createSearchMemoriesTool({
       db: options.db,
+      getCurrentSessionId: options.getCurrentSessionId,
       getCurrentUserId: options.getCurrentUserId,
       getCurrentAgentId: options.getCurrentAgentId,
     }),
@@ -891,9 +894,12 @@ class PiAgentRuntime implements AgentRuntimeBoundary, AgentRuntimePiAgentAccess 
         // its handle in every text part. Fail open — a redaction bug must not
         // kill a turn, the earlier boundaries already did the real work.
         try {
-          return redactMessages(cleaned)
+          const outgoing = redactMessages(cleaned)
+          this.recordManifest(outgoing)
+          return outgoing
         } catch (err) {
           console.error('[agent-runtime] redactKnown failed on the outgoing context:', err)
+          this.recordManifest(cleaned)
           return cleaned
         }
       },
@@ -907,6 +913,12 @@ class PiAgentRuntime implements AgentRuntimeBoundary, AgentRuntimePiAgentAccess 
       // (the default) this returns undefined and the result stays as is.
       afterToolCall: async (ctx) => this.freezeEcoToolResult(ctx),
     })
+  }
+
+  private recordManifest(messages: readonly unknown[]): void {
+    if (!this.currentSessionId) return
+    try { recordContextManifest(this.db, this.currentSessionId, this.agentId, this.agent.state.systemPrompt, messages) }
+    catch { console.warn('[context] Could not record bounded provenance metadata') }
   }
 
   /** `baseTools` plus `codemode` when the setting and the current model allow it. Fails closed to `baseTools`. */
@@ -1273,6 +1285,7 @@ class PiAgentRuntime implements AgentRuntimeBoundary, AgentRuntimePiAgentAccess 
 
     let prompt = assembleSystemPrompt({
       memoryDir: this.memoryDir,
+      contextScope: resolveContextScope(this.db, sessionId, agentId ?? this.agentId),
       baseInstructions: this.baseInstructions,
       instanceIdentity,
       recentDays: profileOptions.recentDays,

@@ -1,11 +1,11 @@
 import fs from 'node:fs'
+import { contextMemoryDir } from './context-scope.js'
 import path from 'node:path'
 import { getWorkspaceDir } from './workspace.js'
 import { getConfigDir, getDefaultTimezone, getDocsPath, getReadmePath, loadMultiPersonaSettings } from './config.js'
 import { loadPersona, getPersonaDir, listPersonaIds } from './persona-loader.js'
 import type { PersonaContext } from './persona-loader.js'
-import { loadHeuristics } from './heuristics.js'
-import { budgetRecentMemory, DAILY_SEPARATOR } from './recent-memory.js'
+import { DAILY_SEPARATOR } from './recent-memory.js'
 import type { DailyMemoryEntry } from './recent-memory.js'
 import { SYSTEM_PROMPT_CACHE_MARKER } from './prompt-cache.js'
 import { buildInteractiveQuestionsPrompt } from './interactive-questions-prompt.js'
@@ -952,6 +952,8 @@ export function formatRuntimeInstanceBlock(identity?: RuntimeInstanceIdentity | 
 }
 
 export function assembleSystemPrompt(options?: {
+  /** Resolved from the authenticated session; absent means no automatic data memory. */
+  contextScope?: import('./context-scope.js').ContextScope | null
   memoryDir?: string
   configDir?: string
   baseInstructions?: string
@@ -1001,7 +1003,6 @@ export function assembleSystemPrompt(options?: {
    */
   scopedAgentMemory?: boolean
 }): string {
-  const recentDays = options?.recentDays ?? 3
 
   // RC5 (multi-persona bleeding): non-main personas with scoped memory
   // enabled read/write their OWN memory root (/data/agents/<id>/memory/)
@@ -1069,7 +1070,7 @@ export function assembleSystemPrompt(options?: {
   }
 
   // 3. Agent rules from AGENTS.md (persona overrides global)
-  const agentsRules = persona?.agents ?? readAgentsRulesFile(options?.configDir)
+  const agentsRules = [readAgentsRulesFile(options?.configDir), persona?.agents].filter(Boolean).join('\n\n')
   sections.push(`<agent_rules>\n${sealSystemText(agentsRules.trim(), 'agent-rules')}\n</agent_rules>`)
 
   // SPEC 11.5: the system prompt is a stable prefix followed by a dynamic
@@ -1079,43 +1080,20 @@ export function assembleSystemPrompt(options?: {
   // prefix survives a summary write or a consolidation run.
   const tail: string[] = []
 
-  // 4. Core memory from MEMORY.md (persona memory is additional, not replacing)
-  const agents = readMemoryFile(memoryDir)
-  tail.push(`<core_memory>\n${sealSystemText(agents.trim(), 'core-memory')}\n</core_memory>`)
-
-  // 4b. Agent-specific memory (from persona MEMORY.md, additive)
-  if (persona?.memory) {
-    tail.push(`<agent_memory>\n${sealSystemText(persona.memory.trim(), 'agent-memory')}\n</agent_memory>`)
-  }
-
-  // 5. Recent daily context, capped by a character budget (token audit
-  // 2026-09-17 §1.6: this block was unlimited and cost up to 85k tokens per
-  // turn). Newest day first, older days cut first, every cut named with the
-  // file it came from so the agent can read the rest on demand.
-  const heuristics = loadHeuristics()
-  const dailyEntries = readRecentDailyEntries(recentDays, memoryDir)
-  const budgeted = budgetRecentMemory(dailyEntries, {
-    maxChars: heuristics.recentMemory.maxChars,
-    dailyDir: path.join(memoryDir ?? getMemoryDir(), 'daily'),
-    warnFactor: heuristics.recentMemory.warnFactor,
-  })
-  if (budgeted.text) {
-    tail.push(`<recent_memory>
-These are summarized session notes from recent days. They are condensed — for full conversation details, use the read_chat_history tool.
-
-${sealSystemText(budgeted.text, 'recent-memory')}
-</recent_memory>`)
-  }
-
-  // 6. User profile injection (persona USER.md overrides global user profile)
-  if (persona?.user) {
-    tail.push(`<user_profile>\n${sealSystemText(persona.user.trim(), 'user-profile')}\n</user_profile>`)
-  } else if (options?.currentUser?.username) {
-    const profileContent = readUserProfile(options.currentUser.username, memoryDir)
-    tail.push(`<user_profile>\n${sealSystemText(profileContent.trim(), 'user-profile')}\n</user_profile>`)
-  } else {
-    const usersPath = getUserProfileDir(memoryDir)
-    tail.push(`<user_profiles_path>${usersPath}</user_profiles_path>`)
+  // Data is opt-in by classified scope. Legacy MEMORY.md, persona MEMORY.md,
+  // USER.md and complete dailies stay on disk, but are NEVER automatic input.
+  const scope = options?.contextScope
+  const dataDir = scope ? contextMemoryDir(memoryDir ?? getMemoryDir(), scope) : null
+  if (dataDir) {
+    fs.mkdirSync(path.join(dataDir, 'daily'), { recursive: true })
+    for (const [source, dir] of [
+      ['approved_global_memory', contextMemoryDir(memoryDir ?? getMemoryDir(), { ...scope!, key: 'approved-global' })],
+      ['scoped_memory', dataDir],
+    ]) {
+      const file = path.join(dir, 'MEMORY.md')
+      if (fs.existsSync(file)) tail.push(`<${source}>\n${sealSystemText(fs.readFileSync(file, 'utf-8').trim(), source)}\n</${source}>`)
+    }
+    tail.push(`<context_scope>Data policy: project-isolated. Scope: ${scope!.projectId ? 'assigned project' : 'this strand only'}. Legacy memory and daily archives require explicit retrieval; never promote project notes into global rules.</context_scope>`)
   }
 
   // 7. Available tools overview
@@ -1216,7 +1194,7 @@ ${providerLines.join('\n')}
   // 8. Wiki pages (LLM-maintained knowledge base).
   // Skipped entirely when the prompt profile disables it (slim profiles for
   // slow/local providers) — the agent can still read wiki files on demand.
-  const wikiPages = options?.includeWikiPages === false ? [] : listWikiPages(memoryDir)
+  const wikiPages = !dataDir || options?.includeWikiPages === false ? [] : listWikiPages(dataDir)
   if (wikiPages.length > 0) {
     const pageLines = wikiPages.map(n => {
       const aliasStr = n.aliases.length > 0 ? ` (aliases: ${n.aliases.join(', ')})` : ''
@@ -1234,26 +1212,17 @@ ${sealSystemText(pageLines, 'wiki-pages')}
   }
 
   // 9. Memory and config file paths for agent self-access
-  const dir = memoryDir ?? getMemoryDir()
+  const dir = dataDir
   const cfgDir = options?.configDir ?? getConfigDir()
   const today = new Date().toISOString().split('T')[0]
   sections.push(`<memory_paths>
-You can read and write your memory and config files directly using read_file, write_file, and edit_file tools.
-When modifying existing files, prefer edit_file (targeted oldText/newText replacements) over write_file (full rewrite) to save tokens and reduce errors.
-
-Memory files:
-- SOUL.md: ${path.join(dir, 'SOUL.md')}
+Global policy (always applies): ${path.join(cfgDir, 'AGENTS.md')}
+${dir ? `Write durable project/strand data ONLY under this scoped directory: ${dir}
 - MEMORY.md: ${path.join(dir, 'MEMORY.md')}
-- Daily memory directory: ${path.join(dir, 'daily/')} (today's file is named in the current_date block)
-- User profiles directory: ${path.join(dir, 'users/')}
-- Wiki pages directory: ${path.join(dir, 'wiki/')}
-- Sources directory (immutable raw material): ${path.join(dir, 'sources/')}
-
-Config files:
-- AGENTS.md (agent rules): ${path.join(cfgDir, 'AGENTS.md')}
-- HEARTBEAT.md (heartbeat tasks): ${path.join(cfgDir, 'HEARTBEAT.md')}
-- CONSOLIDATION.md (consolidation rules): ${path.join(cfgDir, 'CONSOLIDATION.md')}
-- TASKS.md (background task guidelines): ${path.join(cfgDir, 'TASKS.md')}
+- Daily archive: ${path.join(dir, 'daily')}
+- Wiki: ${path.join(dir, 'wiki')}
+Never write project data into persona/global MEMORY.md, SOUL.md, AGENTS.md or USER.md.
+Daily archives are not automatically injected. Retrieval from another scope must be explicitly requested and named.` : 'No authenticated data scope: do not read or write personal/project memory automatically.'}
 </memory_paths>`)
 
   // 9b. Axiom documentation (read-only, shipped with the image).
@@ -1370,7 +1339,7 @@ Artifact constraints, because the canvas runs the page in a locked-down sandbox:
   // carries the date and would otherwise rotate a line inside the stable,
   // cached prefix once a day.
   const { date, tz } = getCurrentDateTimeParts(options?.timezone)
-  sections.push(`<current_date>\nCurrent date: ${date} (${tz})\nToday's daily file: ${path.join(dir, 'daily', `${today}.md`)}\n</current_date>`)
+  sections.push(`<current_date>\nCurrent date: ${date} (${tz})\nToday's daily file: ${dir ? path.join(dir, 'daily', `${today}.md`) : 'none (no authenticated data scope)'}\n</current_date>`)
 
   // 15. Language setting (placed near the end for recency: "respond in X" hits
   // the model right before it processes the user message).

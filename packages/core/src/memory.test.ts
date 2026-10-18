@@ -1,3 +1,4 @@
+import { contextMemoryDir } from './context-scope.js'
 import { describe, it, expect, afterEach } from 'vitest'
 import {
   ensureMemoryStructure,
@@ -417,7 +418,7 @@ describe('memory', () => {
   })
 
   describe('assembleSystemPrompt', () => {
-    it('combines all memory tiers into a coherent prompt', () => {
+    it('loads identity and policy, never unclassified legacy core memory', () => {
       const dir = makeTmpDir()
       ensureMemoryStructure(dir)
 
@@ -429,9 +430,9 @@ describe('memory', () => {
       expect(prompt).toContain('</personality>')
 
       // Should contain core memory block
-      expect(prompt).toContain('<core_memory>')
-      expect(prompt).toContain('# Agent Memory')
-      expect(prompt).toContain('</core_memory>')
+      expect(prompt).not.toContain('<core_memory>')
+      expect(prompt).not.toContain('# Agent Memory')
+      expect(prompt).not.toContain('</core_memory>')
     })
 
     it('keeps the stable prefix before the dynamic tail (SPEC 11.5 prompt cache)', () => {
@@ -453,11 +454,8 @@ describe('memory', () => {
       expect(at('<memory_paths>')).toBeLessThan(at('<task_system>'))
       expect(at('<task_system>')).toBeLessThan(at('<workspace>'))
       // ...then everything that changes daily or on consolidation...
-      expect(at('<workspace>')).toBeLessThan(at('<core_memory>'))
-      expect(at('<core_memory>')).toBeLessThan(at('<recent_memory>'))
-      expect(at('<recent_memory>')).toBeLessThan(at('<user_profile>'))
-      // ...and the date stays last.
-      expect(at('<user_profile>')).toBeLessThan(at('<current_date>'))
+      expect(at('<workspace>')).toBeLessThan(at('<current_date>'))
+      for (const tag of ['<core_memory>', '<recent_memory>', '<user_profile>']) expect(prompt).not.toContain(tag)
     })
 
     it('puts the cache breakpoint marker exactly between the stable prefix and the volatile tail', () => {
@@ -475,7 +473,7 @@ describe('memory', () => {
         expect(prompt.indexOf(tag), tag).toBeLessThan(marker)
       }
       // ...volatile ones behind it.
-      for (const tag of ['<core_memory>', '<recent_memory>', '<user_profile>', '<current_date>']) {
+      for (const tag of ['<current_date>']) {
         expect(prompt.indexOf(tag), tag).toBeGreaterThan(marker)
       }
 
@@ -485,7 +483,7 @@ describe('memory', () => {
       expect(text).not.toContain(SYSTEM_PROMPT_CACHE_MARKER)
       expect(prefixChars).not.toBeNull()
       expect(text.slice(0, prefixChars!)).toContain('<workspace>')
-      expect(text.slice(prefixChars!)).toContain('<core_memory>')
+      expect(text.slice(prefixChars!)).toContain('<current_date>')
       expect(text.slice(prefixChars!)).not.toContain('<workspace>')
     })
 
@@ -493,9 +491,10 @@ describe('memory', () => {
       const dir = makeTmpDir()
       ensureMemoryStructure(dir)
 
-      const prompt = assembleSystemPrompt({ memoryDir: dir })
+      const scope = { userId: 1, agentId: 'main', sessionId: 'test', projectId: null, key: 'strand:test' }
+      const prompt = assembleSystemPrompt({ memoryDir: dir, contextScope: scope })
       const today = new Date().toISOString().split('T')[0]
-      const todayPath = path.join(dir, 'daily', `${today}.md`)
+      const todayPath = path.join(contextMemoryDir(dir, scope), 'daily', `${today}.md`)
 
       expect(prompt).toContain(todayPath)
       const { text, prefixChars } = splitSystemPromptAtCacheMarker(prompt)
@@ -503,10 +502,10 @@ describe('memory', () => {
       expect(text.slice(0, prefixChars!)).not.toContain(todayPath)
       expect(text.slice(prefixChars!)).toContain(todayPath)
       // The directory pointer stays available in <memory_paths>.
-      expect(text.slice(0, prefixChars!)).toContain(path.join(dir, 'daily/'))
+      expect(text.slice(0, prefixChars!)).toContain(path.join(contextMemoryDir(dir, scope), 'daily'))
     })
 
-    it('keeps the stable prefix byte-identical across two assemblies while the tail changes', () => {
+    it('keeps the stable prefix byte-identical across two assemblies despite unclassified archive writes', () => {
       const dir = makeTmpDir()
       ensureMemoryStructure(dir)
       appendToDailyFile('\n## Session\n\nFirst note\n', undefined, dir)
@@ -523,11 +522,11 @@ describe('memory', () => {
       expect(second.prefixChars).toBe(first.prefixChars)
       expect(second.text.slice(0, second.prefixChars!)).toBe(first.text.slice(0, first.prefixChars!))
       // ...and the tail really did change, otherwise the test proves nothing.
-      expect(second.text.slice(second.prefixChars!)).not.toBe(first.text.slice(first.prefixChars!))
-      expect(second.text).toContain('Second note written mid-session')
+      expect(second.text.slice(second.prefixChars!)).toBe(first.text.slice(first.prefixChars!)) // legacy writes cannot alter the prompt
+      expect(second.text).not.toContain('Second note written mid-session')
     })
 
-    it('caps the recent_memory block at the configured character budget', () => {
+    it('excludes entire daily archives even when a legacy budget is configured', () => {
       const dir = makeTmpDir()
       ensureMemoryStructure(dir)
       const yesterday = new Date()
@@ -542,18 +541,18 @@ describe('memory', () => {
 
         expect(block.length).toBeLessThan(8500)
         // Newest day survives in full, the older one is cut back to its tail.
-        expect(block).toContain('TODAY-HEAD')
-        expect(block).toContain('TODAY-TAIL')
+        expect(block).toBe('')
+        expect(block).not.toContain('TODAY-TAIL')
         expect(block).not.toContain('YESTERDAY-HEAD')
         // ...and the cut is declared with the file to read for the rest.
-        expect(block).toContain('[truncated:')
-        expect(block).toContain(path.join(dir, 'daily'))
+        expect(block).not.toContain('[truncated:')
+        expect(block).not.toContain(path.join(dir, 'daily'))
       } finally {
         setHeuristicsOverrideForTests(null)
       }
     })
 
-    it('leaves a small recent_memory block untouched', () => {
+    it('excludes even small legacy daily notes', () => {
       const dir = makeTmpDir()
       ensureMemoryStructure(dir)
       appendToDailyFile('\n## Session\n\nToday: debugged the webhook\n', undefined, dir)
@@ -561,7 +560,7 @@ describe('memory', () => {
       setHeuristicsOverrideForTests({ recentMemory: { maxChars: 8000, days: 3, warnFactor: 3 } })
       try {
         const prompt = assembleSystemPrompt({ memoryDir: dir })
-        expect(prompt).toContain('Today: debugged the webhook')
+        expect(prompt).not.toContain('Today: debugged the webhook')
         expect(prompt).not.toContain('[truncated:')
         expect(prompt).not.toContain('[omitted:')
       } finally {
@@ -583,7 +582,7 @@ describe('memory', () => {
       expect(prompt).toContain('</instructions>')
     })
 
-    it('includes recent daily context when available', () => {
+    it('does not automatically include available daily context', () => {
       const dir = makeTmpDir()
       ensureMemoryStructure(dir)
 
@@ -592,9 +591,9 @@ describe('memory', () => {
 
       const prompt = assembleSystemPrompt({ memoryDir: dir })
 
-      expect(prompt).toContain('<recent_memory>')
-      expect(prompt).toContain('User asked about deployment')
-      expect(prompt).toContain('</recent_memory>')
+      expect(prompt).not.toContain('<recent_memory>')
+      expect(prompt).not.toContain('User asked about deployment')
+      expect(prompt).not.toContain('</recent_memory>')
     })
 
     it('excludes recent_memory block when no daily content', () => {
@@ -664,13 +663,13 @@ describe('memory', () => {
       const prompt = assembleSystemPrompt({ memoryDir: dir })
 
       expect(prompt).toContain('<memory_paths>')
-      expect(prompt).toContain('SOUL.md')
-      expect(prompt).toContain('MEMORY.md')
+      expect(prompt).toContain('No authenticated data scope')
+      expect(prompt).not.toContain(path.join(dir, 'MEMORY.md'))
       expect(prompt).toContain('AGENTS.md')
-      expect(prompt).toContain('HEARTBEAT.md')
-      expect(prompt).toContain('daily/')
-      expect(prompt).toContain('wiki/')
-      expect(prompt).toContain('read_file, write_file, and edit_file')
+      expect(prompt).toContain('AGENTS.md')
+      expect(prompt).not.toContain('daily/')
+      expect(prompt).not.toContain('wiki/')
+      expect(prompt).not.toContain('read_file, write_file, and edit_file')
       expect(prompt).toContain('</memory_paths>')
     })
 
@@ -681,8 +680,8 @@ describe('memory', () => {
       const prompt = assembleSystemPrompt({ memoryDir: dir })
 
       expect(prompt).toContain('<memory_paths>')
-      expect(prompt).toContain('Sources directory')
-      expect(prompt).toContain(path.join(dir, 'sources'))
+      expect(prompt).toContain('No authenticated data scope')
+      expect(prompt).not.toContain(path.join(dir, 'sources'))
     })
 
     it('includes axiom_docs section pointing at README and the three docs subdirectories', () => {
@@ -703,7 +702,7 @@ describe('memory', () => {
       expect(prompt).toContain('</axiom_docs>')
     })
 
-    it('includes wiki_pages section when wiki pages exist', () => {
+    it('does not enumerate unclassified legacy wiki pages', () => {
       const dir = makeTmpDir()
       ensureMemoryStructure(dir)
 
@@ -713,15 +712,12 @@ describe('memory', () => {
 
       const prompt = assembleSystemPrompt({ memoryDir: dir })
 
-      expect(prompt).toContain('<wiki_pages>')
-      expect(prompt).toContain('axiom.md')
-      expect(prompt).toContain('Axiom')
-      expect(prompt).toContain('the-axiom')
-      expect(prompt).toContain('load it with read_file')
-      expect(prompt).toContain('Maintain and organize it autonomously')
-      expect(prompt).toContain('wiki/SKILL.md')
-      expect(prompt).toContain('genuine contradiction')
-      expect(prompt).toContain('</wiki_pages>')
+      expect(prompt).not.toContain('<wiki_pages>')
+      expect(prompt).not.toContain('axiom.md')
+      expect(prompt).not.toContain('Axiom')
+      expect(prompt).not.toContain('the-axiom')
+      expect(prompt).not.toContain('load it with read_file')
+      expect(prompt).not.toContain('</wiki_pages>')
     })
 
     it('excludes wiki_pages section when no wiki pages exist', () => {
@@ -764,7 +760,7 @@ describe('memory', () => {
       expect(prompt).not.toContain('<wiki_pages>')
       // The wiki directory path must still be listed in memory_paths so the
       // agent can read/write wiki files on demand.
-      expect(prompt).toContain('Wiki pages directory')
+      expect(prompt).toContain('No authenticated data scope')
     })
 
     it('every profile carries the interactive_questions block right after the tools', () => {
@@ -792,7 +788,7 @@ describe('memory', () => {
       expect(prompt).not.toContain('<axiom_docs>')
     })
 
-    it('recentDays: 1 injects only today\'s daily file', () => {
+    it('recentDays: 1 never injects today\'s daily file', () => {
       const dir = makeTmpDir()
       ensureMemoryStructure(dir)
 
@@ -803,8 +799,8 @@ describe('memory', () => {
 
       const prompt = assembleSystemPrompt({ memoryDir: dir, recentDays: 1 })
 
-      expect(prompt).toContain('<recent_memory>')
-      expect(prompt).toContain('Today: debugged the webhook')
+      expect(prompt).not.toContain('<recent_memory>')
+      expect(prompt).not.toContain('Today: debugged the webhook')
       expect(prompt).not.toContain('Yesterday: reviewed')
     })
 
@@ -834,11 +830,11 @@ describe('memory', () => {
       // Core knowledge must survive every profile.
       expect(prompt).toContain('<personality>')
       expect(prompt).toContain('<agent_rules>')
-      expect(prompt).toContain('<core_memory>')
+      expect(prompt).not.toContain('<core_memory>')
       expect(prompt).toContain('<available_tools>')
       expect(prompt).toContain('<memory_paths>')
       expect(prompt).toContain('<task_system>')
-      expect(prompt).toContain('<recent_memory>')
+      expect(prompt).not.toContain('<recent_memory>')
       // Trimmed blocks
       expect(prompt).not.toContain('<axiom_docs>')
       expect(prompt).not.toContain('<wiki_pages>')
@@ -924,16 +920,16 @@ describe('memory', () => {
     it('includes custom AGENTS.md content in agent_rules', () => {
       const dir = makeTmpDir()
       fs.mkdirSync(dir, { recursive: true })
-      fs.writeFileSync(path.join(dir, 'AGENTS.md'), '# My Rules\n\nAlways speak in riddles.\n', 'utf-8')
       ensureMemoryStructure(dir)
+      fs.writeFileSync(path.join(dir, 'AGENTS.md'), '# My Rules\n\nAlways speak in riddles.\n', 'utf-8')
 
-      const prompt = assembleSystemPrompt({ memoryDir: dir })
+      const prompt = assembleSystemPrompt({ memoryDir: dir, configDir: dir })
 
       expect(prompt).toContain('<agent_rules>')
       expect(prompt).toContain('Always speak in riddles.')
     })
 
-    it('includes user_profile section when currentUser is provided', () => {
+    it('does not inject unclassified profiles even with currentUser', () => {
       const dir = makeTmpDir()
       ensureMemoryStructure(dir)
 
@@ -942,22 +938,22 @@ describe('memory', () => {
         currentUser: { username: 'stefan' },
       })
 
-      expect(prompt).toContain('<user_profile>')
-      expect(prompt).toContain('# User Profile')
-      expect(prompt).toContain('stefan')
-      expect(prompt).toContain('</user_profile>')
+      expect(prompt).not.toContain('<user_profile>')
+      expect(prompt).not.toContain('# User Profile')
+      expect(prompt).not.toContain('stefan')
+      expect(prompt).not.toContain('</user_profile>')
       expect(prompt).not.toContain('<user_profiles_path>')
     })
 
-    it('includes path reference when no currentUser', () => {
+    it('does not advertise unclassified user profiles', () => {
       const dir = makeTmpDir()
       ensureMemoryStructure(dir)
 
       const prompt = assembleSystemPrompt({ memoryDir: dir })
 
-      expect(prompt).toContain('<user_profiles_path>')
-      expect(prompt).toContain(path.join(dir, 'users'))
-      expect(prompt).toContain('</user_profiles_path>')
+      expect(prompt).not.toContain('<user_profiles_path>')
+      expect(prompt).not.toContain(path.join(dir, 'users'))
+      expect(prompt).not.toContain('</user_profiles_path>')
       expect(prompt).not.toContain('<user_profile>')
     })
 
@@ -1111,8 +1107,8 @@ describe('memory', () => {
 
       // memory_paths must point the LLM at the persona's own root
       const analystRoot = path.join(agentsBaseDir, 'analyst', 'memory')
-      expect(prompt).toContain(path.join(analystRoot, 'MEMORY.md'))
-      expect(prompt).toContain(path.join(analystRoot, 'daily/'))
+      expect(prompt).not.toContain(path.join(analystRoot, 'MEMORY.md'))
+      expect(prompt).not.toContain(path.join(analystRoot, 'daily/'))
       expect(prompt).not.toContain(path.join(mainMemoryDir, 'MEMORY.md'))
 
       // The persona memory root was bootstrapped as a side effect
@@ -1137,7 +1133,7 @@ describe('memory', () => {
       expect(prompt.indexOf('<runtime_instance>')).toBeLessThan(prompt.indexOf('<identity>'))
     })
 
-    it('assembleSystemPrompt injects the persona\'s own MEMORY.md and dailies when scoped', () => {
+    it('assembleSystemPrompt excludes the persona\'s own MEMORY.md and dailies when scoped', () => {
       const { mainMemoryDir, agentsBaseDir } = makeScopedSetup()
       const analystRoot = path.join(agentsBaseDir, 'analyst', 'memory')
       ensureMemoryStructure(analystRoot)
@@ -1151,14 +1147,14 @@ describe('memory', () => {
         scopedAgentMemory: true,
       })
 
-      expect(prompt).toContain('ANALYST-ONLY-FACT')
-      expect(prompt).toContain('ANALYST-DAILY-ENTRY')
+      expect(prompt).not.toContain('ANALYST-ONLY-FACT')
+      expect(prompt).not.toContain('ANALYST-DAILY-ENTRY')
       expect(prompt).not.toContain('MAIN-SECRET')
       // Persona SOUL.md override still applies
       expect(prompt).toContain('# Analyst Soul')
     })
 
-    it('assembleSystemPrompt keeps main unchanged when scoping is enabled', () => {
+    it('assembleSystemPrompt isolates main too when scoping is enabled', () => {
       const { mainMemoryDir, agentsBaseDir } = makeScopedSetup()
 
       const prompt = assembleSystemPrompt({
@@ -1168,12 +1164,12 @@ describe('memory', () => {
         scopedAgentMemory: true,
       })
 
-      expect(prompt).toContain('MAIN-SECRET')
-      expect(prompt).toContain('MAIN-DAILY-NOTE')
-      expect(prompt).toContain(path.join(mainMemoryDir, 'MEMORY.md'))
+      expect(prompt).not.toContain('MAIN-SECRET')
+      expect(prompt).not.toContain('MAIN-DAILY-NOTE')
+      expect(prompt).not.toContain(path.join(mainMemoryDir, 'MEMORY.md'))
     })
 
-    it('assembleSystemPrompt falls back to shared memory for personas when scoping is disabled', () => {
+    it('assembleSystemPrompt never falls back to shared memory when legacy scoping is disabled', () => {
       const { mainMemoryDir, agentsBaseDir } = makeScopedSetup()
 
       const prompt = assembleSystemPrompt({
@@ -1184,8 +1180,8 @@ describe('memory', () => {
       })
 
       // Legacy behavior: shared memory is injected
-      expect(prompt).toContain('MAIN-SECRET')
-      expect(prompt).toContain(path.join(mainMemoryDir, 'MEMORY.md'))
+      expect(prompt).not.toContain('MAIN-SECRET')
+      expect(prompt).not.toContain(path.join(mainMemoryDir, 'MEMORY.md'))
     })
   })
 

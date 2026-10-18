@@ -76,7 +76,7 @@ import type {
 import type { AgentTool } from '@earendil-works/pi-agent-core'
 import { completeSimple } from '@axiom/core'
 // W5/P3: close out feed-only outcomes that are too old to still announce.
-import { expireStaleTaskNotices } from '@axiom/core'
+import { archivePendingTaskNotices } from '@axiom/core'
 import { getCurrentTaskAgentId, getCurrentTaskExecutionContext, resolveTaskDefaultProvider as resolveTaskDefaultProviderChain } from '@axiom/core'
 import { resolveRoleSpec } from '@axiom/core'
 import { backfillStrandModelPins, resolveBackfillStrandModel, loadModelPolicyRoles } from '@axiom/core'
@@ -2792,20 +2792,12 @@ export async function createRuntimeComposition(options: RuntimeCompositionOption
     logger.error('[axiom] Boot resume failed:', err)
   }
 
-  // W5/P3: an outcome that nobody was there to hear is announced at the next
-  // run of its persona (see task-agent-notice.ts). One that sat unannounced
-  // for longer than the delivery max age is closed out here instead of
-  // surfacing days later — same age rule as the injection queue.
-  // `maxAgeHours: 0` disables the age rule (see settings reference) — then
-  // nothing is ever too old, and expiry must not run at all.
-  if (deliveryLimits.maxAgeMs > 0) {
-    try {
-      const expired = expireStaleTaskNotices(db, { maxAgeMs: deliveryLimits.maxAgeMs })
-      if (expired > 0) logger.log(`[axiom] Boot: ${expired} stale task outcome(s) marked as announced`)
-    } catch (err) {
-      logger.warn('[axiom] Could not expire stale task outcomes:', err)
-    }
-  }
+  // Never pay persona-wide context debt on an unrelated user turn. Preserve
+  // legacy outcomes in the feed, with ownerless rows quarantined for admins.
+  try {
+    const result = archivePendingTaskNotices(db)
+    logger.log(`[context] Archived ${result.delivered} legacy notices; ${result.quarantined} need ownership classification`)
+  } catch { logger.warn('[context] Legacy notice archival failed; rows remain unchanged for retry') }
 
   injectionSweeper.start()
 

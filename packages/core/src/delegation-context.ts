@@ -90,7 +90,7 @@ export function buildDelegationContext(options: BuildDelegationContextOptions): 
     }
     if (sel.memoryQuery?.trim()) {
       const keywords = extractTopicTags([sel.memoryQuery])
-      const facts = queryMemoriesFts(db, keywords.length ? keywords : sel.memoryQuery.split(/\s+/), 10, options.agentId)
+      const facts = queryMemoriesFts(db, keywords.length ? keywords : sel.memoryQuery.split(/\s+/), 10, options.agentId, parentSessionId)
       if (facts.length) push(`<memory_facts>\n${facts.map(f => `${RECALLED_MARKER} ${f.content}`).join('\n')}\n</memory_facts>`)
     }
     const ids = (sel.messageIds ?? []).filter(id => Number.isInteger(id) && id > 0)

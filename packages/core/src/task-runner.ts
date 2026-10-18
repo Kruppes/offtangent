@@ -1,3 +1,4 @@
+import { recordContextManifest } from './context-provenance.js'
 import { inheritEcoMode, readStrandContextWindow, readStrandEcoMode, snapshotContextWindow } from './eco-mode-store.js'
 import { freezeEcoToolResult, frozenEcoRowId, resolveEcoOwner } from './eco-tool-freeze.js'
 import { Agent as PiAgent } from '@earendil-works/pi-agent-core'
@@ -11,7 +12,8 @@ import type { Database } from './database.js'
 // former inline impl (loadAttachedSkillContent/renderAttachedSkillsBlock) is
 // gone; resolveAgentMemoryDir stays (fork per-persona memory roots).
 import { renderAttachedSkillsBlock } from './attached-skills.js'
-import { readTasksGuidelinesFile, resolveAgentMemoryDir } from './memory.js'
+import { resolveContextScope, contextMemoryDir } from './context-scope.js'
+import { readTasksGuidelinesFile, readAgentsRulesFile, getMemoryDir, resolveAgentMemoryDir } from './memory.js'
 import type { SettingsThinkingLevel } from './contracts/settings.js'
 import { formatTaskRouting } from './task-policy.js'
 import { readBackgroundThinkingLevelFromConfig, resolveBackgroundReasoning, toPiAiReasoning } from './thinking-level.js'
@@ -405,6 +407,7 @@ Use this directory for cloning repos, creating files, and all file operations.
 Do NOT create working directories elsewhere (e.g. /tmp) — use ${workspaceDir} instead.
 </workspace>`)
 
+  sections.push(`<global_rules>\n${readAgentsRulesFile(configDir)}\n</global_rules>`)
   const taskGuidelines = readTasksGuidelinesFile(configDir).trim()
   if (taskGuidelines.length > 0) {
     sections.push(`<task_guidelines>
@@ -415,7 +418,7 @@ ${taskGuidelines}
   if (memoryDir) {
     sections.push(`<memory_reference>
 Your memory files are located in: ${memoryDir}
-You can read SOUL.md and MEMORY.md if you need context about the user's preferences or prior interactions.
+Read/write MEMORY.md and wiki only in this data scope. Legacy/persona memory and other projects require explicit retrieval; never promote their content globally.
 </memory_reference>`)
   }
 
@@ -836,15 +839,16 @@ export class TaskRunner {
       const model = this.options.buildModel(provider)
       const initialApiKey = await this.options.getApiKey(provider)
 
+      const dataScope = resolveContextScope(this.options.db, sessionId, task.agentId ?? 'main')
       // Determine effective system prompt
       const baseSystemPrompt = overrides?.systemPromptOverride
-        ? overrides.systemPromptOverride
+        ? `<global_rules>\n${readAgentsRulesFile()}\n</global_rules>\n${overrides.systemPromptOverride}`
         // RC5 (multi-persona bleeding): persona tasks get THEIR memory root
         // in <memory_reference>, not main's — otherwise the task LLM reads
         // (and is pointed at) main's SOUL.md/MEMORY.md.
         : buildTaskSystemPrompt(
             task.prompt,
-            resolveAgentMemoryDir(task.agentId, { fallbackMemoryDir: this.options.memoryDir }),
+            dataScope ? contextMemoryDir(resolveAgentMemoryDir(task.agentId, { fallbackMemoryDir: this.options.memoryDir }) ?? getMemoryDir(), dataScope) : undefined,
             undefined,
             { budgetMinutes: this.resolveBudgetMinutes(task) },
           )
@@ -987,12 +991,12 @@ export class TaskRunner {
           }
           // Privacy (plan 2026-09-26, step 4): last net before the request
           // leaves the process. Fail open — redaction must never kill a task.
-          try {
-            return redactMessages(view)
-          } catch (err) {
-            console.error(`[task-runner] redactKnown failed on the outgoing context of task ${taskId}:`, err)
-            return view
-          }
+          let outgoing = view
+          try { outgoing = redactMessages(view) }
+          catch (err) { console.error(`[task-runner] redactKnown failed on the outgoing context of task ${taskId}:`, err) }
+          try { recordContextManifest(this.options.db, sessionId, task.agentId ?? 'main', systemPrompt, outgoing) }
+          catch { console.warn('[context] Could not record bounded task provenance metadata') }
+          return outgoing
         },
         ...(provider.transport && provider.transport !== 'sse'
           && { transport: provider.transport }),

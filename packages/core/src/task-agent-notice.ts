@@ -1,41 +1,10 @@
-/**
- * task-agent-notice.ts: the last mile for task outcomes that never reach a
- * strand (W5/P3).
- *
- * ## The incident (2026-09-17, 16:17)
- *
- * A cronjob task (`w4-deploy-verify-20260917`) completed, the feed item was
- * written — and the agent never learned about it. The user wrote at 16:22,
- * a run started, and the result was still nowhere in the context.
- *
- * The cause is NOT the W4 durable queue or its sweeper: those never saw the
- * result. `routeTaskOutcome` asks `resolveTaskStrandOrigin`, which returns
- * null for `trigger_type='cronjob'` by design (SPEC 2.9 — cronjob results
- * must not mint strands or start LLM turns), and takes the feed-only path:
- * feed item + Telegram, no injection, therefore no queue row, therefore
- * nothing for the sweeper to re-deliver. Verified on the production DB:
- * `SELECT COUNT(*) FROM task_injections` = 0 while the feed carried the
- * `cron_report` row for that exact minute.
- *
- * ## The fix
- *
- * Keep the design decision (a cronjob still never starts a turn on its own)
- * and close the gap on the other side: the outcome is owed to the persona,
- * and the next run of that persona pays the debt. `consumePendingTaskNotices`
- * returns a compact block of the outcomes that were never announced and marks
- * them announced in the same step; `AgentCore` prepends it to the next user
- * message, so the agent reads the cronjob result BEFORE it answers the user.
- *
- * Scope is deliberately narrow:
- *  * only `trigger_type='cronjob'` — heartbeat/consolidation runs are internal
- *    plumbing, announcing them would be noise;
- *  * only `result_status != 'silent'` — silent means "do not tell anyone";
- *  * bounded by age and count, and each summary is truncated;
- *  * `agent_notified_at` is backfilled in the migration, so a deploy never
- *    replays yesterday's cronjobs.
- */
-
+/** Legacy notices are archival queries only. Automatic delivery is origin-strand
+ * or feed-only (task-outcome.ts), NEVER the next turn of a persona. */
 import type { Database } from './database.js'
+import { TaskStore } from './task-store.js'
+import { resolveTaskOwnerUserIdForTask } from './task-ownership.js'
+import { insertFeedItemDeduped } from './feed-store.js'
+import { buildTaskFeedItem } from './task-feed.js'
 
 /** Outcome that is owed to a persona. */
 export interface PendingTaskNotice {
@@ -160,14 +129,43 @@ ${parts.join('\n\n')}
  * List + format + mark, in one step. Returns null when nothing is pending.
  * Best effort: any DB problem returns null instead of breaking the turn.
  */
-export function consumePendingTaskNotices(db: Database, query: PendingNoticeQuery): string | null {
-  try {
-    const notices = listPendingTaskNotices(db, query)
-    if (notices.length === 0) return null
-    const block = formatPendingTaskNoticeBlock(notices)
-    markTaskNoticesDelivered(db, notices.map(n => n.id), query.now ?? Date.now())
-    return block
-  } catch {
-    return null
-  }
+/** @deprecated Persona-wide prompt delivery is forbidden. Kept as a safe compatibility no-op. */
+export function consumePendingTaskNotices(_db: Database, _query: PendingNoticeQuery): string | null {
+  return null
+}
+
+/** Lossless/idempotent boot migration; unknown owners are quarantined, not guessed. */
+export function archivePendingTaskNotices(db: Database): { delivered: number; quarantined: number } {
+  const rows = db.prepare("SELECT id FROM tasks WHERE agent_notified_at IS NULL AND trigger_type = 'cronjob' AND status IN ('completed','failed') AND (result_status IS NULL OR result_status != 'silent')").all() as Array<{ id: string }>
+  const store = new TaskStore(db)
+  let delivered = 0
+  let quarantined = 0
+  db.transaction(() => {
+    for (const row of rows) {
+      const task = store.getById(row.id)
+      if (!task) continue
+      // Existing feed rows already carry the authorized recipient. Do not
+      // duplicate them or rebroadcast a historical outcome.
+      const existing = db.prepare('SELECT id FROM feed_items WHERE task_id = ? LIMIT 1').get(task.id)
+      const owner = resolveTaskOwnerUserIdForTask(db, task)
+      if (!existing && owner === null) { quarantined++; continue }
+      if (!existing) insertFeedItemDeduped(db, {
+        ...buildTaskFeedItem(task, { userId: String(owner), strandId: null }),
+        dedupeKey: `legacy-task-notice:${task.id}`,
+      })
+      markTaskNoticesDelivered(db, [task.id])
+      delivered++
+    }
+    if (quarantined) {
+      // Metadata-only operator notice; never disclose ownerless task contents
+      // to an arbitrary first user. Original rows remain retrievable by admin.
+      const admins = db.prepare("SELECT id FROM users WHERE role = 'admin'").all() as Array<{ id: number }>
+      for (const admin of admins) insertFeedItemDeduped(db, {
+        userId: String(admin.id), kind: 'system', title: 'Archived task notices need ownership classification',
+        body: 'Some legacy outcomes have no trustworthy owner. They remain preserved in the task archive and are not injected into any strand.',
+        dedupeKey: 'context-isolation:ownerless-notices:v1',
+      })
+    }
+  })()
+  return { delivered, quarantined }
 }

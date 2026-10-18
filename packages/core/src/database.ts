@@ -5,6 +5,7 @@ import fs from 'node:fs'
 import { initEmailSendLogTable } from './email-send-log.js'
 import { initTaskInjectionQueueTable } from './task-injection-queue.js'
 import { ensureSessionSummariesTable } from './session-summary-store.js'
+import { ensureContextProvenanceSchema } from './context-provenance.js'
 import { ensureOfftangentTables } from './offtangent-schema.js'
 import { ensureProjectAssignmentTables } from './project-assignment-schema.js'
 import { ensureStrandTaskDismissalTable } from './strand-task-dismissals.js'
@@ -833,6 +834,10 @@ export function initDatabase(dbPath?: string): Database {
     CREATE INDEX IF NOT EXISTS idx_sessions_project ON sessions(project_id);
   `)
 
+  if (!projectCols.find(c => c.name === 'context_policy')) {
+    db.exec("ALTER TABLE sessions ADD COLUMN context_policy TEXT NOT NULL DEFAULT 'project-isolated' CHECK(context_policy IN ('project-isolated','strand-only'))")
+  }
+
   // Fork: multi-persona scoping for memories and chat_messages.
   const memoryCols = db.prepare("PRAGMA table_info(memories)").all() as { name: string }[]
   if (!memoryCols.find(c => c.name === 'agent_id')) {
@@ -904,6 +909,7 @@ export function initDatabase(dbPath?: string): Database {
 
   // Offtangent (SPEC 3.2, 3.3): captures, router decisions, tags, now set.
   ensureOfftangentTables(db)
+  ensureContextProvenanceSchema(db)
 
   // Offtangent Stufe 2: the running strand to project assignment. Three new
   // tables (suggestion, dismissal, run bookkeeping), no column on `sessions`,
@@ -965,6 +971,8 @@ const UUID_REGEX = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12
  */
 export function ensureMemoryProvenanceColumns(db: Database): void {
   const cols = new Set((db.prepare("PRAGMA table_info(memories)").all() as { name: string }[]).map(c => c.name))
+  // NULL is deliberately unclassified legacy, never globally approved.
+  if (!cols.has('context_scope')) db.exec('ALTER TABLE memories ADD COLUMN context_scope TEXT')
   if (!cols.has('provenance')) {
     db.exec("ALTER TABLE memories ADD COLUMN provenance TEXT NOT NULL DEFAULT 'agent' CHECK(provenance IN ('owner','agent','untrusted','system'))")
   }

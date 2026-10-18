@@ -771,6 +771,7 @@ export {
   listPendingTaskNotices,
   markTaskNoticesDelivered,
   expireStaleTaskNotices,
+  archivePendingTaskNotices,
   formatPendingTaskNoticeBlock,
   consumePendingTaskNotices,
 } from './task-agent-notice.js'
@@ -1755,3 +1756,8 @@ export type { HaInferenceConfig } from './ha-inference.js'
 
 export { modelConsentSelection, hasModelConsent, confirmModelConsents, checkConfiguredModelFor } from './model-consent.js'
 export type { ModelConsentSelection } from './model-consent.js'
+
+export { resolveContextScope, contextMemoryDir } from './context-scope.js'
+export type { ContextScope } from './context-scope.js'
+export { recordContextManifest, readContextManifest } from './context-provenance.js'
+export type { ContextManifest, ContextSource } from './context-provenance.js'

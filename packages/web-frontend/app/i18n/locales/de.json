@@ -2589,6 +2589,7 @@
       "pdfFallback": "Die Vorschau kann hier nicht angezeigt werden. Das PDF lässt sich öffnen oder herunterladen."
     },
     "context": {
+    "provenance": {"title": "Enthaltener Kontext", "unsupported": "Dieser Server meldet noch keine Kontextquellen.", "pending": "Noch keine ausgehende Anfrage erfasst.", "chars": "Zeichen", "explain": "Auswahl vor der Provider-Serialisierung. Nur Hashes und Umfang, keine Promptinhalte. Gesamtblöcke enthalten die einzeln gelisteten Quellen. Explizite Abrufe bleiben im Strandverlauf."},
       "usage": "Kontextauslastung",
       "loading": "Letzte Anfrage wird gelesen …",
       "unsupported": "Dieser Server meldet die Kontextauslastung noch nicht.",

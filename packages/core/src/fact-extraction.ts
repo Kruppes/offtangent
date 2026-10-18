@@ -1,3 +1,4 @@
+import { resolveContextScope } from './context-scope.js'
 import type { Api, Model } from '@earendil-works/pi-ai'
 import { completeSimple } from './pi-models.js'
 import type { Database } from './database.js'
@@ -224,7 +225,8 @@ export function parseFactLines(response: string): string[] {
  * Check whether a fact already exists for the same user.
  * Uses FTS5 candidate search followed by normalized word-overlap matching.
  */
-export function isDuplicateFact(db: Database, userId: number | null, newFact: string, agentId: string = 'main'): boolean {
+export function isDuplicateFact(db: Database, userId: number | null, newFact: string, agentId: string = 'main', sessionId?: string): boolean {
+  const contextKey = resolveContextScope(db, sessionId)?.key ?? null
   const normalizedFact = normalizeWhitespace(newFact)
   if (!normalizedFact) return false
 
@@ -241,14 +243,14 @@ export function isDuplicateFact(db: Database, userId: number | null, newFact: st
   // main already knows it), but a fact that already exists as 'shared' is
   // visible to every persona via retrieval and must not be stored again.
   const params = userId === null
-    ? [ftsQuery, agentId, DUPLICATE_SEARCH_LIMIT]
-    : [ftsQuery, userId, agentId, DUPLICATE_SEARCH_LIMIT]
+    ? [ftsQuery, agentId, contextKey, DUPLICATE_SEARCH_LIMIT]
+    : [ftsQuery, userId, agentId, contextKey, DUPLICATE_SEARCH_LIMIT]
 
   const candidates = db.prepare(`
     SELECT m.content
     FROM memories_fts
     INNER JOIN memories m ON m.id = memories_fts.rowid
-    WHERE memories_fts MATCH ? AND ${userClause} AND m.agent_id IN (?, 'shared') AND m.status = 'active'
+    WHERE memories_fts MATCH ? AND ${userClause} AND m.agent_id = ? AND m.context_scope IS ? AND m.status = 'active'
     ORDER BY bm25(memories_fts) ASC, m.timestamp DESC, m.id DESC
     LIMIT ?
   `).all(...params) as CandidateRow[]
@@ -352,7 +354,7 @@ export async function extractAndStoreFacts(
   for (const fact of facts) {
     // isDuplicateFact checks the persona bucket AND 'shared', so a fact the
     // LLM now flags as shared is not stored again if a persona already has it.
-    if (isDuplicateFact(db, userId, fact.content, agentId)) {
+    if (isDuplicateFact(db, userId, fact.content, agentId, sessionId)) {
       duplicates += 1
       continue
     }
@@ -361,7 +363,7 @@ export async function extractAndStoreFacts(
     // the cross-persona 'shared' bucket (visible to every persona via the
     // agent_id IN (?, 'shared') retrieval filter); everything else stays
     // scoped to the session's persona.
-    storeFact(db, userId, sessionId, fact.content, fact.scope === 'shared' ? 'shared' : agentId, {
+    storeFact(db, userId, sessionId, fact.content, agentId, {
       provenance: fact.provenance,
       sessionKind,
       observedAt: new Date().toISOString().replace('T', ' ').slice(0, 19),

@@ -79,23 +79,16 @@ describe('task agent notices (W5/P3)', () => {
     expect(pending.map(p => p.id)).toEqual([task.id])
   })
 
-  it('delivers the outcome to the owed persona exactly once', () => {
-    const task = finishCronTask()
-
-    const first = consumePendingTaskNotices(db, { agentId: 'coder' })
-    expect(first).toContain('<background_task_results>')
-    expect(first).toContain('w4-deploy-verify-20260917')
-    expect(first).toContain('Deploy verified: 3/3 checks green.')
-
-    // Second run of the same persona: already announced, nothing repeats.
-    expect(consumePendingTaskNotices(db, { agentId: 'coder' })).toBeNull()
-    expect(store.getById(task.id)!.agentNotifiedAt).toBeTruthy()
+  it('never consumes persona-wide notices into any user prompt; rows remain available', () => {
+    const task = finishCronTask({ agentId: 'coder' })
+    for (const agentId of ['main', 'coder']) expect(consumePendingTaskNotices(db, { agentId })).toBeNull()
+    expect(listPendingTaskNotices(db, { agentId: 'coder' }).map(n => n.id)).toEqual([task.id])
   })
 
-  it('does not hand one persona another persona\'s outcome', () => {
+  it('keeps archival queries persona-scoped without delivering them', () => {
     finishCronTask({ agentId: 'coder' })
-    expect(consumePendingTaskNotices(db, { agentId: 'main' })).toBeNull()
-    expect(consumePendingTaskNotices(db, { agentId: 'coder' })).toContain('w4-deploy-verify')
+    expect(listPendingTaskNotices(db, { agentId: 'main' })).toEqual([])
+    expect(listPendingTaskNotices(db, { agentId: 'coder' })).toHaveLength(1)
   })
 
   it('never announces a silent result', () => {
@@ -103,11 +96,11 @@ describe('task agent notices (W5/P3)', () => {
     expect(consumePendingTaskNotices(db, { agentId: 'coder' })).toBeNull()
   })
 
-  it('announces a failed cronjob with its error and handoff', () => {
+  it('retains a failed cronjob error and handoff for explicit archival rendering', () => {
     const task = finishCronTask({ resultStatus: 'failed', summary: 'Build broke' })
     store.update(task.id, { errorMessage: 'npm run build exited 1', handoff: 'Open: fix the tsc error in task-store.ts' })
 
-    const block = consumePendingTaskNotices(db, { agentId: 'coder' })
+    const block = formatPendingTaskNoticeBlock(listPendingTaskNotices(db, { agentId: 'coder' }))
     expect(block).toContain('failed')
     expect(block).toContain('Build broke')
     expect(block).toContain('Handoff: Open: fix the tsc error in task-store.ts')

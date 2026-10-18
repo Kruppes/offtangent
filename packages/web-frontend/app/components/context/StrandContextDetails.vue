@@ -94,6 +94,24 @@
     </ul>
   </section>
 
+  <section v-if="gauge.status === 'ready'" data-context-provenance aria-labelledby="ctx-provenance">
+    <h4 id="ctx-provenance" class="mb-2 text-xs font-semibold uppercase tracking-label text-muted-foreground">{{ $t('context.provenance.title') }}</h4>
+    <p v-if="!gauge.data.isolation" class="text-sm text-muted-foreground">{{ $t('context.provenance.unsupported') }}</p>
+    <template v-else>
+      <p class="text-sm">{{ gauge.data.isolation.policy }} · {{ gauge.data.isolation.dataScope }}</p>
+      <p class="my-2 text-xs text-muted-foreground">{{ $t('context.provenance.explain') }}</p>
+      <time v-if="gauge.data.isolation.at" class="text-xs" :datetime="gauge.data.isolation.at">{{ when(gauge.data.isolation.at) }}</time>
+      <p v-else class="text-sm text-muted-foreground">{{ $t('context.provenance.pending') }}</p>
+      <ul class="space-y-2 text-sm">
+        <li v-for="(source, index) in gauge.data.isolation.sources" :key="index" class="rounded-md bg-muted p-2 break-words [overflow-wrap:anywhere]">
+          <strong>{{ source.source }}</strong> · {{ source.scope }} · {{ source.chars }} {{ $t('context.provenance.chars') }}
+          <p class="text-xs">{{ source.reason }}</p>
+          <code class="text-xs">SHA-256 {{ source.hash }}</code>
+        </li>
+      </ul>
+    </template>
+  </section>
+
   <StrandStats :strand-id="strandId" />
 </template>
 

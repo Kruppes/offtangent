@@ -1,3 +1,4 @@
+import { resolveContextScope, contextFactPredicate, type ContextScope } from './context-scope.js'
 import type { Database } from './database.js'
 import { normalizeFtsQuery } from './fts-utils.js'
 import { NotFoundError, InvalidInputError } from './errors.js'
@@ -27,6 +28,7 @@ export interface MemoryFact {
 export const INJECTABLE_PROVENANCE: readonly MemoryProvenance[] = ['owner', 'agent']
 
 export interface SearchMemoriesOptions {
+  contextScope?: ContextScope
   userId?: number
   limit?: number
   dateFrom?: string
@@ -135,13 +137,18 @@ function normalizeDateTo(input: string): string {
 }
 
 function buildMemoryFilters(
-  options: Pick<SearchMemoriesOptions, 'userId' | 'dateFrom' | 'dateTo' | 'agentId' | 'includeSuperseded' | 'includeAllProvenance'>,
+  options: Pick<SearchMemoriesOptions, 'userId' | 'dateFrom' | 'dateTo' | 'agentId' | 'includeSuperseded' | 'includeAllProvenance' | 'contextScope'>,
   alias: string,
   defaults: { includeAllProvenance: boolean } = { includeAllProvenance: false },
 ): { conditions: string[]; params: unknown[] } {
   const conditions: string[] = []
   const params: unknown[] = []
 
+  if (options.contextScope) {
+    const filter = contextFactPredicate(options.contextScope, alias)
+    conditions.push(filter.sql)
+    params.push(...filter.params)
+  }
   if (!options.includeSuperseded) {
     conditions.push(`${alias}.status = 'active'`)
   }
@@ -270,12 +277,14 @@ export function createMemory(
   agentId: string = 'main',
   meta: CreateMemoryProvenance = {},
 ): number {
+  const scope = resolveContextScope(db, sessionId ?? undefined)
+  const scopeKey = scope && scope.userId === userId ? scope.key : null
   const provenance = meta.provenance ?? 'agent'
   const key = meta.supersessionKey?.trim() || null
   const insert = db.transaction((): number => {
     const result = db.prepare(
-      'INSERT INTO memories (user_id, session_id, content, source, agent_id, provenance, session_kind, observed_at, supersession_key) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)'
-    ).run(userId, sessionId, content, source, agentId, provenance, meta.sessionKind ?? null, meta.observedAt ?? null, key)
+      'INSERT INTO memories (user_id, session_id, content, source, agent_id, provenance, session_kind, observed_at, supersession_key, context_scope) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)'
+    ).run(userId, sessionId, content, source, agentId, provenance, meta.sessionKind ?? null, meta.observedAt ?? null, key, scopeKey)
     const id = Number(result.lastInsertRowid)
     if (key) {
       // Supersession instead of append (SPEC 11.4 gate 4): the previous
@@ -284,10 +293,10 @@ export function createMemory(
       const userClause = userId === null ? 'user_id IS NULL' : 'user_id = ?'
       const params: unknown[] = [id, key, agentId]
       if (userId !== null) params.push(userId)
-      params.push(id)
+      params.push(id, scopeKey)
       db.prepare(
         `UPDATE memories SET status = 'superseded', superseded_by = ?
-         WHERE supersession_key = ? AND agent_id = ? AND ${userClause} AND status = 'active' AND id != ?`
+         WHERE supersession_key = ? AND agent_id = ? AND ${userClause} AND status = 'active' AND id != ? AND context_scope IS ?`
       ).run(...params)
     }
     return id

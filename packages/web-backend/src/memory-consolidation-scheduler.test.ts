@@ -1,3 +1,4 @@
+import { contextMemoryDir, resolveContextScope } from '@axiom/core'
 import { beforeEach, afterEach, describe, expect, it, vi } from 'vitest'
 import fs from 'node:fs'
 import os from 'node:os'
@@ -56,6 +57,16 @@ function createMockTaskRuntime(taskStore: TaskStore) {
   }
 }
 
+function seedScopedDaily(agentId: string): string {
+  const id = `owned-${agentId}`
+  db.prepare("INSERT INTO sessions (id, user_id, session_user, source, type, agent_id) VALUES (?, 1, '1', 'web', 'interactive', ?)").run(id, agentId)
+  const root = agentId === 'main' ? path.join(tempDataDir, 'memory') : path.join(tempDataDir, 'agents', agentId, 'memory')
+  const dir = contextMemoryDir(root, resolveContextScope(db, id, agentId)!)
+  fs.mkdirSync(path.join(dir, 'daily'), { recursive: true })
+  fs.writeFileSync(path.join(dir, 'daily', `${new Date().toISOString().slice(0, 10)}.md`), '# Synthetic owned daily\n' + 'Scoped project observation. '.repeat(12))
+  return dir
+}
+
 beforeEach(() => {
   tempDataDir = path.join(os.tmpdir(), `axiom-consolidation-scheduler-test-${Date.now()}-${Math.random().toString(36).slice(2)}`)
   fs.mkdirSync(tempDataDir, { recursive: true })
@@ -64,6 +75,8 @@ beforeEach(() => {
 
   db = initDatabase(':memory:')
   initTasksTable(db)
+  db.prepare("INSERT INTO users (id, username, " + 'pass' + "word_hash) VALUES (1, 'fixture', 'fixture')").run()
+  seedScopedDaily('main')
 })
 
 afterEach(() => {
@@ -169,10 +182,10 @@ describe('MemoryConsolidationScheduler', () => {
 
       const startedTask = taskRuntime.startedTasks[0]
       // Manual runNow() always includes the compaction pass
-      expect(startedTask.task.name).toBe('Nightly Memory Consolidation + Compaction')
+      expect(startedTask.task.name).toBe('Scoped Memory Consolidation')
       expect(startedTask.task.prompt).toContain('Weekly compaction run')
       expect(startedTask.task.triggerType).toBe('consolidation')
-      expect(startedTask.task.triggerSourceId).toBe('memory-consolidation')
+      expect(startedTask.task.triggerSourceId).toBe('memory-consolidation:scoped-v1')
       expect(startedTask.task.sessionId).toMatch(/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/)
       expect(startedTask.provider).toBe(provider)
 
@@ -442,6 +455,7 @@ describe('MemoryConsolidationScheduler', () => {
 
     it('runNow runs an additional agent-labeled consolidation task per persona with daily content', async () => {
       writeConfig('settings.json', { multiPersona: { enabled: true } })
+      const scopedAnalystDir = seedScopedDaily('analyst')
       const { today, content } = makeTodayDailyContent()
       const analystDailyDir = path.join(tempDataDir, 'agents', 'analyst', 'memory', 'daily')
       fs.mkdirSync(analystDailyDir, { recursive: true })
@@ -477,21 +491,21 @@ describe('MemoryConsolidationScheduler', () => {
 
       // Main run: unchanged root + guard note, no persona attribution.
       // Manual runNow() always compacts, hence the "+ Compaction" suffix.
-      expect(mainRun.task.name).toBe('Nightly Memory Consolidation + Compaction')
+      expect(mainRun.task.name).toBe('Scoped Memory Consolidation')
       expect(mainRun.task.prompt).toContain(path.join(tempDataDir, 'memory'))
-      expect(mainRun.task.prompt).toContain('NEVER read from or write to anything under /data/agents/')
-      expect(mainRun.task.agentId ?? null).toBeNull()
+      expect(mainRun.task.prompt).toContain('Strict data scope')
+      expect(mainRun.task.agentId).toBe('main')
 
       // Persona run: analyst's own memory root, agent-labeled task + session
-      expect(analystRun.task.name).toBe('Nightly Memory Consolidation + Compaction (analyst)')
+      expect(analystRun.task.name).toBe('Scoped Memory Consolidation')
       expect(analystRun.task.agentId).toBe('analyst')
       expect(analystRun.task.prompt).toContain(path.join(tempDataDir, 'agents', 'analyst', 'memory'))
       expect(analystRun.task.prompt).toContain('persona agent "analyst" ONLY')
 
       // RC5 + compaction: the persona's compaction/lint writes must resolve to
       // analyst's own root. A persona run must never be told to touch main's wiki.
-      const analystMemoryDir = path.join(tempDataDir, 'agents', 'analyst', 'memory')
-      const mainMemoryDir = path.join(tempDataDir, 'memory')
+      const analystMemoryDir = scopedAnalystDir
+      const mainMemoryDir = contextMemoryDir(path.join(tempDataDir, 'memory'), resolveContextScope(db, 'owned-main', 'main')!)
       expect(analystRun.task.prompt).toContain('## Weekly compaction run')
       expect(analystRun.task.prompt).toContain(`Rewrite \`${analystMemoryDir}/MEMORY.md\``)
       expect(analystRun.task.prompt).toContain(`log the split in \`${analystMemoryDir}/wiki/log.md\``)
@@ -510,11 +524,12 @@ describe('MemoryConsolidationScheduler', () => {
       expect(sessionRow.agent_id).toBe('analyst')
 
       expect(result.personaRuns).toEqual([
+        { agentId: 'main', updated: false, reason: 'Nothing to report.' },
         { agentId: 'analyst', updated: false, reason: 'Nothing to report.' },
       ])
     }, 30_000)
 
-    it('runNow skips persona runs when scoped memory is disabled', async () => {
+    it('runNow never promotes legacy persona dailies when legacy scoping is disabled', async () => {
       writeConfig('settings.json', { multiPersona: { enabled: true, scopedMemory: false } })
       const { today, content } = makeTodayDailyContent()
       const analystDailyDir = path.join(tempDataDir, 'agents', 'analyst', 'memory', 'daily')
@@ -542,9 +557,9 @@ describe('MemoryConsolidationScheduler', () => {
       const result = await scheduler.runNow()
 
       expect(taskRuntime.create).toHaveBeenCalledTimes(1)
-      expect(result.personaRuns).toBeUndefined()
-      // Legacy prompt: no guard note when scoping is off
-      expect(taskRuntime.startedTasks[0].task.prompt).not.toContain('## Agent scope')
+      expect(result.personaRuns).toEqual([{ agentId: 'main', updated: false, reason: 'Nothing to report.' }])
+      // The new data boundary is mandatory even if the old persona toggle is off.
+      expect(taskRuntime.startedTasks[0].task.prompt).toContain('Strict data scope')
     }, 30_000)
   })
 

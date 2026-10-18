@@ -1,3 +1,5 @@
+import { resolveContextScope, contextFactPredicate, type ContextScope } from './context-scope.js'
+import { getCurrentTaskExecutionContext } from './task-execution-context.js'
 import type { AgentTool } from '@earendil-works/pi-agent-core'
 import { Type } from '@earendil-works/pi-ai'
 import type { Database } from './database.js'
@@ -14,11 +16,11 @@ import { resolveAgentReadScope } from './agent-read-scope.js'
 async function searchMemoriesHybrid(
   db: Database,
   query: string,
-  options: { userId?: number; limit: number; agentId?: string },
+  options: { userId?: number; limit: number; agentId?: string; contextScope?: ContextScope },
 ): Promise<{ facts: MemoryFact[]; semantic: boolean }> {
   // Overfetch both lists so fusion has material to work with.
   const poolSize = Math.min(options.limit * 3, 50)
-  const ftsFacts = searchMemories(db, query, { userId: options.userId, limit: poolSize, agentId: options.agentId })
+  const ftsFacts = searchMemories(db, query, { userId: options.userId, limit: poolSize, agentId: options.agentId, contextScope: options.contextScope })
 
   let embeddingHits: Array<{ id: number }> = []
   try {
@@ -51,6 +53,11 @@ async function searchMemoriesHybrid(
       && fact.agentId !== options.agentId && fact.agentId !== 'shared') {
       continue
     }
+    if (fact && fact.userId !== options.userId) continue
+    if (fact && options.contextScope) {
+      const filter = contextFactPredicate(options.contextScope)
+      if (!db.prepare(`SELECT 1 FROM memories m WHERE m.id = ? AND ${filter.sql} AND m.status = 'active' AND m.provenance IN ('owner','agent')`).get(fact.id, ...filter.params)) continue
+    }
     if (fact) merged.push(fact)
     if (merged.length >= options.limit) break
   }
@@ -59,6 +66,7 @@ async function searchMemoriesHybrid(
 
 export interface SearchMemoriesToolOptions {
   db: Database
+  getCurrentSessionId?: () => string | undefined
   getCurrentUserId?: () => number | undefined
   /**
    * Supplies the persona (agentId) the calling runtime belongs to.
@@ -99,6 +107,7 @@ export function createSearchMemoriesTool(options: SearchMemoriesToolOptions): Ag
           description: 'Maximum number of facts to return (default: 10, max: 50).',
         }),
       ),
+      cross_project: Type.Optional(Type.Boolean({ description: 'Explicitly search your own archived/other-project facts. Only use when requested; returned scope is labelled.' })),
       agent: Type.Optional(
         Type.String({
           description:
@@ -109,7 +118,7 @@ export function createSearchMemoriesTool(options: SearchMemoriesToolOptions): Ag
       ),
     }),
     execute: async (_toolCallId, params) => {
-      const { query, limit: rawLimit, agent: rawAgent } = params as { query?: string; limit?: number; agent?: string }
+      const { query, limit: rawLimit, agent: rawAgent, cross_project: crossProject } = params as { query?: string; limit?: number; agent?: string; cross_project?: boolean }
 
       if (typeof query !== 'string' || query.trim().length === 0) {
         return {
@@ -127,14 +136,18 @@ export function createSearchMemoriesTool(options: SearchMemoriesToolOptions): Ag
 
       try {
         const limit = Math.min(Math.max(Math.floor(rawLimit ?? 10), 1), 50)
-        const userId = options.getCurrentUserId?.()
+        const task = getCurrentTaskExecutionContext()
+        const currentSession = options.getCurrentSessionId?.() ?? task?.taskSessionId ?? undefined
+        const dataScope = resolveContextScope(options.db, currentSession)
+        const userId = dataScope?.userId ?? options.getCurrentUserId?.() ?? task?.userId ?? undefined
+        if (!userId || (!dataScope && !crossProject)) return { content: [{ type: 'text' as const, text: 'No authenticated memory scope. Specify an explicit archive search from an owned session.' }], details: { error: true } }
         // Persona scoping: by default non-'main' personas only search their own
         // facts (+ 'shared'); 'main' stays unscoped. An explicit `agent` param
         // opts into cross-persona reads ('all' → unscoped; a concrete id → that
         // bucket + 'shared'). Unknown ids error out instead of returning [].
         const scope = resolveAgentReadScope({
           requested: rawAgent,
-          callerAgentId: options.getCurrentAgentId?.(),
+          callerAgentId: options.getCurrentAgentId?.() ?? task?.agentId ?? undefined,
           listAgentIds: options.listAgentIds,
         })
         if (!scope.ok) {
@@ -148,6 +161,7 @@ export function createSearchMemoriesTool(options: SearchMemoriesToolOptions): Ag
           userId,
           limit,
           agentId: agentScope,
+          contextScope: crossProject ? undefined : dataScope ?? undefined,
         })
 
         if (facts.length === 0) {
@@ -169,7 +183,7 @@ export function createSearchMemoriesTool(options: SearchMemoriesToolOptions): Ag
         }).join('\n\n')
 
         return {
-          content: [{ type: 'text' as const, text: formatted }],
+          content: [{ type: 'text' as const, text: `${crossProject ? '[Explicit cross-project archive retrieval]\n' : '[Current project/strand memory]\n'}${formatted}` }],
           details: {
             count: facts.length,
             query,

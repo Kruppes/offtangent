@@ -1,12 +1,14 @@
 import type { Database } from '@axiom/core'
 import type { ConsolidationResult } from '@axiom/core'
 import type { AgentCore } from '@axiom/core'
-import type { Task } from '@axiom/core'
 import type { TaskRuntimeTaskBoundary } from '@axiom/core'
 import type { ProviderConfig } from '@axiom/core'
 import type { SessionManager } from '@axiom/core'
 import { generateSessionId } from '@axiom/core'
 import {
+  resolveContextScope,
+  contextMemoryDir,
+  resolveAgentMemoryDir,
   getActiveProvider,
   getProviderDefaultModel,
   gateFallbackModel,
@@ -43,6 +45,7 @@ export const DEFAULT_CONSOLIDATION_SETTINGS: ConsolidationSettings = {
 }
 
 export interface ConsolidationPromptOptions {
+  originSessionId?: string
   /** Memory root to consolidate (default: global getMemoryDir()). */
   memoryDir?: string
   /**
@@ -121,6 +124,10 @@ Persona agents keep their own memory roots under /data/agents/<id>/memory/ and a
 
   return `You are a nightly memory consolidation agent. Your ONLY job is to extract and store *knowledge* from recent daily memory entries. You are a librarian, not an executor.${scopingBlock}
 
+## Strict data scope
+
+This run is restricted to the single classified user/persona/project-or-strand directory \`${memoryDir}\`. Legacy persona/global files and other scopes are NOT inputs. Never promote anything into global policy, approved-global memory, or another project's memory. Existing global safety rules still apply. If ownership is unclear, preserve the material in this directory and flag it; do not guess.
+
 ## Core principle
 
 You read conversations and extract factual knowledge: things the user said, preferences they expressed, facts they mentioned, lessons that were learned, project context that was established. You write this knowledge into the appropriate memory files.
@@ -156,7 +163,7 @@ You must NOT write to any other file. No config files, no code files, no files o
 
 4. **Read user profiles**: Use \`list_files\` on \`${memoryDir}/users\`, then \`read_file\` to read each user profile.
 
-5. **Optionally read chat history**: If daily files reference conversations that need more detail, use \`read_chat_history\` to get the full context.
+5. **Optional detail retrieval**: Only use \`read_chat_history\` with the exact \`session_id\` ${JSON.stringify(options?.originSessionId ?? "unavailable — do not retrieve")}. Do not search across projects or users. Never use cross_project on search_memories.
 
 6. **Decide what to promote/update** (guided by the consolidation rules above):
    - If you find recurring patterns, learned lessons, or important facts in daily files, add them to \`${memoryDir}/MEMORY.md\` using \`edit_file\` or \`write_file\`.
@@ -164,7 +171,7 @@ You must NOT write to any other file. No config files, no code files, no files o
    - If you find user-specific information (preferences, context), update the relevant user profile in \`${memoryDir}/users/\`.
    - Remove outdated or superseded information from MEMORY.md.
    - Prune while you promote: merge near-duplicate entries, collapse resolved threads to their end state, and delete lessons already covered by AGENTS.md or a wiki page.
-   - Respect the size budgets from the consolidation rules (MEMORY.md and user profiles are injected into every system prompt). If a file is over budget, compact it in this run: move episodic detail to the wiki or delete it.
+   - Respect the size budgets from the consolidation rules (only classified MEMORY.md within this data scope is injected; profiles are not globally injected). If a file is over budget, compact it in this run: move episodic detail to the wiki or delete it.
    - Do NOT duplicate information across files — each fact should live in exactly one place.
 
 7. **Wiki Health Check (Lint)**:
@@ -382,298 +389,58 @@ export class MemoryConsolidationScheduler {
   }
 
   private async executeConsolidation(scheduled: boolean): Promise<ConsolidationResult> {
-    console.log('[axiom] Starting memory consolidation...')
-    const startTime = Date.now()
-    // Create the consolidation session up-front so both the task and the
-    // scheduler's tool-call logging share the same session ID (registered
-    // in the `sessions` table with type='consolidation'). The session row
-    // is always written, even in the test-mode fallback path, so child
-    // rows (tool_calls, token_usage) never dangle with an orphan FK.
-    let sessionId: string
-    if (this.sessionManager) {
-      sessionId = this.sessionManager.createSession({
-        type: 'consolidation',
-        source: 'system',
-      }).id
-    } else {
-      sessionId = generateSessionId()
-      this.db.prepare(
-        `INSERT INTO sessions (id, user_id, source, type, started_at, last_activity, message_count, summary_written)
-         VALUES (?, NULL, 'system', 'consolidation', datetime('now'), datetime('now'), 0, 0)`,
-      ).run(sessionId)
-    }
-
-    const taskRuntime = this.resolveTaskRuntime()
-
-    // Ensure task runtime is available
-    if (!taskRuntime) {
-      const result: ConsolidationResult = {
-        updated: false,
-        dailyFilesReviewed: 0,
-        reason: 'Task runtime not available for consolidation',
-      }
-      this.lastRun = new Date().toISOString()
-      this.lastResult = result
-
-      logToolCall(this.db, {
-        sessionId,
-        toolName: 'memory_consolidation',
-        input: JSON.stringify({ lookbackDays: this.settings.lookbackDays }),
-        output: JSON.stringify({ error: 'Task runtime not available' }),
-        durationMs: Date.now() - startTime,
-        status: 'error',
-      })
-
-      console.warn('[axiom] Memory consolidation skipped: task runtime not available')
-      return result
-    }
-
-    try {
-      // Resolve the provider to use
-      const provider = this.resolveProvider()
-      if (!provider) {
-        const result: ConsolidationResult = {
-          updated: false,
-          dailyFilesReviewed: 0,
-          reason: 'No provider available for consolidation',
-        }
-        this.lastRun = new Date().toISOString()
-        this.lastResult = result
-
-        logToolCall(this.db, {
-          sessionId,
-          toolName: 'memory_consolidation',
-          input: JSON.stringify({ lookbackDays: this.settings.lookbackDays }),
-          output: JSON.stringify({ error: 'No provider available for consolidation' }),
-          durationMs: Date.now() - startTime,
-          status: 'error',
-        })
-
-        console.warn('[axiom] Memory consolidation skipped: no provider available')
-        return result
-      }
-
-      // Read user-defined consolidation rules
-      const consolidationRules = readConsolidationFile()
-
-      // Create a task via task runtime boundary. When scoped persona memory
-      // is active (RC5), the main run gets a guard note: persona memory
-      // roots are out of scope and persona content must not be promoted
-      // into main's MEMORY.md — personas are consolidated in separate runs.
-      // ponytail: weekly compaction pinned to Sunday; make it configurable if that ever matters
-      const compactionRun = !scheduled || new Date().getDay() === 0
-      const prompt = buildConsolidationTaskPrompt(this.settings.lookbackDays, consolidationRules, {
-        scopedPersonaGuard: isScopedAgentMemoryEnabled(),
-        compactionRun,
-      })
-      const task: Task = taskRuntime.create({
-        name: compactionRun ? 'Nightly Memory Consolidation + Compaction' : 'Nightly Memory Consolidation',
-        prompt,
-        triggerType: 'consolidation',
-        triggerSourceId: 'memory-consolidation',
-        provider: provider.name,
-        model: getProviderDefaultModel(provider),
-        // Consolidation never accepts an explicit provider/model override
-        // from the user or agent — it always uses the configured default.
-        isDefaultModel: true,
-        // Pre-allocated session ID so the TaskRunner re-uses this session
-        // (it only creates a new session when sessionId is null).
-        sessionId,
-      })
-
-      // Start the task via task runtime boundary
-      await taskRuntime.start(task, provider)
-
-      console.log(`[axiom] Memory consolidation task started: ${task.id}`)
-
-      // Wait for the task to complete by polling
-      const result = await this.waitForTaskCompletion(task.id, startTime, taskRuntime)
-
-      // RC5: consolidate each persona's own memory root in separate,
-      // agent-labeled runs (sequential, after the main run). Failures here
-      // never fail the main consolidation result.
-      const personaRuns = await this.runPersonaConsolidations(taskRuntime, provider, consolidationRules, compactionRun)
-      if (personaRuns.length > 0) {
-        result.personaRuns = personaRuns
-      }
-
-      this.lastRun = new Date().toISOString()
-      this.lastResult = result
-
-      // Refresh the agent's system prompt if memory files may have been modified
-      if (this.agentCore) {
-        try {
-          this.agentCore.refreshSystemPrompt()
-        } catch (err) {
-          console.error('[axiom] Failed to refresh system prompt after consolidation:', err)
-        }
-      }
-
-      // Log to activity log
-      logToolCall(this.db, {
-        sessionId,
-        toolName: 'memory_consolidation',
-        input: JSON.stringify({
-          lookbackDays: this.settings.lookbackDays,
-          provider: provider.provider,
-          model: getProviderDefaultModel(provider),
-          taskId: task.id,
-        }),
-        output: JSON.stringify({
-          updated: result.updated,
-          dailyFilesReviewed: result.dailyFilesReviewed,
-          reason: result.reason ?? null,
-        }),
-        durationMs: Date.now() - startTime,
-        status: 'success',
-      })
-
-      console.log(
-        `[axiom] Memory consolidation complete: ${result.updated ? 'UPDATED' : 'no change'} ` +
-        `(task ${task.id}` +
-        (result.usage ? `, ${result.usage.input + result.usage.output} tokens` : '') +
-        `)`,
-      )
-
-      return result
-    } catch (err) {
-      const result: ConsolidationResult = {
-        updated: false,
-        dailyFilesReviewed: 0,
-        reason: `Error: ${(err as Error).message}`,
-      }
-      this.lastRun = new Date().toISOString()
-      this.lastResult = result
-
-      // Log error to activity log
-      logToolCall(this.db, {
-        sessionId,
-        toolName: 'memory_consolidation',
-        input: JSON.stringify({
-          lookbackDays: this.settings.lookbackDays,
-        }),
-        output: JSON.stringify({
-          error: (err as Error).message,
-        }),
-        durationMs: Date.now() - startTime,
-        status: 'error',
-      })
-
-      console.error('[axiom] Memory consolidation failed:', err)
-      return result
-    }
-  }
-
-  /**
-   * Run one consolidation task per persona over that persona's own memory
-   * root (/data/agents/<id>/memory/). Sessions and tasks are labeled with
-   * the persona's agentId so all attribution stays scoped. Sequential to
-   * avoid task-runtime contention at the nightly run hour.
-   */
-  private async runPersonaConsolidations(
-    taskRuntime: ConsolidationTaskRuntime,
-    provider: ProviderConfig,
-    consolidationRules: string,
-    compactionRun: boolean,
-  ): Promise<NonNullable<ConsolidationResult['personaRuns']>> {
+    const runtime = this.resolveTaskRuntime()
+    const provider = this.resolveProvider()
+    if (!runtime) return { updated: false, dailyFilesReviewed: 0, reason: 'Task runtime not available' }
+    if (!provider) return { updated: false, dailyFilesReviewed: 0, reason: 'No provider available' }
+    const rules = readConsolidationFile()
+    const compactionRun = !scheduled || new Date().getDay() === 0
+    // Resolve targets from OWNED sessions, never scan legacy roots and never
+    // aggregate across users/projects/personas. Dedupe by full on-disk scope.
+    const candidates = this.db.prepare("SELECT id, agent_id FROM sessions WHERE type = 'interactive' ORDER BY last_activity DESC").all() as Array<{ id: string; agent_id: string }>
+    const seen = new Set<string>()
     const runs: NonNullable<ConsolidationResult['personaRuns']> = []
-
-    let targets: Array<{ agentId: string; memoryDir: string }> = []
-    try {
-      targets = listPersonaConsolidationTargets(this.settings.lookbackDays)
-    } catch (err) {
-      console.error('[axiom] Failed to resolve persona consolidation targets:', err)
-      return runs
-    }
-
-    for (const target of targets) {
-      const personaStart = Date.now()
-
-      let sessionId: string
-      if (this.sessionManager) {
-        sessionId = this.sessionManager.createSession({
-          type: 'consolidation',
-          source: 'system',
-          agentId: target.agentId,
-        }).id
-      } else {
-        sessionId = generateSessionId()
-        this.db.prepare(
-          `INSERT INTO sessions (id, user_id, source, type, started_at, last_activity, message_count, summary_written, agent_id)
-           VALUES (?, NULL, 'system', 'consolidation', datetime('now'), datetime('now'), 0, 0, ?)`,
-        ).run(sessionId, target.agentId)
-      }
-
+    let dailyFilesReviewed = 0
+    const usage = { input: 0, output: 0 }
+    for (const row of candidates) {
+      const scope = resolveContextScope(this.db, row.id, row.agent_id)
+      if (!scope) continue
+      const dir = contextMemoryDir(resolveAgentMemoryDir(scope.agentId) ?? getMemoryDir(), scope)
+      if (seen.has(dir)) continue
+      seen.add(dir)
+      const dailyFiles = readDailyFilesForConsolidation(this.settings.lookbackDays, dir)
+      if (!dailyFiles.length) continue
+      const sessionId = this.sessionManager
+        ? this.sessionManager.createSession({ type: 'consolidation', source: 'system', agentId: scope.agentId, parentSessionId: row.id, userId: String(scope.userId) }).id
+        : generateSessionId()
+      if (!this.sessionManager) this.db.prepare(
+        "INSERT INTO sessions (id, user_id, source, type, agent_id, parent_session_id) VALUES (?, ?, 'system', 'consolidation', ?, ?)",
+      ).run(sessionId, scope.userId, scope.agentId, row.id)
+      const start = Date.now()
       try {
-        // Personas compact on the same schedule as main: their MEMORY.md and
-        // user profiles grow just like main's, and the budgets apply per root.
-        // memoryDir pins every compaction target (incl. wiki/log.md) to this
-        // persona's own root, so a persona run can never write into main's wiki.
-        const prompt = buildConsolidationTaskPrompt(this.settings.lookbackDays, consolidationRules, {
-          memoryDir: target.memoryDir,
-          agentId: target.agentId,
-          compactionRun,
+        const task = runtime.create({ name: 'Scoped Memory Consolidation',
+          prompt: buildConsolidationTaskPrompt(this.settings.lookbackDays, rules, { memoryDir: dir, agentId: scope.agentId, originSessionId: row.id, compactionRun }),
+          triggerType: 'consolidation', triggerSourceId: 'memory-consolidation:scoped-v1',
+          provider: provider.name, model: getProviderDefaultModel(provider), isDefaultModel: true, sessionId, agentId: scope.agentId,
         })
-        const task: Task = taskRuntime.create({
-          name: compactionRun
-            ? `Nightly Memory Consolidation + Compaction (${target.agentId})`
-            : `Nightly Memory Consolidation (${target.agentId})`,
-          prompt,
-          triggerType: 'consolidation',
-          triggerSourceId: `memory-consolidation:${target.agentId}`,
-          provider: provider.name,
-          model: getProviderDefaultModel(provider),
-          isDefaultModel: true,
-          sessionId,
-          agentId: target.agentId,
-        })
-
-        await taskRuntime.start(task, provider)
-        console.log(`[axiom] Persona memory consolidation task started: ${task.id} (${target.agentId})`)
-
-        const personaResult = await this.waitForTaskCompletion(task.id, personaStart, taskRuntime)
-        runs.push({ agentId: target.agentId, updated: personaResult.updated, reason: personaResult.reason })
-
-        logToolCall(this.db, {
-          sessionId,
-          toolName: 'memory_consolidation',
-          input: JSON.stringify({
-            lookbackDays: this.settings.lookbackDays,
-            agentId: target.agentId,
-            taskId: task.id,
-          }),
-          output: JSON.stringify({
-            updated: personaResult.updated,
-            reason: personaResult.reason ?? null,
-          }),
-          durationMs: Date.now() - personaStart,
-          status: 'success',
-        })
-
-        console.log(
-          `[axiom] Persona memory consolidation complete (${target.agentId}): `
-          + `${personaResult.updated ? 'UPDATED' : 'no change'}`,
-        )
-      } catch (err) {
-        runs.push({ agentId: target.agentId, updated: false, reason: `Error: ${(err as Error).message}` })
-
-        logToolCall(this.db, {
-          sessionId,
-          toolName: 'memory_consolidation',
-          input: JSON.stringify({
-            lookbackDays: this.settings.lookbackDays,
-            agentId: target.agentId,
-          }),
-          output: JSON.stringify({ error: (err as Error).message }),
-          durationMs: Date.now() - personaStart,
-          status: 'error',
-        })
-
-        console.error(`[axiom] Persona memory consolidation failed (${target.agentId}):`, err)
+        await runtime.start(task, provider)
+        const result = await this.waitForTaskCompletion(task.id, start, runtime)
+        dailyFilesReviewed += dailyFiles.length
+        usage.input += result.usage?.input ?? 0
+        usage.output += result.usage?.output ?? 0
+        runs.push({ agentId: scope.agentId, updated: result.updated, reason: result.reason })
+        logToolCall(this.db, { sessionId, toolName: 'memory_consolidation', input: JSON.stringify({ policy: 'project-isolated', taskId: task.id }), output: JSON.stringify({ updated: result.updated }), durationMs: Date.now() - start, status: 'success' })
+      } catch {
+        // Do not log provider prompts/response bodies or filesystem paths.
+        runs.push({ agentId: scope.agentId, updated: false, reason: 'Scoped consolidation failed' })
       }
     }
-
-    return runs
+    const result: ConsolidationResult = { updated: runs.some(r => r.updated), dailyFilesReviewed, personaRuns: runs, usage,
+      reason: runs.length ? 'Scoped roots only; legacy archives untouched' : 'No scoped daily files to consolidate' }
+    this.lastRun = new Date().toISOString()
+    this.lastResult = result
+    this.agentCore?.refreshSystemPrompt()
+    return result
   }
 
   /**

@@ -5,6 +5,8 @@
  */
 import type { AgentCore, EffectiveModel, ModelSelection, Database, NowSetMode, StrandAttention, StrandAttentionSummary, StrandDeletePreview, StrandDeleteResult, StrandReadState, StrandTaskTree, Tag, Thread, ResurfaceItem } from '@axiom/core'
 import {
+  readContextManifest,
+  resolveContextScope,
   EMPTY_STRAND_READ_STATE,
   InvalidInputError,
   listActivePersonaIds,
@@ -148,6 +150,7 @@ export interface StrandTranscriptStatus {
 }
 
 export interface StrandContextReport {
+  isolation: { policy: 'project-isolated'; dataScope: 'project' | 'strand'; provenance: import('@axiom/core').ContextManifest | null }
   strandId: string
   measurement: StrandContextMeasurement
   budget: StrandContextBudget
@@ -871,7 +874,8 @@ export function createStrandsService(options: StrandsServiceOptions) {
   }
 
   function strandContext(userId: number, strandId: string): StrandContextReport {
-    requireStrand(userId, strandId)
+    const ownedStrand = requireStrand(userId, strandId)
+    const dataScope = resolveContextScope(db, strandId, ownedStrand.agentId)
     const effective = effectiveModelForStrand(db, strandId, options.getTurnRunner?.()?.getTurnModelOverride?.(userId, strandId))
     const usage = lastRequestUsageForStrand(db, strandId)
     const meta = effective ? modelMetadataFor(effective.providerId, effective.modelId) : null
@@ -909,6 +913,7 @@ export function createStrandsService(options: StrandsServiceOptions) {
         }
     return {
       strandId,
+      isolation: { policy: 'project-isolated', dataScope: dataScope?.projectId ? 'project' : 'strand', provenance: readContextManifest(db, strandId, userId, ownedStrand.agentId) },
       measurement,
       budget: {
         contextWindow,

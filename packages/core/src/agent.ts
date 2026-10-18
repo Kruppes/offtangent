@@ -34,7 +34,6 @@ import {
 import { getLatestSessionSummary, insertSessionSummary } from './session-summary-store.js'
 import { loadHeuristics } from './heuristics.js'
 import { getProviderConcurrencyLimiter } from './provider-concurrency.js'
-import { consumePendingTaskNotices } from './task-agent-notice.js'
 import { assembleStrandContextWithStats, trimMessagesToBudget, stripStrandContextFromLastUserMessage } from './strand-context.js'
 import type { EffectiveModel, ModelSelection } from './model-resolution.js'
 import type { TurnRuntimeOverrides } from './turn-overrides.js'
@@ -1108,20 +1107,8 @@ export class AgentCore {
       text = `${factInjection}\n\n${text}`
     }
 
-    // W5/P3: outcomes of feed-only tasks (cronjobs) never start a turn of
-    // their own, so they would otherwise wait for a run that reads them.
-    // The next run is this one — announce them BEFORE the user's message,
-    // never persisted, exactly once (see task-agent-notice.ts).
-    const taskNoticeMaxAgeHours = (() => {
-      try { return loadHeuristics().taskDelivery.maxAgeHours } catch { return 24 }
-    })()
-    const taskNotices = consumePendingTaskNotices(this.db, {
-      agentId,
-      ...(taskNoticeMaxAgeHours > 0 ? { maxAgeMs: taskNoticeMaxAgeHours * 3600_000 } : {}),
-    })
-    if (taskNotices) {
-      text = `${taskNotices}\n\n${text}`
-    }
+    // Feed-only outcomes stay in the durable feed. Interactive task outcomes
+    // use the existing origin-strand injection queue, never a persona mailbox.
 
     // Build image content and file context from attachments
     const { images, hints: fileHints } = buildAttachmentContext(attachments)

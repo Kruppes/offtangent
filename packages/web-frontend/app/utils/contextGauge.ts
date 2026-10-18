@@ -11,7 +11,14 @@
 export const CAUTION_RATIO = 0.7
 export const FULL_RATIO = 0.9
 
+export interface ContextIsolationView {
+  policy: string
+  dataScope: string
+  at: string | null
+  sources: Array<{ source: string; scope: string; hash: string; chars: number; reason: string }>
+}
 export interface StrandContextView {
+  isolation?: ContextIsolationView | null
   measured: boolean
   requestTokens: number | null
   inputTokens: number | null
@@ -57,6 +64,15 @@ export function mapContextReport(raw: unknown): StrandContextView {
   const ratio = requestTokens !== null && contextWindow ? requestTokens / contextWindow : null
   const transcriptKnown = t.state === 'measured'
   return {
+    isolation: root.isolation && typeof root.isolation === 'object' ? {
+      policy: str(obj(root.isolation).policy) ?? 'unknown',
+      dataScope: str(obj(root.isolation).dataScope) ?? 'unknown',
+      at: str(obj(obj(root.isolation).provenance).at),
+      sources: (Array.isArray(obj(obj(root.isolation).provenance).sources) ? obj(obj(root.isolation).provenance).sources as unknown[] : []).slice(0, 100).map(value => {
+        const source = obj(value)
+        return { source: str(source.source) ?? 'unknown', scope: str(source.scope) ?? 'unknown', hash: str(source.hash) ?? '', chars: num(source.chars) ?? 0, reason: str(source.reason) ?? '' }
+      }),
+    } : null,
     measured,
     requestTokens,
     inputTokens: measured ? num(m.inputTokens) : null,

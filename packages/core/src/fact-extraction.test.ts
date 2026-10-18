@@ -124,20 +124,20 @@ describe('fact-extraction', () => {
     expect(isDuplicateFact(db, 1, 'Project uses PostgreSQL at port 5433')).toBe(false)
   })
 
-  it('isDuplicateFact checks across the bucket boundary (persona + shared)', () => {
+  it('isDuplicateFact never deduplicates against unapproved shared legacy facts', () => {
     createMemory(db, 1, 'session-a', 'The Demo App pricing model uses three tiers', 'extracted_fact', 'shared')
     createMemory(db, 1, 'session-a', 'Coder deployed the scanner on the NUC', 'extracted_fact', 'coder')
 
-    // A fact already in 'shared' is a duplicate for any persona bucket
-    expect(isDuplicateFact(db, 1, 'Demo App pricing model uses three tiers', 'coder')).toBe(true)
-    expect(isDuplicateFact(db, 1, 'Demo App pricing model uses three tiers', 'advisor')).toBe(true)
+    // Unapproved shared legacy facts cannot suppress new persona-local facts
+    expect(isDuplicateFact(db, 1, 'Demo App pricing model uses three tiers', 'coder')).toBe(false)
+    expect(isDuplicateFact(db, 1, 'Demo App pricing model uses three tiers', 'advisor')).toBe(false)
     // A fact in coder's bucket is a duplicate for coder …
     expect(isDuplicateFact(db, 1, 'Coder deployed the scanner on the NUC', 'coder')).toBe(true)
     // … but NOT for another persona (no cross-persona dedupe)
     expect(isDuplicateFact(db, 1, 'Coder deployed the scanner on the NUC', 'advisor')).toBe(false)
   })
 
-  it('extractAndStoreFacts stores [shared]-marked facts under agent_id=shared', async () => {
+  it('extractAndStoreFacts keeps model-suggested [shared] facts in the source persona', async () => {
     mockCompleteSimple.mockResolvedValueOnce(makeResponse([
       '- [shared] The Demo App pricing model is implemented in tiers.ts',
       '- Coder prefers vitest for unit tests',
@@ -158,11 +158,11 @@ describe('fact-extraction', () => {
 
     const facts = listMemories(db, { userId: 1, limit: 10, offset: 0 }).facts
     const byContent = new Map(facts.map(fact => [fact.content, fact.agentId]))
-    expect(byContent.get('The Demo App pricing model is implemented in tiers.ts')).toBe('shared')
+    expect(byContent.get('The Demo App pricing model is implemented in tiers.ts')).toBe('coder')
     expect(byContent.get('Coder prefers vitest for unit tests')).toBe('coder')
   })
 
-  it('extractAndStoreFacts does not duplicate a shared fact into a persona bucket', async () => {
+  it('extractAndStoreFacts does not let an unapproved shared archive suppress a new fact', async () => {
     createMemory(db, 1, 'session-old', 'The Demo App pricing model is implemented in tiers.ts', 'extracted_fact', 'shared')
     mockCompleteSimple.mockResolvedValueOnce(makeResponse(
       '- The Demo App pricing model is implemented in tiers.ts',
@@ -179,7 +179,7 @@ describe('fact-extraction', () => {
       'advisor',
     )
 
-    expect(result).toEqual({ extracted: 1, stored: 0, duplicates: 1 })
+    expect(result).toEqual({ extracted: 1, stored: 1, duplicates: 0 })
   })
 
   it('shared facts are visible to personas and to main via retrieval', () => {

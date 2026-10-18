@@ -1001,6 +1001,22 @@ describe('strand context telemetry', () => {
     expect(res.body).not.toHaveProperty('measurement')
   })
 
+  it('returns metadata only and rejects foreign-owner context reads and stale-persona provenance', async () => {
+    const strand = sessionManager.createThread('1', 'main', 'Fixture')
+    const { recordContextManifest } = await import('@axiom/core')
+    recordContextManifest(db, strand.id, 'main', '<scoped_memory>PRIVATE_SENTINEL</scoped_memory>', [])
+    const own = await api('GET', `/api/strands/${strand.id}/context`)
+    expect(own.status).toBe(200)
+    expect(own.body.isolation).toMatchObject({ policy: 'project-isolated', dataScope: 'strand', provenance: { sources: expect.any(Array) } })
+    expect(JSON.stringify(own.body)).not.toContain('PRIVATE_SENTINEL')
+    const foreign = await api('GET', `/api/strands/${strand.id}/context`, undefined, otherToken)
+    expect(foreign.status).toBe(404)
+    expect(foreign.body).not.toHaveProperty('isolation')
+    db.prepare("UPDATE sessions SET agent_id = 'coder' WHERE id = ?").run(strand.id)
+    const switched = await api('GET', `/api/strands/${strand.id}/context`)
+    expect((switched.body.isolation as { provenance: unknown }).provenance).toBeNull()
+  })
+
   it('requires authentication', async () => {
     const strand = sessionManager.createThread('1', 'main', 'Auth')
     const res = await fetch(`${baseUrl}/api/strands/${strand.id}/context`)

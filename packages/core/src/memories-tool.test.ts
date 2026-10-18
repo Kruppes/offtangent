@@ -60,7 +60,7 @@ function getDetails(result: Awaited<ReturnType<AgentTool['execute']>>): Record<s
   return (result as { details: Record<string, unknown> }).details
 }
 
-describe('search_memories tool', () => {
+describe('search_memories tool: explicit same-user archive retrieval', () => {
   let db: Database
 
   beforeEach(() => {
@@ -86,7 +86,7 @@ describe('search_memories tool', () => {
     createMemory(db, 1, 'session-b', 'Redis runs on port 6379', 'extracted_fact')
 
     const tool = createSearchMemoriesTool({ db, getCurrentUserId: () => 1 })
-    const result = await tool.execute('tool-call-1', { query: 'postgres port' })
+    const result = await tool.execute('tool-call-1', { cross_project: true, query: 'postgres port' })
     const text = getTextContent(result)
     const details = getDetails(result)
 
@@ -104,7 +104,7 @@ describe('search_memories tool', () => {
     createMemory(db, 2, 'session-b', 'postgres port is 6432', 'session')
 
     const tool = createSearchMemoriesTool({ db, getCurrentUserId: () => 2 })
-    const result = await tool.execute('tool-call-2', { query: 'postgres' })
+    const result = await tool.execute('tool-call-2', { cross_project: true, query: 'postgres' })
     const text = getTextContent(result)
 
     expect(text).toContain('6432')
@@ -117,15 +117,15 @@ describe('search_memories tool', () => {
     createMemory(db, 1, 'session-c', 'shared postgres fact', 'extracted_fact', 'shared')
     createMemory(db, 1, 'session-d', 'main postgres fact', 'extracted_fact', 'main')
 
-    const analystTool = createSearchMemoriesTool({ db, getCurrentAgentId: () => 'analyst' })
-    const analystText = getTextContent(await analystTool.execute('tc-w', { query: 'postgres' }))
+    const analystTool = createSearchMemoriesTool({ db, getCurrentUserId: () => 1, getCurrentAgentId: () => 'analyst' })
+    const analystText = getTextContent(await analystTool.execute('tc-w', { cross_project: true, query: 'postgres' }))
     expect(analystText).toContain('analyst postgres fact')
     expect(analystText).toContain('shared postgres fact')
     expect(analystText).not.toContain('coder postgres fact')
     expect(analystText).not.toContain('main postgres fact')
 
-    const mainTool = createSearchMemoriesTool({ db, getCurrentAgentId: () => 'main' })
-    const mainText = getTextContent(await mainTool.execute('tc-m', { query: 'postgres' }))
+    const mainTool = createSearchMemoriesTool({ db, getCurrentUserId: () => 1, getCurrentAgentId: () => 'main' })
+    const mainText = getTextContent(await mainTool.execute('tc-m', { cross_project: true, query: 'postgres' }))
     expect(mainText).toContain('analyst postgres fact')
     expect(mainText).toContain('coder postgres fact')
     expect(mainText).toContain('main postgres fact')
@@ -141,26 +141,26 @@ describe('search_memories tool', () => {
       createMemory(db, 1, 'session-d', 'main postgres fact', 'extracted_fact', 'main')
     })
 
-    it('default (no agent): non-main persona still sees only its own + shared', async () => {
-      const coderTool = createSearchMemoriesTool({ db, getCurrentAgentId: () => 'coder', listAgentIds: personas })
-      const text = getTextContent(await coderTool.execute('tc', { query: 'postgres' }))
+    it('explicit archive (no agent): non-main persona sees own + shared', async () => {
+      const coderTool = createSearchMemoriesTool({ db, getCurrentUserId: () => 1, getCurrentAgentId: () => 'coder', listAgentIds: personas })
+      const text = getTextContent(await coderTool.execute('tc', { cross_project: true, query: 'postgres' }))
       expect(text).toContain('coder postgres fact')
       expect(text).toContain('shared postgres fact')
       expect(text).not.toContain('analyst postgres fact')
       expect(text).not.toContain('main postgres fact')
     })
 
-    it('default (no agent): main stays unscoped', async () => {
-      const mainTool = createSearchMemoriesTool({ db, getCurrentAgentId: () => 'main', listAgentIds: personas })
-      const text = getTextContent(await mainTool.execute('tc', { query: 'postgres' }))
+    it('explicit archive (no agent): main can retrieve across personas', async () => {
+      const mainTool = createSearchMemoriesTool({ db, getCurrentUserId: () => 1, getCurrentAgentId: () => 'main', listAgentIds: personas })
+      const text = getTextContent(await mainTool.execute('tc', { cross_project: true, query: 'postgres' }))
       expect(text).toContain('coder postgres fact')
       expect(text).toContain('analyst postgres fact')
       expect(text).toContain('main postgres fact')
     })
 
     it('agent:"main" from a non-main persona returns main rows (+ shared)', async () => {
-      const coderTool = createSearchMemoriesTool({ db, getCurrentAgentId: () => 'coder', listAgentIds: personas })
-      const text = getTextContent(await coderTool.execute('tc', { query: 'postgres', agent: 'main' }))
+      const coderTool = createSearchMemoriesTool({ db, getCurrentUserId: () => 1, getCurrentAgentId: () => 'coder', listAgentIds: personas })
+      const text = getTextContent(await coderTool.execute('tc', { cross_project: true, query: 'postgres', agent: 'main' }))
       expect(text).toContain('main postgres fact')
       expect(text).toContain('shared postgres fact')
       expect(text).not.toContain('coder postgres fact')
@@ -168,8 +168,8 @@ describe('search_memories tool', () => {
     })
 
     it('agent:"all" returns rows across every persona bucket', async () => {
-      const coderTool = createSearchMemoriesTool({ db, getCurrentAgentId: () => 'coder', listAgentIds: personas })
-      const text = getTextContent(await coderTool.execute('tc', { query: 'postgres', agent: 'all', limit: 50 }))
+      const coderTool = createSearchMemoriesTool({ db, getCurrentUserId: () => 1, getCurrentAgentId: () => 'coder', listAgentIds: personas })
+      const text = getTextContent(await coderTool.execute('tc', { cross_project: true, query: 'postgres', agent: 'all', limit: 50 }))
       expect(text).toContain('coder postgres fact')
       expect(text).toContain('analyst postgres fact')
       expect(text).toContain('main postgres fact')
@@ -177,8 +177,8 @@ describe('search_memories tool', () => {
     })
 
     it('unknown agent id returns an error, not an empty list', async () => {
-      const coderTool = createSearchMemoriesTool({ db, getCurrentAgentId: () => 'coder', listAgentIds: personas })
-      const result = await coderTool.execute('tc', { query: 'postgres', agent: 'researcher' })
+      const coderTool = createSearchMemoriesTool({ db, getCurrentUserId: () => 1, getCurrentAgentId: () => 'coder', listAgentIds: personas })
+      const result = await coderTool.execute('tc', { cross_project: true, query: 'postgres', agent: 'researcher' })
       const text = getTextContent(result)
       const details = getDetails(result)
       expect(details.error).toBe(true)
@@ -196,7 +196,7 @@ describe('search_memories tool', () => {
         getCurrentUserId: () => 1,
         listAgentIds: personas,
       })
-      const text = getTextContent(await coderTool.execute('tc', { query: 'postgres', agent: 'all', limit: 50 }))
+      const text = getTextContent(await coderTool.execute('tc', { cross_project: true, query: 'postgres', agent: 'all', limit: 50 }))
       expect(text).toContain('main postgres fact')
       expect(text).not.toContain('user-two fact')
     })
@@ -204,7 +204,7 @@ describe('search_memories tool', () => {
 
   it('handles empty results gracefully', async () => {
     const tool = createSearchMemoriesTool({ db, getCurrentUserId: () => 1 })
-    const result = await tool.execute('tool-call-3', { query: 'no-match-xyz' })
+    const result = await tool.execute('tool-call-3', { cross_project: true, query: 'no-match-xyz' })
     const text = getTextContent(result)
     const details = getDetails(result)
 
@@ -215,10 +215,10 @@ describe('search_memories tool', () => {
   it('validates query and limit parameters', async () => {
     const tool = createSearchMemoriesTool({ db })
 
-    const blankQueryResult = await tool.execute('tool-call-4', { query: '   ' })
+    const blankQueryResult = await tool.execute('tool-call-4', { cross_project: true, query: '   ' })
     expect(getTextContent(blankQueryResult)).toContain('query must be a non-empty string')
 
-    const invalidLimitResult = await tool.execute('tool-call-5', { query: 'postgres', limit: 0 })
+    const invalidLimitResult = await tool.execute('tool-call-5', { cross_project: true, query: 'postgres', limit: 0 })
     expect(getTextContent(invalidLimitResult)).toContain('limit must be a positive number')
   })
 
@@ -228,7 +228,7 @@ describe('search_memories tool', () => {
     }
 
     const tool = createSearchMemoriesTool({ db, getCurrentUserId: () => 1 })
-    const result = await tool.execute('tool-call-6', { query: 'postgres', limit: 100 })
+    const result = await tool.execute('tool-call-6', { cross_project: true, query: 'postgres', limit: 100 })
     const details = getDetails(result)
 
     expect(details.limit).toBe(50)

@@ -2,6 +2,7 @@ import { describe, it, expect, afterEach, vi, beforeEach } from 'vitest'
 import { SessionManager, generateSessionId, type SessionInfo } from './session-manager.js'
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/
+import { resolveContextScope, contextMemoryDir } from './context-scope.js'
 import { initDatabase } from './database.js'
 import { logTokenUsage } from './token-logger.js'
 import type { Database } from './database.js'
@@ -14,6 +15,13 @@ describe('SessionManager', () => {
   let tmpDir: string
   let memoryDir: string
   let dbPath: string
+
+  function scopedDaily(base: string, date: string, agentId = 'main'): string {
+    const row = db.prepare('SELECT id FROM sessions WHERE agent_id = ? ORDER BY rowid LIMIT 1').get(agentId) as { id: string }
+    const scope = resolveContextScope(db, row.id, agentId)
+    expect(scope).not.toBeNull()
+    return path.join(contextMemoryDir(base, scope!), 'daily', `${date}.md`)
+  }
 
   beforeEach(() => {
     tmpDir = path.join(os.tmpdir(), `axiom-session-test-${Date.now()}-${Math.random().toString(36).slice(2)}`)
@@ -41,10 +49,10 @@ describe('SessionManager', () => {
     it('creates a new session for a user', async () => {
       const manager = new SessionManager({ db, memoryDir })
       await manager.init()
-      const session = manager.getOrCreateSession('user1', 'telegram')
+      const session = manager.getOrCreateSession('1', 'telegram')
 
       expect(session.id).toMatch(UUID_RE)
-      expect(session.userId).toBe('user1')
+      expect(session.userId).toBe('1')
       expect(session.source).toBe('telegram')
       expect(session.messageCount).toBe(0)
       expect(session.summaryWritten).toBe(false)
@@ -54,8 +62,8 @@ describe('SessionManager', () => {
     it('returns existing session for same user', async () => {
       const manager = new SessionManager({ db, memoryDir })
       await manager.init()
-      const session1 = manager.getOrCreateSession('user1')
-      const session2 = manager.getOrCreateSession('user1')
+      const session1 = manager.getOrCreateSession('1')
+      const session2 = manager.getOrCreateSession('1')
 
       expect(session1.id).toBe(session2.id)
     })
@@ -63,8 +71,8 @@ describe('SessionManager', () => {
     it('creates separate sessions for different users', async () => {
       const manager = new SessionManager({ db, memoryDir })
       await manager.init()
-      const session1 = manager.getOrCreateSession('user1')
-      const session2 = manager.getOrCreateSession('user2')
+      const session1 = manager.getOrCreateSession('1')
+      const session2 = manager.getOrCreateSession('2')
 
       expect(session1.id).not.toBe(session2.id)
     })
@@ -72,7 +80,7 @@ describe('SessionManager', () => {
     it('stores session metadata in SQLite including last_activity and session_user', async () => {
       const manager = new SessionManager({ db, memoryDir })
       await manager.init()
-      const session = manager.getOrCreateSession('user1', 'web')
+      const session = manager.getOrCreateSession('1', 'web')
 
       const metadata = manager.getSessionMetadata(session.id)
       expect(metadata).toBeDefined()
@@ -81,7 +89,7 @@ describe('SessionManager', () => {
       expect(metadata!.message_count).toBe(0)
       expect(metadata!.summary_written).toBe(0)
       expect(metadata!.last_activity).not.toBeNull()
-      expect(metadata!.session_user).toBe('user1')
+      expect(metadata!.session_user).toBe('1')
       expect(metadata!.type).toBe('interactive')
       expect(metadata!.parent_session_id).toBeNull()
       expect(metadata!.prompt_tokens).toBe(0)
@@ -91,7 +99,7 @@ describe('SessionManager', () => {
     it('returns prompt and completion token counts in session metadata', async () => {
       const manager = new SessionManager({ db, memoryDir })
       await manager.init()
-      const session = manager.getOrCreateSession('user1', 'web')
+      const session = manager.getOrCreateSession('1', 'web')
 
       logTokenUsage(db, {
         provider: 'openai',
@@ -121,26 +129,26 @@ describe('SessionManager', () => {
     it('increments message count', async () => {
       const manager = new SessionManager({ db, memoryDir })
       await manager.init()
-      manager.getOrCreateSession('user1')
+      manager.getOrCreateSession('1')
 
-      manager.recordMessage('user1')
-      manager.recordMessage('user1')
-      manager.recordMessage('user1')
+      manager.recordMessage('1')
+      manager.recordMessage('1')
+      manager.recordMessage('1')
 
-      const session = manager.getSession('user1')
+      const session = manager.getSession('1')
       expect(session!.messageCount).toBe(3)
     })
 
     it('updates message count and last_activity in SQLite', async () => {
       const manager = new SessionManager({ db, memoryDir })
       await manager.init()
-      const session = manager.getOrCreateSession('user1')
+      const session = manager.getOrCreateSession('1')
 
       // Small delay to ensure timestamp difference
       await new Promise(resolve => setTimeout(resolve, 10))
 
-      manager.recordMessage('user1')
-      manager.recordMessage('user1')
+      manager.recordMessage('1')
+      manager.recordMessage('1')
 
       const metadataAfter = manager.getSessionMetadata(session.id)
       expect(metadataAfter!.message_count).toBe(2)
@@ -168,19 +176,19 @@ describe('SessionManager', () => {
       })
       await manager.init()
 
-      const session = manager.getOrCreateSession('user1')
-      manager.recordMessage('user1')
+      const session = manager.getOrCreateSession('1')
+      manager.recordMessage('1')
 
       // Advance past timeout
       await vi.advanceTimersByTimeAsync(61 * 1000)
 
       expect(onSessionEnd).toHaveBeenCalledWith(expect.objectContaining({
         id: session.id,
-        userId: 'user1',
+        userId: '1',
       }), null)
 
       // Session should be gone
-      expect(manager.hasActiveSession('user1')).toBe(false)
+      expect(manager.hasActiveSession('1')).toBe(false)
     })
 
     it('sets the inactivity timer exactly once per incoming user message', async () => {
@@ -198,12 +206,12 @@ describe('SessionManager', () => {
         })
         await manager.init()
 
-        manager.getOrCreateSession('user1', 'web')
-        manager.recordMessage('user1')
+        manager.getOrCreateSession('1', 'web')
+        manager.recordMessage('1')
 
         const timerSetLogs = logSpy.mock.calls
           .map(args => String(args[0] ?? ''))
-          .filter(line => line.includes('Timer set for user1'))
+          .filter(line => line.includes('Timer set for 1'))
 
         expect(timerSetLogs).toHaveLength(1)
       }
@@ -222,15 +230,15 @@ describe('SessionManager', () => {
       })
       await manager.init()
 
-      manager.getOrCreateSession('user1')
-      manager.recordMessage('user1')
+      manager.getOrCreateSession('1')
+      manager.recordMessage('1')
 
       // Advance 50 seconds (not yet timed out)
       await vi.advanceTimersByTimeAsync(50 * 1000)
       expect(onSessionEnd).not.toHaveBeenCalled()
 
       // Record another message (resets timer)
-      manager.recordMessage('user1')
+      manager.recordMessage('1')
 
       // Advance 50 more seconds (still within new timer)
       await vi.advanceTimersByTimeAsync(50 * 1000)
@@ -251,8 +259,8 @@ describe('SessionManager', () => {
       })
       await manager.init()
 
-      manager.getOrCreateSession('user1')
-      manager.recordMessage('user1')
+      manager.getOrCreateSession('1')
+      manager.recordMessage('1')
 
       await vi.advanceTimersByTimeAsync(61 * 1000)
 
@@ -260,7 +268,7 @@ describe('SessionManager', () => {
 
       // Check that summary was appended to daily file
       const today = new Date().toISOString().split('T')[0]
-      const dailyPath = path.join(memoryDir, 'daily', `${today}.md`)
+      const dailyPath = scopedDaily(memoryDir, today)
       expect(fs.existsSync(dailyPath)).toBe(true)
       const dailyContent = fs.readFileSync(dailyPath, 'utf-8')
       expect(dailyContent).toMatch(/## \d{2}:\d{2}/)
@@ -277,8 +285,8 @@ describe('SessionManager', () => {
       })
       await manager.init()
 
-      const session = manager.getOrCreateSession('user1')
-      manager.recordMessage('user1')
+      const session = manager.getOrCreateSession('1')
+      manager.recordMessage('1')
 
       // The lastActivity is set to "now" (fake timer time)
       const lastActivityDate = new Date(session.lastActivity)
@@ -289,7 +297,7 @@ describe('SessionManager', () => {
       await vi.advanceTimersByTimeAsync(61 * 1000)
 
       // Summary should be in the daily file for the lastActivity date
-      const dailyPath = path.join(memoryDir, 'daily', `${expectedDateStr}.md`)
+      const dailyPath = scopedDaily(memoryDir, expectedDateStr)
       expect(fs.existsSync(dailyPath)).toBe(true)
       const content = fs.readFileSync(dailyPath, 'utf-8')
       expect(content).toContain(`## ${expectedHH}:${expectedMM}`)
@@ -305,8 +313,8 @@ describe('SessionManager', () => {
       })
       await manager.init()
 
-      const session = manager.getOrCreateSession('user1')
-      manager.recordMessage('user1')
+      const session = manager.getOrCreateSession('1')
+      manager.recordMessage('1')
 
       await vi.advanceTimersByTimeAsync(61 * 1000)
 
@@ -326,7 +334,7 @@ describe('SessionManager', () => {
       })
       await manager.init()
 
-      manager.getOrCreateSession('user1')
+      manager.getOrCreateSession('1')
       // No messages recorded
 
       await vi.advanceTimersByTimeAsync(61 * 1000)
@@ -344,7 +352,7 @@ describe('SessionManager', () => {
       vi.useRealTimers()
     })
 
-    it('writes persona session summaries to the persona memory root, not into main dailies', async () => {
+    it('writes persona summaries inside the authenticated strand scope, not main dailies', async () => {
       const agentsBaseDir = path.join(tmpDir, 'agents')
       fs.mkdirSync(path.join(agentsBaseDir, 'analyst'), { recursive: true })
       const onSummarize = vi.fn().mockResolvedValue('ANALYST PORTFOLIO SUMMARY')
@@ -358,15 +366,15 @@ describe('SessionManager', () => {
       })
       await manager.init()
 
-      manager.getOrCreateSession('user1', 'telegram', 'analyst')
-      manager.recordMessage('user1', 'analyst')
+      manager.getOrCreateSession('1', 'telegram', 'analyst')
+      manager.recordMessage('1', 'analyst')
 
       await vi.advanceTimersByTimeAsync(61 * 1000)
 
       expect(onSummarize).toHaveBeenCalled()
 
       const today = new Date().toISOString().split('T')[0]
-      const personaDaily = path.join(agentsBaseDir, 'analyst', 'memory', 'daily', `${today}.md`)
+      const personaDaily = scopedDaily(path.join(agentsBaseDir, 'analyst', 'memory'), today, 'analyst')
       expect(fs.existsSync(personaDaily)).toBe(true)
       expect(fs.readFileSync(personaDaily, 'utf-8')).toContain('ANALYST PORTFOLIO SUMMARY')
 
@@ -376,7 +384,7 @@ describe('SessionManager', () => {
       }
     })
 
-    it('keeps main session summaries in the shared memory dir when scoping is enabled', async () => {
+    it('keeps main session summaries in the authenticated strand scope', async () => {
       const agentsBaseDir = path.join(tmpDir, 'agents')
       const onSummarize = vi.fn().mockResolvedValue('MAIN SESSION SUMMARY')
       const manager = new SessionManager({
@@ -389,18 +397,18 @@ describe('SessionManager', () => {
       })
       await manager.init()
 
-      manager.getOrCreateSession('user1')
-      manager.recordMessage('user1')
+      manager.getOrCreateSession('1')
+      manager.recordMessage('1')
 
       await vi.advanceTimersByTimeAsync(61 * 1000)
 
       const today = new Date().toISOString().split('T')[0]
-      const mainDaily = path.join(memoryDir, 'daily', `${today}.md`)
+      const mainDaily = scopedDaily(memoryDir, today)
       expect(fs.existsSync(mainDaily)).toBe(true)
       expect(fs.readFileSync(mainDaily, 'utf-8')).toContain('MAIN SESSION SUMMARY')
     })
 
-    it('writes persona summaries to the shared memory dir when scoping is disabled (legacy)', async () => {
+    it('uses scoped subdirectories even when legacy persona memory scoping is disabled', async () => {
       const agentsBaseDir = path.join(tmpDir, 'agents')
       const onSummarize = vi.fn().mockResolvedValue('LEGACY SHARED SUMMARY')
       const manager = new SessionManager({
@@ -413,13 +421,13 @@ describe('SessionManager', () => {
       })
       await manager.init()
 
-      manager.getOrCreateSession('user1', 'telegram', 'coder')
-      manager.recordMessage('user1', 'coder')
+      manager.getOrCreateSession('1', 'telegram', 'coder')
+      manager.recordMessage('1', 'coder')
 
       await vi.advanceTimersByTimeAsync(61 * 1000)
 
       const today = new Date().toISOString().split('T')[0]
-      const mainDaily = path.join(memoryDir, 'daily', `${today}.md`)
+      const mainDaily = scopedDaily(memoryDir, today, 'coder')
       expect(fs.existsSync(mainDaily)).toBe(true)
       expect(fs.readFileSync(mainDaily, 'utf-8')).toContain('LEGACY SHARED SUMMARY')
       expect(fs.existsSync(path.join(agentsBaseDir, 'coder', 'memory', 'daily', `${today}.md`))).toBe(false)
@@ -437,13 +445,13 @@ describe('SessionManager', () => {
       })
       await manager.init()
 
-      manager.getOrCreateSession('user1')
-      manager.recordMessage('user1')
+      manager.getOrCreateSession('1')
+      manager.recordMessage('1')
 
-      const summary = await manager.handleNewCommand('user1')
+      const summary = await manager.handleNewCommand('1')
 
       expect(summary).toBe('Session about deployment.')
-      expect(manager.hasActiveSession('user1')).toBe(false)
+      expect(manager.hasActiveSession('1')).toBe(false)
       expect(onSummarize).toHaveBeenCalled()
     })
 
@@ -451,7 +459,7 @@ describe('SessionManager', () => {
       const manager = new SessionManager({ db, memoryDir })
       await manager.init()
 
-      const result = await manager.handleNewCommand('user1')
+      const result = await manager.handleNewCommand('1')
       expect(result).toBeNull()
     })
 
@@ -459,12 +467,12 @@ describe('SessionManager', () => {
       const manager = new SessionManager({ db, memoryDir })
       await manager.init()
 
-      const session1 = manager.getOrCreateSession('user1')
-      manager.recordMessage('user1')
+      const session1 = manager.getOrCreateSession('1')
+      manager.recordMessage('1')
 
-      await manager.handleNewCommand('user1')
+      await manager.handleNewCommand('1')
 
-      const session2 = manager.getOrCreateSession('user1')
+      const session2 = manager.getOrCreateSession('1')
       expect(session2.id).not.toBe(session1.id)
       expect(session2.messageCount).toBe(0)
     })
@@ -479,13 +487,13 @@ describe('SessionManager', () => {
       })
       await manager.init()
 
-      manager.getOrCreateSession('user1')
-      manager.recordMessage('user1')
+      manager.getOrCreateSession('1')
+      manager.recordMessage('1')
 
-      await manager.handleNewCommand('user1')
+      await manager.handleNewCommand('1')
 
       const today = new Date().toISOString().split('T')[0]
-      const dailyPath = path.join(memoryDir, 'daily', `${today}.md`)
+      const dailyPath = scopedDaily(memoryDir, today)
       expect(fs.existsSync(dailyPath)).toBe(true)
       const content = fs.readFileSync(dailyPath, 'utf-8')
       expect(content).toContain('Discussed Docker setup.')
@@ -512,21 +520,21 @@ describe('SessionManager', () => {
       })
       await manager.init()
 
-      const oldSession = manager.getOrCreateSession('user1')
+      const oldSession = manager.getOrCreateSession('1')
       // 3 messages so we cross MIN_MESSAGES_FOR_SUMMARY and exercise the
       // real summary path (not the short-session placeholder shortcut).
-      manager.recordMessage('user1')
-      manager.recordMessage('user1')
-      manager.recordMessage('user1')
+      manager.recordMessage('1')
+      manager.recordMessage('1')
+      manager.recordMessage('1')
 
       const before = Date.now()
-      const newSession = manager.handleNewCommandAsync('user1')
+      const newSession = manager.handleNewCommandAsync('1')
       const elapsed = Date.now() - before
 
       // Must be effectively synchronous (well under the artificial summary delay).
       expect(elapsed).toBeLessThan(50)
       expect(newSession.id).not.toBe(oldSession.id)
-      expect(manager.hasActiveSession('user1')).toBe(true)
+      expect(manager.hasActiveSession('1')).toBe(true)
       // Summary callback has not fired yet — summary is still pending.
       expect(onSessionEnd).not.toHaveBeenCalled()
 
@@ -558,18 +566,18 @@ describe('SessionManager', () => {
       })
       await manager.init()
 
-      manager.getOrCreateSession('user1')
+      manager.getOrCreateSession('1')
       // 3 messages so the session crosses MIN_MESSAGES_FOR_SUMMARY and
       // actually triggers the summarizer + daily-file write.
-      manager.recordMessage('user1')
-      manager.recordMessage('user1')
-      manager.recordMessage('user1')
+      manager.recordMessage('1')
+      manager.recordMessage('1')
+      manager.recordMessage('1')
 
-      manager.handleNewCommandAsync('user1')
+      manager.handleNewCommandAsync('1')
       await manager.awaitBackgroundJobs()
 
       const today = new Date().toISOString().split('T')[0]
-      const dailyPath = path.join(memoryDir, 'daily', `${today}.md`)
+      const dailyPath = scopedDaily(memoryDir, today)
       expect(fs.existsSync(dailyPath)).toBe(true)
       const content = fs.readFileSync(dailyPath, 'utf-8')
       expect(content).toContain('Async daily entry.')
@@ -582,13 +590,13 @@ describe('SessionManager', () => {
       const manager = new SessionManager({ db, memoryDir, timeoutMinutes: 15, onSummarize })
       await manager.init()
 
-      const oldSession = manager.getOrCreateSession('user1')
-      manager.recordMessage('user1')
-      manager.recordMessage('user1')
-      manager.recordMessage('user1')
+      const oldSession = manager.getOrCreateSession('1')
+      manager.recordMessage('1')
+      manager.recordMessage('1')
+      manager.recordMessage('1')
 
       const clickedAt = Date.now()
-      manager.handleNewCommandAsync('user1')
+      manager.handleNewCommandAsync('1')
       await manager.awaitBackgroundJobs()
 
       const row = db.prepare('SELECT ended_at FROM sessions WHERE id = ?').get(oldSession.id) as { ended_at: string }
@@ -605,9 +613,9 @@ describe('SessionManager', () => {
       const manager = new SessionManager({ db, memoryDir, onSummarize })
       await manager.init()
 
-      const newSession = manager.handleNewCommandAsync('user1')
+      const newSession = manager.handleNewCommandAsync('1')
       expect(newSession).toBeDefined()
-      expect(manager.hasActiveSession('user1')).toBe(true)
+      expect(manager.hasActiveSession('1')).toBe(true)
       expect(onSummarize).not.toHaveBeenCalled()
     })
 
@@ -623,14 +631,14 @@ describe('SessionManager', () => {
       })
       await manager.init()
 
-      manager.getOrCreateSession('user1')
+      manager.getOrCreateSession('1')
       // 2 messages = classic ping/pong (one user turn + one assistant reply).
       // Calling the summarizer here would just yield "Empty session." — we
       // expect the manager to short-circuit with an em-dash placeholder.
-      manager.recordMessage('user1')
-      manager.recordMessage('user1')
+      manager.recordMessage('1')
+      manager.recordMessage('1')
 
-      manager.handleNewCommandAsync('user1')
+      manager.handleNewCommandAsync('1')
       await manager.awaitBackgroundJobs()
 
       expect(onSummarize).not.toHaveBeenCalled()
@@ -645,7 +653,7 @@ describe('SessionManager', () => {
 
       // No daily-log entry should be written for a short session.
       const today = new Date().toISOString().split('T')[0]
-      const dailyPath = path.join(memoryDir, 'daily', `${today}.md`)
+      const dailyPath = scopedDaily(memoryDir, today)
       expect(fs.existsSync(dailyPath)).toBe(false)
     })
 
@@ -668,15 +676,15 @@ describe('SessionManager', () => {
       })
       await manager.init()
 
-      const oldSession = manager.getOrCreateSession('user1')
-      manager.recordMessage('user1')
-      manager.recordMessage('user1')
-      manager.recordMessage('user1')
+      const oldSession = manager.getOrCreateSession('1')
+      manager.recordMessage('1')
+      manager.recordMessage('1')
+      manager.recordMessage('1')
 
-      const newSession = manager.handleNewCommandAsync('user1')
+      const newSession = manager.handleNewCommandAsync('1')
       // User keeps chatting in the new session while the summary is in flight.
-      manager.recordMessage('user1')
-      manager.recordMessage('user1')
+      manager.recordMessage('1')
+      manager.recordMessage('1')
 
       // Only NOW does the slow summary resolve.
       resolveSummary!('Old session summary.')
@@ -713,15 +721,15 @@ describe('SessionManager', () => {
       })
       await manager.init()
 
-      manager.getOrCreateSession('user1')
-      manager.recordMessage('user1')
-      manager.getOrCreateSession('user2')
-      manager.recordMessage('user2')
+      manager.getOrCreateSession('1')
+      manager.recordMessage('1')
+      manager.getOrCreateSession('2')
+      manager.recordMessage('2')
 
       await manager.endAllSessions('provider_change')
 
-      expect(manager.hasActiveSession('user1')).toBe(false)
-      expect(manager.hasActiveSession('user2')).toBe(false)
+      expect(manager.hasActiveSession('1')).toBe(false)
+      expect(manager.hasActiveSession('2')).toBe(false)
       expect(onSummarize).toHaveBeenCalledTimes(2)
       expect(onSessionEnd).toHaveBeenCalledTimes(2)
     })
@@ -732,14 +740,14 @@ describe('SessionManager', () => {
       const manager = new SessionManager({ db, memoryDir })
       await manager.init()
 
-      const s1 = manager.getOrCreateSession('user1')
-      const s2 = manager.getOrCreateSession('user2')
-      manager.recordMessage('user1')
+      const s1 = manager.getOrCreateSession('1')
+      const s2 = manager.getOrCreateSession('2')
+      manager.recordMessage('1')
 
       await manager.dispose()
 
-      expect(manager.hasActiveSession('user1')).toBe(false)
-      expect(manager.hasActiveSession('user2')).toBe(false)
+      expect(manager.hasActiveSession('1')).toBe(false)
+      expect(manager.hasActiveSession('2')).toBe(false)
 
       // Both sessions should be ended in SQLite
       const m1 = manager.getSessionMetadata(s1.id)
@@ -774,10 +782,10 @@ describe('SessionManager', () => {
       })
       await manager.init()
 
-      manager.getOrCreateSession('user1')
-      manager.recordMessage('user1')
+      manager.getOrCreateSession('1')
+      manager.recordMessage('1')
 
-      const summary = await manager.handleNewCommand('user1')
+      const summary = await manager.handleNewCommand('1')
 
       expect(onSummarize).toHaveBeenCalled()
       expect(summary).toBe('Summary text')
@@ -907,7 +915,7 @@ describe('SessionManager', () => {
     it('getOrCreateSession defaults to type=interactive', async () => {
       const manager = new SessionManager({ db, memoryDir })
       await manager.init()
-      const session = manager.getOrCreateSession('user1', 'web')
+      const session = manager.getOrCreateSession('1', 'web')
       const meta = manager.getSessionMetadata(session.id)
       expect(meta!.type).toBe('interactive')
     })
@@ -928,11 +936,11 @@ describe('SessionManager', () => {
       const manager = new SessionManager({ db, memoryDir })
       await manager.init()
 
-      const parent = manager.getOrCreateSession('user1', 'web')
+      const parent = manager.getOrCreateSession('1', 'web')
       const child = manager.createSession({
         type: 'task',
         source: 'system',
-        userId: 'user1',
+        userId: '1',
         parentSessionId: parent.id,
       })
 
@@ -944,7 +952,7 @@ describe('SessionManager', () => {
       expect(meta!.type).toBe('task')
       expect(meta!.parent_session_id).toBe(parent.id)
       expect(meta!.source).toBe('system')
-      expect(meta!.session_user).toBe('user1')
+      expect(meta!.session_user).toBe('1')
     })
 
     it('createSession() persists the persona agent_id (multi-persona bleeding regression)', async () => {
@@ -1002,7 +1010,7 @@ describe('SessionManager', () => {
       const longAgo = Date.now() - 2 * 60 * 60 * 1000
       db.prepare(
         `INSERT INTO sessions (id, user_id, source, type, session_user, started_at, last_activity, message_count, summary_written)
-         VALUES (?, NULL, 'web', 'interactive', 'user1', datetime(? / 1000, 'unixepoch'), datetime(? / 1000, 'unixepoch'), 3, 0)`,
+         VALUES (?, NULL, 'web', 'interactive', '1', datetime(? / 1000, 'unixepoch'), datetime(? / 1000, 'unixepoch'), 3, 0)`,
       ).run(sessionId, longAgo, longAgo)
 
       const manager = new SessionManager({ db, memoryDir, timeoutMinutes: 15 })
@@ -1018,11 +1026,11 @@ describe('SessionManager', () => {
       const longAgo = Date.now() - 2 * 60 * 60 * 1000
       db.prepare(
         `INSERT INTO sessions (id, user_id, source, type, session_user, started_at, last_activity, message_count, summary_written)
-         VALUES (?, NULL, 'web', 'interactive', 'user1', datetime(? / 1000, 'unixepoch'), datetime(? / 1000, 'unixepoch'), 0, 0)`,
+         VALUES (?, NULL, 'web', 'interactive', '1', datetime(? / 1000, 'unixepoch'), datetime(? / 1000, 'unixepoch'), 0, 0)`,
       ).run(emptyId, longAgo, longAgo)
       db.prepare(
         `INSERT INTO sessions (id, user_id, source, type, session_user, started_at, last_activity, message_count, summary_written)
-         VALUES (?, NULL, 'web', 'interactive', 'user2', datetime(? / 1000, 'unixepoch'), datetime(? / 1000, 'unixepoch'), 5, 1)`,
+         VALUES (?, NULL, 'web', 'interactive', '2', datetime(? / 1000, 'unixepoch'), datetime(? / 1000, 'unixepoch'), 5, 1)`,
       ).run(summarizedId, longAgo, longAgo)
 
       const manager = new SessionManager({ db, memoryDir, timeoutMinutes: 15 })
@@ -1064,8 +1072,8 @@ describe('SessionManager', () => {
       })
       await manager1.init()
 
-      const session = manager1.getOrCreateSession('user1', 'web')
-      manager1.recordMessage('user1')
+      const session = manager1.getOrCreateSession('1', 'web')
+      manager1.recordMessage('1')
 
       // Add chat messages to DB so the summary has content
       db.prepare(
@@ -1097,7 +1105,7 @@ describe('SessionManager', () => {
       // onSummarize should have been called with conversation history
       expect(onSummarize).toHaveBeenCalledWith(
         session.id,
-        'user1',
+        '1',
         expect.stringContaining('How do I deploy?')
       )
 
@@ -1108,7 +1116,7 @@ describe('SessionManager', () => {
 
       // Summary should NOT be in today's daily file but in the file for twoHoursAgo's date
       const expectedDate = twoHoursAgo.toISOString().split('T')[0]
-      const dailyPath = path.join(memoryDir, 'daily', `${expectedDate}.md`)
+      const dailyPath = scopedDaily(memoryDir, expectedDate)
       expect(fs.existsSync(dailyPath)).toBe(true)
       const content = fs.readFileSync(dailyPath, 'utf-8')
       expect(content).toContain('Session covered deployment strategies.')
@@ -1119,7 +1127,7 @@ describe('SessionManager', () => {
       expect(content).toContain(`## ${expectedHH}:${expectedMM}`)
 
       // No active session should remain
-      expect(manager2.hasActiveSession('user1')).toBe(false)
+      expect(manager2.hasActiveSession('1')).toBe(false)
     })
 
     it('fires onSessionEnd when an orphaned session is summarized on startup', async () => {
@@ -1173,8 +1181,8 @@ describe('SessionManager', () => {
       })
       await manager1.init()
 
-      const session = manager1.getOrCreateSession('user1', 'web')
-      manager1.recordMessage('user1')
+      const session = manager1.getOrCreateSession('1', 'web')
+      manager1.recordMessage('1')
 
       // Add chat messages
       db.prepare(
@@ -1202,7 +1210,7 @@ describe('SessionManager', () => {
 
       // Summary should be in yesterday's daily file at 23:35
       const expectedDateStr = yesterday.toISOString().split('T')[0]
-      const dailyPath = path.join(memoryDir, 'daily', `${expectedDateStr}.md`)
+      const dailyPath = scopedDaily(memoryDir, expectedDateStr)
       expect(fs.existsSync(dailyPath)).toBe(true)
       const content = fs.readFileSync(dailyPath, 'utf-8')
       expect(content).toContain('## 23:35')
@@ -1220,8 +1228,8 @@ describe('SessionManager', () => {
         })
         await manager1.init()
 
-        const session = manager1.getOrCreateSession('user1', 'web')
-        manager1.recordMessage('user1')
+        const session = manager1.getOrCreateSession('1', 'web')
+        manager1.recordMessage('1')
 
         // Set last_activity to 5 minutes ago (timeout is 15 min, so 10 min remaining)
         const fiveMinAgo = new Date(Date.now() - 5 * 60 * 1000)
@@ -1250,8 +1258,8 @@ describe('SessionManager', () => {
         await manager2.init()
 
         // Session should be restored
-        expect(manager2.hasActiveSession('user1')).toBe(true)
-        const restored = manager2.getSession('user1')
+        expect(manager2.hasActiveSession('1')).toBe(true)
+        const restored = manager2.getSession('1')
         expect(restored).toBeDefined()
         expect(restored!.id).toBe(session.id)
         expect(restored!.restored).toBe(true)
@@ -1266,12 +1274,12 @@ describe('SessionManager', () => {
         // Now the session should have timed out and been summarized
         expect(onSummarize).toHaveBeenCalled()
         expect(onSessionEnd).toHaveBeenCalled()
-        expect(manager2.hasActiveSession('user1')).toBe(false)
+        expect(manager2.hasActiveSession('1')).toBe(false)
 
         // Conversation history from DB should have been passed (restored session)
         expect(onSummarize).toHaveBeenCalledWith(
           session.id,
-          'user1',
+          '1',
           expect.stringContaining('Quick question')
         )
       } finally {
@@ -1290,8 +1298,8 @@ describe('SessionManager', () => {
         })
         await manager1.init()
 
-        const session = manager1.getOrCreateSession('user1', 'web')
-        manager1.recordMessage('user1')
+        const session = manager1.getOrCreateSession('1', 'web')
+        manager1.recordMessage('1')
 
         // Set last_activity to 5 minutes ago
         const fiveMinAgo = new Date(Date.now() - 5 * 60 * 1000)
@@ -1312,14 +1320,14 @@ describe('SessionManager', () => {
         })
         await manager2.init()
 
-        expect(manager2.hasActiveSession('user1')).toBe(true)
+        expect(manager2.hasActiveSession('1')).toBe(true)
 
         // Advance 5 minutes (still within remaining 10 min)
         await vi.advanceTimersByTimeAsync(5 * 60 * 1000)
         expect(onSessionEnd).not.toHaveBeenCalled()
 
         // Record a new message (should reset timer to full 15 minutes)
-        manager2.recordMessage('user1')
+        manager2.recordMessage('1')
 
         // Advance 14 minutes (should still be within new full timer)
         await vi.advanceTimersByTimeAsync(14 * 60 * 1000)
@@ -1341,8 +1349,8 @@ describe('SessionManager', () => {
       })
       await manager1.init()
 
-      const session = manager1.getOrCreateSession('user1', 'web')
-      manager1.recordMessage('user1')
+      const session = manager1.getOrCreateSession('1', 'web')
+      manager1.recordMessage('1')
 
       // Set last_activity far in the past (no chat messages in DB)
       const longAgo = new Date(Date.now() - 24 * 60 * 60 * 1000)

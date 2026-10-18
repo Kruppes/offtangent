@@ -2589,6 +2589,7 @@
       "pdfFallback": "The preview cannot be shown here. Open or download the PDF instead."
     },
     "context": {
+    "provenance": {"title": "Included context", "unsupported": "This server does not report context sources yet.", "pending": "No outgoing request recorded yet.", "chars": "characters", "explain": "App-side selection before provider serialization. Hashes and sizes only; no prompt contents. Envelope entries overlap their listed blocks. Explicit retrieval stays in the strand history."},
       "usage": "Context usage",
       "loading": "Reading the last request …",
       "unsupported": "This server does not report context usage yet.",
