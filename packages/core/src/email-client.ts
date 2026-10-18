@@ -200,6 +200,30 @@ export function htmlToText(html: string): string {
 }
 
 /** Lowercased bare address, tolerating `Name <addr>` and surrounding whitespace. */
+/**
+ * Plain-text rendering of one RFC 822 message (an attached `.eml`): a short
+ * header block, the text body (HTML converted), and the names of nested
+ * attachments, which are NOT read. Lives here because this module is the only
+ * one allowed to import mailparser. Throws when the bytes cannot be parsed.
+ */
+export async function parseEmlText(bytes: Buffer): Promise<string> {
+  const parsed = await simpleParser(bytes, { skipImageLinks: true, skipTextToHtml: true })
+  const from = parsed.from?.text ?? ''
+  const to = Array.isArray(parsed.to) ? parsed.to.map(a => a.text).join(', ') : parsed.to?.text ?? ''
+  const date = parsed.date ? parsed.date.toISOString() : ''
+  const body = (parsed.text ?? '').trim() || htmlToText(typeof parsed.html === 'string' ? parsed.html : '')
+  const nested = (parsed.attachments ?? [])
+    .map(a => `${a.filename || '(unnamed)'} (${a.contentType || 'application/octet-stream'}, ${a.size ?? 0} bytes)`)
+  const head = [
+    `from: ${from || '(no sender)'}`,
+    `to: ${to || '(no recipient)'}`,
+    `date: ${date || '(no date)'}`,
+    `subject: ${parsed.subject || '(no subject)'}`,
+    ...(nested.length > 0 ? [`attachments (not read): ${nested.join('; ')}`] : []),
+  ]
+  return `${head.join('\n')}\n\n${body || '(no text body)'}`
+}
+
 export function normalizeAddress(value: string): string {
   const match = /<([^>]*)>/.exec(value)
   return (match?.[1] ?? value).trim().toLowerCase()

@@ -32,7 +32,7 @@ import { withSecretBoundary } from '../secret-boundary.js'
 import type { ProviderConfig } from '../provider-config.js'
 import { createAskConnectorTool, wrapConnectorResult } from './ask-connector-tool.js'
 import { createConnectorToolContext } from './access.js'
-import { createFakeGoogle, GOOGLE_FAKE_CANARY } from './google/fake-google.fixture.js'
+import { createFakeGoogle, GOOGLE_FAKE_ATTACHMENT_CANARY, GOOGLE_FAKE_CANARY } from './google/fake-google.fixture.js'
 import { GOOGLE_CONNECTOR_ID } from './google/manifest.js'
 import { createMailboxConnectorManifest, MAILBOX_CANARY } from './mailbox.fixture.js'
 import { getConnectorRegistry } from './registry.js'
@@ -432,6 +432,75 @@ describe('connector sub-agent canary gate', () => {
     // No token ever reached the cloud model either.
     expect(cloud.seen()).not.toContain('access-token')
     expect(cloud.seen()).not.toContain('refresh-token')
+  })
+
+  /**
+   * The same gate for attachments: the canary sits in the TEXT LAYER of a PDF
+   * attachment, so it can only travel through gmail_read_attachment (download,
+   * pdftotext). It must reach the local model and nothing else — not the cloud
+   * model, not the chat history, not a log line, not a file under DATA_DIR.
+   */
+  it('keeps the text of a google mail attachment away from the cloud model', async () => {
+    const fake = createFakeGoogle()
+    setConnectorClient(GOOGLE_CONNECTOR_ID, { clientId: 'client-id-2', clientSecret: 'client-secret-0123456789' })
+    saveConnectorTokens(GOOGLE_CONNECTOR_ID, {
+      accessToken: 'access-token-before-refresh',
+      refreshToken: 'refresh-token-abcdefghij',
+      expiresAt: new Date(Date.now() + 3_600_000).toISOString(),
+      scopes: ['https://www.googleapis.com/auth/gmail.readonly'],
+    })
+    const filesBefore = fs.readdirSync(dataDir, { recursive: true }).map(String).sort()
+
+    const local = scriptedProvider(LOCAL_PROVIDER.id, 'model-local', [
+      { toolCalls: [{ name: 'gmail_list_attachments', args: { threadId: 'thr-1003' } }] },
+      { toolCalls: [{ name: 'gmail_read_attachment', args: { messageId: 'msg-1003a', partId: '1' } }] },
+      { text: 'The delivery note lists 3 pallets.' },
+    ])
+    const cloud = scriptedProvider(CLOUD_PROVIDER.id, 'model-cloud', [
+      { toolCalls: [{ name: 'ask_connector', args: { connector: GOOGLE_CONNECTOR_ID, question: 'How many pallets are on the delivery note?' } }] },
+      { text: 'Three pallets.' },
+    ])
+    const logLines: string[] = []
+
+    const askTool = createAskConnectorTool({
+      runnerOptions: {
+        ...runnerOptions(local.stream),
+        logger: line => logLines.push(line),
+        buildToolContext: manifestToWire => createConnectorToolContext(manifestToWire, { fetchImpl: fake.fetchImpl }),
+      },
+    })
+    const mainAgent = new PiAgent({
+      initialState: {
+        systemPrompt: 'main agent',
+        tools: withSecretBoundary([askTool as AgentTool]),
+        model: fakeModel(CLOUD_PROVIDER.id, 'model-cloud'),
+        messages: [],
+      },
+      streamFn: cloud.stream,
+    })
+
+    await mainAgent.prompt('How many pallets are on the delivery note?')
+
+    // The attachment really was downloaded and its text layer read locally.
+    expect(fake.requests.some(r => r.url.includes('/messages/msg-1003a/attachments/att-1'))).toBe(true)
+    expect(local.seen()).toContain(GOOGLE_FAKE_ATTACHMENT_CANARY)
+    expect(local.seen()).toContain('Pallets: 3')
+    // ...and stayed there.
+    expect(cloud.seen()).toContain('connector_result')
+    expect(cloud.seen()).toContain('3 pallets')
+    expect(cloud.seen()).not.toContain(GOOGLE_FAKE_ATTACHMENT_CANARY)
+    expect(cloud.seen()).not.toContain('Pallets: 3')
+    expect(chatMessagesDump()).not.toContain(GOOGLE_FAKE_ATTACHMENT_CANARY)
+    expect(logLines.join('\n')).not.toContain(GOOGLE_FAKE_ATTACHMENT_CANARY)
+    expect(logLines.join('\n')).not.toContain('delivery-note')
+    // No file was written for the attachment.
+    const filesAfter = fs.readdirSync(dataDir, { recursive: true }).map(String).sort()
+    expect(filesAfter.filter(f => !filesBefore.includes(f) && !/\.db(-wal|-shm|-journal)?$/.test(f))).toEqual([])
+    for (const file of filesAfter) {
+      const full = path.join(dataDir, file)
+      if (!fs.statSync(full).isFile()) continue
+      expect(fs.readFileSync(full).includes(GOOGLE_FAKE_ATTACHMENT_CANARY)).toBe(false)
+    }
   })
 
   it('wraps the answer in an untrusted envelope and neutralises closing tags', () => {

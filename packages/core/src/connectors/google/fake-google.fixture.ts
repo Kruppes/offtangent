@@ -12,24 +12,44 @@
  * that mail content never reaches a cloud model.
  */
 
+import { textPdf } from '../pdf.fixture.js'
+
 /** Marker that only the local model may ever see. */
 export const GOOGLE_FAKE_CANARY = 'CANARY-4b81e5a2-google-do-not-leak'
 
 export const FAKE_GOOGLE_ACCOUNT = 'bob@example.com'
 
+/** Sits inside the text layer of the fake delivery-note PDF. */
+export const GOOGLE_FAKE_ATTACHMENT_CANARY = 'CANARY-9d03c7f1-attachment-do-not-leak'
+
+/**
+ * Bytes behind `attachments.get`, keyed `<messageId>/<attachmentId>`. Built
+ * lazily: the PDF builder lives in the attachment test fixtures.
+ */
+export const FAKE_GOOGLE_ATTACHMENTS: Record<string, () => Buffer> = {
+  'msg-1003a/att-1': () => textPdf([
+    ['Delivery note 8821', `Reference ${GOOGLE_FAKE_ATTACHMENT_CANARY}`],
+    ['Pallets: 3, signed on arrival'],
+  ]),
+}
+
+export function b64urlBytes(value: Buffer): string {
+  return value.toString('base64').replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '')
+}
+
 function b64url(value: string): string {
-  return Buffer.from(value, 'utf-8').toString('base64')
-    .replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '')
+  return b64urlBytes(Buffer.from(value, 'utf-8'))
 }
 
 interface FakePart {
+  partId?: string
   mimeType: string
   filename?: string
   body: { size: number; data?: string; attachmentId?: string }
   parts?: FakePart[]
 }
 
-interface FakeMessage {
+export interface FakeMessage {
   id: string
   threadId: string
   snippet: string
@@ -196,6 +216,8 @@ export interface FakeGoogleOptions {
   refreshedAccessToken?: string
   messages?: FakeMessage[]
   events?: unknown[]
+  /** Overrides {@link FAKE_GOOGLE_ATTACHMENTS}. */
+  attachments?: Record<string, () => Buffer>
 }
 
 export interface FakeGoogleRequest {
@@ -231,6 +253,15 @@ function messageMetadata(message: FakeMessage, wanted: string[]): unknown {
   }
 }
 
+/** Gmail numbers parts like "0", "1", "1.0"; the root part has an empty id. */
+function withPartIds(part: FakePart, id: string): FakePart {
+  return {
+    ...part,
+    partId: part.partId ?? id,
+    parts: part.parts?.map((child, index) => withPartIds(child, id ? `${id}.${index}` : String(index))),
+  }
+}
+
 function messageFull(message: FakeMessage): unknown {
   const headers = Object.entries(message.headers).map(([name, value]) => ({ name, value }))
   return {
@@ -238,7 +269,7 @@ function messageFull(message: FakeMessage): unknown {
     threadId: message.threadId,
     snippet: message.snippet,
     internalDate: message.internalDate,
-    payload: { ...message.payload, headers },
+    payload: { ...withPartIds(message.payload, ''), headers },
   }
 }
 
@@ -278,6 +309,7 @@ function matchesQuery(message: FakeMessage, query: string): boolean {
 export function createFakeGoogle(options: FakeGoogleOptions = {}): FakeGoogle {
   const messages = options.messages ?? FAKE_GOOGLE_MESSAGES
   const events = options.events ?? FAKE_CALENDAR_EVENTS
+  const attachments = options.attachments ?? FAKE_GOOGLE_ATTACHMENTS
   const refreshedAccessToken = options.refreshedAccessToken ?? 'access-token-after-refresh'
   let unauthorizedLeft = options.unauthorizedApiRequests ?? 0
 
@@ -337,6 +369,13 @@ export function createFakeGoogle(options: FakeGoogleOptions = {}): FakeGoogle {
           messages: hits.map(message => ({ id: message.id, threadId: message.threadId })),
           resultSizeEstimate: hits.length,
         })
+      }
+      const attachmentMatch = /^users\/me\/messages\/([^/]+)\/attachments\/([^/]+)$/.exec(path)
+      if (attachmentMatch) {
+        const key = `${decodeURIComponent(attachmentMatch[1])}/${decodeURIComponent(attachmentMatch[2])}`
+        const bytes = attachments[key]?.()
+        if (!bytes) return json({ error: { code: 404, message: 'Not Found' } }, 404)
+        return json({ size: bytes.length, data: b64urlBytes(bytes) })
       }
       const messageMatch = /^users\/me\/messages\/(.+)$/.exec(path)
       if (messageMatch) {

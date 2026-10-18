@@ -4,6 +4,8 @@ ENV DEBIAN_FRONTEND=noninteractive
 ENV NODE_VERSION=22
 
 # Install system packages
+# poppler-utils: pdftotext/pdfinfo for the local text extraction of mail
+# attachments (connectors/attachment-text.ts)
 RUN apt-get update && apt-get install -y \
     git \
     python3 \
@@ -18,6 +20,7 @@ RUN apt-get update && apt-get install -y \
     sudo \
     gosu \
     tini \
+    poppler-utils \
     && rm -rf /var/lib/apt/lists/*
 
 # Install Node.js

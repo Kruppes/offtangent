@@ -130,10 +130,16 @@ describe('google manifest', () => {
     expect(url.searchParams.get('redirect_uri')).toBe('https://instance.example/api/connectors/google/callback')
   })
 
-  it('creates exactly the three read tools', () => {
+  it('creates exactly the five read tools', () => {
     connect(3_600_000)
     const fake = createFakeGoogle()
-    expect(Object.keys(toolsOf(fake))).toEqual(['gmail_search', 'gmail_read_thread', 'calendar_events'])
+    expect(Object.keys(toolsOf(fake))).toEqual([
+      'gmail_search',
+      'gmail_read_thread',
+      'gmail_list_attachments',
+      'gmail_read_attachment',
+      'calendar_events',
+    ])
   })
 
   it('returns only address and message count from the test call', async () => {

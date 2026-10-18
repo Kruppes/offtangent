@@ -20,6 +20,7 @@ import { resolveGoogleEndpoints } from './api.js'
 import type { GoogleEndpoints } from './api.js'
 import { createCalendarEventsTool } from './calendar.js'
 import { createGmailReadThreadTool, createGmailSearchTool, fetchGmailProfile } from './gmail.js'
+import { createGmailListAttachmentsTool, createGmailReadAttachmentTool } from './gmail-attachments.js'
 import { formatInZone, resolveConnectorTimezone } from './time.js'
 
 export const GOOGLE_CONNECTOR_ID = 'google'
@@ -98,6 +99,16 @@ export function createGoogleConnectorManifest(options: GoogleManifestOptions = {
         formatDate: value => formatMessageDate(value, timeZone),
       }),
       createGmailReadThreadTool({
+        ...shared,
+        baseUrl: endpoints.gmailBaseUrl,
+        formatDate: value => formatMessageDate(value, timeZone),
+      }),
+      createGmailListAttachmentsTool({
+        ...shared,
+        baseUrl: endpoints.gmailBaseUrl,
+        formatDate: value => formatMessageDate(value, timeZone),
+      }),
+      createGmailReadAttachmentTool({
         ...shared,
         baseUrl: endpoints.gmailBaseUrl,
         formatDate: value => formatMessageDate(value, timeZone),

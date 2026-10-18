@@ -24,12 +24,30 @@ export const GMAIL_SNIPPET_CHARS = 160
 /** A quote block longer than this is replaced by a note. */
 export const GMAIL_QUOTE_KEEP_LINES = 2
 
+/*
+ * Response bounds of the Gmail calls. Every body is a bounded stream (see
+ * `googleGetJson`); crossing a bound ends the call with the fixed code
+ * `response_too_large` and nothing of the body reaches the model.
+ *
+ * - A `format=full` message inlines only part bodies WITHOUT an attachment id
+ *   (text and HTML bodies, the odd tiny file); real file attachments come
+ *   separately via `attachments.get`, which has its own bound. 8 MiB of JSON
+ *   (~6 MB of base64url body) is far above any real mail text and still a
+ *   fixed ceiling for the memory of one call.
+ * - A thread is several such messages; 16 MiB covers long threads with HTML
+ *   bodies. The answer itself is cut at GMAIL_THREAD_CAP_CHARS anyway.
+ * - List, `format=metadata` and profile responses are a few KB; 1 MiB.
+ */
+export const GMAIL_MESSAGE_MAX_RESPONSE_BYTES = 8 * 1024 * 1024
+export const GMAIL_THREAD_MAX_RESPONSE_BYTES = 16 * 1024 * 1024
+export const GMAIL_METADATA_MAX_RESPONSE_BYTES = 1024 * 1024
+
 interface GmailHeader {
   name?: string
   value?: string
 }
 
-interface GmailPart {
+export interface GmailPart {
   partId?: string
   mimeType?: string
   filename?: string
@@ -38,7 +56,7 @@ interface GmailPart {
   parts?: GmailPart[]
 }
 
-interface GmailMessage {
+export interface GmailMessage {
   id?: string
   threadId?: string
   snippet?: string
@@ -52,7 +70,7 @@ interface GmailListResponse {
   nextPageToken?: string
 }
 
-interface GmailThreadResponse {
+export interface GmailThreadResponse {
   id?: string
   messages?: GmailMessage[]
 }
@@ -127,6 +145,8 @@ export interface ThreadAttachment {
   filename: string
   mimeType: string
   size: number
+  /** Gmail `partId` — stable for a message, unlike the attachment id. */
+  partId: string
 }
 
 interface FlatPart {
@@ -194,14 +214,23 @@ export function messageBodyText(message: GmailMessage): string {
   return joinParts(usable.filter(entry => !entry.mimeType.startsWith('multipart/')).map(decodePart)).trim()
 }
 
-export function messageAttachments(message: GmailMessage): ThreadAttachment[] {
+/** Every part of a message that carries a file name, with the part itself. */
+export function attachmentParts(message: GmailMessage): Array<{ part: GmailPart; attachment: ThreadAttachment }> {
   return flatten(message.payload)
     .filter(entry => (entry.part.filename ?? '').length > 0)
     .map(entry => ({
-      filename: entry.part.filename ?? '',
-      mimeType: entry.mimeType || 'application/octet-stream',
-      size: entry.part.body?.size ?? 0,
+      part: entry.part,
+      attachment: {
+        filename: entry.part.filename ?? '',
+        mimeType: entry.mimeType || 'application/octet-stream',
+        size: entry.part.body?.size ?? 0,
+        partId: entry.part.partId ?? '',
+      },
     }))
+}
+
+export function messageAttachments(message: GmailMessage): ThreadAttachment[] {
+  return attachmentParts(message).map(entry => entry.attachment)
 }
 
 /** Replaces an attribution line ("On … wrote:") in the shortened body. */
@@ -330,6 +359,7 @@ export function createGmailSearchTool(options: GmailToolOptions): AgentTool {
           buildUrl(baseUrl, 'users/me/messages', { q: query, maxResults: limit }),
           counters,
           signal,
+          { maxBodyBytes: GMAIL_METADATA_MAX_RESPONSE_BYTES },
         )
         const ids = (list.messages ?? []).map(entry => entry.id ?? '').filter(Boolean).slice(0, limit)
         if (ids.length === 0) return toolText(`No message matches "${query}".`, { hits: 0 })
@@ -344,6 +374,7 @@ export function createGmailSearchTool(options: GmailToolOptions): AgentTool {
             }),
             counters,
             signal,
+            { maxBodyBytes: GMAIL_METADATA_MAX_RESPONSE_BYTES },
           )
           lines.push(searchLine(message, formatDate))
         }
@@ -376,7 +407,8 @@ export function createGmailReadThreadTool(options: GmailToolOptions): AgentTool 
     description: [
       'Read the plain text of every message in one mail thread.',
       'Needs the thread id from gmail_search, e.g. `gmail_read_thread(threadId: "18f2c…")`.',
-      'Quoted history is shortened, attachments are listed by name, type and size only (no download),',
+      'Quoted history is shortened, attachments are listed by name, type, size and part id only (no download;',
+      'use gmail_read_attachment to read one),',
       `and the answer is cut at ${GMAIL_THREAD_CAP_CHARS} characters.`,
     ].join(' '),
     parameters: Type.Object({
@@ -393,6 +425,7 @@ export function createGmailReadThreadTool(options: GmailToolOptions): AgentTool 
           buildUrl(baseUrl, `users/me/threads/${encodeURIComponent(threadId)}`, { format: 'full' }),
           counters,
           signal,
+          { maxBodyBytes: GMAIL_THREAD_MAX_RESPONSE_BYTES },
         )
         const messages = thread.messages ?? []
         if (messages.length === 0) return toolText(`Thread "${threadId}" has no messages.`, { messages: 0 })
@@ -403,13 +436,15 @@ export function createGmailReadThreadTool(options: GmailToolOptions): AgentTool 
           const attachments = messageAttachments(message)
           const head = [
             `--- message ${index + 1}/${messages.length} ---`,
+            `message id: ${message.id ?? '(unknown)'}`,
             `date: ${formatDate(headerValue(headers, 'Date') || message.internalDate || '')}`,
             `from: ${headerValue(headers, 'From') || '(no sender)'}`,
             `to: ${headerValue(headers, 'To') || '(no recipient)'}`,
             `subject: ${headerValue(headers, 'Subject') || '(no subject)'}`,
           ]
           if (attachments.length > 0) {
-            head.push(`attachments: ${attachments.map(a => `${a.filename} (${a.mimeType}, ${a.size} bytes)`).join('; ')}`)
+            head.push(`attachments: ${attachments.map(a => `${a.filename} (${a.mimeType}, ${a.size} bytes)${a.partId ? ` [part ${a.partId}]` : ''}`).join('; ')}`)
+            head.push(`(read one with gmail_read_attachment(messageId: "${message.id ?? ''}", partId: "…"))`)
           }
           blocks.push([...head, '', trimQuotes(messageBodyText(message)) || '(no text body)'].join('\n'))
         }
@@ -433,7 +468,13 @@ export async function fetchGmailProfile(
   ctx: ConnectorToolContext,
   baseUrl: string,
 ): Promise<GmailProfileSummary> {
-  const profile = await googleGetJson<GmailProfileResponse>(ctx, buildUrl(baseUrl, 'users/me/profile'))
+  const profile = await googleGetJson<GmailProfileResponse>(
+    ctx,
+    buildUrl(baseUrl, 'users/me/profile'),
+    undefined,
+    undefined,
+    { maxBodyBytes: GMAIL_METADATA_MAX_RESPONSE_BYTES },
+  )
   return {
     emailAddress: profile.emailAddress ?? '',
     messagesTotal: typeof profile.messagesTotal === 'number' ? profile.messagesTotal : 0,

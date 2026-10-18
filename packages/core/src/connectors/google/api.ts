@@ -130,6 +130,75 @@ async function requestOnce(
 }
 
 /**
+ * Upper bound for a Google response body when the caller names none. Every
+ * body is read as a bounded stream; there is no unbounded path. 8 MiB holds
+ * any realistic event list, message list or `format=full` message (file
+ * attachments are NOT inlined there, they come via `attachments.get`).
+ */
+export const GOOGLE_DEFAULT_MAX_RESPONSE_BYTES = 8 * 1024 * 1024
+/**
+ * Bound for the error body of a 403, read only for its `reason` token. A real
+ * Google error document is well below 2 KB.
+ */
+export const GOOGLE_ERROR_BODY_MAX_BYTES = 64 * 1024
+
+export interface GoogleGetOptions {
+  /**
+   * Upper bound for the response body in bytes (default
+   * {@link GOOGLE_DEFAULT_MAX_RESPONSE_BYTES}). The body is streamed and the
+   * request is dropped as soon as the bound is crossed (`response_too_large`),
+   * whatever `Content-Length` or the resource itself claims.
+   */
+  maxBodyBytes?: number
+}
+
+/**
+ * Cancel a stream without waiting for it. A `cancel()` whose promise never
+ * settles (a stuck socket, a hostile stream) must not hang the tool call, so
+ * the promise is only given a `catch` and then left alone.
+ */
+function cancelQuietly(cancel: (() => Promise<unknown>) | undefined): void {
+  if (!cancel) return
+  try {
+    void cancel().catch(() => undefined)
+  } catch {
+    // A synchronous throw from cancel() is as irrelevant as a rejection.
+  }
+}
+
+/** Read a body as UTF-8, stopping (and cancelling the stream) past `maxBytes`. */
+async function readBoundedText(response: Response, maxBytes: number): Promise<string> {
+  const declared = Number(response.headers?.get?.('content-length') ?? '')
+  if (Number.isFinite(declared) && declared > maxBytes) {
+    const body = response.body
+    cancelQuietly(body ? () => body.cancel() : undefined)
+    throw new GoogleApiError('response_too_large', response.status)
+  }
+  if (!response.body) return ''
+  const reader = response.body.getReader()
+  const chunks: Uint8Array[] = []
+  let size = 0
+  for (;;) {
+    let step: Awaited<ReturnType<typeof reader.read>>
+    try {
+      step = await reader.read()
+    } catch (err) {
+      const name = (err as Error)?.name ?? ''
+      if (name === 'TimeoutError' || name === 'AbortError') throw new GoogleApiError('timeout')
+      throw new GoogleApiError('network_error')
+    }
+    if (step.done) break
+    size += step.value.byteLength
+    if (size > maxBytes) {
+      cancelQuietly(() => reader.cancel())
+      throw new GoogleApiError('response_too_large', response.status)
+    }
+    chunks.push(step.value)
+  }
+  return Buffer.concat(chunks).toString('utf-8')
+}
+
+/**
  * `GET` a JSON resource with the connector's access token.
  *
  * Counts refreshes so a caller can assert "exactly one refresh" — the P3 gate
@@ -140,6 +209,7 @@ export async function googleGetJson<T>(
   url: string,
   counters?: { refreshes: number },
   signal?: AbortSignal,
+  getOptions: GoogleGetOptions = {},
 ): Promise<T> {
   const fetchImpl = ctx.fetchImpl ?? fetch
   const token = await ctx.getAccessToken()
@@ -158,7 +228,7 @@ export async function googleGetJson<T>(
       // Read the body ONLY to pick the reason token out of it; nothing of it is
       // kept or handed on.
       try {
-        reason = readErrorReason(await response.text())
+        reason = readErrorReason(await readBoundedText(response, GOOGLE_ERROR_BODY_MAX_BYTES))
       } catch {
         reason = ''
       }
@@ -170,8 +240,9 @@ export async function googleGetJson<T>(
     )
   }
 
+  const text = await readBoundedText(response, getOptions.maxBodyBytes ?? GOOGLE_DEFAULT_MAX_RESPONSE_BYTES)
   try {
-    return (await response.json()) as T
+    return JSON.parse(text) as T
   } catch {
     throw new GoogleApiError('invalid_json', response.status)
   }

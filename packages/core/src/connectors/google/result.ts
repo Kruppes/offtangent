@@ -71,6 +71,13 @@ export function toolError(err: unknown, details: Record<string, unknown> = {}): 
         code: 'timeout',
       })
     }
+    if (err.code === 'response_too_large') {
+      return toolText(
+        'Error: response_too_large — the answer from the mailbox is larger than the read limit and was dropped. '
+          + 'Nothing was read. Do not retry the same call.',
+        { ...details, error: true, code: 'response_too_large' },
+      )
+    }
     return toolText(`Error: upstream ${err.code} — the request was refused. Nothing was read.`, {
       ...details,
       error: true,
