@@ -73,7 +73,10 @@ describe('context isolation — synthetic sentinels, no provider replay', () => 
     expect(resolveContextScope(db, 'cron')).toBeNull()
     db.prepare("UPDATE sessions SET session_user='1' WHERE id IN ('fork','cron')").run()
     expect(resolveContextScope(db, 'fork')?.key).toBe('strand:fork')
-    expect(resolveContextScope(db, 'cron')?.key).toBe('strand:cron')
+    // Assigning an owner after creation cannot relabel an old task's history.
+    expect(resolveContextScope(db, 'cron')).toBeNull()
+    db.prepare("INSERT INTO sessions (id,type,agent_id,session_user) VALUES ('new-cron','task','main','1')").run()
+    expect(resolveContextScope(db, 'new-cron')?.key).toBe('strand:new-cron')
     db.prepare("UPDATE sessions SET session_user='alice' WHERE id='task'").run()
     expect(resolveContextScope(db, 'nested')).toBeNull()
     db.prepare("UPDATE sessions SET session_user='2' WHERE id='task'").run()

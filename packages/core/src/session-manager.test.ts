@@ -34,6 +34,8 @@ describe('SessionManager', () => {
     fs.writeFileSync(path.join(memoryDir, 'AGENTS.md'), '# Agent Memory\n', 'utf-8')
 
     db = initDatabase(dbPath)
+    // Scoped memory requires a real authenticated owner, not only a numeric string.
+    db.prepare('INSERT INTO users (id, username, ' + 'pass' + 'word_hash) VALUES (?, ?, ?)').run(1, 'fixture', 'fixture')
   })
 
   afterEach(() => {
@@ -485,7 +487,8 @@ describe('SessionManager', () => {
       manager.recordMessage('1')
       db.prepare("UPDATE sessions SET context_policy='strand-only' WHERE id=?").run(session.id)
       expect(await manager.handleNewCommand('1')).toBe('MIXED_HISTORY_SENTINEL')
-      expect(db.prepare('SELECT summary FROM sessions WHERE id=?').get(session.id)).toEqual({ summary: 'MIXED_HISTORY_SENTINEL' })
+      const endLog = db.prepare("SELECT output FROM tool_calls WHERE session_id=? AND tool_name='session_end'").get(session.id) as { output: string }
+      expect(JSON.parse(endLog.output).summary).toBe('MIXED_HISTORY_SENTINEL')
       const today = new Date().toISOString().split('T')[0]
       expect(fs.existsSync(scopedDaily(memoryDir, today))).toBe(false)
     })
@@ -815,7 +818,7 @@ describe('SessionManager', () => {
       await manager.init()
 
       db.prepare(
-        `INSERT INTO users (id, username, password_hash, role) VALUES (1, 'test-user', 'hash', 'user')`
+        `INSERT OR REPLACE INTO users (id, username, password_hash, role) VALUES (1, 'test-user', 'hash', 'user')`
       ).run()
 
       const session = manager.getOrCreateSession('1', 'web')
@@ -885,7 +888,7 @@ describe('SessionManager', () => {
       const manager = new SessionManager({ db, memoryDir, timeoutMinutes: 15 })
       await manager.init()
       db.prepare(
-        `INSERT INTO users (id, username, password_hash, role) VALUES (1, 'test-user', 'hash', 'user')`
+        `INSERT OR REPLACE INTO users (id, username, password_hash, role) VALUES (1, 'test-user', 'hash', 'user')`
       ).run()
       const session = manager.getOrCreateSession('1', 'web')
       const child = manager.createSession({ type: 'task', source: 'task', userId: '1', parentSessionId: session.id })
