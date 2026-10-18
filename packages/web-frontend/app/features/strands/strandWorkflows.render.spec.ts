@@ -9,10 +9,12 @@ import { transpileModule, ModuleKind } from 'typescript'
 import * as shellCommands from '../../composables/useShellCommands'
 import * as strandW5b from '~/api/strandW5b'
 import * as strandEco from '~/api/strandEco'
+import * as strandContext from '~/composables/useStrandContext'
 
 // The existing render config compiles imports for SSR. Compile these four
 // SFCs for Vue's client renderer instead, so onMounted and clicks really run.
 /** What the strand header told the top-bar quota (`useActiveStrandProvider`). */
+const contextIds = new Set<string>()
 const topBarCalls: Array<[string, string, string | null]> = []
 const topBarQuota = { useActiveStrandProvider: () => ({ publish: (strandId: string, providerId: string | null) => { topBarCalls.push(['publish', strandId, providerId]) }, release: (strandId: string) => { topBarCalls.push(['release', strandId, null]) } }) }
 function loadPage(path: string, overrides: Record<string, unknown> = {}): Component {
@@ -21,7 +23,7 @@ function loadPage(path: string, overrides: Record<string, unknown> = {}): Compon
   const script = compileScript(descriptor, { id: path, inlineTemplate: true })
   const { outputText } = transpileModule(script.content, { compilerOptions: { module: ModuleKind.CommonJS } })
   const exports: { default?: Component } = {}
-  const modules: Record<string, unknown> = { vue: Vue, '~/composables/useShellCommands': shellCommands, './detailApi': detailApi, '~/api/strandW5b': strandW5b, '~/api/models': { useModelsApi: () => ({ listModels: async () => [] }) }, '~/api/projects': { useProjectsApi: () => ({ list: async () => [] }) }, '~/api/personas': { usePersonasApi: () => ({ listPersonas: async () => [{ id: 'main', displayName: 'Main' }, { id: 'coder', displayName: 'Coder' }] }) }, './StrandActions.vue': { default: defineComponent({ render: () => h('aside') }) }, './EcoModeSwitch.vue': { default: defineComponent({ render: () => h('span') }) }, '~/api/strandEco': strandEco, '~/composables/useTopBarQuota': topBarQuota, ...overrides }
+  const modules: Record<string, unknown> = { vue: Vue, '~/composables/useShellCommands': shellCommands, './detailApi': detailApi, '~/api/strandW5b': strandW5b, '~/api/models': { useModelsApi: () => ({ listModels: async () => [] }) }, '~/api/projects': { useProjectsApi: () => ({ list: async () => [] }) }, '~/api/personas': { usePersonasApi: () => ({ listPersonas: async () => [{ id: 'main', displayName: 'Main' }, { id: 'coder', displayName: 'Coder' }] }) }, './StrandActions.vue': { default: defineComponent({ render: () => h('aside') }) }, './EcoModeSwitch.vue': { default: defineComponent({ render: () => h('span') }) }, '~/api/strandEco': strandEco, '~/composables/useStrandContext': strandContext, '~/composables/useTopBarQuota': topBarQuota, ...overrides }
   new Function('require', 'exports', outputText)((name: string) => {
     if (!(name in modules)) throw new Error(`Unexpected import: ${name}`)
     return modules[name]
@@ -94,6 +96,8 @@ async function flush() {
 }
 afterEach(() => {
   trees.splice(0).forEach(({ app }) => app.unmount())
+  for (const id of contextIds) strandContext.setStrandContextForTest(id, null, null)
+  contextIds.clear()
   vi.unstubAllGlobals()
 })
 
@@ -106,10 +110,30 @@ afterEach(() => {
 function setup(activity: Record<string, { state: 'running' | 'queued' }> = {}) {
   const apiFetch = vi.fn()
   const sessionActivity = Vue.ref(activity)
-  vi.stubGlobal('useApi', () => ({ apiFetch }))
+  vi.stubGlobal('useApi', () => ({ apiFetch: (url: string, ...args: unknown[]) => {
+    const match = /^\/api\/strands\/([^/]+)\/context$/.exec(url)
+    if (match) contextIds.add(decodeURIComponent(match[1]!))
+    return apiFetch(url, ...args)
+  } }))
   vi.stubGlobal('useChat', () => ({ sessionActivity }))
   vi.stubGlobal('useI18n', () => ({ t: (key: string, params?: unknown) => key + (params ? JSON.stringify(params) : '') }))
   return Object.assign(apiFetch, { sessionActivity })
+}
+/** Separate HTTP fixtures keep mounted context reads from consuming detail/mutation replies.
+ * The real composable, watcher and report mapper still run; no preset gauge state.
+ */
+function setupHeader(activity: Record<string, { state: 'running' | 'queued' }> = {}) {
+  const api = setup(activity)
+  const contextApi = vi.fn().mockResolvedValue({ measurement: { state: 'unknown' } })
+  vi.stubGlobal('useApi', () => ({ apiFetch: (url: string, ...args: unknown[]) => {
+    const match = /^\/api\/strands\/([^/]+)\/context$/.exec(url)
+    if (match) {
+      contextIds.add(decodeURIComponent(match[1]!))
+      return contextApi(url, ...args)
+    }
+    return api(url, ...args)
+  } }))
+  return Object.assign(api, { contextApi })
 }
 async function click(root: Node, label: string) {
   const button = all(root).find(n => n.tag === 'button' && text(n).includes(label))!
@@ -156,7 +180,7 @@ describe('strand mutation workflows', () => {
     expect(deleted).toHaveBeenCalledWith('s')
   })
   it('loads detail directly and exposes loading, missing and retry states', async () => {
-    const api = setup()
+    const api = setupHeader()
     let reject!: (error: unknown) => void
     api.mockImplementationOnce(() => new Promise((_r, fail) => { reject = fail }))
     const { root } = mount(Header, { strandId: 'beyond-first-page' })
@@ -175,7 +199,7 @@ describe('strand mutation workflows', () => {
    */
   it('names the model of the running turn and re-reads the strand when the turn ends', async () => {
     const base = { id: 's', title: 'Live turn', tags: [], projectId: null, pinned: false }
-    const api = setup({ s: { state: 'running' } })
+    const api = setupHeader({ s: { state: 'running' } })
     api.mockResolvedValueOnce({ strand: { ...base, effectiveModel: { providerId: 'openai-codex', modelId: 'gpt-6-astra', source: 'global' }, runningTurnModel: { providerId: 'anthropic', modelId: 'claude-fable-5-1', source: 'global' } } })
     const { root } = mount(Header, { strandId: 's' }); await flush()
     expect(text(root)).toContain('claude-fable-5-1')
@@ -194,7 +218,7 @@ describe('strand mutation workflows', () => {
   it('tells the top bar which provider the strand runs on, following the running turn', async () => {
     topBarCalls.splice(0)
     const base = { id: 's', title: 'Quota', tags: [], projectId: null, pinned: false }
-    const api = setup({ s: { state: 'running' } })
+    const api = setupHeader({ s: { state: 'running' } })
     api.mockResolvedValueOnce({ strand: { ...base, effectiveModel: { providerId: 'kimi', modelId: 'kimi-k2', source: 'strand' }, runningTurnModel: { providerId: 'anthropic', modelId: 'claude-x', source: 'global' } } })
     const { app } = mount(Header, { strandId: 's' }); await flush()
     expect(topBarCalls).toEqual([['publish', 's', null], ['publish', 's', 'anthropic']])
@@ -210,7 +234,7 @@ describe('strand mutation workflows', () => {
   })
 
   it('W5b: shows the lineage both ways, linked, only when present', async () => {
-    const api = setup()
+    const api = setupHeader()
     api.mockResolvedValueOnce({ strand: { id: 'child', title: 'Child', tags: [], projectId: null, pinned: false, parentStrandId: 'parent', parentStrandTitle: 'Parent strand', forkedFromMessageId: 12, childStrands: [{ id: 'grandchild', title: 'Grandchild', forkedAt: null, forkedFromMessageId: 3 }] } })
     const { root } = mount(Header, { strandId: 'child' }); await flush()
     expect(text(root)).toContain('fork.forkedFrom')
@@ -223,7 +247,7 @@ describe('strand mutation workflows', () => {
     expect(links).toContain('/strands/parent#msg-12')
     expect(links).toContain('/strands/grandchild')
 
-    const plain = setup()
+    const plain = setupHeader()
     plain.mockResolvedValueOnce({ strand: { id: 'solo', title: 'Solo', tags: [], projectId: null, pinned: false, parentStrandId: null } })
     const second = mount(Header, { strandId: 'solo' }); await flush()
     expect(all(second.root).some(n => n.tag === 'nav')).toBe(false)
@@ -231,13 +255,59 @@ describe('strand mutation workflows', () => {
 
   it.each(['accept', 'dismiss'])('only %ss a project suggestion after explicit action', async action => {
     const strand = { id: 's', title: 'Real title', tags: [], projectId: null, pinned: false, projectSuggestion: { projectId: 'p', projectName: 'Proposal', reason: 'Reason' } }
-    const api = setup().mockResolvedValueOnce({ strand }).mockResolvedValueOnce({ strand: { ...strand, projectSuggestion: null, projectId: action === 'accept' ? 'p' : null } })
+    const api = setupHeader().mockResolvedValueOnce({ strand }).mockResolvedValueOnce({ strand: { ...strand, projectSuggestion: null, projectId: action === 'accept' ? 'p' : null } })
     const { root } = mount(Header, { strandId: 's' }); await flush()
     expect(text(root)).toContain('Reason')
     expect(api.mock.calls).toEqual([['/api/strands/s']])
     await click(root, 'strandDetail.' + action)
     expect(api).toHaveBeenLastCalledWith('/api/strands/s/project-suggestion/' + action, { method: 'POST' })
     expect(text(root)).not.toContain('Reason')
+  })
+})
+
+describe('strand header: real context provenance', () => {
+  const scope = (root: Node) => all(root).find(n => 'data-effective-memory-scope' in n.props)
+  it.each([
+    ['project', { policy: 'project-isolated', effectivePolicy: 'project-isolated', dataScope: 'project', historyRetained: false }, 'project-isolated · project', false],
+    ['retained', { policy: 'project-isolated', effectivePolicy: 'strand-only', dataScope: 'strand', historyRetained: true }, 'strand-only · strand', true],
+    ['locked', { policy: 'project-isolated', effectivePolicy: 'none', dataScope: 'none', historyRetained: false }, 'none · none', false],
+    ['partial', { policy: 'project-isolated', dataScope: 'strand' }, 'unknown · strand', false],
+  ] as const)('maps and renders %s from the context API, not the configured policy', async (id, isolation, expected, retained) => {
+    const api = setupHeader()
+    api.mockResolvedValue({ strand: { id, title: id, tags: [], projectId: 'p' } })
+    api.contextApi.mockResolvedValue({ isolation })
+    const { root } = mount(Header, { strandId: id }); await flush()
+    expect(api.mock.calls).toEqual([[`/api/strands/${id}`]])
+    expect(api.contextApi.mock.calls).toEqual([[`/api/strands/${id}/context`], [`/api/strands/${id}/context`]])
+    expect(scope(root)?.props.role).toBe('status')
+    expect(text(scope(root)!)).toContain(`context.provenance.effective: ${expected}`)
+    expect(text(scope(root)!).includes('context.provenance.retained')).toBe(retained)
+    if (id !== 'project') expect(text(scope(root)!)).not.toContain('project-isolated')
+  })
+  it.each(['legacy', 'unsupported', 'offline'])('does not invent an effective scope for %s context', async mode => {
+    const api = setupHeader()
+    api.mockResolvedValue({ strand: { id: 's', title: 'Legacy', tags: [], projectId: null } })
+    if (mode !== 'legacy') api.contextApi.mockRejectedValue(mode === 'unsupported' ? new ApiError('missing', 404) : new Error('offline'))
+    const { root } = mount(Header, { strandId: 's' }); await flush()
+    expect(api.contextApi).toHaveBeenCalledTimes(2)
+    expect(scope(root)).toBeUndefined()
+    expect(text(root)).not.toContain('project-isolated')
+  })
+  it('refreshes effective scope after project assignment and renders retained history', async () => {
+    const api = setupHeader()
+    const strand = { id: 's/1', title: 'Existing', tags: [], projectId: null, projectSuggestion: { projectId: 'p', projectName: 'Project', reason: 'Suggested' } }
+    api.mockResolvedValueOnce({ strand }).mockResolvedValueOnce({ strand: { ...strand, projectId: 'p', projectSuggestion: null } })
+    api.contextApi.mockResolvedValue({ isolation: { policy: 'project-isolated', effectivePolicy: 'strand-only', dataScope: 'strand', historyRetained: false } })
+    const { root } = mount(Header, { strandId: 's/1' }); await flush()
+    expect(text(scope(root)!)).toContain('strand-only · strand')
+    expect(text(scope(root)!)).not.toContain('context.provenance.retained')
+    api.contextApi.mockResolvedValue({ isolation: { policy: 'project-isolated', effectivePolicy: 'strand-only', dataScope: 'strand', historyRetained: true } })
+    await click(root, 'strandDetail.accept')
+    expect(api).toHaveBeenLastCalledWith('/api/strands/s%2F1/project-suggestion/accept', { method: 'POST' })
+    expect(api.contextApi.mock.calls).toEqual(Array.from({ length: 3 }, () => ['/api/strands/s%2F1/context']))
+    expect(text(scope(root)!)).toContain('strand-only · strand')
+    expect(text(scope(root)!)).toContain('context.provenance.retained')
+    expect(text(scope(root)!)).not.toContain('project-isolated')
   })
 })
 
@@ -573,7 +643,10 @@ describe('strand header: eco and context window follow the effective model', () 
       return strand
     })
     const { root } = mount(headerWith(setStrandModel), { strandId: 's' }); await flush()
-    context[0]!.resolve(native); await flush()
+    expect(context).toHaveLength(3)
+    context[0]!.resolve(native)
+    context[1]!.resolve(native)
+    context[2]!.resolve(native); await flush()
     expect(byTestId(root, 'eco-cw-select')).toBeDefined()
     // Compact status row; native context controls remain reachable via the info popover.
     const wrapper = byTestId(root, 'eco-mode')!
@@ -588,20 +661,20 @@ describe('strand header: eco and context window follow the effective model', () 
     const dialog = all(root).find(n => n.tag === 'model-picker-dialog')!
     ;(dialog.props.onSelect as (s: unknown) => Promise<void>)({ providerId: 'openai-compat', modelId: 'gpt-oss' })
     await flush()
-    expect(context).toHaveLength(2)
+    expect(context).toHaveLength(4)
     // re-read pending: the native picker of the old model must not stay visible
     expect(byTestId(root, 'eco-context-window')).toBeUndefined()
-    // a late answer of the OLD request must not bring it back
-    context[0]!.resolve(native); await flush()
+    // a late answer of the OLD Eco request must not bring it back
+    context[2]!.resolve(native); await flush()
     expect(byTestId(root, 'eco-context-window')).toBeUndefined()
-    context[1]!.resolve(v1); await flush()
+    context[3]!.resolve(v1); await flush()
     expect(byTestId(root, 'eco-context-window')).toBeUndefined()
     expect(byTestId(root, 'eco-toggle')).toBeDefined()
 
     await click(root, 'strandDetail.resetModel')
     expect(setStrandModel).toHaveBeenLastCalledWith('s', null)
-    expect(context).toHaveLength(3)
-    context[2]!.resolve(native); await flush()
+    expect(context).toHaveLength(5)
+    context[4]!.resolve(native); await flush()
     expect(byTestId(root, 'eco-cw-select')).toBeDefined()
   })
 
@@ -617,7 +690,7 @@ describe('strand header: eco and context window follow the effective model', () 
     delete api.sessionActivity.value.s
     api.sessionActivity.value = { ...api.sessionActivity.value }
     await flush()
-    expect(api.mock.calls.map(c => c[0])).toEqual(['/api/strands/s', '/api/strands/s/context', '/api/strands/s', '/api/strands/s/context'])
+    expect(api.mock.calls.map(c => c[0])).toEqual(['/api/strands/s/context', '/api/strands/s', '/api/strands/s/context', '/api/strands/s/context', '/api/strands/s', '/api/strands/s/context'])
     expect(byTestId(root, 'eco-cw-select')).toBeUndefined()
     expect(visibleText(byTestId(root, 'eco-cw-fixed')!)).toContain('eco.cwFixedShort')
   })
@@ -630,7 +703,7 @@ describe('strand header: eco and context window follow the effective model', () 
     delete api.sessionActivity.value.s
     api.sessionActivity.value = { ...api.sessionActivity.value }
     await flush()
-    expect(api.mock.calls.map(c => c[0])).toEqual(['/api/strands/s', '/api/strands/s/context', '/api/strands/s'])
+    expect(api.mock.calls.map(c => c[0])).toEqual(['/api/strands/s/context', '/api/strands/s', '/api/strands/s/context', '/api/strands/s/context', '/api/strands/s'])
     expect(byTestId(root, 'eco-cw-select')).toBeDefined()
   })
 })
@@ -639,7 +712,7 @@ describe('strand header: eco and context window follow the effective model', () 
 describe('persona and working mode header controls', () => {
   it('keeps explicit specialists direct and allows every Main/Auto transition', async () => {
     let strand = { id: 'identity', title: 'Context stays', tags: [], projectId: null, pinned: false, agentId: 'coder', workingMode: 'main' }
-    const api = setup()
+    const api = setupHeader()
     api.mockImplementation(async (url: string, options?: { method?: string, body?: string }) => {
       if (url !== '/api/strands/identity') throw new Error(`Unexpected ${url}`)
       if (options?.method === 'PATCH') strand = { ...strand, ...JSON.parse(options.body!) }
@@ -669,7 +742,7 @@ describe('persona and working mode header controls', () => {
 
   it('does not optimistically change persona/mode when the server rejects an active turn', async () => {
     const strand = { id: 'busy', title: 'Busy', tags: [], projectId: null, pinned: false, agentId: 'main', workingMode: 'main' }
-    const api = setup().mockResolvedValueOnce({ strand }).mockRejectedValueOnce(new Error('strand busy'))
+    const api = setupHeader().mockResolvedValueOnce({ strand }).mockRejectedValueOnce(new Error('strand busy'))
     const { root } = mount(Header, { strandId: 'busy' }); await flush()
     const mode = byTestId(root, 'strand-mode-select')!
     await (mode.props.onChange as (event: unknown) => unknown)({ target: { value: 'auto' } }); await flush()
