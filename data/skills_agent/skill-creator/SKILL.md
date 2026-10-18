@@ -1,7 +1,7 @@
 ---
 name: skill-creator
 version: 1.0.1
-description: Create or update an agent skill — a SKILL.md file under /data/skills_agent/<name>/ that captures a reusable workflow you can load on demand later. Use when the user asks to "save this as a skill", "create a skill", "remember this workflow", or when you spot a recurring pattern across conversations that's worth extracting.
+description: Create or update an agent skill — a SKILL.md file in the current scoped skill directory that captures a reusable workflow you can load on demand later. Use when the user asks to "save this as a skill", "create a skill", "remember this workflow", or when you spot a recurring pattern across conversations that's worth extracting.
 ---
 
 # Skill Creator
@@ -14,11 +14,11 @@ This skill walks you through creating them correctly the first time, so the file
 
 | Type | Directory | Who writes it | Editable from chat? |
 |---|---|---|---|
-| **Agent-created** (this skill creates these) | `/data/skills_agent/<name>/` | You, at runtime | **Yes** — write_file/edit_file |
-| Built-in (shipped with Offtangent) | `/data/skills_agent/<name>/` (seeded from `/app/skills_agent_defaults/` on container start) | The Offtangent project | Technically yes, but they get auto-overwritten on update unless you set `managed: false` |
+| **Agent-created** (this skill creates these) | `<scoped skill directory>/<name>/` | You, at runtime | **Yes** — write_file/edit_file |
+| Built-in (shipped with Offtangent) | `/data/skills_agent/<name>/` (seeded from `/app/skills_agent_defaults/` on container start) | The Offtangent project | No from scoped work — updates or global changes require operator action |
 | User-installed | `/data/skills/<owner>/<name>/` | The user, via the web UI installer | No — managed via Settings → Skills |
 
-→ **Always write to `/data/skills_agent/<name>/SKILL.md`.** Never write to `/data/skills/` (user space) or `/app/skills_agent_defaults/` (read-only image).
+→ **Always use the scoped creation directory in the current `<agent_skills>` instructions.** Never write new skills into the legacy global `/data/skills_agent/<name>/` directory. Project assignment is not permission to publish a skill globally; global approval is an explicit operator action. Never write to `/data/skills/` (user space) or `/app/skills_agent_defaults/` (read-only image).
 
 ## When to create a skill
 

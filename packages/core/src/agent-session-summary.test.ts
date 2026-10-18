@@ -58,6 +58,9 @@ vi.mock('./stt.js', () => ({
 vi.mock('./agent-skills.js', () => ({
   createAgentSkillTools: vi.fn(() => []),
   getAgentSkillsForPrompt: vi.fn(() => []),
+  listScopedAgentSkills: vi.fn(() => []),
+  filterAndAnnotateAgentSkills: vi.fn((entries) => entries),
+  scopedAgentSkillsDir: vi.fn(() => '/skills-agent/scoped-fixture'),
   getAgentSkillsCount: vi.fn(() => 0),
   getAgentSkillsDir: vi.fn(() => '/tmp/test-agent-skills'),
   trackAgentSkillUsage: vi.fn(),

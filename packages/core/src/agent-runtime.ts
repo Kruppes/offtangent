@@ -1,3 +1,5 @@
+import { guardScopedWrites } from './scoped-write-guard.js'
+import { getCurrentTaskExecutionContext } from './task-execution-context.js'
 import { recordContextManifest } from './context-provenance.js'
 import { readStrandWorkingMode, strandWorkingModePrompt } from './strand-working-mode.js'
 import { spawn } from 'node:child_process'
@@ -18,7 +20,7 @@ import type { ProviderManager } from './provider-manager.js'
 import { createStreamActivityNotifier } from './provider-phase.js'
 import type { SettingsThinkingLevel } from './contracts/settings.js'
 import { normalizeThinkingLevel } from './thinking-level.js'
-import { resolveContextScope } from './context-scope.js'
+import { resolveContextScope, type ContextScope } from './context-scope.js'
 import { assembleSystemPrompt, ensureMemoryStructure, ensureConfigStructure, formatCurrentTimeContext } from './memory.js'
 import type { SkillPromptEntry, AvailableProviderModelPromptEntry, RuntimeInstanceIdentity } from './memory.js'
 import { loadMultiPersonaSettings } from './config.js'
@@ -30,7 +32,7 @@ import { createBuiltinWebTools } from './web-tools.js'
 import type { BuiltinToolsConfig, BuiltinToolsConfigSource } from './web-tools.js'
 import { createTranscribeAudioTool } from './stt-tool.js'
 import { loadSttSettings } from './stt.js'
-import { createAgentSkillTools, getAgentSkillsForPrompt, getAgentSkillsCount, getAgentSkillsDir, trackAgentSkillUsage, currentPlatform } from './agent-skills.js'
+import { createAgentSkillTools, listScopedAgentSkills, scopedAgentSkillsDir, filterAndAnnotateAgentSkills, trackAgentSkillUsage, currentPlatform } from './agent-skills.js'
 import { createSearchMemoriesTool } from './memories-tool.js'
 import { createReadChatHistoryTool } from './chat-history-tools.js'
 import { createRecallMessageTool } from './recall-message-tool.js'
@@ -78,6 +80,7 @@ export interface BaseAgentToolsOptions {
    * Background task tools omit it and use the per-task execution context.
    */
   getCurrentSessionId?: () => string | undefined
+  memoryRoot?: string
   quotaService?: QuotaServiceLike
 }
 
@@ -90,8 +93,14 @@ export interface BaseAgentToolsOptions {
  * - Background tasks: create_task, resume_task, list_tasks
  */
 export function createBaseAgentTools(options: BaseAgentToolsOptions): AgentTool[] {
+  const getScope = () => {
+    const task = getCurrentTaskExecutionContext()
+    const scope = resolveContextScope(options.db, task ? task.taskSessionId ?? undefined : options.getCurrentSessionId?.(), task ? task.agentId ?? undefined : options.getCurrentAgentId?.())
+    const userId = task ? task.userId : options.getCurrentUserId?.()
+    return userId !== undefined && scope?.userId !== userId ? null : scope
+  }
   return [
-    ...createYoloTools(),
+    ...guardScopedWrites(createYoloTools(), getScope, options.memoryRoot),
     ...createBuiltinWebTools(options.builtinToolsConfig),
     createReadChatHistoryTool({ db: options.db, getCurrentAgentId: options.getCurrentAgentId }),
     createRecallMessageTool({
@@ -106,7 +115,7 @@ export function createBaseAgentTools(options: BaseAgentToolsOptions): AgentTool[
       getCurrentUserId: options.getCurrentUserId,
       getCurrentAgentId: options.getCurrentAgentId,
     }),
-    ...createAgentSkillTools(),
+    ...createAgentSkillTools(getScope),
     ...createEmailTools(),
     // The ONE door to private connector data: asks a strictly local sub-agent
     // and returns its summary. The raw connector tools are never registered
@@ -739,11 +748,12 @@ export function isAgentBusyError(err: unknown): boolean {
 /**
  * Load active skill entries for system prompt injection.
  */
-function getActiveSkillEntries(): SkillPromptEntry[] {
+function getActiveSkillEntries(scope: ContextScope | null): SkillPromptEntry[] {
   try {
     const skillsFile = loadSkills()
     return skillsFile.skills
-      .filter(s => s.enabled)
+      .filter(s => s.enabled && (s.contextAccess === 'global' || (scope && s.contextAccess
+        && s.contextAccess.userId === scope.userId && s.contextAccess.agentId === scope.agentId && s.contextAccess.key === scope.key)))
       .map(s => ({
         name: s.name,
         description: s.description,
@@ -827,6 +837,7 @@ class PiAgentRuntime implements AgentRuntimeBoundary, AgentRuntimePiAgentAccess 
       ...(options.tools ?? []),
       ...createBaseAgentTools({
         db: this.db,
+        memoryRoot: this.memoryDir,
         builtinToolsConfig: () => this.readRuntimeSettings().builtinToolsConfig,
         sttEnabled,
         getCurrentUserId: () => this.getCurrentToolUserId(),
@@ -1214,7 +1225,8 @@ class PiAgentRuntime implements AgentRuntimeBoundary, AgentRuntimePiAgentAccess 
   private buildSystemPrompt(channel?: string, currentUser?: { username: string }, agentId?: string, sessionId?: string): string {
     const { language, timezone, builtinToolsConfig, sttEnabled, instanceIdentity } = this.readRuntimeSettings()
 
-    const activeSkills = getActiveSkillEntries()
+    const contextScope = currentUser && channel !== 'telegram-group' ? resolveContextScope(this.db, sessionId, agentId ?? this.agentId) : null
+    const activeSkills = getActiveSkillEntries(contextScope)
     // Build a skill-prompt context so agent skills can be gated by the current
     // platform / active toolset and annotated with missing required env vars.
     const activeTools = new Set<string>([
@@ -1228,11 +1240,12 @@ class PiAgentRuntime implements AgentRuntimeBoundary, AgentRuntimePiAgentAccess 
     if (builtinToolsConfig?.webFetch?.enabled !== false) activeTools.add('web_fetch')
     if (sttEnabled) activeTools.add('transcribe_audio')
 
-    const agentSkillEntries = getAgentSkillsForPrompt({
+    const scopedSkills = listScopedAgentSkills(contextScope)
+    const agentSkillEntries = filterAndAnnotateAgentSkills(scopedSkills.sort((a, b) => (b.lastUsed ?? "").localeCompare(a.lastUsed ?? "")).slice(0, 10), {
       platform: currentPlatform(),
       activeTools,
     })
-    const totalAgentSkills = getAgentSkillsCount()
+    const totalAgentSkills = scopedSkills.length
     const allSkills = [...activeSkills, ...agentSkillEntries]
 
     const builtinToolsPromptConfig = {
@@ -1296,7 +1309,7 @@ class PiAgentRuntime implements AgentRuntimeBoundary, AgentRuntimePiAgentAccess 
 
     let prompt = assembleSystemPrompt({
       memoryDir: this.memoryDir,
-      contextScope: currentUser && channel !== 'telegram-group' ? resolveContextScope(this.db, sessionId, agentId ?? this.agentId) : null,
+      contextScope,
       baseInstructions: this.baseInstructions,
       instanceIdentity,
       recentDays: profileOptions.recentDays,
@@ -1309,7 +1322,7 @@ class PiAgentRuntime implements AgentRuntimeBoundary, AgentRuntimePiAgentAccess 
       agentSkillsOverflowCount: totalAgentSkills > 10 ? totalAgentSkills : undefined,
       currentUser,
       builtinTools: builtinToolsPromptConfig,
-      agentSkillsDir: getAgentSkillsDir(),
+      agentSkillsDir: contextScope ? scopedAgentSkillsDir(contextScope) : undefined,
       availableProviders,
       agentId,
     })

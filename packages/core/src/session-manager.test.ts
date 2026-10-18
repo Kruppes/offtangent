@@ -479,18 +479,27 @@ describe('SessionManager', () => {
       expect(session2.messageCount).toBe(0)
     })
 
-    it('retains a reassigned strand summary without writing mixed history to scoped daily memory', async () => {
+    it('retains a reassigned strand summary in strand daily memory without writing either project', async () => {
       const onSummarize = vi.fn().mockResolvedValue('MIXED_HISTORY_SENTINEL')
       const manager = new SessionManager({ db, memoryDir, onSummarize })
       await manager.init()
-      const session = manager.getOrCreateSession('1')
+      db.prepare("INSERT INTO projects(id,user_id,name) VALUES ('mixed-A','1','A'),('mixed-B','1','B')").run()
+      const session = manager.createThread('1', 'main', 'Mixed fixture', 'mixed-A')
+      manager.activateSession('1', session.id)
+      const oldScope = resolveContextScope(db, session.id)!
+      expect(oldScope.key).toBe('project:mixed-A')
       manager.recordMessage('1')
-      db.prepare("UPDATE sessions SET context_policy='strand-only' WHERE id=?").run(session.id)
+      db.prepare("UPDATE sessions SET project_id='mixed-B' WHERE id=?").run(session.id)
+      const retainedScope = resolveContextScope(db, session.id)!
+      expect(retainedScope.key).toBe(`strand:${session.id}`)
       expect(await manager.handleNewCommand('1')).toBe('MIXED_HISTORY_SENTINEL')
       const endLog = db.prepare("SELECT output FROM tool_calls WHERE session_id=? AND tool_name='session_end'").get(session.id) as { output: string }
       expect(JSON.parse(endLog.output).summary).toBe('MIXED_HISTORY_SENTINEL')
       const today = new Date().toISOString().split('T')[0]
-      expect(fs.existsSync(scopedDaily(memoryDir, today))).toBe(false)
+      expect(fs.readFileSync(scopedDaily(memoryDir, today), 'utf8')).toContain('MIXED_HISTORY_SENTINEL')
+      for (const project of [oldScope, { ...oldScope, projectId: 'mixed-B', key: 'project:mixed-B' }]) {
+        expect(fs.existsSync(path.join(contextMemoryDir(memoryDir, project), 'daily', `${today}.md`))).toBe(false)
+      }
     })
 
     it('appends summary to daily file', async () => {

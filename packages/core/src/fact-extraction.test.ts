@@ -95,10 +95,10 @@ describe('fact-extraction', () => {
     mockCompleteSimple.mockResolvedValueOnce(makeResponse('- OLD_TRANSCRIPT_SENTINEL uses PostgreSQL'))
     const result = await extractAndStoreFacts(db, 1, 'session-a', 'User: OLD_TRANSCRIPT_SENTINEL uses PostgreSQL', makeModel(), 'k')
     expect(result.stored).toBe(1)
-    expect(db.prepare('SELECT context_scope,content FROM memories').get()).toEqual({ context_scope: null, content: 'OLD_TRANSCRIPT_SENTINEL uses PostgreSQL' })
+    expect(db.prepare('SELECT context_scope,content FROM memories').get()).toEqual({ context_scope: 'strand:session-a', content: 'OLD_TRANSCRIPT_SENTINEL uses PostgreSQL' })
   })
 
-  it('quarantines facts if assignment changes and changes back during extraction', async () => {
+  it('retains facts only in strand memory if assignment changes and changes back during extraction', async () => {
     mockCompleteSimple.mockImplementationOnce(async () => {
       db.prepare("UPDATE sessions SET context_policy='strand-only' WHERE id='session-a'").run()
       db.prepare("UPDATE sessions SET context_policy='project-isolated' WHERE id='session-a'").run()
@@ -106,8 +106,9 @@ describe('fact-extraction', () => {
     })
     const result = await extractAndStoreFacts(db, 1, 'session-a', 'User: RACE_SENTINEL uses PostgreSQL', makeModel(), 'k')
     expect(result.stored).toBe(1)
-    expect(db.prepare('SELECT context_scope,content FROM memories').get()).toEqual({ context_scope: null, content: 'RACE_SENTINEL uses PostgreSQL' })
-    expect(isDuplicateFact(db, 1, 'RACE_SENTINEL uses PostgreSQL', 'main', 'session-a')).toBe(false)
+    expect(db.prepare('SELECT context_scope,content FROM memories').get()).toEqual({ context_scope: 'strand:session-a', content: 'RACE_SENTINEL uses PostgreSQL' })
+    expect(isDuplicateFact(db, 1, 'RACE_SENTINEL uses PostgreSQL', 'main', 'session-a')).toBe(true)
+    expect(db.prepare("SELECT count(*) AS n FROM memories WHERE context_scope LIKE 'project:%'").get()).toEqual({ n: 0 })
   })
 
   it('parseFactLines handles bullet lists, numbered lists, empty lines, and NO_FACTS', () => {

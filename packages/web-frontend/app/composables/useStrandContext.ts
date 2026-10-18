@@ -106,7 +106,7 @@ export function useStrandContext(strandId: MaybeRefOrGetter<string | null>, proj
       const id = toValue(strandId)
       return id ? belongings.value.get(id) ?? { status: 'loading' as const } : { status: 'loading' as const }
     },
-    refreshGauge: () => { const id = toValue(strandId); if (id) void loadGauge(id) },
+    refreshGauge: () => { const id = toValue(strandId); if (id) { put(gauges, id, { status: 'loading' }); void loadGauge(id) } },
     refreshBelongings: () => { const id = toValue(strandId); if (id) void loadBelongings(id) },
     /** Load the gauge now and whenever the strand changes. */
     watchGauge: () => watch(() => toValue(strandId), (id) => { if (id) void loadGauge(id) }, { immediate: true }),

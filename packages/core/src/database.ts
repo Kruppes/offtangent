@@ -841,12 +841,19 @@ export function initDatabase(dbPath?: string): Database {
   if (!projectCols.find(c => c.name === 'context_origin_scope')) {
     db.exec('ALTER TABLE sessions ADD COLUMN context_origin_scope TEXT')
   }
+  if (!projectCols.find(c => c.name === 'context_scope_revision')) {
+    db.exec('ALTER TABLE sessions ADD COLUMN context_scope_revision INTEGER NOT NULL DEFAULT 0')
+  }
+  if (!projectCols.find(c => c.name === 'context_identity_changed')) {
+    db.exec('ALTER TABLE sessions ADD COLUMN context_identity_changed INTEGER NOT NULL DEFAULT 0')
+  }
   // Original project/user cannot be reconstructed reliably for legacy tasks.
   // Retain their transcripts/results, but never reclassify them on resume.
   db.exec("UPDATE sessions SET context_origin_scope = 'legacy-unclassified' WHERE type IN ('task', 'consolidation') AND context_origin_scope IS NULL")
   // A strand retains its old transcript when reassigned. Facts extracted later
   // cannot safely be attributed to its new project/persona/owner. Preserve them
-  // as unclassified, even if the assignment changes back while extraction waits.
+  // in independent strand memory; identity transfers remain unclassified.
+  // A monotonic revision revokes task pins even after a change back.
   // Replace the previous trigger: only a provably empty, unclassified strand
   // may receive an initial project without tainting its (nonexistent) history.
   // NULL alone is NOT evidence of emptiness; archived chat/tool rows also count.
@@ -866,7 +873,16 @@ export function initDatabase(dbPath?: string): Database {
       AND NOT EXISTS (SELECT 1 FROM memories WHERE session_id = OLD.id)
       AND NOT EXISTS (SELECT 1 FROM sessions WHERE parent_session_id = OLD.id)
       AND NOT EXISTS (SELECT 1 FROM tasks WHERE session_id = OLD.id))
-    BEGIN UPDATE sessions SET context_origin_scope = 'scope-changed' WHERE id = NEW.id; END;`))()
+    BEGIN UPDATE sessions SET context_origin_scope = 'scope-changed',
+      context_scope_revision = OLD.context_scope_revision + 1,
+      context_identity_changed = MAX(OLD.context_identity_changed,
+        OLD.agent_id IS NOT NEW.agent_id OR ((OLD.session_user IS NOT NEW.session_user OR OLD.user_id IS NOT NEW.user_id)
+          AND (OLD.type != 'interactive' OR OLD.user_id IS NOT NULL OR OLD.session_user IS NOT NULL
+            OR COALESCE(OLD.message_count,0) > 0 OR COALESCE(OLD.summary_written,0) > 0
+            OR EXISTS (SELECT 1 FROM chat_messages WHERE session_id=OLD.id)
+            OR EXISTS (SELECT 1 FROM tool_calls WHERE session_id=OLD.id)
+            OR EXISTS (SELECT 1 FROM memories WHERE session_id=OLD.id))))
+      WHERE id = NEW.id; END;`))()
 
   // Fork: multi-persona scoping for memories and chat_messages.
   const memoryCols = db.prepare("PRAGMA table_info(memories)").all() as { name: string }[]

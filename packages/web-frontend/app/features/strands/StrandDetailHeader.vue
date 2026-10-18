@@ -8,6 +8,7 @@ import StrandActions from './StrandActions.vue'
 import EcoModeSwitch from './EcoModeSwitch.vue'
 import { strandErrorKey, useStrandDetailApi, type StrandDetail } from './detailApi'
 import { messageRoute } from '~/api/strandW5b'
+import { useStrandContext } from '~/composables/useStrandContext'
 import { useActiveStrandProvider } from '~/composables/useTopBarQuota'
 const props = withDefaults(defineProps<{ strandId: string; showBack?: boolean }>(), { showBack: true })
 const emit = defineEmits<{ back: []; updated: [strand: StrandDetail]; deleted: [id: string] }>()
@@ -19,6 +20,10 @@ const personaApi = usePersonasApi()
 const personas = ref<PersonaListItem[]>([])
 const personaError = ref(false)
 const strand = ref<StrandDetail | null>(null)
+const scopeContext = useStrandContext(() => props.strandId)
+scopeContext.watchGauge()
+const scopeGauge = computed(() => scopeContext.gauge())
+watch(() => strand.value?.projectId, () => scopeContext.refreshGauge())
 const loading = ref(true)
 const saving = ref(false)
 const error = ref('')
@@ -145,6 +150,10 @@ onMounted(() => { void load(); void loadProjects(); void loadPersonas() })
 
 <template>
   <header class="max-h-[50dvh] shrink-0 overflow-y-auto border-b border-border bg-background px-3 py-3 md:px-6" :aria-busy="loading || saving">
+    <p v-if="scopeGauge.status === 'ready' && scopeGauge.data.isolation" class="mb-2 text-xs" role="status" data-effective-memory-scope>
+      {{ t('context.provenance.effective') }}: {{ scopeGauge.data.isolation.effectivePolicy ?? 'unknown' }} · {{ scopeGauge.data.isolation.dataScope }}
+      <span v-if="scopeGauge.data.isolation.historyRetained" class="block">{{ t('context.provenance.retained') }}</span>
+    </p>
     <div class="flex items-center gap-3">
       <Button v-if="showBack" class="min-h-11 min-w-11" variant="ghost" :aria-label="t('strandDetail.back')" @click="emit('back')"><AppIcon name="arrowLeft" class="h-5 w-5" /></Button>
       <h1 class="min-w-0 flex-1 break-words text-lg font-semibold">{{ strand?.title || t('strandDetail.untitled') }}</h1>

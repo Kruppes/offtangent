@@ -1,5 +1,6 @@
 import { describe, it, expect, afterEach, beforeEach } from 'vitest'
 import fs from 'node:fs'
+import { createHash } from 'node:crypto'
 import path from 'node:path'
 import os from 'node:os'
 import {
@@ -47,6 +48,14 @@ describe('agent-skills', () => {
       `---\nname: ${name}\ndescription: ${description}\n---\n\nSkill instructions here.`,
       'utf-8',
     )
+  }
+
+  function approveFixture(name: string) {
+    const dir = path.join(tmpDir, 'skills_agent')
+    const hash = createHash('sha256').update(fs.readFileSync(path.join(dir, name, 'SKILL.md'))).digest('hex')
+    const file = path.join(dir, '.global-approvals.json')
+    const previous = fs.existsSync(file) ? JSON.parse(fs.readFileSync(file, 'utf8')) : {}
+    fs.writeFileSync(file, JSON.stringify({ ...previous, [name]: hash }))
   }
 
   describe('getAgentSkillsDir', () => {
@@ -221,6 +230,7 @@ describe('agent-skills', () => {
     it('returns SkillPromptEntry format', () => {
       createSkill('prompt-skill', 'For prompt injection')
       trackAgentSkillUsage('prompt-skill')
+      approveFixture('prompt-skill')
 
       const result = getAgentSkillsForPrompt()
       expect(result).toHaveLength(1)
@@ -235,6 +245,7 @@ describe('agent-skills', () => {
       for (let i = 0; i < 15; i++) {
         createSkill(`skill-${String(i).padStart(2, '0')}`, `Skill ${i}`)
         trackAgentSkillUsage(`skill-${String(i).padStart(2, '0')}`)
+        approveFixture(`skill-${String(i).padStart(2, '0')}`)
       }
 
       const result = getAgentSkillsForPrompt()
@@ -259,6 +270,7 @@ describe('agent-skills', () => {
   describe('list_agent_skills tool', () => {
     it('returns formatted skill list', async () => {
       createSkill('tool-skill', 'A skill for tool testing')
+      approveFixture('tool-skill')
 
       const tools = createAgentSkillTools()
       expect(tools).toHaveLength(1)
@@ -280,6 +292,7 @@ describe('agent-skills', () => {
 
     it('includes location in output', async () => {
       createSkill('located-skill', 'Has a location')
+      approveFixture('located-skill')
 
       const tools = createAgentSkillTools()
       const result = await tools[0].execute('test-call-id', {})
@@ -450,6 +463,7 @@ describe('agent-skills', () => {
 
     it('list_agent_skills tool output marks skills with missing env vars', async () => {
       createSkillWithFrontmatter('needs-env', 'required_env_vars:\n  - NEVER_SET_VAR_XYZ\n')
+      approveFixture('needs-env')
 
       const tools = createAgentSkillTools()
       const result = await tools[0].execute('test-call-id', {})

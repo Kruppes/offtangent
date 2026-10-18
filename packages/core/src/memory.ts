@@ -1092,7 +1092,7 @@ export function assembleSystemPrompt(options?: {
       const file = path.join(dir, 'MEMORY.md')
       if (fs.existsSync(file)) tail.push(`<${source}>\n${sealSystemText(fs.readFileSync(file, 'utf-8').trim(), source)}\n</${source}>`)
     }
-    tail.push(`<context_scope>Data policy: project-isolated. Scope: ${scope!.projectId ? 'assigned project' : 'this strand only'}. Legacy memory and daily archives require explicit retrieval; never promote project notes into global rules.</context_scope>`)
+    tail.push(`<context_scope>Data policy: ${scope!.projectId ? 'project-isolated' : 'strand-only'}. Scope: ${scope!.projectId ? 'assigned project' : 'this strand only'}. Legacy memory and daily archives require explicit retrieval; never promote project notes into global rules.</context_scope>`)
   }
 
   // 7. Available tools overview
@@ -1202,7 +1202,7 @@ ${providerLines.join('\n')}
     tail.push(`<wiki_pages>
 The wiki is the agent's structured knowledge base. Maintain and organize it autonomously: add new pages, extend existing ones, merge duplicates, fix stale entries, and keep cross-links healthy without asking for permission. When discussing a topic covered by a wiki page, load it with read_file for context. Use write_file or edit_file to create or update wiki pages when you learn something worth preserving. Raw source material for the wiki lives under sources/ — wiki pages can cite it in a ## Sources section.
 
-For non-trivial wiki work (ingesting a new source, creating a new page, running a lint pass, or auditing structure), load the built-in \`wiki\` agent skill first by reading ${options?.agentSkillsDir ?? '/data/skills_agent'}/wiki/SKILL.md — it contains the canonical conventions (frontmatter, filenames, cross-links, ## Sources/Quellen) and the ingest/query/lint workflows.
+For non-trivial wiki work (ingesting a new source, creating a new page, running a lint pass, or auditing structure), load the built-in \`wiki\` agent skill first by reading ${options?.skills?.find(s => s.name === 'wiki')?.location ?? '(not available in this scope)'}/SKILL.md — it contains the canonical conventions (frontmatter, filenames, cross-links, ## Sources/Quellen) and the ingest/query/lint workflows.
 
 Only ask the user when you hit a genuine contradiction (new information conflicts with an existing page) that you cannot resolve on your own — then present the options (A vs. B) and let the user decide. Routine edits, additions, and reorganization do not require confirmation.
 
@@ -1221,7 +1221,7 @@ ${dir ? `Write durable project/strand data ONLY under this scoped directory: ${d
 - Daily archive: ${path.join(dir, 'daily')}
 - Wiki: ${path.join(dir, 'wiki')}
 Never write project data into persona/global MEMORY.md, SOUL.md, AGENTS.md or USER.md.
-Daily archives are not automatically injected. Retrieval from another scope must be explicitly requested and named.` : 'No authenticated data scope: do not read or write personal/project memory automatically.'}
+Daily archives are not automatically injected. Retrieval from another scope must be explicitly requested and named. Project assignment is organizational, not permission to promote retained history. Mixed/previously assigned history stays in strand memory. Never use shell to bypass these write rules; shell is not an OS sandbox.` : 'No authenticated data scope: do not read or write personal/project memory automatically.'}
 </memory_paths>`)
 
   // 9b. Axiom documentation (read-only, shipped with the image).
@@ -1251,7 +1251,7 @@ Discovery: use list_files on the directory and read the file whose name matches 
   // on demand instead of paying its token cost on every turn.
   if (options?.agentSkillsDir) {
     sections.push(`<agent_skills>
-You can create new reusable agent skills under ${options.agentSkillsDir}/<skill-name>/SKILL.md. They are auto-discovered on the next message and appear in the available_skills block.
+You can create new reusable agent skills under ${options.agentSkillsDir}/<skill-name>/SKILL.md. They are auto-discovered only in this owner/persona/data scope on the next message. Do not create or modify global/legacy skills from project work. Publishing a generic skill globally requires explicit operator approval; assignment to a project is not such approval.
 
 For the format, naming rules, gating fields, and worked examples, load the built-in **skill-creator** skill (listed in the available_skills block) before writing a new SKILL.md.
 </agent_skills>`)

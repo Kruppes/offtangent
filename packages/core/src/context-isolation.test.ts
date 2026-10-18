@@ -56,7 +56,7 @@ describe('context isolation — synthetic sentinels, no provider replay', () => 
     expect(db.prepare("SELECT context_policy FROM sessions WHERE id='numbers'").get()).toEqual({ context_policy: 'project-isolated' })
     expect(resolveContextScope(db, 'numbers')?.key).toBe('project:own')
     db.prepare("UPDATE sessions SET project_id='other' WHERE id='numbers'").run()
-    expect(resolveContextScope(db, 'numbers')?.key).toBe('project:other')
+    expect(resolveContextScope(db, 'numbers')?.key).toBe('strand:numbers')
     db.prepare("UPDATE sessions SET context_policy='strand-only' WHERE id='numbers'").run()
     expect(resolveContextScope(db, 'numbers')?.key).toBe('strand:numbers')
     db.prepare("UPDATE sessions SET context_policy='project-isolated', project_id='foreign' WHERE id='numbers'").run()
@@ -109,7 +109,8 @@ describe('context isolation — synthetic sentinels, no provider replay', () => 
 
   it('invalidates metadata on project, policy, persona and owner mutations', () => {
     for (const mutation of ["project_id='other'", "context_policy='strand-only'", "agent_id='coder'", "session_user='2'", "user_id=2"]) {
-      db.prepare("UPDATE sessions SET project_id='own',context_policy='project-isolated',agent_id='main',session_user='1',user_id=1 WHERE id='numbers'").run()
+      db.prepare("DELETE FROM sessions WHERE id='numbers'").run()
+      db.prepare("INSERT INTO sessions(id,project_id,context_policy,agent_id,session_user,user_id,type) VALUES ('numbers','own','project-isolated','main','1',1,'interactive')").run()
       recordContextManifest(db, 'numbers', 'main', 'fixture', [])
       expect(readContextManifest(db, 'numbers', 1, 'main')).not.toBeNull()
       db.prepare(`UPDATE sessions SET ${mutation} WHERE id='numbers'`).run()

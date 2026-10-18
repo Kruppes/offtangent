@@ -75,12 +75,14 @@ export function loadAttachedSkillContent(skillName: string, skillsDir: string = 
 export function renderAttachedSkillsBlock(
   skillNames: readonly string[] | null | undefined,
   skillsDir: string = getAgentSkillsDir(),
+  explicitFallbackDir?: string,
 ): string {
   if (!skillNames || skillNames.length === 0) return ''
 
   const parts: string[] = []
   for (const name of skillNames) {
-    const content = loadAttachedSkillContent(name, skillsDir)
+    // Only named attachments are explicit reads; never enumerate legacy skills.
+    const content = loadAttachedSkillContent(name, skillsDir) ?? (explicitFallbackDir ? loadAttachedSkillContent(name, explicitFallbackDir) : null)
     if (content === null) continue
     parts.push(renderSkillBlock(name, content))
   }

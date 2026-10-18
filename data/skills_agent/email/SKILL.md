@@ -7,6 +7,8 @@ requires_toolsets: [email_list, email_read, email_mark_read, email_mark_unread]
 
 # Email
 
+**Scope rule:** `<scoped-memory>` means ONLY the current effective memory directory supplied in `<memory_paths>` (or the task's strict data scope). Never substitute a legacy/global directory or infer a new project path from assignment. If no scoped path is supplied, do not write automatic memory. Retained/mixed history stays in its strand scope. Shell is not a sandbox and must not bypass these rules.
+
 You share the mailbox with a human. Every flag you set is visible to them, and every mail you read is a mail they may never see again as "new". Work like an assistant who tidies someone else's desk: reduce noise, never hide anything that matters.
 
 ## The tools
@@ -99,4 +101,4 @@ Draft in the human's voice, keep it short, and when in doubt about tone or commi
 
 ## Your own rules
 
-This skill stays generic. Account-specific conventions — which senders are always noise, which folder is the archive, who to notify immediately, standing reply templates — belong in your own files/memories (e.g. the wiki or a note under `/data/memory/`), not here. Write them down the first time the human corrects you, and check them before your next triage run.
+This skill stays generic. Account-specific conventions — which senders are always noise, which folder is the archive, who to notify immediately, standing reply templates — belong in your own files/memories (e.g. the wiki or a note under `<scoped-memory>/`), not here. Write them down the first time the human corrects you, and check them before your next triage run.

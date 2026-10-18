@@ -51,6 +51,19 @@ describe('loadAttachedSkillContent', () => {
     expect(content).toContain('Agent content.')
   })
 
+  it('explicit attachments prefer scoped skills and retain deliberate legacy access', () => {
+    const scoped = path.join(tempDataDir, 'scope-fixture')
+    for (const [root, text] of [[agentSkillsDir, 'LEGACY_SENTINEL'], [scoped, 'SCOPED_SENTINEL']]) {
+      fs.mkdirSync(path.join(root, 'same-name'), { recursive: true })
+      fs.writeFileSync(path.join(root, 'same-name', 'SKILL.md'), text)
+    }
+    expect(renderAttachedSkillsBlock(['same-name'], scoped, agentSkillsDir)).toContain('SCOPED_SENTINEL')
+    expect(renderAttachedSkillsBlock(['same-name'], scoped, agentSkillsDir)).not.toContain('LEGACY_SENTINEL')
+    fs.rmSync(path.join(scoped, 'same-name'), { recursive: true })
+    expect(renderAttachedSkillsBlock(['same-name'], scoped, agentSkillsDir)).toContain('LEGACY_SENTINEL')
+    expect(loadAttachedSkillContent('same-name', agentSkillsDir)).toBe('LEGACY_SENTINEL')
+  })
+
   it('returns null for a missing agent skill and does not throw', () => {
     expect(loadAttachedSkillContent('does-not-exist', agentSkillsDir)).toBeNull()
   })

@@ -1,4 +1,7 @@
 import fs from 'node:fs'
+import { createHash } from 'node:crypto'
+import { contextMemoryDir, type ContextScope } from './context-scope.js'
+import { APPROVED_BUILTIN_SKILLS } from './approved-builtin-skills.js'
 import path from 'node:path'
 import type { AgentTool } from '@earendil-works/pi-agent-core'
 import { Type } from '@earendil-works/pi-ai'
@@ -117,8 +120,8 @@ function writeUsageFile(usage: AgentSkillUsage): void {
  * Creates the directory if it doesn't exist.
  * Returns entries with name, description, location, and optional lastUsed timestamp.
  */
-export function listAgentSkills(): AgentSkillEntry[] {
-  const dir = ensureAgentSkillsDir()
+export function listAgentSkills(directory?: string): AgentSkillEntry[] {
+  const dir = directory ?? ensureAgentSkillsDir()
   if (!dir) return []
   const usage = readUsageFile()
   const entries: AgentSkillEntry[] = []
@@ -155,6 +158,33 @@ export function listAgentSkills(): AgentSkillEntry[] {
   }
 
   return entries
+}
+
+/** New skills are created in this owner/persona/data-scope bucket. No migration
+ * or keyword classification of the legacy inventory is performed. */
+export function scopedAgentSkillsDir(scope: ContextScope): string {
+  return contextMemoryDir(getAgentSkillsDir(), scope)
+}
+
+/** Operator approval file: relative legacy directory name -> SHA-256 of SKILL.md.
+ * Content changes revoke approval; mere presence/name/description is not trust. */
+export function listScopedAgentSkills(scope: ContextScope | null, crossProject = false): AgentSkillEntry[] {
+  let approvals: Record<string, string> = {}
+  try { approvals = JSON.parse(fs.readFileSync(path.join(getAgentSkillsDir(), '.global-approvals.json'), 'utf8')) } catch { /* no grants */ }
+  const globals = listAgentSkills().filter(s => {
+    const name = path.basename(s.location)
+    const hash = createHash('sha256').update(fs.readFileSync(path.join(s.location, 'SKILL.md'))).digest('hex')
+    return hash === APPROVED_BUILTIN_SKILLS[name] || hash === approvals?.[name]
+  })
+  if (!scope) return globals
+  const ownDir = scopedAgentSkillsDir(scope)
+  if (!crossProject) return [...globals, ...listAgentSkills(ownDir)]
+  // Explicit cross-project retrieval: only the authenticated owner/persona,
+  // never other users or unowned legacy inventory. The response is labelled.
+  const parent = path.dirname(ownDir)
+  let dirs: fs.Dirent[] = []
+  try { dirs = fs.readdirSync(parent, { withFileTypes: true }) } catch { /* empty */ }
+  return [...globals, ...dirs.filter(d => d.isDirectory() && !d.isSymbolicLink()).flatMap(d => listAgentSkills(path.join(parent, d.name)))]
 }
 
 /**
@@ -247,10 +277,10 @@ export function filterAndAnnotateAgentSkills(
  * Returns the 10 most recently used skills as SkillPromptEntry[].
  *
  * Accepts an optional context to filter by platform/toolset and mark skills with
- * missing required env vars. Without context, no gating is applied (backward compat).
+ * missing required env vars. Without context, platform gating is omitted; scope/grant filtering always applies.
  */
-export function getAgentSkillsForPrompt(ctx?: SkillPromptContext): SkillPromptEntry[] {
-  const recent = getRecentAgentSkills(10)
+export function getAgentSkillsForPrompt(ctx?: SkillPromptContext, scope: ContextScope | null = null): SkillPromptEntry[] {
+  const recent = listScopedAgentSkills(scope).sort((a, b) => (b.lastUsed ?? "").localeCompare(a.lastUsed ?? "")).slice(0, 10)
   if (!ctx) {
     return recent.map(s => ({
       name: s.name,
@@ -285,20 +315,22 @@ export function getAgentSkillsCount(): number {
 /**
  * Create the list_agent_skills tool for agent discovery.
  */
-export function createAgentSkillTools(): AgentTool[] {
+export function createAgentSkillTools(getScope: () => ContextScope | null = () => null): AgentTool[] {
   const listTool: AgentTool = {
     name: 'list_agent_skills',
     label: 'List Agent Skills',
     description:
-      'List all self-created agent skills with their descriptions and file locations. ' +
+      'List approved generic and current-scope skills with descriptions and file locations. ' +
       'Use this when you need a skill you haven\'t used recently or want to browse all available agent skills.',
-    parameters: Type.Object({}),
-    execute: async () => {
+    parameters: Type.Object({ cross_project: Type.Optional(Type.Boolean({ description: 'Only when the user explicitly requests cross-project skill retrieval: include other scopes of your owner/persona. Results are explicit retrieval, not global approval.' })) }),
+    execute: async (_id, args) => {
       try {
-        const skills = listAgentSkills()
+        const crossProject = (args as { cross_project?: boolean }).cross_project === true
+        const scope = getScope()
+        const skills = listScopedAgentSkills(scope, crossProject)
         if (skills.length === 0) {
           return {
-            content: [{ type: 'text' as const, text: 'No agent skills found. You can create skills by writing SKILL.md files to the agent skills directory.' }],
+            content: [{ type: 'text' as const, text: scope ? `No agent skills found. Create skills only at ${scopedAgentSkillsDir(scope)}/<name>/SKILL.md.` : 'No agent skills found. No approved generic skills or writable skill scope are available.' }],
             details: { count: 0 },
           }
         }
@@ -310,8 +342,8 @@ export function createAgentSkillTools(): AgentTool[] {
           return `- **${s.name}**: ${s.description}\n  Location: ${s.location}${lastUsedStr}${warnStr}`
         })
 
-        const dir = getAgentSkillsDir()
-        const text = `Found ${skills.length} agent skill(s):\n\n${lines.join('\n\n')}\n\nSkills directory: ${dir}`
+        const dir = scope ? scopedAgentSkillsDir(scope) : '(no writable scope)'
+        const text = `${crossProject ? '[Explicit cross-project skill retrieval]\n' : ''}Found ${skills.length} agent skill(s):\n\n${lines.join('\n\n')}\n\nSkills directory: ${dir}`
 
         return {
           content: [{ type: 'text' as const, text }],

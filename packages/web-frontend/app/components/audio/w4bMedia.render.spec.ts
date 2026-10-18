@@ -177,6 +177,17 @@ describe('StrandContextDetails', () => {
   })
   const owned = { status: 'ready' as const, data: { facts: [{ id: 1, text: 'Synthetic fact one' }], summaries: 2, toolCalls: 5, messages: 40, projectName: 'Project X' } }
 
+  it('shows effective strand scope and assignment warning instead of requested project policy', async () => {
+    const data = report(1000)
+    data.isolation = { policy: 'project-isolated', effectivePolicy: 'strand-only', historyRetained: true, dataScope: 'strand', at: null, sources: [] }
+    setStrandContextForTest('s1', { status: 'ready', data }, owned)
+    const html = await render(StrandContextDetails, { strandId: 's1' })
+    expect(html).toContain('strand-only · strand')
+    expect(html).toContain('data-context-history-retained')
+    expect(html).toContain('context.provenance.retained')
+    expect(html).not.toContain('project-isolated')
+  })
+
   it('loading', async () => {
     setStrandContextForTest('s1', { status: 'loading' }, { status: 'loading' })
     const html = await render(StrandContextDetails, { strandId: 's1' })

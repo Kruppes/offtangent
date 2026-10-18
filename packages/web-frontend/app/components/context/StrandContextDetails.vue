@@ -98,7 +98,8 @@
     <h4 id="ctx-provenance" class="mb-2 text-xs font-semibold uppercase tracking-label text-muted-foreground">{{ $t('context.provenance.title') }}</h4>
     <p v-if="!gauge.data.isolation" class="text-sm text-muted-foreground">{{ $t('context.provenance.unsupported') }}</p>
     <template v-else>
-      <p class="text-sm">{{ gauge.data.isolation.policy }} · {{ gauge.data.isolation.dataScope }}</p>
+      <p class="text-sm">{{ gauge.data.isolation.effectivePolicy ?? 'unknown' }} · {{ gauge.data.isolation.dataScope }}</p>
+      <p v-if="gauge.data.isolation.historyRetained" role="status" class="my-2 text-sm" data-context-history-retained>{{ $t('context.provenance.retained') }}</p>
       <p class="my-2 text-xs text-muted-foreground">{{ $t('context.provenance.explain') }}</p>
       <time v-if="gauge.data.isolation.at" class="text-xs" :datetime="gauge.data.isolation.at">{{ when(gauge.data.isolation.at) }}</time>
       <p v-else class="text-sm text-muted-foreground">{{ $t('context.provenance.pending') }}</p>

@@ -81,7 +81,7 @@ vi.mock('./config.js', () => ({
 vi.mock('./skill-config.js', () => ({
   loadSkills: vi.fn(() => ({
     skills: [
-      { name: 'Enabled skill', description: 'desc', path: '/skills/enabled', enabled: true },
+      { name: 'Enabled skill', description: 'desc', path: '/skills/enabled', enabled: true, contextAccess: 'global' },
       { name: 'Disabled skill', description: 'desc', path: '/skills/disabled', enabled: false },
     ],
   })),
@@ -103,6 +103,9 @@ vi.mock('./web-tools.js', () => ({
 vi.mock('./agent-skills.js', () => ({
   createAgentSkillTools: vi.fn(() => [{ name: 'agent_skill_tool', execute: vi.fn() }]),
   getAgentSkillsForPrompt: vi.fn(() => [{ name: 'recent skill', description: 'desc', location: '/skills-agent/recent' }]),
+  listScopedAgentSkills: vi.fn(() => [{ name: 'recent skill', description: 'desc', location: '/skills-agent/recent' }]),
+  filterAndAnnotateAgentSkills: vi.fn((entries) => entries),
+  scopedAgentSkillsDir: vi.fn(() => '/skills-agent/scoped-fixture'),
   getAgentSkillsCount: vi.fn(() => 1),
   getAgentSkillsDir: vi.fn(() => '/skills-agent'),
   trackAgentSkillUsage: vi.fn(),
@@ -442,7 +445,8 @@ describe('AgentRuntime boundary', () => {
     expect(runtimeHarness.continueCalls).toBe(1)
     expect(runtimeHarness.promptCalls).toEqual([])
     // The failed assistant message is gone; the user message is not duplicated.
-    expect((piAgent.state.messages as Array<{ role: string }>).map(m => m.role)).toEqual(['user'])
+    // Retry must re-resolve scope and refresh the system message too.
+    expect((piAgent.state.messages as Array<{ role: string }>).map(m => m.role)).toEqual(['system', 'user'])
   })
 
   it('falls back to a fresh prompt when the transcript has nothing to continue from', async () => {

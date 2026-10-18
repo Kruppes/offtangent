@@ -15,6 +15,8 @@ export interface SkillConfig {
   sourceUrl: string
   path: string
   enabled: boolean
+  /** Explicit operator grant. Legacy/enabled alone is NOT global approval. */
+  contextAccess?: 'global' | { userId: number; agentId: string; key: string }
   envKeys: string[]
   envValues: Record<string, string> // Values are encrypted at rest
   emoji?: string

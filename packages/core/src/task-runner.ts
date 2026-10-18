@@ -11,9 +11,10 @@ import type { Database } from './database.js'
 // attached_skills deduplicated onto the upstream module (0.27.0). The fork's
 // former inline impl (loadAttachedSkillContent/renderAttachedSkillsBlock) is
 // gone; resolveAgentMemoryDir stays (fork per-persona memory roots).
+import { scopedAgentSkillsDir, getAgentSkillsDir } from './agent-skills.js'
 import { renderAttachedSkillsBlock } from './attached-skills.js'
 import { scopedConsolidationTools } from './consolidation-tools.js'
-import { resolveContextScope, contextMemoryDir } from './context-scope.js'
+import { resolveContextScope, contextMemoryDir, contextScopePin } from './context-scope.js'
 import { readTasksGuidelinesFile, readAgentsRulesFile, getMemoryDir, resolveAgentMemoryDir } from './memory.js'
 import type { SettingsThinkingLevel } from './contracts/settings.js'
 import { formatTaskRouting } from './task-policy.js'
@@ -421,7 +422,7 @@ ${taskGuidelines}
   if (memoryDir) {
     sections.push(`<memory_reference>
 Your memory files are located in: ${memoryDir}
-Read/write MEMORY.md and wiki only in this data scope. Legacy/persona memory and other projects require explicit retrieval; never promote their content globally.
+Read/write MEMORY.md and wiki only in this data scope. Legacy/persona memory and other projects require explicit retrieval; never promote their content into another project or globally. Project assignment does not authorize importing retained history. Never bypass scoped file-write rules using shell; this is not an OS sandbox.
 </memory_reference>`)
   }
 
@@ -713,7 +714,7 @@ export class TaskRunner {
     task.sessionId = sessionId
     const origin = resolveContextScope(this.db, sessionId, task.agentId ?? 'main')
     this.db.prepare('UPDATE sessions SET context_origin_scope = ? WHERE id = ?')
-      .run(origin ? JSON.stringify([origin.userId, origin.key]) : 'unclassified', sessionId)
+      .run(origin ? contextScopePin(origin) : 'unclassified', sessionId)
     return sessionId
   }
 
@@ -863,12 +864,15 @@ export class TaskRunner {
             { budgetMinutes: this.resolveBudgetMinutes(task) },
           )
 
+      const scopedTaskPrompt = dataScope
+        ? `${baseSystemPrompt}\n<agent_skills>New agent skills belong only in ${scopedAgentSkillsDir(dataScope)}/<name>/SKILL.md. Never create or modify global skills from project work. Global approval requires an explicit operator grant.</agent_skills>`
+        : baseSystemPrompt
       // Inject attached-skills block (before the base prompt) so skill rules are
       // anchored at the top and apply regardless of the rest of the prompt.
-      const attachedSkillsBlock = renderAttachedSkillsBlock(overrides?.attachedSkills ?? null)
+      const attachedSkillsBlock = renderAttachedSkillsBlock(overrides?.attachedSkills ?? null, dataScope ? scopedAgentSkillsDir(dataScope) : getAgentSkillsDir(), dataScope ? getAgentSkillsDir() : undefined)
       const withSkills = attachedSkillsBlock
-        ? `${attachedSkillsBlock}\n\n${baseSystemPrompt}`
-        : baseSystemPrompt
+        ? `${attachedSkillsBlock}\n\n${scopedTaskPrompt}`
+        : scopedTaskPrompt
       // Output contract (SPEC 11.6): the schema is stated at the end so it
       // sits next to the STATUS/SUMMARY format it constrains.
       const systemPromptRaw = task.outputSchema

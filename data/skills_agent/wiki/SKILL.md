@@ -6,21 +6,23 @@ description: Maintain and search the user's LLM wiki (knowledge base of Markdown
 
 # Wiki Skill
 
-The wiki lives at `/data/memory/wiki/`. It is a collection of LLM-maintained Markdown files — a user knowledge base following the Karpathy pattern.
+**Scope rule:** `<scoped-memory>` means ONLY the current effective memory directory supplied in `<memory_paths>` (or the task's strict data scope). Never substitute a legacy/global directory or infer a new project path from assignment. If no scoped path is supplied, do not write automatic memory. Retained/mixed history stays in its strand scope. Shell is not a sandbox and must not bypass these rules.
+
+The wiki lives at `<scoped-memory>/wiki/`. It is a collection of LLM-maintained Markdown files — a user knowledge base following the Karpathy pattern.
 
 ## Three-Layer Architecture
 
 | Layer | Path | Mutability | Purpose |
 |---|---|---|---|
-| Sources (raw) | `/data/memory/sources/` | Immutable — add only | Archived raw material: articles, transcripts, papers |
-| Wiki (distilled) | `/data/memory/wiki/` | LLM-maintained | Summary pages, concepts, cross-references |
-| Schema / rules | `/data/config/CONSOLIDATION.md` + this skill | Editable | How the wiki operates |
+| Sources (raw) | `<scoped-memory>/sources/` | Immutable — add only | Archived raw material: articles, transcripts, papers |
+| Wiki (distilled) | `<scoped-memory>/wiki/` | LLM-maintained | Summary pages, concepts, cross-references |
+| Schema / rules | `/data/config/CONSOLIDATION.md` + this skill | Read-only from scoped work; operator-maintained | How the wiki operates |
 
 Rule of thumb: **Sources are what you read. Wiki is what you learned.** Never edit sources; always cite them from wiki pages.
 
 ## Wiki Structure
 
-Each wiki page is a `.md` file under `/data/memory/wiki/`. Pages can have YAML frontmatter. Existing pages may still use partial frontmatter and should be migrated gradually when touched.
+Each wiki page is a `.md` file under `<scoped-memory>/wiki/`. Pages can have YAML frontmatter. Existing pages may still use partial frontmatter and should be migrated gradually when touched.
 
 ```markdown
 ---
@@ -120,7 +122,7 @@ How to update the schema/rules:
 
 1. Edit `SKILL.md` directly with `edit_file` (or equivalent focused file editing).
 2. Keep the change narrow and operational.
-3. Append an `update` entry to `/data/memory/wiki/log.md` describing the rule change.
+3. Append an `update` entry to `<scoped-memory>/wiki/log.md` describing the rule change.
 
 ## Operations
 
@@ -139,7 +141,7 @@ Goal: extract knowledge from an external source (URL, file, conversation context
    - Body: the raw text as received — no interpretation, no editing
    - **Never modify an existing source file.** If the source itself changes, add a new dated file.
 
-3. **List existing wiki pages** via `list_files /data/memory/wiki/`:
+3. **List existing wiki pages** via `list_files <scoped-memory>/wiki/`:
    - Which pages already exist?
    - Is there an existing page that should be extended?
 
@@ -162,15 +164,15 @@ Goal: extract knowledge from an external source (URL, file, conversation context
 **Example — ingest a web article:**
 ```
 1. web_fetch the URL
-2. write_file /data/memory/sources/articles/2026-04-17-<slug>.md (raw text, with frontmatter)
-3. list_files /data/memory/wiki/
+2. write_file <scoped-memory>/sources/articles/2026-04-17-<slug>.md (raw text, with frontmatter)
+3. list_files <scoped-memory>/wiki/
 4. Extract relevant knowledge, identify duplicates
-5. write_file or edit_file /data/memory/wiki/topic.md with distilled knowledge + ## Sources pointing to the archived source
+5. write_file or edit_file <scoped-memory>/wiki/topic.md with distilled knowledge + ## Sources pointing to the archived source
 ```
 
 **Example — ingest context from a conversation:**
 ```
-1. list_files /data/memory/wiki/
+1. list_files <scoped-memory>/wiki/
 2. Check whether a matching page exists
 3. If yes: edit_file to add a section
 4. If no: write_file to create a new page
@@ -185,7 +187,7 @@ Goal: search the wiki for knowledge relevant to a current task.
 
 **Steps:**
 
-1. `list_files /data/memory/wiki/` — list all pages
+1. `list_files <scoped-memory>/wiki/` — list all pages
 2. Scan filenames: which pages might be relevant?
 3. Read relevant pages with `read_file`
 4. If a page links to others (`[Name](file.md)`): read those too
@@ -210,9 +212,9 @@ Goal: audit the wiki for quality — find contradictions, orphaned pages, missin
 
 1. **Triage before reading everything:**
    ```
-   read_file /data/memory/wiki/index.md
-   list_files /data/memory/wiki/
-   shell: wc -l /data/memory/wiki/*.md /data/memory/wiki/*/*.md
+   read_file <scoped-memory>/wiki/index.md
+   list_files <scoped-memory>/wiki/
+   shell: wc -l <scoped-memory>/wiki/*.md <scoped-memory>/wiki/*/*.md
    ```
    For small wikis (< ~20 pages) read every page. For larger wikis read fully only the pages that are relevant to recent changes, oversized, or flagged by earlier lint reports — do not burn tokens re-reading the whole wiki every run.
 
@@ -245,9 +247,9 @@ Goal: audit the wiki for quality — find contradictions, orphaned pages, missin
    - Pages with `status: archived` → remove their entries from `index.md`.
 
 8. **Write a lint report:**
-   - Append findings to `/data/memory/wiki/log.md` (never to daily files; daily logs are read-only source material):
+   - Append findings to `<scoped-memory>/wiki/log.md` (never to daily files; daily logs are read-only source material):
      ```
-     append to /data/memory/wiki/log.md
+     append to <scoped-memory>/wiki/log.md
      ## [YYYY-MM-DD] lint | Wiki Lint Report — YYYY-MM-DD
 
      ### Findings
@@ -315,9 +317,9 @@ Goal: audit the wiki for quality — find contradictions, orphaned pages, missin
 
 ## Paths
 
-- Wiki directory: `/data/memory/wiki/`
-- Sources directory (immutable raw material): `/data/memory/sources/`
-- Wiki index: `/data/memory/wiki/index.md`
-- Wiki log / lint reports: `/data/memory/wiki/log.md`
-- Today's daily file: `/data/memory/daily/YYYY-MM-DD.md` (read-only source material; do not write lint reports there)
+- Wiki directory: `<scoped-memory>/wiki/`
+- Sources directory (immutable raw material): `<scoped-memory>/sources/`
+- Wiki index: `<scoped-memory>/wiki/index.md`
+- Wiki log / lint reports: `<scoped-memory>/wiki/log.md`
+- Today's daily file: `<scoped-memory>/daily/YYYY-MM-DD.md` (read-only source material; do not write lint reports there)
 - Always use absolute paths

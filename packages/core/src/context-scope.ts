@@ -9,6 +9,8 @@ export interface ContextScope {
   sessionId: string
   projectId: string | null
   key: string
+  /** Revokes pins even when a mixed strand stays strand-scoped across moves. */
+  revision?: number
 }
 /** Reject ambiguous legacy ownership instead of applying differing precedence rules. */
 export function sessionOwner(row: { user_id: number | null; session_user: string | null }): number | null {
@@ -23,7 +25,7 @@ export function sessionOwner(row: { user_id: number | null; session_user: string
   if (canonical !== null && legacy !== null && canonical !== legacy) return null
   return canonical ?? legacy
 }
-type ScopeRow = { id: string; user_id: number | null; session_user: string | null; agent_id: string; project_id: string | null; type: string; context_policy?: string; context_origin_scope?: string | null; parent_session_id: string | null }
+type ScopeRow = { context_scope_revision?: number; context_identity_changed?: number; id: string; user_id: number | null; session_user: string | null; agent_id: string; project_id: string | null; type: string; context_policy?: string; context_origin_scope?: string | null; parent_session_id: string | null }
 export function resolveContextScope(db: Database, sessionId?: string, agentId?: string): ContextScope | null {
   if (!sessionId) return null
   const start = db.prepare('SELECT * FROM sessions WHERE id = ?').get(sessionId) as ScopeRow | undefined
@@ -54,26 +56,29 @@ export function resolveContextScope(db: Database, sessionId?: string, agentId?: 
     if ((link.session_user != null || link.user_id != null) && sessionOwner(link) !== userId) return null
   }
   // Assignment is never trusted without project ownership (stale/deleted IDs fail closed).
-  const projectId = row.context_policy !== 'strand-only' && row.project_id && db.prepare('SELECT 1 FROM projects WHERE id = ? AND CAST(user_id AS TEXT) = ?').get(row.project_id, String(userId))
+  if (lineage.some(link => link.context_identity_changed)) return null
+  const projectId = row.context_origin_scope !== 'scope-changed' && row.context_policy !== 'strand-only' && row.project_id && db.prepare('SELECT 1 FROM projects WHERE id = ? AND CAST(user_id AS TEXT) = ?').get(row.project_id, String(userId))
     ? row.project_id : null
   const key = projectId ? `project:${projectId}` : `strand:${row.id}`
   // Task transcripts may contain the original project's data. If its parent
   // moves or changes owner, do not read/write that transcript into a new scope.
   // New tasks pin this at session creation; legacy tasks are quarantined.
-  const origin = JSON.stringify([userId, key])
-  const background = start.type === 'task' || start.type === 'consolidation'
-  if (background && lineage.some(link => link.context_origin_scope === 'scope-changed')) return null
+  const revision = row.context_scope_revision ?? 0
+  const origin = contextScopePin({ userId, key, revision })
+  if (lineage.some(link => (link.type === 'task' || link.type === 'consolidation') && link.context_origin_scope === 'scope-changed')) return null
   if (lineage.some(link =>
     (link.type === 'consolidation' && link.context_origin_scope !== origin)
     || (link.type === 'task' && link.context_origin_scope != null && link.context_origin_scope !== origin))) return null
-  return { userId, agentId: agentId ?? start.agent_id ?? 'main', sessionId: row.id, projectId, key }
+  return { userId, agentId: agentId ?? start.agent_id ?? 'main', sessionId: row.id, projectId, key, revision }
 }
-/** A reassigned strand may contain mixed-scope history. Preserve extracted
- * facts, but do not relabel that history as memory of the new assignment. */
+/** Pins include a monotonic generation: A→B→A and strand→strand changes revoke
+ * running/queued children without depriving new work of strand memory. */
+export function contextScopePin(scope: Pick<ContextScope, 'userId' | 'key' | 'revision'>): string {
+  return JSON.stringify(scope.revision ? [scope.userId, scope.key, scope.revision] : [scope.userId, scope.key])
+}
+/** Mixed history gets its own durable strand memory, never the assigned project. */
 export function resolveFactWriteScope(db: Database, sessionId?: string): ContextScope | null {
   if (!sessionId) return null
-  const row = db.prepare('SELECT context_origin_scope FROM sessions WHERE id = ?').get(sessionId) as { context_origin_scope: string | null } | undefined
-  if (row?.context_origin_scope === 'scope-changed') return null
   return resolveContextScope(db, sessionId)
 }
 /** Hash each segment: no IDs/path traversal or user names in filesystem paths. */

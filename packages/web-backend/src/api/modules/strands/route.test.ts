@@ -1001,6 +1001,20 @@ describe('strand context telemetry', () => {
     expect(res.body).not.toHaveProperty('measurement')
   })
 
+  it('reports effective project scope only for empty project strands, retained scope after assignment and switching', async () => {
+    db.prepare("INSERT INTO projects(id,user_id,name) VALUES ('scope-A','1','A'),('scope-B','1','B')").run()
+    const fresh = sessionManager.createThread('1', 'main', 'Fresh', 'scope-B')
+    const first = await api('GET', `/api/strands/${fresh.id}/context`)
+    expect(first.body.isolation).toMatchObject({ effectivePolicy: 'project-isolated', dataScope: 'project', historyRetained: false })
+    const retained = sessionManager.createThread('1', 'main', 'Retained')
+    db.prepare("INSERT INTO chat_messages(session_id,role,content) VALUES (?,'user','RETAINED_SENTINEL')").run(retained.id)
+    for (const project of ['scope-A', 'scope-B', 'scope-A']) {
+      db.prepare('UPDATE sessions SET project_id=? WHERE id=?').run(project, retained.id)
+      const res = await api('GET', `/api/strands/${retained.id}/context`)
+      expect(res.body.isolation).toMatchObject({ policy: 'project-isolated', effectivePolicy: 'strand-only', dataScope: 'strand', historyRetained: true })
+    }
+  })
+
   it('reports the persisted strand-only policy instead of project-isolated', async () => {
     const strand = sessionManager.createThread('1', 'main', 'Strand only')
     db.prepare("UPDATE sessions SET context_policy='strand-only' WHERE id=?").run(strand.id)

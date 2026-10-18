@@ -101,8 +101,10 @@ describe('scoped context provenance mapping', () => {
   it('tolerates legacy servers and bounds additive metadata without prompt text', () => {
     expect(mapContextReport(REPORT).isolation).toBeNull()
     const source = { source: 'scoped_memory', scope: 'project', hash: 'a'.repeat(64), chars: 42, reason: 'classified-source', content: 'NEVER_RENDER_RAW_PAYLOAD' }
-    const value = mapContextReport({ ...REPORT, isolation: { policy: 'project-isolated', dataScope: 'project', provenance: { at: '2026-01-01', sources: Array(105).fill(source) } } })
+    const value = mapContextReport({ ...REPORT, isolation: { policy: 'project-isolated', effectivePolicy: 'strand-only', historyRetained: true, dataScope: 'strand', provenance: { at: '2026-01-01', sources: Array(105).fill(source) } } })
     expect(value.isolation?.policy).toBe('project-isolated')
+    expect(value.isolation?.effectivePolicy).toBe('strand-only')
+    expect(value.isolation?.historyRetained).toBe(true)
     expect(value.isolation?.sources).toHaveLength(100)
     expect(value.isolation?.sources[0]).toEqual({ source: source.source, scope: source.scope, hash: source.hash, chars: 42, reason: source.reason })
     expect(JSON.stringify(value)).not.toContain('NEVER_RENDER_RAW_PAYLOAD')

@@ -1,3 +1,5 @@
+import { scopedConsolidationTools } from '../../core/src/consolidation-tools.js'
+import { createMemory, searchMemories, createYoloTools } from '@axiom/core'
 import { contextMemoryDir, resolveContextScope, SessionManager } from '@axiom/core'
 import { beforeEach, afterEach, describe, expect, it, vi } from 'vitest'
 import fs from 'node:fs'
@@ -155,14 +157,43 @@ describe('MemoryConsolidationScheduler', () => {
       expect(taskRuntime.start).not.toHaveBeenCalled()
     })
 
-    it('does not select mixed-scope transcripts after a scope changes back', async () => {
-      const taskRuntime = createMockTaskRuntime(new TaskStore(db))
-      db.prepare("UPDATE sessions SET context_policy='strand-only' WHERE id='owned-main'").run()
-      db.prepare("UPDATE sessions SET context_policy='project-isolated' WHERE id='owned-main'").run()
+    it('consolidates moved retained history and facts into strand output, never old or new project memory', async () => {
+      const taskStore = new TaskStore(db)
+      const taskRuntime = createMockTaskRuntime(taskStore)
+      const root = path.join(tempDataDir, 'memory')
+      db.prepare("INSERT INTO projects(id,user_id,name) VALUES ('A','1','A'),('B','1','B')").run()
+      db.prepare("UPDATE sessions SET project_id='A' WHERE id='owned-main'").run()
+      const a = resolveContextScope(db, 'owned-main')!
+      db.prepare("INSERT INTO chat_messages(session_id,role,content) VALUES ('owned-main','user','MOVED_HISTORY_SENTINEL')").run()
+      db.prepare("UPDATE sessions SET project_id='B' WHERE id='owned-main'").run()
+      db.prepare("INSERT INTO sessions(id,user_id,session_user,type,agent_id,project_id) VALUES ('fresh-B',1,'1','interactive','main','B')").run()
+      const b = resolveContextScope(db, 'fresh-B')!
+      for (const scope of [a, b]) {
+        fs.mkdirSync(contextMemoryDir(root, scope), { recursive: true })
+        fs.writeFileSync(path.join(contextMemoryDir(root, scope), 'MEMORY.md'), `${scope.key}_UNCHANGED`)
+      }
+      taskRuntime.start.mockImplementation(async task => {
+        const scope = resolveContextScope(db, task.sessionId!)!
+        expect(scope.key).toBe('strand:owned-main')
+        const tools = scopedConsolidationTools(createYoloTools(), contextMemoryDir(root, scope), scope.sessionId)
+        expect(tools.map(t => t.name)).not.toContain('shell')
+        await tools.find(t => t.name === 'write_file')!.execute('output', { path: 'MEMORY.md', content: 'MOVED_CONSOLIDATION_SENTINEL' })
+        await expect(tools.find(t => t.name === 'write_file')!.execute('reject-project', { path: path.join(contextMemoryDir(root, b), 'MEMORY.md'), content: 'MOVED_CONSOLIDATION_SENTINEL' })).rejects.toThrow('Outside consolidation scope')
+        createMemory(db, 1, task.sessionId!, 'MOVED_CONSOLIDATION_FACT_SENTINEL uses SQLite')
+        taskStore.update(task.id, { status: 'completed', resultStatus: 'silent', resultSummary: 'fixture' })
+        return task.id
+      })
       const scheduler = new MemoryConsolidationScheduler({ db, taskRuntime, getDefaultProvider: () => makeProvider() })
-      const result = await scheduler.runNow()
-      expect(result.updated).toBe(false)
-      expect(taskRuntime.create).not.toHaveBeenCalled()
+      await scheduler.runNow()
+      expect(taskRuntime.create).toHaveBeenCalledOnce()
+      const created = taskRuntime.create.mock.calls[0][0]
+      const scope = resolveContextScope(db, created.sessionId)!
+      expect(created.prompt).toContain(contextMemoryDir(root, scope))
+      expect(created.prompt).not.toContain(contextMemoryDir(root, b))
+      expect(fs.readFileSync(path.join(contextMemoryDir(root, scope), 'MEMORY.md'), 'utf8')).toBe('MOVED_CONSOLIDATION_SENTINEL')
+      for (const project of [a, b]) expect(fs.readFileSync(path.join(contextMemoryDir(root, project), 'MEMORY.md'), 'utf8')).toBe(`${project.key}_UNCHANGED`)
+      expect(searchMemories(db, 'MOVED_CONSOLIDATION_FACT_SENTINEL', { userId: 1, contextScope: b })).toEqual([])
+      expect(searchMemories(db, 'MOVED_CONSOLIDATION_FACT_SENTINEL', { userId: 1, contextScope: scope })).toHaveLength(1)
     })
 
     it.each([false, true])('pins scheduled consolidation before handing it to runtime (SessionManager=%s)', async withManager => {

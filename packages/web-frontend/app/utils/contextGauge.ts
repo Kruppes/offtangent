@@ -13,6 +13,8 @@ export const FULL_RATIO = 0.9
 
 export interface ContextIsolationView {
   policy: string
+  effectivePolicy?: string
+  historyRetained?: boolean
   dataScope: string
   at: string | null
   sources: Array<{ source: string; scope: string; hash: string; chars: number; reason: string }>
@@ -66,6 +68,8 @@ export function mapContextReport(raw: unknown): StrandContextView {
   return {
     isolation: root.isolation && typeof root.isolation === 'object' ? {
       policy: str(obj(root.isolation).policy) ?? 'unknown',
+      effectivePolicy: str(obj(root.isolation).effectivePolicy) ?? 'unknown',
+      historyRetained: obj(root.isolation).historyRetained === true,
       dataScope: str(obj(root.isolation).dataScope) ?? 'unknown',
       at: str(obj(obj(root.isolation).provenance).at),
       sources: (Array.isArray(obj(obj(root.isolation).provenance).sources) ? obj(obj(root.isolation).provenance).sources as unknown[] : []).slice(0, 100).map(value => {

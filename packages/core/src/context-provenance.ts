@@ -83,7 +83,7 @@ export function recordContextManifest(db: Database, sessionId: string, agentId: 
   }
   const at = new Date().toISOString()
   const policy = (db.prepare('SELECT context_policy FROM sessions WHERE id = ?').get(scope.sessionId) as { context_policy: string }).context_policy
-  const manifest: ContextManifest = { version: 1, policy: policy === 'strand-only' ? 'strand-only' : 'project-isolated', at, sources, boundary: 'pre-provider' }
+  const manifest: ContextManifest = { version: 1, policy: !scope.projectId || policy === 'strand-only' ? 'strand-only' : 'project-isolated', at, sources, boundary: 'pre-provider' }
   db.transaction(() => {
     db.prepare('INSERT INTO context_manifests VALUES (?, ?, ?, ?, ?, ?)').run(randomUUID(), sessionId, scope.userId, agentId, at, JSON.stringify(manifest))
     purgeContextManifests(db)

@@ -88,13 +88,13 @@ describe('independent review blocker regressions', () => {
     // message_count is deliberately stale/zero: raw retained history must count.
     db.prepare("INSERT INTO chat_messages(session_id,role,content) VALUES (?,'user','UNASSIGNED_SENTINEL')").run(history.id)
     expect(assignProjectIfUnset(db, history.id, '1', 'A')).toBe(true)
-    expect(resolveFactWriteScope(db, history.id)).toBeNull()
+    expect(resolveFactWriteScope(db, history.id)?.key).toBe(`strand:${history.id}`)
     expect(db.prepare('SELECT content FROM chat_messages WHERE session_id=?').get(history.id)).toEqual({ content: 'UNASSIGNED_SENTINEL' })
   })
   it('never resets sticky history on a later NULL-to-project assignment', () => {
     db.prepare("UPDATE sessions SET project_id=NULL WHERE id='S'").run()
     expect(assignProjectIfUnset(db, 'S', '1', 'A')).toBe(true)
-    expect(resolveFactWriteScope(db, 'S')).toBeNull()
+    expect(resolveFactWriteScope(db, 'S')?.key).toBe('strand:S')
   })
   it('rolls migration cards and markers back together when the batch cannot commit', () => {
     const store = new TaskStore(db)

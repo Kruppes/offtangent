@@ -8,6 +8,7 @@ import { generateSessionId } from '@axiom/core'
 import {
   purgeContextManifests,
   resolveContextScope,
+  contextScopePin,
   contextMemoryDir,
   resolveAgentMemoryDir,
   getActiveProvider,
@@ -22,7 +23,6 @@ import {
   readConsolidationFile,
   getMemoryDir,
   getAgentMemoryDir,
-  getAgentSkillsDir,
   isScopedAgentMemoryEnabled,
   listPersonaIds,
   readDailyFilesForConsolidation,
@@ -84,7 +84,6 @@ export function buildConsolidationTaskPrompt(
   // — including the wiki split targets and the wiki/log.md lint report — stays
   // inside that persona's root and can never write into main's wiki.
   const memoryDir = options?.memoryDir ?? getMemoryDir()
-  const wikiSkillPath = `${getAgentSkillsDir()}/wiki/SKILL.md`
   const compactionSection = options?.compactionRun
     ? `
 
@@ -96,7 +95,7 @@ Today is the weekly compaction run. In addition to the steps above, actively SHR
 - Before deleting episodic detail that is still worth keeping, move it to the appropriate wiki page.
 - Split oversized wiki pages (~500+ lines, including ones flagged in earlier lint reports): convert them into a topic folder \`${memoryDir}/wiki/<topic>/\` with an \`index.md\` hub (short overview + links) and detailed subpages, and leave a redirect page at the old filename. Move content, never drop it — after the split, verify every section of the original page exists in exactly one subpage. Update \`${memoryDir}/wiki/index.md\` and log the split in \`${memoryDir}/wiki/log.md\`.
 - A page that other automation writes into (e.g. digest-cronjob comment blocks, tracking frontmatter) is NOT a blocker and MUST still be split in this run — just split it in place: do NOT move or rename the file, keep it at its existing path as the hub, preserve its frontmatter and all automation-written comment blocks, and extract only the body sections into subpages. The external writer keeps working unchanged. "Actively maintained by a cronjob" is never a valid reason to skip a split.
-- Before splitting, read \`${wikiSkillPath}\` and follow its page conventions for every hub and subpage you write: frontmatter with the required \`type\` field (no invented fields), exactly one \`# Title\` heading, sections as \`##\`, at most one consecutive blank line.
+- Before splitting, follow these wiki page conventions (external skill reads are not allowed during scoped consolidation) for every hub and subpage you write: frontmatter with the required \`type\` field (no invented fields), exactly one \`# Title\` heading, sections as \`##\`, at most one consecutive blank line.
 - Do not defer qualifying splits to a future run. If a split is genuinely blocked, name the concrete blocker in the log entry.
 - Prune \`${memoryDir}/wiki/log.md\` to the ~10 most recent entries.`
     : ''
@@ -405,16 +404,14 @@ export class MemoryConsolidationScheduler {
     const compactionRun = !scheduled || new Date().getDay() === 0
     // Resolve targets from OWNED sessions, never scan legacy roots and never
     // aggregate across users/projects/personas. Dedupe by full on-disk scope.
-    const candidates = this.db.prepare("SELECT id, agent_id FROM sessions WHERE type = 'interactive' AND context_origin_scope IS NOT 'scope-changed' ORDER BY last_activity DESC").all() as Array<{ id: string; agent_id: string }>
+    const candidates = this.db.prepare("SELECT id, agent_id FROM sessions WHERE type = 'interactive' ORDER BY last_activity DESC").all() as Array<{ id: string; agent_id: string }>
     const seen = new Set<string>()
     const runs: NonNullable<ConsolidationResult['personaRuns']> = []
     let dailyFilesReviewed = 0
     const usage = { input: 0, output: 0 }
     for (const row of candidates) {
-      // Candidates were collected before earlier runs awaited completion. Recheck
-      // sticky reassignment here too (including A→B→A during those awaits).
-      const state = this.db.prepare('SELECT context_origin_scope FROM sessions WHERE id = ?').get(row.id) as { context_origin_scope: string | null } | undefined
-      if (state?.context_origin_scope === 'scope-changed') continue
+      // Resolve again after earlier runs awaited: moved histories now target their
+      // own strand directory; a new revision pin guards the asynchronous run.
       const scope = resolveContextScope(this.db, row.id, row.agent_id)
       if (!scope) continue
       const dir = contextMemoryDir(resolveAgentMemoryDir(scope.agentId) ?? getMemoryDir(), scope)
@@ -425,7 +422,7 @@ export class MemoryConsolidationScheduler {
       if (runs.length >= 20) break // Bound maintenance cost per run; newest active scopes first.
       const start = Date.now()
       try {
-        const originPin = JSON.stringify([scope.userId, scope.key])
+        const originPin = contextScopePin(scope)
         const sessionId = this.sessionManager
           ? this.sessionManager.createSession({ type: 'consolidation', source: 'system', agentId: scope.agentId, parentSessionId: row.id, userId: String(scope.userId), contextOriginScope: originPin }).id
           : generateSessionId()

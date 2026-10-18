@@ -6,6 +6,8 @@ description: Use Offtangent's background-execution system — one-off background
 
 # Tasks, Cronjobs & Reminders
 
+**Scope rule:** `<scoped-memory>` means ONLY the current effective memory directory supplied in `<memory_paths>` (or the task's strict data scope). Never substitute a legacy/global directory or infer a new project path from assignment. If no scoped path is supplied, do not write automatic memory. Retained/mixed history stays in its strand scope. Shell is not a sandbox and must not bypass these rules.
+
 Offtangent has three related but distinct ways to run work outside the current chat turn. Picking the right one is the most important decision — they look similar but behave very differently.
 
 | Tool family | Lifecycle | Spawns an agent? | Typical use |
@@ -77,7 +79,7 @@ Optional cap. Defaults to the system value, hard-capped at the system maximum (s
 
 ### `attached_skills`
 
-`create_task` takes an optional `attached_skills` array — names of agent skills under `/data/skills_agent/<name>/` (or installed skills as `owner/name`). Each `SKILL.md` is **injected directly into the task prompt** when the task starts, so the task agent doesn't have to discover and `read_file` the skill itself.
+`create_task` takes an optional `attached_skills` array — names of agent skills in the current scoped skill directory (with deliberately named legacy/global attachments still available) (or installed skills as `owner/name`). Each `SKILL.md` is **injected directly into the task prompt** when the task starts, so the task agent doesn't have to discover and `read_file` the skill itself.
 
 ```
 create_task(
@@ -87,7 +89,7 @@ create_task(
 )
 ```
 
-Use it whenever the task's work depends on a skill — it is more reliable than writing "read /data/skills_agent/nitter/SKILL.md first" into the prompt. Missing SKILL.md files are skipped with a warning; the task still runs. Omit the parameter when no skill is relevant.
+Use it whenever the task's work depends on a skill — it is more reliable than writing "read the nitter skill first" into the prompt. Missing SKILL.md files are skipped with a warning; the task still runs. Omit the parameter when no skill is relevant.
 
 ### Resuming a paused task
 
@@ -194,22 +196,22 @@ This needs zero platform code — it's just `read_file` / `write_file` in the cr
 
 **Where to store:**
 
-- **`/data/memory/state/<job-name>.json` or `.md`** — compact, machine-readable job state (last-seen IDs, timestamps, cursors). Prefer this for pure dedupe markers.
-- **Wiki page (`/data/memory/wiki/<topic>.md`)** — curated, human-readable knowledge the job enriches over time.
+- **`<scoped-memory>/state/<job-name>.json` or `.md`** — compact, machine-readable job state (last-seen IDs, timestamps, cursors). Prefer this for pure dedupe markers.
+- **Wiki page (`<scoped-memory>/wiki/<topic>.md`)** — curated, human-readable knowledge the job enriches over time.
 
 **Guardrails (a brain a cronjob writes to on every run grows unnoticed):**
 
 - **Set a size budget** (~60 KB). When the file outgrows it, move raw material into monthly archives / sub-pages and keep only a compact summary or current state in the main file.
 - **Don't blindly `read_file` a large state file** — a single `read_file` on an overgrown file can silently blow up the run (a real incident: a hub page grew to 756 KB and killed the run on low token budget / high cost). Instead `grep` for the specific marker and append with shell `>>`.
-- **Keep the split clean:** compact machine state → `/data/memory/state/`; curated knowledge → the wiki.
+- **Keep the split clean:** compact machine state → `<scoped-memory>/state/`; curated knowledge → the wiki.
 
 Example digest cronjob prompt using a brain file:
 
 ```
-prompt: "Read /data/memory/state/hn-digest.md for the list of story IDs already sent.
+prompt: "Read <scoped-memory>/state/hn-digest.md for the list of story IDs already sent.
          Fetch the current Hacker News front page. Report only stories whose ID is
          NOT in that file, as a 5-bullet digest. Then append the newly reported IDs
-         to /data/memory/state/hn-digest.md (use grep + shell append, do not reload
+         to <scoped-memory>/state/hn-digest.md (use grep + shell append, do not reload
          the whole file if it is large). Keep the file under ~60 KB."
 ```
 
@@ -306,7 +308,7 @@ create_cronjob(
   name: "Nitter daily scrape",
   schedule: "0 7 * * *",
   action_type: "task",
-  prompt: "Scrape the configured Nitter accounts and append new posts to /data/memory/wiki/social.md following the conventions.",
+  prompt: "Scrape the configured Nitter accounts and append new posts to <scoped-memory>/wiki/social.md following the conventions.",
   attached_skills: ["nitter"],   // SKILL.md baked into the prompt
 )
 ```
@@ -320,7 +322,7 @@ create_cronjob(
   name: "HN digest",
   schedule: "0 8 * * *",
   action_type: "task",
-  prompt: "Read /data/memory/state/hn-digest.md for story IDs already sent. Fetch the HN front page, report only new stories, then append the new IDs back to that file (grep + shell append; keep it under ~60 KB).",
+  prompt: "Read <scoped-memory>/state/hn-digest.md for story IDs already sent. Fetch the HN front page, report only new stories, then append the new IDs back to that file (grep + shell append; keep it under ~60 KB).",
 )
 ```
 
@@ -337,7 +339,7 @@ create_cronjob(
 - **Promising fresh data from a `create_reminder`.** A reminder is static text. If you say "I'll remind you with the latest weather", you're lying. Use `create_cronjob` task-type instead.
 - **Telling a task to `read_file` a skill instead of attaching it.** `create_task` accepts `attached_skills` — use it, the SKILL.md then ships inside the task prompt.
 - **Attaching skills to a `create_reminder` or an `injection` cronjob.** No agent runs there, so `attached_skills` does not exist for them.
-- **A digest/monitor cronjob with no brain file.** Each run is isolated, so it re-reports the same items forever. Give it a `/data/memory/state/` file to dedupe against.
+- **A digest/monitor cronjob with no brain file.** Each run is isolated, so it re-reports the same items forever. Give it a `<scoped-memory>/state/` file to dedupe against.
 - **Reloading an overgrown brain file with `read_file`.** A single `read_file` on a state/wiki file that grew into the hundreds of KB can kill the run. Budget its size and `grep` + append instead.
 
 ---

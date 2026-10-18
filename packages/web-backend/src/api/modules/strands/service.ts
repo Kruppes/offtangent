@@ -150,7 +150,7 @@ export interface StrandTranscriptStatus {
 }
 
 export interface StrandContextReport {
-  isolation: { policy: 'project-isolated' | 'strand-only'; dataScope: 'project' | 'strand' | 'none'; provenance: import('@axiom/core').ContextManifest | null }
+  isolation: { policy: 'project-isolated' | 'strand-only'; effectivePolicy: 'project-isolated' | 'strand-only' | 'none'; historyRetained: boolean; dataScope: 'project' | 'strand' | 'none'; provenance: import('@axiom/core').ContextManifest | null }
   strandId: string
   measurement: StrandContextMeasurement
   budget: StrandContextBudget
@@ -875,7 +875,7 @@ export function createStrandsService(options: StrandsServiceOptions) {
 
   function strandContext(userId: number, strandId: string): StrandContextReport {
     const ownedStrand = requireStrand(userId, strandId)
-    const policyRow = db.prepare('SELECT context_policy FROM sessions WHERE id = ?').get(strandId) as { context_policy: 'project-isolated' | 'strand-only' }
+    const policyRow = db.prepare('SELECT context_policy, context_origin_scope FROM sessions WHERE id = ?').get(strandId) as { context_policy: 'project-isolated' | 'strand-only'; context_origin_scope: string | null }
     const dataScope = resolveContextScope(db, strandId, ownedStrand.agentId)
     const effective = effectiveModelForStrand(db, strandId, options.getTurnRunner?.()?.getTurnModelOverride?.(userId, strandId))
     const usage = lastRequestUsageForStrand(db, strandId)
@@ -914,7 +914,7 @@ export function createStrandsService(options: StrandsServiceOptions) {
         }
     return {
       strandId,
-      isolation: { policy: policyRow.context_policy, dataScope: !dataScope ? 'none' : dataScope.projectId ? 'project' : 'strand', provenance: readContextManifest(db, strandId, userId, ownedStrand.agentId) },
+      isolation: { policy: policyRow.context_policy, effectivePolicy: !dataScope ? 'none' : dataScope.projectId ? 'project-isolated' : 'strand-only', historyRetained: !!dataScope && policyRow.context_origin_scope === 'scope-changed', dataScope: !dataScope ? 'none' : dataScope.projectId ? 'project' : 'strand', provenance: readContextManifest(db, strandId, userId, ownedStrand.agentId) },
       measurement,
       budget: {
         contextWindow,
