@@ -1038,6 +1038,12 @@ class PiAgentRuntime implements AgentRuntimeBoundary, AgentRuntimePiAgentAccess 
   private promptUser?: { username: string }
 
   refreshSystemPrompt(channel?: string, currentUser?: { username: string }, agentId?: string, sessionId?: string): void {
+    // A global memory/skills refresh is not an identity change. Explicit
+    // arguments (even undefined) still clear stale identity fail-closed.
+    if (arguments.length === 0) {
+      channel = this.promptChannel
+      currentUser = this.promptUser
+    }
     this.promptChannel = channel
     this.promptUser = currentUser
     const prompt = this.buildSystemPrompt(channel, currentUser, agentId ?? this.agentId, sessionId)

@@ -711,6 +711,9 @@ export class TaskRunner {
 
     this.store.update(task.id, { sessionId })
     task.sessionId = sessionId
+    const origin = resolveContextScope(this.db, sessionId, task.agentId ?? 'main')
+    this.db.prepare('UPDATE sessions SET context_origin_scope = ? WHERE id = ?')
+      .run(origin ? JSON.stringify([origin.userId, origin.key]) : 'unclassified', sessionId)
     return sessionId
   }
 

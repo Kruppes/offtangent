@@ -23,6 +23,11 @@ export function ensureContextProvenanceSchema(db: Database): void {
     agent_id TEXT NOT NULL, created_at TEXT NOT NULL, manifest TEXT NOT NULL
   ); CREATE TABLE IF NOT EXISTS context_provenance_key (id INTEGER PRIMARY KEY CHECK(id = 1), key TEXT NOT NULL);
   CREATE INDEX IF NOT EXISTS idx_context_manifest_session ON context_manifests(session_id, created_at);
+  CREATE TRIGGER IF NOT EXISTS context_manifest_scope_update
+    AFTER UPDATE OF project_id, context_policy, agent_id, session_user, user_id ON sessions
+    WHEN OLD.project_id IS NOT NEW.project_id OR OLD.context_policy IS NOT NEW.context_policy
+      OR OLD.agent_id IS NOT NEW.agent_id OR OLD.session_user IS NOT NEW.session_user OR OLD.user_id IS NOT NEW.user_id
+    BEGIN DELETE FROM context_manifests WHERE session_id = OLD.id; END;
   CREATE TRIGGER IF NOT EXISTS context_manifest_session_delete AFTER DELETE ON sessions BEGIN DELETE FROM context_manifests WHERE session_id = OLD.id; END;
   CREATE TRIGGER IF NOT EXISTS context_manifest_user_delete AFTER DELETE ON users BEGIN DELETE FROM context_manifests WHERE user_id = OLD.id; END;`)
   db.prepare('INSERT OR IGNORE INTO context_provenance_key VALUES (1, ?)').run(randomBytes(32).toString('hex'))

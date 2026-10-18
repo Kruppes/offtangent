@@ -70,7 +70,7 @@ export function mapContextReport(raw: unknown): StrandContextView {
       at: str(obj(obj(root.isolation).provenance).at),
       sources: (Array.isArray(obj(obj(root.isolation).provenance).sources) ? obj(obj(root.isolation).provenance).sources as unknown[] : []).slice(0, 100).map(value => {
         const source = obj(value)
-        return { source: str(source.source) ?? 'unknown', scope: str(source.scope) ?? 'unknown', hash: str(source.hash) ?? '', chars: num(source.chars) ?? 0, reason: str(source.reason) ?? '' }
+        return { source: str(source.source) ?? 'unknown', scope: str(source.scope) ?? 'unknown', hash: str(source.hash) ?? '', chars: Math.max(0, num(source.chars) ?? 0), reason: str(source.reason) ?? '' }
       }),
     } : null,
     measured,

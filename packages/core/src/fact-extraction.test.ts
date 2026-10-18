@@ -79,6 +79,27 @@ describe('fact-extraction', () => {
     db.close()
   })
 
+  it('preserves facts from reassigned transcripts without classifying them into the new project', async () => {
+    db.prepare("INSERT INTO projects(id,user_id,name) VALUES ('new-project','1','New')").run()
+    db.prepare("UPDATE sessions SET project_id='new-project' WHERE id='session-a'").run()
+    mockCompleteSimple.mockResolvedValueOnce(makeResponse('- OLD_TRANSCRIPT_SENTINEL uses PostgreSQL'))
+    const result = await extractAndStoreFacts(db, 1, 'session-a', 'User: OLD_TRANSCRIPT_SENTINEL uses PostgreSQL', makeModel(), 'k')
+    expect(result.stored).toBe(1)
+    expect(db.prepare('SELECT context_scope,content FROM memories').get()).toEqual({ context_scope: null, content: 'OLD_TRANSCRIPT_SENTINEL uses PostgreSQL' })
+  })
+
+  it('quarantines facts if assignment changes and changes back during extraction', async () => {
+    mockCompleteSimple.mockImplementationOnce(async () => {
+      db.prepare("UPDATE sessions SET context_policy='strand-only' WHERE id='session-a'").run()
+      db.prepare("UPDATE sessions SET context_policy='project-isolated' WHERE id='session-a'").run()
+      return makeResponse('- RACE_SENTINEL uses PostgreSQL')
+    })
+    const result = await extractAndStoreFacts(db, 1, 'session-a', 'User: RACE_SENTINEL uses PostgreSQL', makeModel(), 'k')
+    expect(result.stored).toBe(1)
+    expect(db.prepare('SELECT context_scope,content FROM memories').get()).toEqual({ context_scope: null, content: 'RACE_SENTINEL uses PostgreSQL' })
+    expect(isDuplicateFact(db, 1, 'RACE_SENTINEL uses PostgreSQL', 'main', 'session-a')).toBe(false)
+  })
+
   it('parseFactLines handles bullet lists, numbered lists, empty lines, and NO_FACTS', () => {
     expect(parseFactLines('- User prefers dark mode\n- Project uses PostgreSQL')).toEqual([
       'User prefers dark mode',

@@ -33,9 +33,16 @@ Facts have nullable `memories.context_scope`. Automatic FTS retrieval requires
 matching user, persona and project/strand,
 active status and owner/agent provenance. Unclassified NULL rows are retained but
 not automatically injected. Extracted `[SHARED]` model suggestions cannot confer
-global approval. Dedupe occurs within the classified scope.
+global approval. Dedupe occurs within the classified scope. If a strand's project,
+policy, persona or owner changes, its retained transcript may mix scopes. Facts
+extracted from that strand are preserved as unclassified (also when assignment
+changes back during extraction), never relabelled into the new project. Start a
+fresh strand for new automatically classified facts. This conservative quarantine
+does not erase existing facts or stop the strand from reading its selected scope.
+Summaries of such strands remain in the database without a scoped daily-file write;
+consolidation does not select their mixed transcript as its source.
 
-Task context inherits from an owned origin strand (including nested tasks).
+New task context inherits from an owned origin strand (including nested tasks), with user/scope identity pinned at task-session creation in `sessions.context_origin_scope`. A later parent project, policy or owner change fails closed for automatic task reads/writes and resume; it cannot relabel the existing task transcript into the new scope. Existing legacy task sessions are marked unclassified at startup, retaining transcript/results but receiving no automatic memory until a fresh task is created.
 Cross-persona work uses the target persona's isolated root. Unknown-origin work
 has no implicit project/persona memory fallback. Consolidation enumerates only
 classified owned scope roots, runs one scope at a time with only scope-bound file tools and exact-session history. Shell, codemode, delegation, arbitrary connectors and cross-project search are absent from its capabilities. Only MEMORY.md, wiki/*.md and users/*.md are writable; daily/sources are read-only. Symlink and traversal paths are rejected. This is a capability boundary for consolidation, not just a prompt instruction. Legacy files remain
@@ -53,7 +60,7 @@ to the current strand history; changing policy does not erase that history.
    using the operator's normal versioned snapshot procedure. This migration
    neither moves nor rewrites nor deletes legacy markdown or fact rows.
 3. On first start, idempotent schema setup adds `sessions.context_policy` with
-   default `project-isolated`, nullable `memories.context_scope`, and the metadata-
+   default `project-isolated`, nullable `sessions.context_origin_scope` for pinned task origins, nullable `memories.context_scope`, and the metadata-
    only `context_manifests` table. Existing facts remain NULL/unclassified. Check
    row counts and byte hashes of representative legacy files against the backup.
 4. Do NOT bulk-copy legacy MEMORY.md/dailies into approved-global. First review
@@ -82,8 +89,7 @@ The manifest is recorded at the app-side, redacted pre-provider boundary; provid
 serialization may add envelopes. The HMAC key is random, database-local and never returned through the API. It is retained in the protected database backup, not in telemetry; public hashes cannot be dictionary-matched offline without this key.
 System/message envelope rows overlap their
 individual source rows, so their sizes must not be summed as a token budget.
-Retention is bounded to 20 manifests per session and 30 days. Global pruning runs on every manifest write; deletion of a session cascades to its metadata rows. Changing project or
-context policy clears stale manifests and recreates live session context. The
+Retention is bounded to 20 manifests per session and 30 days. Global pruning runs on every manifest write; deletion of a session cascades to its metadata rows. Changing project, context policy or ownership clears stale manifests via a database trigger. The next provider turn rebuilds the runtime system context against the current authenticated scope. The
 panel without a recorded request shows selected policy/scope and no invented
 outgoing-request measurement. Generic counts and hashes are still sensitive
 metadata: do not export them to public issue reports.
@@ -120,3 +126,5 @@ Compile and test native on the remote Android build host; run an emulator smoke
 on a synthetic server, verify old/new-server behavior and stop the emulator and
 Gradle daemons afterwards. No build/review assertion alone means a deployment or
 Play internal release happened. Report implemented, tested and live separately.
+
+Task lineage resolution is bounded to ten ancestors and fails closed beyond that limit. Unassignable legacy notices remain retryable; without an admin account no quarantine feed notification can be emitted.

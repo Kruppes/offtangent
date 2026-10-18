@@ -137,9 +137,16 @@ export function createSearchMemoriesTool(options: SearchMemoriesToolOptions): Ag
       try {
         const limit = Math.min(Math.max(Math.floor(rawLimit ?? 10), 1), 50)
         const task = getCurrentTaskExecutionContext()
-        const currentSession = options.getCurrentSessionId?.() ?? task?.taskSessionId ?? undefined
-        const dataScope = resolveContextScope(options.db, currentSession)
-        const userId = dataScope?.userId ?? options.getCurrentUserId?.() ?? task?.userId ?? undefined
+        // Async task identity must never fall back to a concurrently active
+        // interactive runtime, including when a task has incomplete lineage.
+        const currentSession = task ? task.taskSessionId ?? undefined : options.getCurrentSessionId?.()
+        const callerAgentId = task ? task.agentId ?? undefined : options.getCurrentAgentId?.()
+        const dataScope = resolveContextScope(options.db, currentSession, callerAgentId)
+        const authenticatedUser = task ? task.userId ?? undefined : options.getCurrentUserId?.()
+        if (dataScope && authenticatedUser != null && dataScope.userId !== authenticatedUser) {
+          return { content: [{ type: 'text' as const, text: 'Memory scope ownership mismatch.' }], details: { error: true } }
+        }
+        const userId = dataScope?.userId ?? authenticatedUser
         if (!userId || (!dataScope && !crossProject)) return { content: [{ type: 'text' as const, text: 'No authenticated memory scope. Specify an explicit archive search from an owned session.' }], details: { error: true } }
         // Persona scoping: by default non-'main' personas only search their own
         // facts (+ 'shared'); 'main' stays unscoped. An explicit `agent` param
@@ -147,7 +154,7 @@ export function createSearchMemoriesTool(options: SearchMemoriesToolOptions): Ag
         // bucket + 'shared'). Unknown ids error out instead of returning [].
         const scope = resolveAgentReadScope({
           requested: rawAgent,
-          callerAgentId: options.getCurrentAgentId?.() ?? task?.agentId ?? undefined,
+          callerAgentId,
           listAgentIds: options.listAgentIds,
         })
         if (!scope.ok) {

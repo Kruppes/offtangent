@@ -1,4 +1,4 @@
-import { resolveContextScope, contextMemoryDir } from './context-scope.js'
+import { resolveFactWriteScope, contextMemoryDir } from './context-scope.js'
 import { randomUUID } from 'node:crypto'
 import type { Database } from './database.js'
 import { maskTranscript, DEFAULT_MASK_OPTIONS, RECALLED_MARKER } from './message-digest.js'
@@ -815,8 +815,8 @@ export class SessionManager {
       agentsBaseDir: this.agentsBaseDir,
       scopedAgentMemory: this.scopedAgentMemory,
     })
-    const scope = resolveContextScope(this.db, sessionId, agentId)
-    if (!scope) return // no owner/scope: retain DB summary, never write shared memory
+    const scope = resolveFactWriteScope(this.db, sessionId)
+    if (!scope || (agentId && scope.agentId !== agentId)) return // retain DB summary; never relabel mixed-scope transcripts
     appendToDailyFile(formattedSummary, activityDate, contextMemoryDir(targetDir ?? getMemoryDir(), scope))
   }
 

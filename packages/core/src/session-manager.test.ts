@@ -477,6 +477,19 @@ describe('SessionManager', () => {
       expect(session2.messageCount).toBe(0)
     })
 
+    it('retains a reassigned strand summary without writing mixed history to scoped daily memory', async () => {
+      const onSummarize = vi.fn().mockResolvedValue('MIXED_HISTORY_SENTINEL')
+      const manager = new SessionManager({ db, memoryDir, onSummarize })
+      await manager.init()
+      const session = manager.getOrCreateSession('1')
+      manager.recordMessage('1')
+      db.prepare("UPDATE sessions SET context_policy='strand-only' WHERE id=?").run(session.id)
+      expect(await manager.handleNewCommand('1')).toBe('MIXED_HISTORY_SENTINEL')
+      expect(db.prepare('SELECT summary FROM sessions WHERE id=?').get(session.id)).toEqual({ summary: 'MIXED_HISTORY_SENTINEL' })
+      const today = new Date().toISOString().split('T')[0]
+      expect(fs.existsSync(scopedDaily(memoryDir, today))).toBe(false)
+    })
+
     it('appends summary to daily file', async () => {
       const onSummarize = vi.fn().mockResolvedValue('Discussed Docker setup.')
       const manager = new SessionManager({

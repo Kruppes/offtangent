@@ -1694,7 +1694,8 @@ export class AgentCore {
     } else {
       // Refresh every existing runtime, persona-level and strand-level.
       for (const [key, runtime] of this.runtimes) {
-        runtime.refreshSystemPrompt(channel, currentUser, AgentCore.agentIdOfKey(key))
+        if (arguments.length === 0) runtime.refreshSystemPrompt()
+        else runtime.refreshSystemPrompt(channel, currentUser, AgentCore.agentIdOfKey(key))
       }
     }
   }

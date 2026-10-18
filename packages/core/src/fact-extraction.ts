@@ -1,4 +1,4 @@
-import { resolveContextScope } from './context-scope.js'
+import { resolveFactWriteScope } from './context-scope.js'
 import type { Api, Model } from '@earendil-works/pi-ai'
 import { completeSimple } from './pi-models.js'
 import type { Database } from './database.js'
@@ -226,7 +226,7 @@ export function parseFactLines(response: string): string[] {
  * Uses FTS5 candidate search followed by normalized word-overlap matching.
  */
 export function isDuplicateFact(db: Database, userId: number | null, newFact: string, agentId: string = 'main', sessionId?: string): boolean {
-  const contextKey = resolveContextScope(db, sessionId)?.key ?? null
+  const contextKey = resolveFactWriteScope(db, sessionId)?.key ?? null
   if (!contextKey) return false // Never deduplicate unclassified writes against legacy data.
   const normalizedFact = normalizeWhitespace(newFact)
   if (!normalizedFact) return false
@@ -360,10 +360,8 @@ export async function extractAndStoreFacts(
       continue
     }
 
-    // The extraction LLM decides the scope: '[shared]'-marked facts land in
-    // the cross-persona 'shared' bucket (visible to every persona via the
-    // agent_id IN (?, 'shared') retrieval filter); everything else stays
-    // scoped to the session's persona.
+    // Model-suggested sharing cannot grant global/persona-wide approval.
+    // Reassigned transcripts remain unclassified rather than being relabelled.
     storeFact(db, userId, sessionId, fact.content, agentId, {
       provenance: fact.provenance,
       sessionKind,

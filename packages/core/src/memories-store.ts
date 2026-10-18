@@ -1,4 +1,4 @@
-import { resolveContextScope, contextFactPredicate, type ContextScope } from './context-scope.js'
+import { resolveFactWriteScope, contextFactPredicate, type ContextScope } from './context-scope.js'
 import type { Database } from './database.js'
 import { normalizeFtsQuery } from './fts-utils.js'
 import { NotFoundError, InvalidInputError } from './errors.js'
@@ -277,7 +277,7 @@ export function createMemory(
   agentId: string = 'main',
   meta: CreateMemoryProvenance = {},
 ): number {
-  const scope = resolveContextScope(db, sessionId ?? undefined)
+  const scope = resolveFactWriteScope(db, sessionId ?? undefined)
   const scopeKey = scope && scope.userId === userId ? scope.key : null
   const provenance = meta.provenance ?? 'agent'
   const key = meta.supersessionKey?.trim() || null

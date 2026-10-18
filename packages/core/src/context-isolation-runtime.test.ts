@@ -56,7 +56,7 @@ describe('final outgoing context boundary', () => {
       expect(JSON.stringify(captured.requests.at(-1))).toContain('FOREIGN_SENTINEL')
       expect(JSON.stringify(captured.requests.at(-1))).not.toContain('OWN_SENTINEL')
       runtime.clearMessages()
-      runtime.refreshSystemPrompt('web', { username: 'fixture' })
+      runtime.refreshSystemPrompt()
       for await (const _ of runtime.streamPrompt('Return to arithmetic.', 'own')) { /* drain */ }
       expect(JSON.stringify(captured.requests.at(-1))).toContain('OWN_SENTINEL')
       expect(JSON.stringify(captured.requests.at(-1))).not.toContain('FOREIGN_SENTINEL')

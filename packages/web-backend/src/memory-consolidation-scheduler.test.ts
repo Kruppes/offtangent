@@ -155,6 +155,16 @@ describe('MemoryConsolidationScheduler', () => {
       expect(taskRuntime.start).not.toHaveBeenCalled()
     })
 
+    it('does not select mixed-scope transcripts after a scope changes back', async () => {
+      const taskRuntime = createMockTaskRuntime(new TaskStore(db))
+      db.prepare("UPDATE sessions SET context_policy='strand-only' WHERE id='owned-main'").run()
+      db.prepare("UPDATE sessions SET context_policy='project-isolated' WHERE id='owned-main'").run()
+      const scheduler = new MemoryConsolidationScheduler({ db, taskRuntime, getDefaultProvider: () => makeProvider() })
+      const result = await scheduler.runNow()
+      expect(result.updated).toBe(false)
+      expect(taskRuntime.create).not.toHaveBeenCalled()
+    })
+
     it('creates and starts a consolidation task via task runtime boundary', async () => {
       const taskStore = new TaskStore(db)
       const taskRuntime = createMockTaskRuntime(taskStore)

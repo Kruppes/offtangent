@@ -405,7 +405,7 @@ export class MemoryConsolidationScheduler {
     const compactionRun = !scheduled || new Date().getDay() === 0
     // Resolve targets from OWNED sessions, never scan legacy roots and never
     // aggregate across users/projects/personas. Dedupe by full on-disk scope.
-    const candidates = this.db.prepare("SELECT id, agent_id FROM sessions WHERE type = 'interactive' ORDER BY last_activity DESC").all() as Array<{ id: string; agent_id: string }>
+    const candidates = this.db.prepare("SELECT id, agent_id FROM sessions WHERE type = 'interactive' AND context_origin_scope IS NOT 'scope-changed' ORDER BY last_activity DESC").all() as Array<{ id: string; agent_id: string }>
     const seen = new Set<string>()
     const runs: NonNullable<ConsolidationResult['personaRuns']> = []
     let dailyFilesReviewed = 0

@@ -838,6 +838,21 @@ export function initDatabase(dbPath?: string): Database {
     db.exec("ALTER TABLE sessions ADD COLUMN context_policy TEXT NOT NULL DEFAULT 'project-isolated' CHECK(context_policy IN ('project-isolated','strand-only'))")
   }
 
+  if (!projectCols.find(c => c.name === 'context_origin_scope')) {
+    db.exec('ALTER TABLE sessions ADD COLUMN context_origin_scope TEXT')
+  }
+  // Original project/user cannot be reconstructed reliably for legacy tasks.
+  // Retain their transcripts/results, but never reclassify them on resume.
+  db.exec("UPDATE sessions SET context_origin_scope = 'legacy-unclassified' WHERE type = 'task' AND context_origin_scope IS NULL")
+  // A strand retains its old transcript when reassigned. Facts extracted later
+  // cannot safely be attributed to its new project/persona/owner. Preserve them
+  // as unclassified, even if the assignment changes back while extraction waits.
+  db.exec(`CREATE TRIGGER IF NOT EXISTS context_fact_scope_changed
+    AFTER UPDATE OF project_id, context_policy, agent_id, session_user, user_id ON sessions
+    WHEN OLD.project_id IS NOT NEW.project_id OR OLD.context_policy IS NOT NEW.context_policy
+      OR OLD.agent_id IS NOT NEW.agent_id OR OLD.session_user IS NOT NEW.session_user OR OLD.user_id IS NOT NEW.user_id
+    BEGIN UPDATE sessions SET context_origin_scope = 'scope-changed' WHERE id = NEW.id; END;`)
+
   // Fork: multi-persona scoping for memories and chat_messages.
   const memoryCols = db.prepare("PRAGMA table_info(memories)").all() as { name: string }[]
   if (!memoryCols.find(c => c.name === 'agent_id')) {

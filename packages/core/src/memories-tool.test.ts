@@ -7,6 +7,7 @@ import { initDatabase } from './database.js'
 import type { Database } from './database.js'
 import { createMemory } from './memories-store.js'
 import { createSearchMemoriesTool } from './memories-tool.js'
+import { runWithTaskExecutionContext } from './task-execution-context.js'
 
 /**
  * Config isolation, and why this file needs it (flake hunt 2026-09-26).
@@ -67,6 +68,29 @@ describe('search_memories tool: explicit same-user archive retrieval', () => {
     db = initDatabase(':memory:')
     insertUser(db, 1, 'alice')
     insertUser(db, 2, 'coder')
+  })
+
+  it('uses task session, user and persona instead of a concurrent interactive runtime', async () => {
+    db.prepare("INSERT INTO sessions(id,user_id,session_user,agent_id,type) VALUES ('task-origin',1,'1','analyst','interactive'), ('foreign',2,'2','coder','interactive')").run()
+    db.prepare("INSERT INTO sessions(id,agent_id,type,parent_session_id,context_origin_scope) VALUES ('task-session','analyst','task','task-origin',?)").run(JSON.stringify([1, 'strand:task-origin']))
+    createMemory(db, 1, 'task-origin', 'postgres OWN_TASK_FACT', 'session', 'analyst')
+    createMemory(db, 2, 'foreign', 'postgres FOREIGN_RUNTIME_FACT', 'session', 'coder')
+    const tool = createSearchMemoriesTool({ db, getCurrentSessionId: () => 'foreign', getCurrentUserId: () => 2, getCurrentAgentId: () => 'coder' })
+    for (const cross_project of [false, true]) {
+      const result = await runWithTaskExecutionContext({ provider: null, taskSessionId: 'task-session', userId: 1, agentId: 'analyst' }, () => tool.execute('tc', { query: 'postgres', cross_project }))
+      expect(getTextContent(result)).toContain('OWN_TASK_FACT')
+      expect(getTextContent(result)).not.toContain('FOREIGN_RUNTIME_FACT')
+      expect(getDetails(result).userId).toBe(1)
+    }
+    for (const context of [
+      { provider: null },
+      { provider: null, taskSessionId: 'task-session', userId: 2, agentId: 'analyst' },
+      { provider: null, taskSessionId: 'task-session', userId: 1, agentId: 'coder' },
+    ]) {
+      const result = await runWithTaskExecutionContext(context, () => tool.execute('tc', { query: 'postgres' }))
+      expect(getDetails(result).error).toBe(true)
+      expect(getTextContent(result)).not.toContain('FOREIGN_RUNTIME_FACT')
+    }
   })
 
   it('creates a tool with correct metadata and schema', () => {

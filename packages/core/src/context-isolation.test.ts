@@ -90,6 +90,30 @@ describe('context isolation — synthetic sentinels, no provider replay', () => 
     expect(db.prepare('SELECT count(*) AS n FROM context_manifests').get()).toEqual({ n: 0 })
   })
 
+  it('pins task scope across project/policy/owner changes and refuses legacy resumes', () => {
+    db.prepare("INSERT INTO sessions (id,type,agent_id,parent_session_id,context_origin_scope) VALUES ('task','task','main','numbers',?),('nested','task','main','task',?),('legacy','task','main','numbers','legacy-unclassified')")
+      .run(JSON.stringify([1, 'project:own']), JSON.stringify([1, 'project:own']))
+    expect(resolveContextScope(db, 'nested')?.key).toBe('project:own')
+    expect(resolveContextScope(db, 'legacy')).toBeNull()
+    db.prepare("UPDATE sessions SET project_id='other' WHERE id='numbers'").run()
+    expect(resolveContextScope(db, 'task')).toBeNull()
+    expect(resolveContextScope(db, 'nested')).toBeNull()
+    const memory = createMemory(db, 1, 'task', 'OLD_TASK_SENTINEL')
+    expect(db.prepare('SELECT context_scope FROM memories WHERE id=?').get(memory)).toEqual({ context_scope: null })
+    db.prepare("UPDATE sessions SET project_id='own',context_policy='strand-only' WHERE id='numbers'").run()
+    expect(resolveContextScope(db, 'task')).toBeNull()
+  })
+
+  it('invalidates metadata on project, policy, persona and owner mutations', () => {
+    for (const mutation of ["project_id='other'", "context_policy='strand-only'", "agent_id='coder'", "session_user='2'", "user_id=2"]) {
+      db.prepare("UPDATE sessions SET project_id='own',context_policy='project-isolated',agent_id='main',session_user='1',user_id=1 WHERE id='numbers'").run()
+      recordContextManifest(db, 'numbers', 'main', 'fixture', [])
+      expect(readContextManifest(db, 'numbers', 1, 'main')).not.toBeNull()
+      db.prepare(`UPDATE sessions SET ${mutation} WHERE id='numbers'`).run()
+      expect(readContextManifest(db, 'numbers', 1, 'main')).toBeNull()
+    }
+  })
+
   it('FTS and supersession cannot cross user, persona, project or unclassified legacy boundaries', () => {
     const fact = (user: number, session: string | null, text: string, persona = 'main') => createMemory(db, user, session, text, 'session', persona, { supersessionKey: 'same-subject' })
     fact(1, null, 'numbers LEGACY_FACT_SENTINEL')
