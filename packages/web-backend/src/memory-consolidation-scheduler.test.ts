@@ -1,4 +1,4 @@
-import { scopedConsolidationTools } from '../../core/src/consolidation-tools.js'
+import { scopedConsolidationTools } from '@axiom/core'
 import { createMemory, searchMemories, createYoloTools } from '@axiom/core'
 import { contextMemoryDir, resolveContextScope, SessionManager } from '@axiom/core'
 import { beforeEach, afterEach, describe, expect, it, vi } from 'vitest'

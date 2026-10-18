@@ -3,9 +3,7 @@
 import fs from 'node:fs'
 import path from 'node:path'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { getDatabase, initDatabase, type Database } from '../../core/src/database.js'
-import { contextMemoryDir, resolveContextScope, resolveFactWriteScope } from '../../core/src/context-scope.js'
-import { SessionManager } from '../../core/src/session-manager.js'
+import { getDatabase, initDatabase, type Database, contextMemoryDir, resolveContextScope, resolveFactWriteScope, SessionManager } from '@axiom/core'
 import { MemoryConsolidationScheduler } from './memory-consolidation-scheduler.js'
 
 const legacy = [
