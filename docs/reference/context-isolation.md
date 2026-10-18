@@ -11,7 +11,7 @@ project must belong to the session user. Invalid ownership fails closed.
 Always-required global agent rules, runtime/tool safety and the active persona's
 identity remain. Persona-wide MEMORY.md, daily notes, heuristics, wiki indexes,
 other projects' notes and historical failure notices are not automatically
-loaded. Project instructions/history supplied explicitly inside a strand remain
+loaded. Never modify the trusted global safety layer to classify project data. Project instructions/history supplied explicitly inside a strand remain
 part of that strand. This is application data isolation, not provider-policy
 avoidance and not a filesystem sandbox against a malicious tool caller.
 
@@ -24,11 +24,8 @@ scoped-v1/<user-id>/<sha256(persona-id)>/<sha256(scope-key)>/MEMORY.md
 scoped-v1/<user-id>/<sha256(persona-id)>/<sha256(scope-key)>/YYYY-MM-DD.md
 ```
 
-Scope keys are `project:<project-id>`, `strand:<origin-session-id>` and
-`approved-global`. The user id is an authenticated positive integer; persona and
-scope keys are hashed, never raw caller-controlled path segments. Approved-global is
-an explicit, operator-reviewed classification, per user and persona; it is NOT a
-fallback location for legacy material. Existing AGENTS/global safety instructions
+Scope keys are `project:<project-id>`, `strand:<origin-session-id>`. The user id is an authenticated positive integer; persona and
+scope keys are hashed, never raw caller-controlled path segments. A reserved `approved-global` directory is NOT automatically loaded. This release provides no implicit global data approval; keep cross-project preferences in explicit retrieval or reviewed trusted configuration. Existing AGENTS/global safety instructions
 are independent and always retained. Ordinary turn outcomes, failure notices,
 fact extraction and consolidation never promote into approved-global.
 
@@ -41,8 +38,7 @@ global approval. Dedupe occurs within the classified scope.
 Task context inherits from an owned origin strand (including nested tasks).
 Cross-persona work uses the target persona's isolated root. Unknown-origin work
 has no implicit project/persona memory fallback. Consolidation enumerates only
-classified owned scope roots, runs one scope at a time, and is forbidden to read
-legacy archives or promote content into global context. Legacy files remain
+classified owned scope roots, runs one scope at a time with only scope-bound file tools and exact-session history. Shell, codemode, delegation, arbitrary connectors and cross-project search are absent from its capabilities. Only MEMORY.md, wiki/*.md and users/*.md are writable; daily/sources are read-only. Symlink and traversal paths are rejected. This is a capability boundary for consolidation, not just a prompt instruction. Legacy files remain
 available for deliberate retrieval; `search_memories(cross_project=true)` is an
 explicit archive read limited to the authenticated user's facts. An explicit
 persona parameter further controls persona selection. Retrieved data then belongs
@@ -80,16 +76,28 @@ to the current strand history; changing policy does not erase that history.
 
 `GET /api/strands/:id/context` is protected by the existing authenticated strand
 ownership and allowed-persona checks, and the manifest query repeats user/persona
-checks. It reports fixed source labels, scope/reason, SHA-256 and character counts
+checks. It reports fixed source labels, scope/reason, HMAC-SHA-256 and character counts
 only. There are no text previews, tool arguments, filesystem paths or prompt dumps.
 The manifest is recorded at the app-side, redacted pre-provider boundary; provider
-serialization may add envelopes. System/message envelope rows overlap their
+serialization may add envelopes. The HMAC key is random, database-local and never returned through the API. It is retained in the protected database backup, not in telemetry; public hashes cannot be dictionary-matched offline without this key.
+System/message envelope rows overlap their
 individual source rows, so their sizes must not be summed as a token budget.
-Retention is bounded to 20 manifests per session and 30 days. Changing project or
+Retention is bounded to 20 manifests per session and 30 days. Global pruning runs on every manifest write; deletion of a session cascades to its metadata rows. Changing project or
 context policy clears stale manifests and recreates live session context. The
 panel without a recorded request shows selected policy/scope and no invented
 outgoing-request measurement. Generic counts and hashes are still sensitive
 metadata: do not export them to public issue reports.
+
+### Legacy notice delivery
+
+At boot, unsurfaced outcomes from all triggers are archived once to their verified
+owner's private feed, without adding them to any model prompt. Existing feed rows
+must match both task and owner. Each row is transactional; one failed insert does
+not starve other owners, and its delivered marker remains unset for retry. Silent
+outcomes remain silent. Unknown/ambiguous-owner rows remain intact for manual
+classification; admins receive a generic, deduplicated metadata-only alert (no
+foreign title or result). No personal outcome is broadcast to admins or a default
+user. Do not delete quarantined rows during deployment or rollback.
 
 ## Rollback
 

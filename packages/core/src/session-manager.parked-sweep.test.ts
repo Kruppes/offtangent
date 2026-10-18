@@ -20,6 +20,7 @@ import fs from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
 import { SessionManager } from './session-manager.js'
+import { contextMemoryDir, resolveContextScope } from './context-scope.js'
 import type { SessionEndCallbackOptions, SessionInfo } from './session-manager.js'
 import { initDatabase } from './database.js'
 import type { Database } from './database.js'
@@ -124,9 +125,11 @@ describe('SessionManager parked-thread sweep', () => {
     expect(listed?.endedAt).toMatch(/^\d{4}-\d{2}-\d{2}T/)
 
     // The daily file got the summary.
-    const daily = fs.readdirSync(path.join(memoryDir, 'daily'))
+    const scopedDir = contextMemoryDir(memoryDir, resolveContextScope(db, thread.id, 'coder')!)
+    expect(fs.readdirSync(path.join(memoryDir, 'daily'))).toEqual([])
+    const daily = fs.readdirSync(path.join(scopedDir, 'daily'))
     expect(daily.length).toBe(1)
-    expect(fs.readFileSync(path.join(memoryDir, 'daily', daily[0]), 'utf-8')).toContain('thread summary')
+    expect(fs.readFileSync(path.join(scopedDir, 'daily', daily[0]), 'utf-8')).toContain('thread summary')
   })
 
   it('closes an empty parked thread without a summary and without a callback', async () => {

@@ -40,7 +40,7 @@ describe('final outgoing context boundary', () => {
         fs.mkdirSync(dir, { recursive: true }); fs.writeFileSync(path.join(dir, 'MEMORY.md'), text)
       }
       const runtime = createAgentRuntime({ db, memoryDir: root, apiKey: '', model: { id: 'fixture', name: 'Fixture', api: 'openai-completions', provider: 'openai', baseUrl: 'https://invalid.test', reasoning: false, input: ['text'], cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 }, contextWindow: 32000, maxTokens: 1000 } })
-      runtime.refreshSystemPrompt('web', undefined, 'main', 'own')
+      runtime.refreshSystemPrompt('web', { username: 'fixture' }, 'main', 'own')
       for await (const _ of runtime.streamPrompt('A harmless arithmetic question.', 'own')) { /* drain */ }
       const payload = JSON.stringify(captured.requests.at(-1))
       expect(payload).toContain('OWN_SENTINEL')
@@ -50,6 +50,16 @@ describe('final outgoing context boundary', () => {
       const manifest = readContextManifest(db, 'own', 1, 'main')!
       expect(manifest.sources.some(s => s.source === 'scoped_memory')).toBe(true)
       expect(JSON.stringify(manifest)).not.toContain('OWN_SENTINEL')
+      // Reuse one runtime without caller refresh: B -> A after global refresh.
+      runtime.clearMessages()
+      for await (const _ of runtime.streamPrompt('Another arithmetic question.', 'foreign')) { /* drain */ }
+      expect(JSON.stringify(captured.requests.at(-1))).toContain('FOREIGN_SENTINEL')
+      expect(JSON.stringify(captured.requests.at(-1))).not.toContain('OWN_SENTINEL')
+      runtime.clearMessages()
+      runtime.refreshSystemPrompt('web', { username: 'fixture' })
+      for await (const _ of runtime.streamPrompt('Return to arithmetic.', 'own')) { /* drain */ }
+      expect(JSON.stringify(captured.requests.at(-1))).toContain('OWN_SENTINEL')
+      expect(JSON.stringify(captured.requests.at(-1))).not.toContain('FOREIGN_SENTINEL')
     } finally { db.close(); fs.rmSync(root, { recursive: true, force: true }) }
   })
 })

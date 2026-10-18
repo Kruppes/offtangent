@@ -565,7 +565,7 @@ describe('createTaskTool', () => {
 
     it('prepends a selected context block with summary, facts and messages by id', async () => {
       seedStrand()
-      db.prepare("INSERT INTO memories (user_id, session_id, content, source, agent_id) VALUES (1, 'x', 'Billing runs on postgres 15', 'extracted_fact', 'main')").run()
+      db.prepare("INSERT INTO memories (user_id, session_id, content, source, agent_id, context_scope) VALUES (1, 'strand-1', 'Billing runs on postgres 15', 'extracted_fact', 'main', 'strand:strand-1')").run()
       const tool = toolWithDb()
       const res = await tool.execute('c', {
         prompt: 'Evaluate the migration order',

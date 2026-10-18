@@ -17,6 +17,7 @@ import { createAgentRuntime } from './agent-runtime.js'
 import type { AgentRuntimeBoundary } from './agent-runtime.js'
 import { initDatabase, type Database } from './database.js'
 import { getUserProfileDir } from './memory.js'
+import { contextMemoryDir, resolveContextScope } from './context-scope.js'
 import type { ProviderConfig } from './provider-config.js'
 import { resetObservedContextLimits } from './request-overflow-guard.js'
 import { resetLocalInferenceActivityForTest } from './local-inference-activity.js'
@@ -96,6 +97,13 @@ function setup(): { db: Database; core: AgentCore } {
   const core = new AgentCore({
     model, apiKey: 'none', db, tools: [], providerConfig,
     runtimeFactory: (agentId, sessionId) => {
+      const scope = resolveContextScope(db, sessionId, agentId)
+      if (scope) {
+        const scopedDir = contextMemoryDir(memoryDir, scope)
+        fs.mkdirSync(scopedDir, { recursive: true })
+        fs.writeFileSync(path.join(scopedDir, 'MEMORY.md'), scope.userId === 1 ? 'PROFILE_MARKER_USER_ONE' : 'PROFILE_MARKER_USER_TWO')
+      }
+
       const key = `${agentId}:${sessionId ?? ''}`
       let rt = runtimes.get(key)
       if (!rt) {

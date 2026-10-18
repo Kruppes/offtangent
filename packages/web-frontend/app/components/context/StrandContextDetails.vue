@@ -106,7 +106,7 @@
         <li v-for="(source, index) in gauge.data.isolation.sources" :key="index" class="rounded-md bg-muted p-2 break-words [overflow-wrap:anywhere]">
           <strong>{{ source.source }}</strong> · {{ source.scope }} · {{ source.chars }} {{ $t('context.provenance.chars') }}
           <p class="text-xs">{{ source.reason }}</p>
-          <code class="text-xs">SHA-256 {{ source.hash }}</code>
+          <code class="text-xs">HMAC-SHA-256 {{ source.hash }}</code>
         </li>
       </ul>
     </template>

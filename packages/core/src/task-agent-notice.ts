@@ -1,5 +1,6 @@
 /** Legacy notices are archival queries only. Automatic delivery is origin-strand
  * or feed-only (task-outcome.ts), NEVER the next turn of a persona. */
+import { createHash } from 'node:crypto'
 import type { Database } from './database.js'
 import { TaskStore } from './task-store.js'
 import { resolveTaskOwnerUserIdForTask } from './task-ownership.js'
@@ -136,36 +137,40 @@ export function consumePendingTaskNotices(_db: Database, _query: PendingNoticeQu
 
 /** Lossless/idempotent boot migration; unknown owners are quarantined, not guessed. */
 export function archivePendingTaskNotices(db: Database): { delivered: number; quarantined: number } {
-  const rows = db.prepare("SELECT id FROM tasks WHERE agent_notified_at IS NULL AND trigger_type = 'cronjob' AND status IN ('completed','failed') AND (result_status IS NULL OR result_status != 'silent')").all() as Array<{ id: string }>
+  const rows = db.prepare("SELECT id FROM tasks WHERE agent_notified_at IS NULL AND status IN ('completed','failed') AND (result_status IS NULL OR result_status != 'silent')").all() as Array<{ id: string }>
   const store = new TaskStore(db)
   let delivered = 0
-  let quarantined = 0
-  db.transaction(() => {
-    for (const row of rows) {
-      const task = store.getById(row.id)
-      if (!task) continue
-      // Existing feed rows already carry the authorized recipient. Do not
-      // duplicate them or rebroadcast a historical outcome.
-      const existing = db.prepare('SELECT id FROM feed_items WHERE task_id = ? LIMIT 1').get(task.id)
-      const owner = resolveTaskOwnerUserIdForTask(db, task)
-      if (!existing && owner === null) { quarantined++; continue }
-      if (!existing) insertFeedItemDeduped(db, {
-        ...buildTaskFeedItem(task, { userId: String(owner), strandId: null }),
-        dedupeKey: `legacy-task-notice:${task.id}`,
-      })
-      markTaskNoticesDelivered(db, [task.id])
-      delivered++
+  const quarantinedIds: string[] = []
+  for (const row of rows) {
+    try {
+      db.transaction(() => {
+        const task = store.getById(row.id)
+        if (!task) return
+        const owner = resolveTaskOwnerUserIdForTask(db, task)
+        if (owner === null || !db.prepare('SELECT 1 FROM users WHERE id = ?').get(owner)) { quarantinedIds.push(row.id); return }
+        const existing = db.prepare('SELECT id FROM feed_items WHERE task_id = ? AND user_id = ? LIMIT 1').get(task.id, String(owner))
+        if (!existing) insertFeedItemDeduped(db, {
+          ...buildTaskFeedItem(task, { userId: String(owner), strandId: null }),
+          dedupeKey: `legacy-task-notice:${task.id}`,
+        })
+        markTaskNoticesDelivered(db, [task.id])
+      })()
+      if (!quarantinedIds.includes(row.id)) delivered++
+    } catch {
+      // A single damaged row must not starve unrelated recipients. The row's
+      // transaction rolls back, so a later boot/operator can retry losslessly.
+      quarantinedIds.push(row.id)
+      console.warn('[context] One legacy notice remains quarantined for retry')
     }
-    if (quarantined) {
-      // Metadata-only operator notice; never disclose ownerless task contents
-      // to an arbitrary first user. Original rows remain retrievable by admin.
-      const admins = db.prepare("SELECT id FROM users WHERE role = 'admin'").all() as Array<{ id: number }>
-      for (const admin of admins) insertFeedItemDeduped(db, {
-        userId: String(admin.id), kind: 'system', title: 'Archived task notices need ownership classification',
-        body: 'Some legacy outcomes have no trustworthy owner. They remain preserved in the task archive and are not injected into any strand.',
-        dedupeKey: 'context-isolation:ownerless-notices:v1',
-      })
-    }
-  })()
-  return { delivered, quarantined }
+  }
+  if (quarantinedIds.length) {
+    const batch = createHash('sha256').update(quarantinedIds.sort().join('\n')).digest('hex')
+    const admins = db.prepare("SELECT id FROM users WHERE role = 'admin'").all() as Array<{ id: number }>
+    for (const admin of admins) insertFeedItemDeduped(db, {
+      userId: String(admin.id), kind: 'system', title: 'Archived task notices need ownership classification',
+      body: 'Some legacy outcomes have no trustworthy owner or could not be archived. They remain preserved in the task archive and are not injected into any strand.',
+      dedupeKey: `context-isolation:ownerless-notices:v1:${batch}`,
+    })
+  }
+  return { delivered, quarantined: quarantinedIds.length }
 }

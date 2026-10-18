@@ -12,6 +12,7 @@ import type { Database } from './database.js'
 // former inline impl (loadAttachedSkillContent/renderAttachedSkillsBlock) is
 // gone; resolveAgentMemoryDir stays (fork per-persona memory roots).
 import { renderAttachedSkillsBlock } from './attached-skills.js'
+import { scopedConsolidationTools } from './consolidation-tools.js'
 import { resolveContextScope, contextMemoryDir } from './context-scope.js'
 import { readTasksGuidelinesFile, readAgentsRulesFile, getMemoryDir, resolveAgentMemoryDir } from './memory.js'
 import type { SettingsThinkingLevel } from './contracts/settings.js'
@@ -117,6 +118,8 @@ export interface TaskRunnerOptions {
   tools: AgentTool[]
   /** Memory directory reference for task agent system prompt */
   memoryDir?: string
+  /** Trusted global rules/guidelines root, shared by normal and override paths. */
+  configDir?: string
   /** Callback when a task completes/fails — delivers the injection message */
   onTaskComplete: (taskId: string, injection: string, agentId: string | null) => void
   /**
@@ -842,14 +845,14 @@ export class TaskRunner {
       const dataScope = resolveContextScope(this.options.db, sessionId, task.agentId ?? 'main')
       // Determine effective system prompt
       const baseSystemPrompt = overrides?.systemPromptOverride
-        ? `<global_rules>\n${readAgentsRulesFile()}\n</global_rules>\n${overrides.systemPromptOverride}`
+        ? `<global_rules>\n${readAgentsRulesFile(this.options.configDir)}\n</global_rules>\n${overrides.systemPromptOverride}`
         // RC5 (multi-persona bleeding): persona tasks get THEIR memory root
         // in <memory_reference>, not main's — otherwise the task LLM reads
         // (and is pointed at) main's SOUL.md/MEMORY.md.
         : buildTaskSystemPrompt(
             task.prompt,
             dataScope ? contextMemoryDir(resolveAgentMemoryDir(task.agentId, { fallbackMemoryDir: this.options.memoryDir }) ?? getMemoryDir(), dataScope) : undefined,
-            undefined,
+            this.options.configDir,
             { budgetMinutes: this.resolveBudgetMinutes(task) },
           )
 
@@ -878,6 +881,11 @@ export class TaskRunner {
       // secret boundary as the interactive runtime — tool results and error
       // texts are sealed, only `shell` resolves handles (D5).
       let effectiveTools = withSecretBoundary(this.options.tools)
+      if (task.triggerType === 'consolidation') {
+        effectiveTools = scopedConsolidationTools(effectiveTools,
+          dataScope ? contextMemoryDir(resolveAgentMemoryDir(task.agentId, { fallbackMemoryDir: this.options.memoryDir }) ?? getMemoryDir(), dataScope) : undefined,
+          dataScope?.sessionId)
+      }
       let disabledTools: string[] = []
       if (overrides?.toolsOverride) {
         try {
@@ -895,7 +903,7 @@ export class TaskRunner {
       // override filter), so a script can never reach a disabled tool; the
       // override can also disable `codemode` itself. Fails closed.
       try {
-        effectiveTools = withCodemodeTool(effectiveTools, loadCodemodeSettings(), model.id, () => agent)
+        if (task.triggerType !== 'consolidation') effectiveTools = withCodemodeTool(effectiveTools, loadCodemodeSettings(), model.id, () => agent)
           .filter(t => !disabledTools.includes(t.name))
       } catch (err) {
         console.error(`[task-runner] codemode tool assembly failed for task ${taskId}, continuing without it:`, err)

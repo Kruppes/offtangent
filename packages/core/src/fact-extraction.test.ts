@@ -69,6 +69,9 @@ describe('fact-extraction', () => {
     db = initDatabase(':memory:')
     insertUser(db, 1, 'alice')
     insertUser(db, 2, 'coder')
+    db.prepare("INSERT INTO projects(id,user_id,name) VALUES ('fixture-project','1','Fixture')").run()
+    for (const id of ['session-a', 'session-old', 'session-new']) db.prepare("INSERT INTO sessions(id,user_id,session_user,agent_id,type,project_id) VALUES (?,1,'1','main','interactive','fixture-project')").run(id)
+    db.prepare("INSERT INTO sessions(id,user_id,session_user,agent_id,type) VALUES ('session-b',2,'2','main','interactive'), ('session-coder',1,'1','coder','interactive')").run()
     mockCompleteSimple.mockReset()
   })
 
@@ -115,26 +118,31 @@ describe('fact-extraction', () => {
   it('isDuplicateFact returns true for highly overlapping facts', () => {
     createMemory(db, 1, 'session-a', 'The project uses PostgreSQL on port 5433', 'extracted_fact')
 
-    expect(isDuplicateFact(db, 1, 'Project uses PostgreSQL at port 5433')).toBe(true)
+    expect(isDuplicateFact(db, 1, 'Project uses PostgreSQL at port 5433', 'main', 'session-a')).toBe(true)
+  })
+
+  it('does not deduplicate unclassified writes against legacy data', () => {
+    createMemory(db, 1, null, 'The project uses PostgreSQL on port 5433', 'extracted_fact')
+    expect(isDuplicateFact(db, 1, 'The project uses PostgreSQL on port 5433')).toBe(false)
   })
 
   it('isDuplicateFact ignores memories from different users', () => {
     createMemory(db, 2, 'session-b', 'The project uses PostgreSQL on port 5433', 'extracted_fact')
 
-    expect(isDuplicateFact(db, 1, 'Project uses PostgreSQL at port 5433')).toBe(false)
+    expect(isDuplicateFact(db, 1, 'Project uses PostgreSQL at port 5433', 'main', 'session-a')).toBe(false)
   })
 
   it('isDuplicateFact never deduplicates against unapproved shared legacy facts', () => {
     createMemory(db, 1, 'session-a', 'The Demo App pricing model uses three tiers', 'extracted_fact', 'shared')
-    createMemory(db, 1, 'session-a', 'Coder deployed the scanner on the NUC', 'extracted_fact', 'coder')
+    createMemory(db, 1, 'session-coder', 'Coder deployed the scanner on the NUC', 'extracted_fact', 'coder')
 
     // Unapproved shared legacy facts cannot suppress new persona-local facts
-    expect(isDuplicateFact(db, 1, 'Demo App pricing model uses three tiers', 'coder')).toBe(false)
-    expect(isDuplicateFact(db, 1, 'Demo App pricing model uses three tiers', 'advisor')).toBe(false)
+    expect(isDuplicateFact(db, 1, 'Demo App pricing model uses three tiers', 'coder', 'session-coder')).toBe(false)
+    expect(isDuplicateFact(db, 1, 'Demo App pricing model uses three tiers', 'advisor', 'session-coder')).toBe(false)
     // A fact in coder's bucket is a duplicate for coder …
-    expect(isDuplicateFact(db, 1, 'Coder deployed the scanner on the NUC', 'coder')).toBe(true)
+    expect(isDuplicateFact(db, 1, 'Coder deployed the scanner on the NUC', 'coder', 'session-coder')).toBe(true)
     // … but NOT for another persona (no cross-persona dedupe)
-    expect(isDuplicateFact(db, 1, 'Coder deployed the scanner on the NUC', 'advisor')).toBe(false)
+    expect(isDuplicateFact(db, 1, 'Coder deployed the scanner on the NUC', 'advisor', 'session-coder')).toBe(false)
   })
 
   it('extractAndStoreFacts keeps model-suggested [shared] facts in the source persona', async () => {
@@ -184,7 +192,7 @@ describe('fact-extraction', () => {
 
   it('shared facts are visible to personas and to main via retrieval', () => {
     createMemory(db, 1, 'session-a', 'The Demo App pricing model uses three tiers', 'extracted_fact', 'shared')
-    createMemory(db, 1, 'session-a', 'Coder deployed the scanner on the NUC', 'extracted_fact', 'coder')
+    createMemory(db, 1, 'session-coder', 'Coder deployed the scanner on the NUC', 'extracted_fact', 'coder')
 
     const coderHits = searchMemories(db, 'Demo App pricing', { userId: 1, agentId: 'coder' }).map(f => f.content)
     expect(coderHits).toContain('The Demo App pricing model uses three tiers')

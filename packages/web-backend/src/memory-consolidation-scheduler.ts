@@ -6,6 +6,7 @@ import type { ProviderConfig } from '@axiom/core'
 import type { SessionManager } from '@axiom/core'
 import { generateSessionId } from '@axiom/core'
 import {
+  purgeContextManifests,
   resolveContextScope,
   contextMemoryDir,
   resolveAgentMemoryDir,
@@ -153,6 +154,10 @@ All file paths below are ABSOLUTE paths. You MUST use the full absolute paths wh
 
 You must NOT write to any other file. No config files, no code files, no files outside the memory directory.
 
+## Available capabilities
+
+Only scope-bound file tools and exact-session read_chat_history are available. No shell, delegation or cross-project retrieval. Daily and sources files are read-only.
+
 ## Steps
 
 1. **Read recent daily files**: Use \`list_files\` on \`${memoryDir}/daily\`, then \`read_file\` to read the last ${lookbackDays} days of daily files (files named YYYY-MM-DD.md, sorted by date). Skip files that only contain a header and no content.
@@ -181,7 +186,7 @@ You must NOT write to any other file. No config files, no code files, no files o
    - Note outdated information that should be refreshed
    - **Content gaps**: surface concepts referenced repeatedly across wiki pages but without a dedicated page; open questions / TODO markers inside pages; topics discussed across multiple daily files but never promoted to the wiki. Report as suggestions — do NOT auto-create pages.
    - **Source coverage**: flag wiki pages that make factual claims but have no \`## Sources\` / \`## Quellen\` section. Flag files under \`${memoryDir}/sources/\` that are not cited by any wiki page (orphaned source or candidate for ingest).
-   - **Oversized pages**: flag wiki pages longer than ~500 lines (check with \`wc -l\`) as split candidates. Do NOT split during lint — splitting happens only in the compaction run.
+   - **Oversized pages**: flag wiki pages longer than ~500 lines (count the lines from read_file) as split candidates. Do NOT split during lint — splitting happens only in the compaction run.
    - If any issues are found, append a brief Lint Report section to \`${memoryDir}/wiki/log.md\` — never to daily files, they are read-only source material. Keep only the ~10 most recent lint reports in log.md; delete older ones when appending.
    - Keep the lint report concise — a bullet list of findings is sufficient
 
@@ -279,9 +284,14 @@ export class MemoryConsolidationScheduler {
     this.sessionManager = options.sessionManager ?? null
   }
 
+  private retentionTimer: ReturnType<typeof setInterval> | null = null
+
   start(): void {
     if (this.running) return
     this.running = true
+    purgeContextManifests(this.db)
+    this.retentionTimer = setInterval(() => { try { purgeContextManifests(this.db) } catch { /* teardown or unavailable DB; retry next interval */ } }, 3600_000)
+    this.retentionTimer.unref()
     this.settings = this.loadSettings()
     if (this.settings.enabled) {
       this.scheduleNext()
@@ -290,6 +300,8 @@ export class MemoryConsolidationScheduler {
 
   stop(): void {
     this.running = false
+    if (this.retentionTimer) clearInterval(this.retentionTimer)
+    this.retentionTimer = null
     if (this.timer) {
       clearTimeout(this.timer)
       this.timer = null
@@ -298,11 +310,7 @@ export class MemoryConsolidationScheduler {
 
   restart(): void {
     this.stop()
-    this.running = true
-    this.settings = this.loadSettings()
-    if (this.settings.enabled) {
-      this.scheduleNext()
-    }
+    this.start()
   }
 
   /**
@@ -410,14 +418,15 @@ export class MemoryConsolidationScheduler {
       seen.add(dir)
       const dailyFiles = readDailyFilesForConsolidation(this.settings.lookbackDays, dir)
       if (!dailyFiles.length) continue
+      if (runs.length >= 20) break // Bound maintenance cost per run; newest active scopes first.
+      const start = Date.now()
+      try {
       const sessionId = this.sessionManager
         ? this.sessionManager.createSession({ type: 'consolidation', source: 'system', agentId: scope.agentId, parentSessionId: row.id, userId: String(scope.userId) }).id
         : generateSessionId()
       if (!this.sessionManager) this.db.prepare(
         "INSERT INTO sessions (id, user_id, source, type, agent_id, parent_session_id) VALUES (?, ?, 'system', 'consolidation', ?, ?)",
       ).run(sessionId, scope.userId, scope.agentId, row.id)
-      const start = Date.now()
-      try {
         const task = runtime.create({ name: 'Scoped Memory Consolidation',
           prompt: buildConsolidationTaskPrompt(this.settings.lookbackDays, rules, { memoryDir: dir, agentId: scope.agentId, originSessionId: row.id, compactionRun }),
           triggerType: 'consolidation', triggerSourceId: 'memory-consolidation:scoped-v1',
@@ -439,7 +448,7 @@ export class MemoryConsolidationScheduler {
       reason: runs.length ? 'Scoped roots only; legacy archives untouched' : 'No scoped daily files to consolidate' }
     this.lastRun = new Date().toISOString()
     this.lastResult = result
-    this.agentCore?.refreshSystemPrompt()
+    try { this.agentCore?.refreshSystemPrompt() } catch { /* next interactive turn refreshes its own scope */ }
     return result
   }
 

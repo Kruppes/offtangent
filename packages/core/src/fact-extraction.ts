@@ -227,6 +227,7 @@ export function parseFactLines(response: string): string[] {
  */
 export function isDuplicateFact(db: Database, userId: number | null, newFact: string, agentId: string = 'main', sessionId?: string): boolean {
   const contextKey = resolveContextScope(db, sessionId)?.key ?? null
+  if (!contextKey) return false // Never deduplicate unclassified writes against legacy data.
   const normalizedFact = normalizeWhitespace(newFact)
   if (!normalizedFact) return false
 

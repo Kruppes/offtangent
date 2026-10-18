@@ -42,7 +42,7 @@ describe('context isolation — synthetic sentinels, no provider replay', () => 
     write(contextMemoryDir(root, { ...scope, key: 'approved-global' }), 'MEMORY.md', 'APPROVED_PREFERENCE_SENTINEL')
     const payload = assembleSystemPrompt({ memoryDir: root, contextScope: scope })
     expect(payload).toContain('OWN_PROJECT_SENTINEL')
-    expect(payload).toContain('APPROVED_PREFERENCE_SENTINEL')
+    expect(payload).not.toContain('APPROVED_PREFERENCE_SENTINEL') // A generic file write is NOT approval.
     expect(payload).toContain('numbers.md')
     expect(payload).toContain('<agent_rules>')
     expect(payload).toContain('<personality>')
@@ -71,10 +71,23 @@ describe('context isolation — synthetic sentinels, no provider replay', () => 
     expect(resolveContextScope(db, 'nested')?.key).toBe('project:own')
     expect(resolveContextScope(db, 'fork')).toBeNull()
     expect(resolveContextScope(db, 'cron')).toBeNull()
+    db.prepare("UPDATE sessions SET session_user='1' WHERE id IN ('fork','cron')").run()
+    expect(resolveContextScope(db, 'fork')?.key).toBe('strand:fork')
+    expect(resolveContextScope(db, 'cron')?.key).toBe('strand:cron')
+    db.prepare("UPDATE sessions SET session_user='alice' WHERE id='task'").run()
+    expect(resolveContextScope(db, 'nested')).toBeNull()
     db.prepare("UPDATE sessions SET session_user='2' WHERE id='task'").run()
     expect(resolveContextScope(db, 'task')).toBeNull()
     // Every link must agree with the owner, not just the leaf.
     expect(resolveContextScope(db, 'nested')).toBeNull()
+  })
+
+  it('rejects conflicting owners and physically cascades provenance on deletion', () => {
+    recordContextManifest(db, 'numbers', 'main', 'fixture', [])
+    db.prepare("UPDATE sessions SET user_id=2 WHERE id='numbers'").run()
+    expect(resolveContextScope(db, 'numbers')).toBeNull()
+    db.prepare("DELETE FROM sessions WHERE id='numbers'").run()
+    expect(db.prepare('SELECT count(*) AS n FROM context_manifests').get()).toEqual({ n: 0 })
   })
 
   it('FTS and supersession cannot cross user, persona, project or unclassified legacy boundaries', () => {
@@ -116,6 +129,7 @@ describe('context isolation — synthetic sentinels, no provider replay', () => 
     expect(db.prepare('SELECT count(*) AS n FROM context_manifests').get()).toEqual({ n: 20 })
     db.prepare("UPDATE context_manifests SET created_at='2000-01-01'").run()
     expect(readContextManifest(db, 'numbers', 1, 'main')).toBeNull()
+    expect(db.prepare('SELECT count(*) AS n FROM context_manifests').get()).toEqual({ n: 0 })
   })
 
   it('legacy notice migration is durable, idempotent and never injects into prompts', () => {
@@ -128,4 +142,20 @@ describe('context isolation — synthetic sentinels, no provider replay', () => 
     expect(consumePendingTaskNotices(db, { agentId: 'main' })).toBeNull()
     expect(store.getById(task.id)?.resultSummary).toBe('NOTICE_SENTINEL')
   })
+  it('archives non-cron outcomes only to the correct owner, quarantines unknown owners and preserves silent outcomes', () => {
+    const store = new TaskStore(db)
+    const known = store.create({ name: 'owned', prompt: 'fixture', triggerType: 'heartbeat', sessionId: 'numbers' })
+    const unknown = store.create({ name: 'unknown', prompt: 'fixture', triggerType: 'agent' })
+    const silent = store.create({ name: 'silent', prompt: 'fixture', triggerType: 'cronjob', sessionId: 'numbers' })
+    for (const task of [known, unknown]) store.update(task.id, { status: 'completed', resultSummary: 'ARCHIVE_SENTINEL', resultStatus: 'completed' })
+    store.update(silent.id, { status: 'completed', resultSummary: 'SILENT_SENTINEL', resultStatus: 'silent' })
+    db.prepare("INSERT INTO feed_items (id, user_id, kind, title, task_id) VALUES ('foreign-feed', '2', 'task_result', 'fixture', ?)").run(known.id)
+    expect(archivePendingTaskNotices(db)).toEqual({ delivered: 1, quarantined: 1 })
+    expect(db.prepare('SELECT user_id FROM feed_items WHERE task_id=? ORDER BY user_id').all(known.id)).toEqual([{ user_id: '1' }, { user_id: '2' }])
+    expect(db.prepare('SELECT count(*) AS n FROM feed_items WHERE task_id=?').get(unknown.id)).toEqual({ n: 0 })
+    expect(db.prepare('SELECT count(*) AS n FROM feed_items WHERE task_id=?').get(silent.id)).toEqual({ n: 0 })
+    expect(store.getById(unknown.id)?.resultSummary).toBe('ARCHIVE_SENTINEL')
+    expect(archivePendingTaskNotices(db)).toEqual({ delivered: 0, quarantined: 1 })
+  })
+
 })

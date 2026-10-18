@@ -150,7 +150,7 @@ export interface StrandTranscriptStatus {
 }
 
 export interface StrandContextReport {
-  isolation: { policy: 'project-isolated'; dataScope: 'project' | 'strand'; provenance: import('@axiom/core').ContextManifest | null }
+  isolation: { policy: 'project-isolated'; dataScope: 'project' | 'strand' | 'none'; provenance: import('@axiom/core').ContextManifest | null }
   strandId: string
   measurement: StrandContextMeasurement
   budget: StrandContextBudget
@@ -913,7 +913,7 @@ export function createStrandsService(options: StrandsServiceOptions) {
         }
     return {
       strandId,
-      isolation: { policy: 'project-isolated', dataScope: dataScope?.projectId ? 'project' : 'strand', provenance: readContextManifest(db, strandId, userId, ownedStrand.agentId) },
+      isolation: { policy: 'project-isolated', dataScope: !dataScope ? 'none' : dataScope.projectId ? 'project' : 'strand', provenance: readContextManifest(db, strandId, userId, ownedStrand.agentId) },
       measurement,
       budget: {
         contextWindow,

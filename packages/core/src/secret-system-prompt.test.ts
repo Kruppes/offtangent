@@ -16,6 +16,9 @@ import os from 'node:os'
 import path from 'node:path'
 import { describe, it, expect, beforeEach, afterEach } from 'vitest'
 import { assembleSystemPrompt, ensureMemoryStructure } from './memory.js'
+import { contextMemoryDir, type ContextScope } from './context-scope.js'
+const contextScope: ContextScope = { userId: 1, agentId: 'main', sessionId: 'fixture', projectId: null, key: 'strand:fixture' }
+let scopedDir: string
 import { listSecrets, resolveSecret, invalidateSecretHandleCache } from './secret-store.js'
 import { invalidateKnownValues } from './secret-boundary.js'
 
@@ -37,6 +40,8 @@ beforeEach(() => {
   invalidateSecretHandleCache()
   invalidateKnownValues()
   ensureMemoryStructure(memoryDir)
+  scopedDir = contextMemoryDir(memoryDir, contextScope)
+  fs.mkdirSync(scopedDir, { recursive: true })
 })
 
 afterEach(() => {
@@ -52,37 +57,38 @@ afterEach(() => {
 describe('system prompt sealing (plan step 2)', () => {
   it('seals a token that sits in MEMORY.md', () => {
     fs.writeFileSync(
-      path.join(memoryDir, 'MEMORY.md'),
+      path.join(scopedDir, 'MEMORY.md'),
       `# Agent Memory\n\n- Deploy token of the demo repo: ${CANARY}\n`,
       'utf-8',
     )
-    const prompt = assembleSystemPrompt({ memoryDir })
+    const prompt = assembleSystemPrompt({ memoryDir, contextScope })
     expect(prompt).not.toContain(CANARY)
     expect(prompt).toMatch(/\{\{secret:github-token-\d+\}\}/)
     const stored = listSecrets()
     expect(stored).toHaveLength(1)
-    expect(stored[0]!.source).toBe('system:core-memory')
+    expect(stored[0]!.source).toBe('system:scoped_memory')
     expect(resolveSecret(stored[0]!.slug)).toBe(CANARY)
   })
 
-  it('seals a token in a daily note (recent memory)', () => {
+  it('does not load or leak a token in a daily note (archive only)', () => {
     const dailyDir = path.join(memoryDir, 'daily')
     fs.mkdirSync(dailyDir, { recursive: true })
     const today = new Date().toISOString().slice(0, 10)
     fs.writeFileSync(path.join(dailyDir, `${today}.md`), `- pushed with ${CANARY}\n`, 'utf-8')
-    const prompt = assembleSystemPrompt({ memoryDir })
+    const prompt = assembleSystemPrompt({ memoryDir, contextScope })
     expect(prompt).not.toContain(CANARY)
-    expect(prompt).toMatch(/\{\{secret:github-token-\d+\}\}/)
+    expect(prompt).not.toContain('pushed with')
+    expect(listSecrets()).toEqual([])
   })
 
   it('is deterministic: two assemblies of unchanged files are byte-identical', () => {
     fs.writeFileSync(
-      path.join(memoryDir, 'MEMORY.md'),
+      path.join(scopedDir, 'MEMORY.md'),
       `# Agent Memory\n\n- token ${CANARY}\n`,
       'utf-8',
     )
-    const first = assembleSystemPrompt({ memoryDir })
-    const second = assembleSystemPrompt({ memoryDir })
+    const first = assembleSystemPrompt({ memoryDir, contextScope })
+    const second = assembleSystemPrompt({ memoryDir, contextScope })
     expect(second).toBe(first)
     // One handle for one value, no matter how often the prompt is assembled.
     expect(listSecrets()).toHaveLength(1)
@@ -90,8 +96,8 @@ describe('system prompt sealing (plan step 2)', () => {
 
   it('leaves prose with the word "Passwort" untouched (tier strong, no context rules)', () => {
     const line = 'Alex sagt, das Passwort für den Router ist geändert worden.'
-    fs.writeFileSync(path.join(memoryDir, 'MEMORY.md'), `# Agent Memory\n\n- ${line}\n`, 'utf-8')
-    const prompt = assembleSystemPrompt({ memoryDir })
+    fs.writeFileSync(path.join(scopedDir, 'MEMORY.md'), `# Agent Memory\n\n- ${line}\n`, 'utf-8')
+    const prompt = assembleSystemPrompt({ memoryDir, contextScope })
     expect(prompt).toContain(line)
     expect(listSecrets()).toEqual([])
   })

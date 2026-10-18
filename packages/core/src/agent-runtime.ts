@@ -1034,7 +1034,12 @@ class PiAgentRuntime implements AgentRuntimeBoundary, AgentRuntimePiAgentAccess 
   // replayed from the transcript's system messages. Replacing the prompt (what
   // this fork does on every persona/channel switch) therefore means rewriting
   // the leading system message in place, keeping its tool declarations.
+  private promptChannel?: string
+  private promptUser?: { username: string }
+
   refreshSystemPrompt(channel?: string, currentUser?: { username: string }, agentId?: string, sessionId?: string): void {
+    this.promptChannel = channel
+    this.promptUser = currentUser
     const prompt = this.buildSystemPrompt(channel, currentUser, agentId ?? this.agentId, sessionId)
     if (this.agent.state.systemPrompt === prompt) return
 
@@ -1285,7 +1290,7 @@ class PiAgentRuntime implements AgentRuntimeBoundary, AgentRuntimePiAgentAccess 
 
     let prompt = assembleSystemPrompt({
       memoryDir: this.memoryDir,
-      contextScope: resolveContextScope(this.db, sessionId, agentId ?? this.agentId),
+      contextScope: currentUser && channel !== 'telegram-group' ? resolveContextScope(this.db, sessionId, agentId ?? this.agentId) : null,
       baseInstructions: this.baseInstructions,
       instanceIdentity,
       recentDays: profileOptions.recentDays,
@@ -1341,6 +1346,8 @@ class PiAgentRuntime implements AgentRuntimeBoundary, AgentRuntimePiAgentAccess 
 
     // Start the prompt (non-blocking)
     this.currentSessionId = sessionId
+    // Scope must be resolved at every turn, including runtime reuse and global refresh.
+    this.refreshSystemPrompt(this.promptChannel, this.promptUser, this.agentId, sessionId)
     this.refreshCodemodeTool()
     const started = continueTranscript ? this.agent.continue() : this.agent.prompt(text, images)
     const promptPromise = started.then(() => {

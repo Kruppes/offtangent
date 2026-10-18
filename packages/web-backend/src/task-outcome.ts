@@ -32,6 +32,7 @@
  * none. That keeps "one event, at most one ring" true in both directions.
  */
 import {
+  sessionOwner,
   buildTaskFeedItem,
   deliverTaskNotification,
   resolveTaskStrandOrigin,
@@ -135,13 +136,11 @@ export async function routeTaskOutcome(deps: TaskOutcomeDeps, input: TaskOutcome
   const strandOrigin = parent ? (anchor?.strandId ?? null) : resolveTaskStrandOrigin(deps.db, task)
   if (anchor) agentId = taskOwnerAgentId(anchor.task)
 
-  const ownedOrigin = strandOrigin && deps.db.prepare("SELECT 1 FROM sessions WHERE id = ? AND type = 'interactive' AND (CAST(session_user AS TEXT) = ? OR (session_user IS NULL AND user_id = ?))").get(strandOrigin, String(userId), userId)
-  if (strandOrigin && ownedOrigin) {
+  const originRow = strandOrigin ? deps.db.prepare("SELECT user_id, session_user, agent_id FROM sessions WHERE id = ? AND type = 'interactive'").get(strandOrigin) as { user_id: number | null; session_user: string | null; agent_id: string | null } | undefined : undefined
+  if (strandOrigin && originRow && sessionOwner(originRow) === Number(userId)) {
     // A user may have changed the orchestrator since this worker started.
     // Keep the task's execution identity intact, but inject through the strand's current owner.
-    const current = deps.db.prepare("SELECT agent_id FROM sessions WHERE id = ? AND (user_id = ? OR (user_id IS NULL AND session_user = ?)) AND type = 'interactive'")
-      .get(strandOrigin, userId, String(userId)) as { agent_id: string | null } | undefined
-    if (current) agentId = current.agent_id ?? 'main'
+    agentId = originRow.agent_id ?? 'main'
     const sessionId = strandOrigin
     deps.injectIntoStrand({
       task,

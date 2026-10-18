@@ -10,6 +10,19 @@ export interface ContextScope {
   projectId: string | null
   key: string
 }
+/** Reject ambiguous legacy ownership instead of applying differing precedence rules. */
+export function sessionOwner(row: { user_id: number | null; session_user: string | null }): number | null {
+  const parse = (v: string | number | null): number | null => {
+    if (v == null || !/^\d+$/.test(String(v))) return null
+    const n = Number(v)
+    return Number.isSafeInteger(n) && n > 0 ? n : null
+  }
+  const canonical = parse(row.session_user), legacy = parse(row.user_id)
+  if (row.session_user != null && canonical === null) return null
+  if (row.user_id != null && legacy === null) return null
+  if (canonical !== null && legacy !== null && canonical !== legacy) return null
+  return canonical ?? legacy
+}
 type ScopeRow = { id: string; user_id: number | null; session_user: string | null; agent_id: string; project_id: string | null; type: string; context_policy?: string; parent_session_id: string | null }
 export function resolveContextScope(db: Database, sessionId?: string, agentId?: string): ContextScope | null {
   if (!sessionId) return null
@@ -35,12 +48,10 @@ export function resolveContextScope(db: Database, sessionId?: string, agentId?: 
     lineage.push(parent)
     row = parent
   }
-  const raw = row.session_user ?? row.user_id
-  const userId = typeof raw === 'number' ? raw : /^\d+$/.test(raw ?? '') ? Number(raw) : NaN
-  if (!Number.isSafeInteger(userId) || userId <= 0) return null
+  const userId = sessionOwner(row)
+  if (userId === null || !db.prepare('SELECT 1 FROM users WHERE id = ?').get(userId)) return null
   for (const link of lineage) {
-    const own = link.session_user ?? link.user_id
-    if (own != null && String(own) !== String(userId)) return null
+    if ((link.session_user != null || link.user_id != null) && sessionOwner(link) !== userId) return null
   }
   // Assignment is never trusted without project ownership (stale/deleted IDs fail closed).
   const projectId = row.context_policy !== 'strand-only' && row.project_id && db.prepare('SELECT 1 FROM projects WHERE id = ? AND CAST(user_id AS TEXT) = ?').get(row.project_id, String(userId))

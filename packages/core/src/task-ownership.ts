@@ -20,6 +20,7 @@
  * null means for them (delivery falls back to the first user; the API
  * treats it as "admin only").
  */
+import { sessionOwner } from './context-scope.js'
 import type { Database } from './database.js'
 
 /** How far the lineage walk follows `parent_session_id` before giving up. */
@@ -73,6 +74,7 @@ export function resolveTaskOwnerUserId(
   let currentId: string | null = taskSessionId
   let safety = MAX_SESSION_LINEAGE_DEPTH
   const seen = new Set<string>()
+  const owners = new Set<number>()
   while (currentId && safety-- > 0) {
     // A cyclic parent chain would otherwise burn the whole depth budget.
     if (seen.has(currentId)) return null
@@ -86,11 +88,13 @@ export function resolveTaskOwnerUserId(
       session_user: string | null
     } | undefined
     if (!row) return null
-    if (!row.parent_session_id) {
-      const parsedSessionUser = parseStrictUserId(row.session_user)
-      if (parsedSessionUser !== null) return parsedSessionUser
-      return parseStrictUserId(row.user_id)
+    const owner = sessionOwner(row)
+    if (row.session_user != null || row.user_id != null) {
+      if (owner === null) return null
+      owners.add(owner)
+      if (owners.size > 1) return null
     }
+    if (!row.parent_session_id) return owner
     currentId = row.parent_session_id
   }
   return null
@@ -168,6 +172,8 @@ export function resolveTaskOwnerUserIdForTask(
     if (seen.has(current.id)) return null
     seen.add(current.id)
 
+    const own = current.sessionId ? db.prepare('SELECT user_id, session_user FROM sessions WHERE id = ?').get(current.sessionId) as { user_id: number | null; session_user: string | null } | undefined : undefined
+    if (own && (own.user_id != null || own.session_user != null) && sessionOwner(own) === null) return null
     const direct = resolveTaskOwnerUserId(db, current.sessionId)
     if (direct !== null) return direct
 

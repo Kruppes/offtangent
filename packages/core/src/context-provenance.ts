@@ -1,4 +1,4 @@
-import { createHash, randomUUID } from 'node:crypto'
+import { createHmac, randomBytes, randomUUID } from 'node:crypto'
 import type { Database } from './database.js'
 import { resolveContextScope } from './context-scope.js'
 
@@ -11,7 +11,7 @@ export interface ContextSource {
 }
 export interface ContextManifest {
   version: 1
-  policy: 'project-isolated'
+  policy: 'project-isolated' | 'strand-only'
   at: string
   sources: ContextSource[]
   /** App-side, after redaction; provider wire serialization may add wrappers. */
@@ -21,20 +21,30 @@ export function ensureContextProvenanceSchema(db: Database): void {
   db.exec(`CREATE TABLE IF NOT EXISTS context_manifests (
     id TEXT PRIMARY KEY, session_id TEXT NOT NULL, user_id INTEGER NOT NULL,
     agent_id TEXT NOT NULL, created_at TEXT NOT NULL, manifest TEXT NOT NULL
-  ); CREATE INDEX IF NOT EXISTS idx_context_manifest_session ON context_manifests(session_id, created_at);`)
+  ); CREATE TABLE IF NOT EXISTS context_provenance_key (id INTEGER PRIMARY KEY CHECK(id = 1), key TEXT NOT NULL);
+  CREATE INDEX IF NOT EXISTS idx_context_manifest_session ON context_manifests(session_id, created_at);
+  CREATE TRIGGER IF NOT EXISTS context_manifest_session_delete AFTER DELETE ON sessions BEGIN DELETE FROM context_manifests WHERE session_id = OLD.id; END;
+  CREATE TRIGGER IF NOT EXISTS context_manifest_user_delete AFTER DELETE ON users BEGIN DELETE FROM context_manifests WHERE user_id = OLD.id; END;`)
+  db.prepare('INSERT OR IGNORE INTO context_provenance_key VALUES (1, ?)').run(randomBytes(32).toString('hex'))
+  purgeContextManifests(db)
+}
+/** Physical purge; called at startup, on read/write and by the maintenance timer. */
+export function purgeContextManifests(db: Database): void {
+  db.prepare("DELETE FROM context_manifests WHERE created_at < ? OR session_id NOT IN (SELECT id FROM sessions) OR user_id NOT IN (SELECT id FROM users)").run(new Date(Date.now() - 30 * 86400_000).toISOString())
 }
 /** Store only bounded metadata, NEVER a prompt dump, source text, arguments or file paths. */
 export function recordContextManifest(db: Database, sessionId: string, agentId: string, systemPrompt: string, messages: readonly unknown[]): void {
   const scope = resolveContextScope(db, sessionId, agentId)
   if (!scope) return
+  const key = (db.prepare('SELECT key FROM context_provenance_key WHERE id = 1').get() as { key: string }).key
   const sources: ContextSource[] = []
   const add = (source: string, category: ContextSource['scope'], text: string, reason: string) => {
-    sources.push({ source, scope: category, hash: createHash('sha256').update(text).digest('hex'), chars: text.length, reason })
+    sources.push({ source, scope: category, hash: createHmac('sha256', key).update(text).digest('hex'), chars: text.length, reason })
   }
   const blocks: Array<[string, ContextSource['scope'], string]> = [
     ['agent_rules', 'global-policy', 'always-required'], ['global_rules', 'global-policy', 'always-required'],
     ['personality', 'persona', 'active-persona'], ['identity', 'persona', 'active-persona'],
-    ['tool_hints', 'persona', 'active-persona'], ['approved_global_memory', 'persona', 'explicitly-classified-global'],
+    ['tool_hints', 'persona', 'active-persona'],
     ['scoped_memory', scope.projectId ? 'project' : 'strand', 'owned-session-assignment'],
     ['wiki_pages', scope.projectId ? 'project' : 'strand', 'owned-session-assignment'],
   ]
@@ -67,15 +77,17 @@ export function recordContextManifest(db: Database, sessionId: string, agentId: 
     if (sources.length >= 100) break
   }
   const at = new Date().toISOString()
-  const manifest: ContextManifest = { version: 1, policy: 'project-isolated', at, sources, boundary: 'pre-provider' }
+  const policy = (db.prepare('SELECT context_policy FROM sessions WHERE id = ?').get(scope.sessionId) as { context_policy: string }).context_policy
+  const manifest: ContextManifest = { version: 1, policy: policy === 'strand-only' ? 'strand-only' : 'project-isolated', at, sources, boundary: 'pre-provider' }
   db.transaction(() => {
     db.prepare('INSERT INTO context_manifests VALUES (?, ?, ?, ?, ?, ?)').run(randomUUID(), sessionId, scope.userId, agentId, at, JSON.stringify(manifest))
-    db.prepare("DELETE FROM context_manifests WHERE created_at < ?").run(new Date(Date.now() - 30 * 86400_000).toISOString())
+    purgeContextManifests(db)
     db.prepare('DELETE FROM context_manifests WHERE session_id = ? AND id NOT IN (SELECT id FROM context_manifests WHERE session_id = ? ORDER BY created_at DESC, rowid DESC LIMIT 20)').run(sessionId, sessionId)
   })()
 }
 /** Caller must already authorize the strand; redundant user+persona check is intentional. */
 export function readContextManifest(db: Database, sessionId: string, userId: number, agentId: string): ContextManifest | null {
+  purgeContextManifests(db)
   const row = db.prepare('SELECT manifest FROM context_manifests WHERE session_id = ? AND user_id = ? AND agent_id = ? AND created_at >= ? ORDER BY created_at DESC, rowid DESC LIMIT 1')
     .get(sessionId, userId, agentId, new Date(Date.now() - 30 * 86400_000).toISOString()) as { manifest: string } | undefined
   return row ? JSON.parse(row.manifest) as ContextManifest : null

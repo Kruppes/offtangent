@@ -39,10 +39,10 @@ describe('resolveTaskOwnerUserId', () => {
     expect(resolveTaskOwnerUserId(db, 'task-b')).toBe(7)
   })
 
-  it('falls back to sessions.user_id when session_user is not numeric', () => {
+  it('rejects ambiguous non-numeric session_user even when legacy user_id is populated', () => {
     session('strand-u', null, 'alice', 4)
     session('task-u', 'strand-u', null)
-    expect(resolveTaskOwnerUserId(db, 'task-u')).toBe(4)
+    expect(resolveTaskOwnerUserId(db, 'task-u')).toBeNull()
   })
 
   it('returns null for a system task whose root session names no user', () => {

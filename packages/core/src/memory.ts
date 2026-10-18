@@ -1087,7 +1087,6 @@ export function assembleSystemPrompt(options?: {
   if (dataDir) {
     fs.mkdirSync(path.join(dataDir, 'daily'), { recursive: true })
     for (const [source, dir] of [
-      ['approved_global_memory', contextMemoryDir(memoryDir ?? getMemoryDir(), { ...scope!, key: 'approved-global' })],
       ['scoped_memory', dataDir],
     ]) {
       const file = path.join(dir, 'MEMORY.md')

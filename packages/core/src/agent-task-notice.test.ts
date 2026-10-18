@@ -134,41 +134,41 @@ describe('AgentCore announces pending task outcomes (W5/P3)', () => {
     agent = new AgentCore({ model: makeModel(), apiKey: 'k', db, systemPrompt: 'sp' })
   })
 
-  it('delivers a completed cronjob result BEFORE the user message on the next run', async () => {
+  it('does not inject an unscoped completed cronjob into an unrelated strand', async () => {
     const taskId = finishedCronTask('w4-deploy-verify-20260917', 'Deploy verified: 3/3 checks green.')
 
     await drain(agent.sendMessage('1', 'moin, was lief heute?', 'web', undefined, 'main'))
 
     expect(prompts).toHaveLength(1)
     const sent = prompts[0]
-    expect(sent).toContain('<background_task_results>')
-    expect(sent).toContain('w4-deploy-verify-20260917')
-    expect(sent).toContain('Deploy verified: 3/3 checks green.')
-    // Order matters: the outcome is context for the user's message.
-    expect(sent.indexOf('</background_task_results>')).toBeLessThan(sent.indexOf('moin, was lief heute?'))
-    // Bookkeeping is on the task row, so a restart cannot replay it.
-    expect(new TaskStore(db).getById(taskId)!.agentNotifiedAt).toBeTruthy()
+    expect(sent).not.toContain('<background_task_results>')
+    expect(sent).not.toContain('w4-deploy-verify-20260917')
+    expect(sent).not.toContain('Deploy verified: 3/3 checks green.')
+    expect(sent).toContain('moin, was lief heute?')
+    // It remains available through task/feed APIs, never silently consumed.
+    expect(new TaskStore(db).getById(taskId)!.resultSummary).toBe('Deploy verified: 3/3 checks green.')
+    expect(new TaskStore(db).getById(taskId)!.agentNotifiedAt).toBeNull()
   })
 
-  it('announces each outcome only once', async () => {
+  it('never replays an unscoped outcome on later turns', async () => {
     finishedCronTask('cron-once', 'One time only.')
 
     await drain(agent.sendMessage('1', 'erste frage', 'web', undefined, 'main'))
     await drain(agent.sendMessage('1', 'zweite frage', 'web', undefined, 'main'))
 
-    expect(prompts[0]).toContain('cron-once')
+    expect(prompts[0]).not.toContain('cron-once')
     expect(prompts[1]).not.toContain('cron-once')
     expect(prompts[1]).toContain('zweite frage')
   })
 
-  it('routes an outcome to the persona that owns it', async () => {
+  it('does not treat persona ownership as strand delivery authorization', async () => {
     finishedCronTask('coders-cron', 'Coder work done.', 'coder')
 
     await drain(agent.sendMessage('1', 'main frage', 'web', undefined, 'main'))
     expect(prompts[0]).not.toContain('coders-cron')
 
     await drain(agent.sendMessage('1', 'coder frage', 'web', undefined, 'coder'))
-    expect(prompts[1]).toContain('coders-cron')
+    expect(prompts[1]).not.toContain('coders-cron')
   })
 
   it('leaves a turn untouched when nothing is pending', async () => {
