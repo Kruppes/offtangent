@@ -1,4 +1,4 @@
-import { contextMemoryDir, resolveContextScope } from '@axiom/core'
+import { contextMemoryDir, resolveContextScope, SessionManager } from '@axiom/core'
 import { beforeEach, afterEach, describe, expect, it, vi } from 'vitest'
 import fs from 'node:fs'
 import os from 'node:os'
@@ -163,6 +163,24 @@ describe('MemoryConsolidationScheduler', () => {
       const result = await scheduler.runNow()
       expect(result.updated).toBe(false)
       expect(taskRuntime.create).not.toHaveBeenCalled()
+    })
+
+    it.each([false, true])('pins scheduled consolidation before handing it to runtime (SessionManager=%s)', async withManager => {
+      const taskStore = new TaskStore(db)
+      const taskRuntime = createMockTaskRuntime(taskStore)
+      taskRuntime.start.mockImplementation(async task => {
+        expect(db.prepare('SELECT context_origin_scope FROM sessions WHERE id=?').get(task.sessionId!)).toEqual({ context_origin_scope: JSON.stringify([1, 'strand:owned-main']) })
+        expect(resolveContextScope(db, task.sessionId!)?.key).toBe('strand:owned-main')
+        db.prepare("UPDATE sessions SET context_policy='strand-only' WHERE id='owned-main'").run()
+        db.prepare("UPDATE sessions SET context_policy='project-isolated' WHERE id='owned-main'").run()
+        expect(resolveContextScope(db, task.sessionId!)).toBeNull()
+        taskStore.update(task.id, { status: 'completed', resultStatus: 'silent' })
+        return task.id
+      })
+      const scheduler = new MemoryConsolidationScheduler({ db, taskRuntime, getDefaultProvider: () => makeProvider(),
+        sessionManager: withManager ? new SessionManager({ db, memoryDir: path.join(tempDataDir, 'memory') }) : undefined })
+      await scheduler.runNow()
+      expect(taskRuntime.start).toHaveBeenCalledOnce()
     })
 
     it('creates and starts a consolidation task via task runtime boundary', async () => {

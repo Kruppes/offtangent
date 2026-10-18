@@ -843,15 +843,30 @@ export function initDatabase(dbPath?: string): Database {
   }
   // Original project/user cannot be reconstructed reliably for legacy tasks.
   // Retain their transcripts/results, but never reclassify them on resume.
-  db.exec("UPDATE sessions SET context_origin_scope = 'legacy-unclassified' WHERE type = 'task' AND context_origin_scope IS NULL")
+  db.exec("UPDATE sessions SET context_origin_scope = 'legacy-unclassified' WHERE type IN ('task', 'consolidation') AND context_origin_scope IS NULL")
   // A strand retains its old transcript when reassigned. Facts extracted later
   // cannot safely be attributed to its new project/persona/owner. Preserve them
   // as unclassified, even if the assignment changes back while extraction waits.
-  db.exec(`CREATE TRIGGER IF NOT EXISTS context_fact_scope_changed
+  // Replace the previous trigger: only a provably empty, unclassified strand
+  // may receive an initial project without tainting its (nonexistent) history.
+  // NULL alone is NOT evidence of emptiness; archived chat/tool rows also count.
+  const scopeMigrationDb = db
+  scopeMigrationDb.transaction(() => scopeMigrationDb.exec(`DROP TRIGGER IF EXISTS context_fact_scope_changed;
+    CREATE TRIGGER context_fact_scope_changed
     AFTER UPDATE OF project_id, context_policy, agent_id, session_user, user_id ON sessions
-    WHEN OLD.project_id IS NOT NEW.project_id OR OLD.context_policy IS NOT NEW.context_policy
-      OR OLD.agent_id IS NOT NEW.agent_id OR OLD.session_user IS NOT NEW.session_user OR OLD.user_id IS NOT NEW.user_id
-    BEGIN UPDATE sessions SET context_origin_scope = 'scope-changed' WHERE id = NEW.id; END;`)
+    WHEN (OLD.project_id IS NOT NEW.project_id OR OLD.context_policy IS NOT NEW.context_policy
+      OR OLD.agent_id IS NOT NEW.agent_id OR OLD.session_user IS NOT NEW.session_user OR OLD.user_id IS NOT NEW.user_id)
+    AND NOT (OLD.type = 'interactive' AND OLD.project_id IS NULL AND NEW.project_id IS NOT NULL
+      AND OLD.context_origin_scope IS NULL
+      AND OLD.context_policy IS NEW.context_policy AND OLD.agent_id IS NEW.agent_id
+      AND OLD.session_user IS NEW.session_user AND OLD.user_id IS NEW.user_id
+      AND COALESCE(OLD.message_count, 0) = 0 AND COALESCE(OLD.summary_written, 0) = 0
+      AND NOT EXISTS (SELECT 1 FROM chat_messages WHERE session_id = OLD.id)
+      AND NOT EXISTS (SELECT 1 FROM tool_calls WHERE session_id = OLD.id)
+      AND NOT EXISTS (SELECT 1 FROM memories WHERE session_id = OLD.id)
+      AND NOT EXISTS (SELECT 1 FROM sessions WHERE parent_session_id = OLD.id)
+      AND NOT EXISTS (SELECT 1 FROM tasks WHERE session_id = OLD.id))
+    BEGIN UPDATE sessions SET context_origin_scope = 'scope-changed' WHERE id = NEW.id; END;`))()
 
   // Fork: multi-persona scoping for memories and chat_messages.
   const memoryCols = db.prepare("PRAGMA table_info(memories)").all() as { name: string }[]

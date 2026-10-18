@@ -129,6 +129,9 @@ export type SessionType =
   | 'loop_detection'
 
 export interface CreateSessionOptions {
+  /** Initial assignment, not a move of an existing transcript. */
+  projectId?: string | null
+  contextOriginScope?: string | null
   type: SessionType
   source: string
   userId?: string
@@ -1162,8 +1165,8 @@ export class SessionManager {
     }
 
     this.db.prepare(
-      `INSERT INTO sessions (id, user_id, source, type, parent_session_id, started_at, last_activity, session_user, message_count, summary_written, agent_id)
-       VALUES (?, NULL, ?, ?, ?, datetime(? / 1000, 'unixepoch'), datetime(? / 1000, 'unixepoch'), ?, 0, 0, ?)`
+      `INSERT INTO sessions (id, user_id, source, type, parent_session_id, started_at, last_activity, session_user, message_count, summary_written, agent_id, project_id, context_origin_scope)
+       VALUES (?, NULL, ?, ?, ?, datetime(? / 1000, 'unixepoch'), datetime(? / 1000, 'unixepoch'), ?, 0, 0, ?, ?, ?)`
     ).run(
       id,
       options.source,
@@ -1173,6 +1176,8 @@ export class SessionManager {
       now,
       options.userId ?? null,
       agentId,
+      options.projectId ?? null,
+      options.contextOriginScope ?? null,
     )
 
     if (options.type === 'interactive') this.pinDefaultStrandModel(id, agentId)
@@ -1679,14 +1684,11 @@ export class SessionManager {
     // Threads are interactive sessions; `createSession` is used (not
     // `getOrCreateSession`) precisely because it does NOT cache the session
     // per user and does not start an inactivity timer.
-    const session = this.createSession({ type: 'interactive', source: 'web', userId, agentId })
+    const session = this.createSession({ type: 'interactive', source: 'web', userId, agentId, projectId: resolvedProjectId })
     this.db.prepare('UPDATE sessions SET working_mode = ? WHERE id = ?').run(workingMode, session.id)
     const normalizedTitle = normalizeThreadTitle(title)
     if (normalizedTitle !== null) {
       this.db.prepare('UPDATE sessions SET title = ? WHERE id = ?').run(normalizedTitle, session.id)
-    }
-    if (resolvedProjectId !== null) {
-      this.db.prepare('UPDATE sessions SET project_id = ? WHERE id = ?').run(resolvedProjectId, session.id)
     }
     const thread = this.getThread(userId, session.id)
     if (!thread) throw new Error(`[session] Thread ${session.id} vanished right after creation`)

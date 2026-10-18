@@ -33,6 +33,8 @@
  */
 import {
   sessionOwner,
+  insertFeedItem,
+  markTaskNoticesDelivered,
   buildTaskFeedItem,
   deliverTaskNotification,
   resolveTaskStrandOrigin,
@@ -47,7 +49,6 @@ import {
   type TelegramDeliveryMode,
 } from '@axiom/core'
 import type { ChatEventBus } from './chat-event-bus.js'
-import { publishFeedItem } from './feed-publish.js'
 
 export interface TaskOutcomeLogger {
   warn: (msg: string, ...args: unknown[]) => void
@@ -125,6 +126,7 @@ export async function routeTaskOutcome(deps: TaskOutcomeDeps, input: TaskOutcome
     if (delivered) {
       // The caller handles the result; don't also post it as an independent
       // completion in the strand/feed. Its own eventual result remains visible.
+      markTaskNoticesDelivered(deps.db, [task.id])
       return { target: 'parent', strandId: resolveTaskStrandId(deps.db, parent), feedItemId: null }
     }
   }
@@ -166,22 +168,14 @@ export async function routeTaskOutcome(deps: TaskOutcomeDeps, input: TaskOutcome
       logger.error(`[task-outcome] Failed to deliver task ${task.id} into strand ${sessionId}:`, err)
     })
 
-    const item = publishFeedItem(
-      { db: deps.db, chatEventBus: deps.chatEventBus, logger },
-      userId,
-      buildTaskFeedItem(task, { userId: String(userId), strandId: sessionId, agentId }),
-    )
+    const item = publishTaskOutcome(deps, task, userId, sessionId, agentId)
     return { target: 'strand', strandId: sessionId, feedItemId: item?.id ?? null }
   }
 
   // Feed only. Persist under the task's own session explicitly — never the
   // lineage, so a background task that somehow carries a parent session can
   // still not write into a strand.
-  const item = publishFeedItem(
-    { db: deps.db, chatEventBus: deps.chatEventBus, logger },
-    userId,
-    buildTaskFeedItem(task, { userId: String(userId), strandId: null, agentId }),
-  )
+  const item = publishTaskOutcome(deps, task, userId, null, agentId)
 
   deliverTaskNotification({
     db: deps.db,
@@ -199,6 +193,26 @@ export async function routeTaskOutcome(deps: TaskOutcomeDeps, input: TaskOutcome
   })
 
   return { target: 'feed', strandId: null, feedItemId: item?.id ?? null }
+}
+
+/** Persist the receipt with its feed row, then broadcast only committed data.
+ * Failed persistence leaves the result unmarked and preserved in tasks. */
+function publishTaskOutcome(deps: TaskOutcomeDeps, task: Task, userId: number, strandId: string | null, agentId: string) {
+  const logger = deps.logger ?? console
+  let item
+  try {
+    item = deps.db.transaction(() => {
+      const stored = insertFeedItem(deps.db, buildTaskFeedItem(task, { userId: String(userId), strandId, agentId }))
+      markTaskNoticesDelivered(deps.db, [task.id])
+      return stored
+    })()
+  } catch (err) {
+    logger.warn(`[task-outcome] Failed to persist outcome for ${task.id}:`, err)
+    return null
+  }
+  try { deps.chatEventBus?.broadcast({ type: 'feed_item', userId, source: 'task', feedItem: item }) }
+  catch (err) { logger.warn(`[task-outcome] Failed to broadcast outcome for ${task.id}:`, err) }
+  return item
 }
 
 /**

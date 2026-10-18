@@ -21,6 +21,7 @@ vi.mock('./provider-config.js', async (importOriginal) => {
 
 interface CapturedAgentOptions {
   getApiKey?: () => unknown
+  initialState?: { tools: TaskRunnerOptions['tools']; systemPrompt: string }
 }
 interface AgentOptionsBox {
   value: CapturedAgentOptions | null
@@ -151,6 +152,68 @@ describe('TaskRunner', () => {
       try { fs.unlinkSync(f) } catch { /* ignore */ }
     }
     tmpFiles.length = 0
+  })
+
+  describe('consolidation origin revocation (B1)', () => {
+    function pinnedTask() {
+      db.prepare('INSERT INTO users(id,username,password_hash) VALUES (1,?,?)').run('fixture', 'fixture')
+      db.prepare("INSERT INTO projects(id,user_id,name) VALUES ('A','1','A'),('B','1','B')").run()
+      const origin = sessionManager.createThread('1', 'main', 'Synthetic', 'A')
+      const session = sessionManager.createSession({ type: 'consolidation', source: 'system', parentSessionId: origin.id,
+        userId: '1', agentId: 'main', contextOriginScope: JSON.stringify([1, 'project:A']) })
+      const task = store.create({ name: 'Scoped fixture', prompt: 'Synthetic consolidation', triggerType: 'consolidation', sessionId: session.id, agentId: 'main' })
+      return { origin, task }
+    }
+    it('fails before constructing an agent if the origin moves while start awaits credentials', async () => {
+      const { origin, task } = pinnedTask()
+      resetAgentOptions()
+      const guarded = new TaskRunner({ db, sessionManager, tools: [], onTaskComplete: () => {},
+        buildModel: () => ({} as ReturnType<TaskRunnerOptions['buildModel']>),
+        getApiKey: async () => {
+          await Promise.resolve()
+          db.prepare("UPDATE sessions SET project_id='B' WHERE id=?").run(origin.id)
+          db.prepare("UPDATE sessions SET project_id='A' WHERE id=?").run(origin.id)
+          return 'fixture'
+        } })
+      try {
+        await expect(guarded.startTask(task, mockProvider)).rejects.toThrow('Consolidation origin scope')
+        expect(lastAgentOptions.value).toBeNull()
+        expect(store.getById(task.id)?.status).toBe('failed')
+      } finally { guarded.dispose() }
+    })
+    it.each(['project_id', 'agent_id', 'context_policy', 'session_user'] as const)('revokes actual runner-bound tools after a live %s change and return', async column => {
+      const { origin, task } = pinnedTask()
+      const { Agent } = await import('@earendil-works/pi-agent-core')
+      const MockAgent = Agent as unknown as ReturnType<typeof vi.fn>
+      let finish!: () => void
+      const pending = new Promise<void>(resolve => { finish = resolve })
+      MockAgent.mockImplementationOnce((options: CapturedAgentOptions) => {
+        recordAgentOptions(options)
+        return { subscribe: vi.fn(() => () => {}), prompt: vi.fn(() => pending), abort: vi.fn(finish),
+          state: { messages: [{ role: 'assistant', content: [{ type: 'text', text: 'STATUS: silent\nSUMMARY: Synthetic' }] }] } }
+      })
+      const execute = vi.fn(async () => ({ content: [{ type: 'text', text: 'OWN_SENTINEL' }], details: {} }))
+      const tools = ['read_chat_history', 'write_file', 'edit_file', 'read_file', 'list_files', 'shell'].map(name => ({ name, execute })) as unknown as TaskRunnerOptions['tools']
+      const guarded = new TaskRunner({ db, sessionManager, tools, onTaskComplete: () => {},
+        buildModel: () => ({} as ReturnType<TaskRunnerOptions['buildModel']>), getApiKey: async () => 'fixture' })
+      try {
+        await guarded.startTask(task, mockProvider)
+        expect(store.getById(task.id)?.status).toBe('running')
+        const scoped = getCapturedAgentOptions().initialState!.tools
+        expect(scoped.map(t => t.name)).not.toContain('shell')
+        await scoped.find(t => t.name === 'read_chat_history')!.execute('before', { session_id: 'foreign' })
+        expect(execute).toHaveBeenCalledOnce()
+        const values = { project_id: ['B', 'A'], agent_id: ['coder', 'main'], context_policy: ['strand-only', 'project-isolated'], session_user: ['2', '1'] }
+        for (const value of values[column]) db.prepare(`UPDATE sessions SET ${column}=? WHERE id=?`).run(value, origin.id)
+        for (const tool of scoped) await expect(tool.execute('after', { path: 'MEMORY.md', content: 'FOREIGN_SENTINEL' })).rejects.toThrow('capabilities revoked')
+        expect(execute).toHaveBeenCalledOnce()
+        expect(store.getById(task.id)?.status).toBe('running')
+      } finally {
+        finish()
+        await new Promise(resolve => setTimeout(resolve, 10))
+        guarded.dispose()
+      }
+    })
   })
 
   describe('task lifecycle: create → run → complete', () => {

@@ -411,6 +411,10 @@ export class MemoryConsolidationScheduler {
     let dailyFilesReviewed = 0
     const usage = { input: 0, output: 0 }
     for (const row of candidates) {
+      // Candidates were collected before earlier runs awaited completion. Recheck
+      // sticky reassignment here too (including A→B→A during those awaits).
+      const state = this.db.prepare('SELECT context_origin_scope FROM sessions WHERE id = ?').get(row.id) as { context_origin_scope: string | null } | undefined
+      if (state?.context_origin_scope === 'scope-changed') continue
       const scope = resolveContextScope(this.db, row.id, row.agent_id)
       if (!scope) continue
       const dir = contextMemoryDir(resolveAgentMemoryDir(scope.agentId) ?? getMemoryDir(), scope)
@@ -421,12 +425,13 @@ export class MemoryConsolidationScheduler {
       if (runs.length >= 20) break // Bound maintenance cost per run; newest active scopes first.
       const start = Date.now()
       try {
-      const sessionId = this.sessionManager
-        ? this.sessionManager.createSession({ type: 'consolidation', source: 'system', agentId: scope.agentId, parentSessionId: row.id, userId: String(scope.userId) }).id
-        : generateSessionId()
-      if (!this.sessionManager) this.db.prepare(
-        "INSERT INTO sessions (id, user_id, source, type, agent_id, parent_session_id) VALUES (?, ?, 'system', 'consolidation', ?, ?)",
-      ).run(sessionId, scope.userId, scope.agentId, row.id)
+        const originPin = JSON.stringify([scope.userId, scope.key])
+        const sessionId = this.sessionManager
+          ? this.sessionManager.createSession({ type: 'consolidation', source: 'system', agentId: scope.agentId, parentSessionId: row.id, userId: String(scope.userId), contextOriginScope: originPin }).id
+          : generateSessionId()
+        if (!this.sessionManager) this.db.prepare(
+          "INSERT INTO sessions (id, user_id, source, type, agent_id, parent_session_id, context_origin_scope) VALUES (?, ?, 'system', 'consolidation', ?, ?, ?)",
+        ).run(sessionId, scope.userId, scope.agentId, row.id, originPin)
         const task = runtime.create({ name: 'Scoped Memory Consolidation',
           prompt: buildConsolidationTaskPrompt(this.settings.lookbackDays, rules, { memoryDir: dir, agentId: scope.agentId, originSessionId: row.id, compactionRun }),
           triggerType: 'consolidation', triggerSourceId: 'memory-consolidation:scoped-v1',

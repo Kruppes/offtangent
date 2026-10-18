@@ -169,10 +169,10 @@ describe('context isolation — synthetic sentinels, no provider replay', () => 
     expect(consumePendingTaskNotices(db, { agentId: 'main' })).toBeNull()
     expect(store.getById(task.id)?.resultSummary).toBe('NOTICE_SENTINEL')
   })
-  it('archives non-cron outcomes only to the correct owner, quarantines unknown owners and preserves silent outcomes', () => {
+  it('archives legacy cron outcomes only to the correct owner, quarantines unknown owners once and preserves silent outcomes', () => {
     const store = new TaskStore(db)
-    const known = store.create({ name: 'owned', prompt: 'fixture', triggerType: 'heartbeat', sessionId: 'numbers' })
-    const unknown = store.create({ name: 'unknown', prompt: 'fixture', triggerType: 'agent' })
+    const known = store.create({ name: 'owned', prompt: 'fixture', triggerType: 'cronjob', sessionId: 'numbers' })
+    const unknown = store.create({ name: 'unknown', prompt: 'fixture', triggerType: 'cronjob' })
     const silent = store.create({ name: 'silent', prompt: 'fixture', triggerType: 'cronjob', sessionId: 'numbers' })
     for (const task of [known, unknown]) store.update(task.id, { status: 'completed', resultSummary: 'ARCHIVE_SENTINEL', resultStatus: 'completed' })
     store.update(silent.id, { status: 'completed', resultSummary: 'SILENT_SENTINEL', resultStatus: 'silent' })
@@ -182,7 +182,8 @@ describe('context isolation — synthetic sentinels, no provider replay', () => 
     expect(db.prepare('SELECT count(*) AS n FROM feed_items WHERE task_id=?').get(unknown.id)).toEqual({ n: 0 })
     expect(db.prepare('SELECT count(*) AS n FROM feed_items WHERE task_id=?').get(silent.id)).toEqual({ n: 0 })
     expect(store.getById(unknown.id)?.resultSummary).toBe('ARCHIVE_SENTINEL')
-    expect(archivePendingTaskNotices(db)).toEqual({ delivered: 0, quarantined: 1 })
+    expect(archivePendingTaskNotices(db)).toEqual({ delivered: 0, quarantined: 0 })
+    expect(db.prepare('SELECT task_id FROM context_notice_quarantine').all()).toEqual([{ task_id: unknown.id }])
   })
 
 })

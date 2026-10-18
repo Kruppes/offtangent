@@ -40,7 +40,9 @@ changes back during extraction), never relabelled into the new project. Start a
 fresh strand for new automatically classified facts. This conservative quarantine
 does not erase existing facts or stop the strand from reading its selected scope.
 Summaries of such strands remain in the database without a scoped daily-file write;
-consolidation does not select their mixed transcript as its source.
+consolidation does not select their mixed transcript as its source. A fresh strand's initial project is stored in its INSERT and is not a reassignment. Automatic NULL-to-project assignment is exempt only while there is no retained chat, tool, fact, summary, task or child-session history and no prior scope-change marker. Existing markers are never silently cleared.
+
+**Project-switch warning:** interactive history is retained, not isolated into historical project segments. A moved strand can send old A messages alongside B memory on its next turn. Use a NEW strand when that mixture is unwanted. The sticky marker protects derived facts/summaries/consolidation, not the interactive transcript; a change back to A does not restore automatic fact or consolidation writes. A dedicated UI warning/history-partition migration is still open.
 
 New task context inherits from an owned origin strand (including nested tasks), with user/scope identity pinned at task-session creation in `sessions.context_origin_scope`. A later parent project, policy or owner change fails closed for automatic task reads/writes and resume; it cannot relabel the existing task transcript into the new scope. Existing legacy task sessions are marked unclassified at startup, retaining transcript/results but receiving no automatic memory until a fresh task is created.
 Cross-persona work uses the target persona's isolated root. Unknown-origin work
@@ -96,14 +98,9 @@ metadata: do not export them to public issue reports.
 
 ### Legacy notice delivery
 
-At boot, unsurfaced outcomes from all triggers are archived once to their verified
-owner's private feed, without adding them to any model prompt. Existing feed rows
-must match both task and owner. Each row is transactional; one failed insert does
-not starve other owners, and its delivered marker remains unset for retry. Silent
-outcomes remain silent. Unknown/ambiguous-owner rows remain intact for manual
-classification; admins receive a generic, deduplicated metadata-only alert (no
-foreign title or result). No personal outcome is broadcast to admins or a default
-user. Do not delete quarantined rows during deployment or rollback.
+The `legacy-cron-notices-v2` boot migration runs ONCE, in an immediate database transaction. Only terminal, non-silent, unmarked **cronjob** rows in that first-run snapshot are eligible. User/agent/subtask, heartbeat and consolidation outcomes are not an old cron notice queue. Existing feed rows must match both task and verified owner. Feed insertion and `agent_notified_at` marking are atomic; nested savepoints isolate damaged rows. The migration-completion marker commits with the batch, so a crash rolls back the entire uncommitted batch. Subsequent boots are no-ops, including for tasks created after migration.
+
+Unknown/ambiguous-owner or failed rows remain intact in `tasks` plus a durable `context_notice_quarantine` disposition. There is NO automatic retry on boot; classification/recovery is an explicit operator action. Admins receive one generic deduplicated metadata-only alert (no foreign title/result). No personal outcome is broadcast to admins or a default user. Current outcome routing commits a private-feed row and notice receipt together; live-parent delivery also records a receipt. Do not delete quarantined rows, completion markers or original task results during deployment or rollback.
 
 ## Rollback
 
@@ -127,4 +124,11 @@ on a synthetic server, verify old/new-server behavior and stop the emulator and
 Gradle daemons afterwards. No build/review assertion alone means a deployment or
 Play internal release happened. Report implemented, tested and live separately.
 
-Task lineage resolution is bounded to ten ancestors and fails closed beyond that limit. Unassignable legacy notices remain retryable; without an admin account no quarantine feed notification can be emitted.
+## Known boundaries retained after the blocker fixes
+
+- Consolidation pins owner/scope at session INSERT, including the scheduler fallback without SessionManager. Missing legacy pins fail closed. Every allowed capability rechecks lineage and sticky owner/persona/policy/project changes (including A→B→A); reads crossing a change are discarded. Production filesystem writes execute synchronously after the check. This guards application event-loop changes, not a malicious concurrent local filesystem/database writer.
+- Skills remain global/persona-wide: an agent-created skill's name/description can appear in another project's prompt. This is an explicit agent-controlled cross-project side channel, NOT a solved isolation guarantee. Scoping/approval of skills is separate work.
+- Provenance tags are regex-derived display metadata, not trusted attribution. User text can forge tags (only HMAC/length are retained); category labeling follows the current resolved scope.
+- Filesystem containment checks still have an lstat/access symlink TOCTOU window for a concurrent local writer. No OS sandbox is claimed.
+- Task lineage resolution is bounded to ten ancestors and fails closed beyond that limit. Without an admin account no quarantine feed notification can be emitted; durable dispositions and original task results still exist.
+- Companion parsing tests do not prove UI rendering. The companion implementation is unchanged by this blocker round; fresh native/UI verification and independent review remain release gates.

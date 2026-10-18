@@ -3,7 +3,7 @@ import { describe, it, expect, beforeEach, afterEach } from 'vitest'
 import fs from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
-import { initDatabase, listFeedItems, SessionManager, TaskStore } from '@axiom/core'
+import { initDatabase, listFeedItems, SessionManager, TaskStore, archivePendingTaskNotices } from '@axiom/core'
 import type { Database, Task, TaskTriggerType } from '@axiom/core'
 import { ChatEventBus, type ChatEvent } from './chat-event-bus.js'
 import { sendTaskDoorbell } from './push/triggers.js'
@@ -117,6 +117,8 @@ describe('sub-task outcome without a session parent edge', () => {
       agentId: 'main', durationMinutes: 1 })
     await settle()
     expect(result.target).toBe('parent')
+    expect(store.getById(child.id)?.agentNotifiedAt).toBeTruthy()
+    expect(archivePendingTaskNotices(db)).toEqual({ delivered: 0, quarantined: 0 })
     expect(received).toEqual([`${parent.id}:<task_injection>Done</task_injection>:main`])
     expect(injections).toEqual([])
     expect(telegram).toEqual([])
@@ -241,6 +243,30 @@ describe('sub-task outcome without a session parent edge', () => {
     expect(messagesIn(strand.id)).toHaveLength(1)
     expect(listFeedItems(db, '1')).toHaveLength(1)
     expect(telegram).toEqual([])
+  })
+})
+
+describe('atomic task-outcome delivery receipt (B3)', () => {
+  it('commits the live cron outcome with its notice marker so boot creates no duplicate', async () => {
+    const strand = sessionManager.createThread('1', 'main')
+    const task = store.create({ name: 'Cron fixture', prompt: 'synthetic', triggerType: 'cronjob', sessionId: backgroundSession('task', strand.id) })
+    const done = store.update(task.id, { status: 'completed', resultSummary: 'OWN_SENTINEL', resultStatus: 'completed' })!
+    const result = await routeTaskOutcome(deps(), { task: done, injection: 'synthetic', userId: 1, agentId: 'main', durationMinutes: 1 })
+    expect(result.feedItemId).toBeTruthy()
+    expect(store.getById(task.id)?.agentNotifiedAt).toBeTruthy()
+    expect(archivePendingTaskNotices(db)).toEqual({ delivered: 0, quarantined: 0 })
+    expect(listFeedItems(db, '1').filter(item => item.taskId === task.id)).toHaveLength(1)
+  })
+  it('rolls the card back if its delivery mark cannot commit', async () => {
+    const task = store.create({ name: 'Fixture', prompt: 'synthetic', triggerType: 'user' })
+    const done = store.update(task.id, { status: 'completed', resultSummary: 'PRESERVED_SENTINEL', resultStatus: 'completed' })!
+    db.exec("CREATE TRIGGER fixture_mark_failure BEFORE UPDATE OF agent_notified_at ON tasks BEGIN SELECT RAISE(ABORT, 'synthetic failure'); END")
+    const result = await routeTaskOutcome(deps(), { task: done, injection: 'synthetic', userId: 1, agentId: 'main', durationMinutes: 1 })
+    expect(result.feedItemId).toBeNull()
+    expect(listFeedItems(db, '1')).toEqual([])
+    expect(events.filter(e => e.type === 'feed_item')).toEqual([])
+    expect(store.getById(task.id)?.agentNotifiedAt).toBeNull()
+    expect(store.getById(task.id)?.resultSummary).toBe('PRESERVED_SENTINEL')
   })
 })
 

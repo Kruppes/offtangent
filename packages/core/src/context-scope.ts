@@ -61,7 +61,11 @@ export function resolveContextScope(db: Database, sessionId?: string, agentId?: 
   // moves or changes owner, do not read/write that transcript into a new scope.
   // New tasks pin this at session creation; legacy tasks are quarantined.
   const origin = JSON.stringify([userId, key])
-  if (lineage.some(link => link.type === 'task' && link.context_origin_scope != null && link.context_origin_scope !== origin)) return null
+  const background = start.type === 'task' || start.type === 'consolidation'
+  if (background && lineage.some(link => link.context_origin_scope === 'scope-changed')) return null
+  if (lineage.some(link =>
+    (link.type === 'consolidation' && link.context_origin_scope !== origin)
+    || (link.type === 'task' && link.context_origin_scope != null && link.context_origin_scope !== origin))) return null
   return { userId, agentId: agentId ?? start.agent_id ?? 'main', sessionId: row.id, projectId, key }
 }
 /** A reassigned strand may contain mixed-scope history. Preserve extracted

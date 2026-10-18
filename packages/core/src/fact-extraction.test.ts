@@ -9,6 +9,7 @@ vi.mock('./pi-models.js', async (importOriginal) => {
 })
 
 import { completeSimple } from './pi-models.js'
+import { SessionManager } from './session-manager.js'
 import { initDatabase } from './database.js'
 import type { Database } from './database.js'
 import {
@@ -77,6 +78,15 @@ describe('fact-extraction', () => {
 
   afterEach(() => {
     db.close()
+  })
+
+  it('classifies facts from createThread with initial project in that project', async () => {
+    const sm = new SessionManager({ db })
+    const thread = sm.createThread('1', 'main', 'Fresh project strand', 'fixture-project')
+    mockCompleteSimple.mockResolvedValueOnce(makeResponse('- FRESH_PROJECT_SENTINEL uses PostgreSQL'))
+    const result = await extractAndStoreFacts(db, 1, thread.id, 'User: FRESH_PROJECT_SENTINEL uses PostgreSQL', makeModel(), 'k')
+    expect(result.stored).toBe(1)
+    expect(db.prepare('SELECT context_scope,content FROM memories').get()).toEqual({ context_scope: 'project:fixture-project', content: 'FRESH_PROJECT_SENTINEL uses PostgreSQL' })
   })
 
   it('preserves facts from reassigned transcripts without classifying them into the new project', async () => {

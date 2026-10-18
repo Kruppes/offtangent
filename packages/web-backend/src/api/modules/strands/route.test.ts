@@ -1001,6 +1001,14 @@ describe('strand context telemetry', () => {
     expect(res.body).not.toHaveProperty('measurement')
   })
 
+  it('reports the persisted strand-only policy instead of project-isolated', async () => {
+    const strand = sessionManager.createThread('1', 'main', 'Strand only')
+    db.prepare("UPDATE sessions SET context_policy='strand-only' WHERE id=?").run(strand.id)
+    const res = await api('GET', `/api/strands/${strand.id}/context`)
+    expect(res.status).toBe(200)
+    expect(res.body.isolation).toMatchObject({ policy: 'strand-only', dataScope: 'strand' })
+  })
+
   it('returns metadata only and rejects foreign-owner context reads and stale-persona provenance', async () => {
     const strand = sessionManager.createThread('1', 'main', 'Fixture')
     const { recordContextManifest } = await import('@axiom/core')

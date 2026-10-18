@@ -846,6 +846,10 @@ export class TaskRunner {
       const initialApiKey = await this.options.getApiKey(provider)
 
       const dataScope = resolveContextScope(this.options.db, sessionId, task.agentId ?? 'main')
+      if (task.triggerType === 'consolidation' && !dataScope) throw new Error('Consolidation origin scope is no longer valid')
+      // Consolidation uses the same root resolver as its scheduler/prompt.
+      const dataMemoryDir = dataScope ? contextMemoryDir(
+        resolveAgentMemoryDir(task.agentId, task.triggerType === 'consolidation' ? undefined : { fallbackMemoryDir: this.options.memoryDir }) ?? getMemoryDir(), dataScope) : undefined
       // Determine effective system prompt
       const baseSystemPrompt = overrides?.systemPromptOverride
         ? `<global_rules>\n${readAgentsRulesFile(this.options.configDir)}\n</global_rules>\n${overrides.systemPromptOverride}`
@@ -854,7 +858,7 @@ export class TaskRunner {
         // (and is pointed at) main's SOUL.md/MEMORY.md.
         : buildTaskSystemPrompt(
             task.prompt,
-            dataScope ? contextMemoryDir(resolveAgentMemoryDir(task.agentId, { fallbackMemoryDir: this.options.memoryDir }) ?? getMemoryDir(), dataScope) : undefined,
+            dataMemoryDir,
             this.options.configDir,
             { budgetMinutes: this.resolveBudgetMinutes(task) },
           )
@@ -885,9 +889,13 @@ export class TaskRunner {
       // texts are sealed, only `shell` resolves handles (D5).
       let effectiveTools = withSecretBoundary(this.options.tools)
       if (task.triggerType === 'consolidation') {
-        effectiveTools = scopedConsolidationTools(effectiveTools,
-          dataScope ? contextMemoryDir(resolveAgentMemoryDir(task.agentId, { fallbackMemoryDir: this.options.memoryDir }) ?? getMemoryDir(), dataScope) : undefined,
-          dataScope?.sessionId)
+        effectiveTools = scopedConsolidationTools(effectiveTools, dataMemoryDir, dataScope?.sessionId, () => {
+          const current = resolveContextScope(this.options.db, sessionId, task.agentId ?? 'main')
+          if (!current || !dataScope || current.userId !== dataScope.userId || current.agentId !== dataScope.agentId
+            || current.sessionId !== dataScope.sessionId || current.key !== dataScope.key) {
+            throw new Error('Consolidation origin scope changed; capabilities revoked')
+          }
+        })
       }
       let disabledTools: string[] = []
       if (overrides?.toolsOverride) {
