@@ -1,7 +1,7 @@
 import fs from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
-import { describe, it, expect, beforeEach, afterEach } from 'vitest'
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
 import {
   sealSecret,
   resolveSecret,
@@ -12,7 +12,7 @@ import {
   secretValueHash,
   invalidateSecretHandleCache,
 } from './secret-store.js'
-import { loadSecrets, loadSecretsDecrypted, setSecret, injectSecretsIntoEnv } from './secrets-config.js'
+import { loadSecrets, loadSecretsDecrypted, setSecret, injectSecretsIntoEnv, saveSecrets, secretsFilePath } from './secrets-config.js'
 import { CORPUS_TOKENS } from './secret-corpus.fixture.js'
 
 let tmpDir: string
@@ -38,6 +38,7 @@ beforeEach(() => {
 })
 
 afterEach(() => {
+  vi.restoreAllMocks()
   if (previousDataDir === undefined) delete process.env.DATA_DIR
   else process.env.DATA_DIR = previousDataDir
   if (previousKey === undefined) delete process.env.ENCRYPTION_KEY
@@ -183,5 +184,67 @@ describe('secret-store — backwards compatibility with the env section', () => 
     setSecret('ANOTHER_ENV', 'another-value-1')
     expect(resolveSecret(slug)).toBe(CORPUS_TOKENS.ASIA)
     expect(Object.keys(loadSecrets().env)).toEqual(['ANOTHER_ENV'])
+  })
+})
+
+const mode = (file: string): number => fs.statSync(file).mode & 0o777
+
+describe('secret-store — explicit origin wins over automatic origin', () => {
+  it('a value first sealed from tool output and then stored via the form is upgraded to the explicit origin and never downgraded (re-review N4)', () => {
+    const pw = ['Hx4', 'q9Lm', '2Wv'].join('')
+    const slug = sealSecret(pw, 'url-password', 'tool:shell')
+    expect(sealSecret(pw, 'password', 'form')).toBe(slug)
+    expect(listSecrets().find(s => s.slug === slug)?.source).toBe('form')
+    // a later automatic hit never downgrades the origin again
+    expect(sealSecret(pw, 'url-password', 'tool:shell')).toBe(slug)
+    expect(listSecrets().find(s => s.slug === slug)?.source).toBe('form')
+    expect(loadSecrets().handles![slug]!.explicitlyStored).toBe(true)
+    expect(listSecrets().map(s => s.slug)).toEqual([slug])
+  })
+})
+
+describe('saveSecrets (re-review N5)', () => {
+  it('never writes the content into a file with looser bits, replaces atomically, and does not swallow a chmod error', () => {
+    const file = secretsFilePath()
+    saveSecrets({ env: {} })
+    fs.chmodSync(file, 0o644) // a loose file from an old version
+    const inodeBefore = fs.statSync(file).ino
+
+    const modesAtWrite: number[] = []
+    const realWrite = fs.writeSync.bind(fs) as (fd: number, buf: Buffer, off: number, len: number) => number
+    vi.spyOn(fs, 'writeSync').mockImplementation(((fd: number, buf: Buffer, off?: number, len?: number) => {
+      modesAtWrite.push(fs.fstatSync(fd).mode & 0o777)
+      const o = off ?? 0
+      return realWrite(fd, buf, o, len ?? buf.length - o)
+    }) as typeof fs.writeSync)
+    const realWriteFile = fs.writeFileSync.bind(fs)
+    vi.spyOn(fs, 'writeFileSync').mockImplementation(((target: fs.PathOrFileDescriptor, data: string | NodeJS.ArrayBufferView, options?: fs.WriteFileOptions) => {
+      modesAtWrite.push(typeof target === 'number' ? fs.fstatSync(target).mode & 0o777 : fs.existsSync(target) ? fs.statSync(target).mode & 0o777 : -1)
+      realWriteFile(target, data, options)
+    }) as typeof fs.writeFileSync)
+    saveSecrets({ env: { A: 'x' } })
+    vi.restoreAllMocks()
+
+    expect(modesAtWrite.length).toBeGreaterThan(0)
+    expect(modesAtWrite.every(m => m === 0o600)).toBe(true)
+    expect(mode(file)).toBe(0o600)
+    expect(fs.statSync(file).ino).not.toBe(inodeBefore) // replaced by rename, not rewritten in place
+    expect(loadSecrets().env).toEqual({ A: 'x' })
+
+    // a failing permission change is an error and leaves the old file intact
+    const failing = new Error('EPERM: simulated')
+    vi.spyOn(fs, 'fchmodSync').mockImplementation(() => { throw failing })
+    vi.spyOn(fs, 'chmodSync').mockImplementation(() => { throw failing })
+    expect(() => saveSecrets({ env: { B: 'y' } })).toThrow(/EPERM/)
+    vi.restoreAllMocks()
+    expect(loadSecrets().env).toEqual({ A: 'x' })
+    expect(fs.readdirSync(path.dirname(file)).filter(f => f.includes('.tmp-'))).toEqual([])
+  })
+
+  it('saveSecrets leaves secrets.json at 0600 even when it existed with looser bits', () => {
+    saveSecrets({ env: {} })
+    fs.chmodSync(secretsFilePath(), 0o644)
+    saveSecrets({ env: {} })
+    expect(mode(secretsFilePath())).toBe(0o600)
   })
 })

@@ -1110,6 +1110,8 @@ describe('memory', () => {
       expect(isPromptSafeModelId('a'.repeat(122))).toBe(false)
       expect(isPromptSafeModelId('openrouter/meta-llama-3:70b')).toBe(true)
       expect(isPromptSafeModelId('http://x')).toBe(false)
+      expect(isPromptSafeModelId(undefined)).toBe(false)
+      expect(isPromptSafeModelId(42)).toBe(false)
       expect(promptSafeProviderName('A\u2028B\u0085C')).toBe('A B C')
     })
 

@@ -965,8 +965,8 @@ export const PROMPT_OTHER_MODELS_BUDGET_CHARS = 2000
  */
 const PROMPT_SAFE_MODEL_ID_RE = /^[A-Za-z0-9][A-Za-z0-9._:/@+-]{0,120}$/
 
-export function isPromptSafeModelId(id: string): boolean {
-  return PROMPT_SAFE_MODEL_ID_RE.test(id) && !id.includes('://')
+export function isPromptSafeModelId(id: unknown): id is string {
+  return typeof id === 'string' && PROMPT_SAFE_MODEL_ID_RE.test(id) && !id.includes('://')
 }
 
 /**

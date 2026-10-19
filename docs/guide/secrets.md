@@ -144,19 +144,13 @@ each one has a concrete reason.
   to the response. Storing a value via the form (or any other explicit
   source) that was first sealed from tool output upgrades the handle's
   `source` to the explicit one and sets `explicitlyStored: true`.
-- **Junk handles are removed by slug, never by value — with the backend
-  stopped.** `npx tsx scripts/cleanup-trivial-secret-handles.ts --slugs a,b,c`
-  lists the named handles (slug, kind, source, length — never a value);
-  `--apply` removes them. Only handles with source `tool:*` or `vaultwarden`
-  that were never stored explicitly can be removed; one unknown or refused
-  slug aborts the whole run. There is no file lock: the script refuses
-  (exit 3, no change) while an Offtangent backend runs — a process with
-  `dist/server.js` in its command line, or anything accepting connections on
-  127.0.0.1:3000 (`CLEANUP_BACKEND_PORT` overrides the port). `--apply`
-  first writes `secrets.json.bak-<timestamp>` exclusively with mode 0600,
-  completely, and compares it byte by byte with the original; on a mismatch
-  nothing is removed. `secrets.json` itself is always written atomically
-  (0600 temp file in the same directory, fsync, rename).
+- **Junk handles are removed one by one, never by value.** An automatic
+  handle that should not exist (for example a placeholder sealed before the
+  triviality check) is deleted individually in the UI or via
+  `DELETE /api/secrets/handles/:slug` on the running backend, which stays the
+  only writer of `secrets.json`. There is no offline cleanup script. The file is
+  always written atomically (0600 temp file in the same directory, fsync,
+  rename).
 - **Background jobs can be skipped instead of downgraded.** A background job
   without its own model (session summary, fact extraction, memory
   consolidation, plan verification) falls back to the active chat model. That

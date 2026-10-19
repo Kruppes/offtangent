@@ -446,8 +446,6 @@ export {
   REDACTED_HANDLE,
   SECRET_HANDLE_RE,
 } from './secret-boundary.js'
-export { BACKEND_CMDLINE_MARKERS, cleanupSecretHandlesBySlug, CLEANUP_ALLOWED_SOURCES, findRunningBackend, parseSlugList, runCleanupCli, writeExclusiveBackup } from './secret-handle-cleanup.js'
-export type { BackendProbeOptions, CleanupCliResult, CleanupHandleReport, CleanupResult } from './secret-handle-cleanup.js'
 export { isTrivialSecretValue, skipTrivialAutomaticFinding, TRIVIAL_SECRET_WORDS, TRIVIALITY_CHECKED_KINDS } from './secret-triviality.js'
 export type { SealTextOptions, SealTextResult, SealedRef } from './secret-boundary.js'
 // Secret values that only exist in files (`<DATA_DIR>/secrets/*.env`) and the
