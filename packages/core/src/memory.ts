@@ -951,6 +951,49 @@ export function formatRuntimeInstanceBlock(identity?: RuntimeInstanceIdentity | 
   return `<runtime_instance>\n${line}\n</runtime_instance>`
 }
 
+/** Max model ids per provider in the compact "further models" line. */
+export const PROMPT_OTHER_MODELS_PER_PROVIDER = 40
+/** Character budget of all "further models" lines together. */
+export const PROMPT_OTHER_MODELS_BUDGET_CHARS = 2000
+
+/**
+ * A model id safe to put into the system prompt: no control characters or
+ * whitespace, no URL, no query string, bounded length (review 2026-10-19,
+ * finding 8 — the ids come from provider APIs and are not validated on save).
+ */
+function isPromptSafeModelId(id: string): boolean {
+  if (!id || id.length > 120) return false
+  // eslint-disable-next-line no-control-regex
+  if (/[\s\u0000-\u001f\u007f]/.test(id)) return false
+  if (id.includes('://') || id.includes('?') || id.includes('=')) return false
+  return true
+}
+
+/**
+ * One `- Provider: id, id, …` line with at most
+ * {@link PROMPT_OTHER_MODELS_PER_PROVIDER} ids and at most `budget`
+ * characters; the rest is summarised as "+N more". Returns `null` when nothing
+ * fits or nothing is left after validation.
+ */
+function formatOtherModelsLine(providerName: string, ids: readonly string[], budget: number): string | null {
+  const safe = ids.filter(isPromptSafeModelId)
+  if (safe.length === 0) return null
+  // eslint-disable-next-line no-control-regex
+  const name = providerName.replace(/[\u0000-\u001f\u007f]+/g, ' ').slice(0, 80)
+  const more = (n: number): string => ` (+${n} more; the full list is in the error message of create_task for an unknown model)`
+  const head = `- ${name}: `
+  const shown: string[] = []
+  for (const id of safe.slice(0, PROMPT_OTHER_MODELS_PER_PROVIDER)) {
+    const rest = safe.length - shown.length - 1
+    const candidate = head + [...shown, id].join(', ') + (rest > 0 ? more(rest) : '')
+    if (candidate.length > budget) break
+    shown.push(id)
+  }
+  if (shown.length === 0) return null
+  const rest = safe.length - shown.length
+  return head + shown.join(', ') + (rest > 0 ? more(rest) : '')
+}
+
 export function assembleSystemPrompt(options?: {
   /** Resolved from the authenticated session; absent means no automatic data memory. */
   contextScope?: import('./context-scope.js').ContextScope | null
@@ -1162,6 +1205,7 @@ export function assembleSystemPrompt(options?: {
   if (options?.availableProviders && options.availableProviders.length > 0) {
     const providerLines: string[] = []
     const otherLines: string[] = []
+    let otherBlockChars = 0
     for (const provider of options.availableProviders) {
       const others: string[] = []
       for (const model of provider.models) {
@@ -1187,7 +1231,11 @@ export function assembleSystemPrompt(options?: {
       // 2026-10-19): without it the agent could not find e.g. an older Opus
       // the user asked for by name. Still not for autonomous routing — the
       // description stays the opt-in gate for that.
-      if (others.length > 0) otherLines.push(`- ${provider.name}: ${others.join(', ')}`)
+      const line = formatOtherModelsLine(provider.name, others, PROMPT_OTHER_MODELS_BUDGET_CHARS - otherBlockChars)
+      if (line) {
+        otherLines.push(line)
+        otherBlockChars += line.length + 1
+      }
     }
 
     if (providerLines.length > 0 || otherLines.length > 0) {

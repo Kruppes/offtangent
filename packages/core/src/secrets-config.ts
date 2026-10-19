@@ -62,8 +62,17 @@ export function loadSecrets(): SecretsFile {
   }
 }
 
+/** Absolute path of secrets.json in the current config directory. */
+export function secretsFilePath(): string {
+  return path.join(getConfigDir(), SECRETS_FILENAME)
+}
+
 /**
- * Save secrets.json to config directory
+ * Save secrets.json to config directory.
+ *
+ * Mode 0600 on create AND after every write (review 2026-10-19, finding 7):
+ * `writeFileSync`'s `mode` only applies when the file is created, so a file
+ * restored from a backup or created by hand keeps loose bits otherwise.
  */
 export function saveSecrets(data: SecretsFile): void {
   const configDir = getConfigDir()
@@ -71,7 +80,74 @@ export function saveSecrets(data: SecretsFile): void {
     fs.mkdirSync(configDir, { recursive: true })
   }
   const filePath = path.join(configDir, SECRETS_FILENAME)
-  fs.writeFileSync(filePath, JSON.stringify(data, null, 2) + '\n', 'utf-8')
+  fs.writeFileSync(filePath, JSON.stringify(data, null, 2) + '\n', { encoding: 'utf-8', mode: 0o600 })
+  try {
+    fs.chmodSync(filePath, 0o600)
+  } catch {
+    // e.g. a share that squashes ownership — the write itself succeeded
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Advisory file lock (review 2026-10-19, finding 6)
+//
+// Every read-modify-write of secrets.json in this process and in the cleanup
+// script runs under `<secrets.json>.lock`, created exclusively (`wx`). The
+// lock is re-entrant inside one process (sealSecret → saveSecrets), waits up
+// to `SECRETS_LOCK_TIMEOUT_MS` and breaks a lock file older than
+// `SECRETS_LOCK_STALE_MS` (a crashed writer).
+// ---------------------------------------------------------------------------
+
+export const SECRETS_LOCK_TIMEOUT_MS = 5_000
+export const SECRETS_LOCK_STALE_MS = 30_000
+
+let lockDepth = 0
+let lockPathHeld: string | null = null
+
+function sleepSync(ms: number): void {
+  Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms)
+}
+
+/**
+ * Run `fn` while holding the secrets.json lock. Synchronous on purpose: all
+ * writers of the file are synchronous.
+ */
+export function withSecretsFileLock<T>(fn: () => T): T {
+  const lockPath = `${secretsFilePath()}.lock`
+  if (lockDepth > 0 && lockPathHeld === lockPath) {
+    lockDepth++
+    try { return fn() } finally { lockDepth-- }
+  }
+  const dir = path.dirname(lockPath)
+  if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true })
+  const deadline = Date.now() + SECRETS_LOCK_TIMEOUT_MS
+  for (;;) {
+    try {
+      const fd = fs.openSync(lockPath, 'wx', 0o600)
+      fs.writeSync(fd, `${process.pid}\n`)
+      fs.closeSync(fd)
+      break
+    } catch (err) {
+      if ((err as NodeJS.ErrnoException).code !== 'EEXIST') throw err
+      try {
+        const age = Date.now() - fs.statSync(lockPath).mtimeMs
+        if (age > SECRETS_LOCK_STALE_MS) { fs.rmSync(lockPath, { force: true }); continue }
+      } catch {
+        continue // vanished between open and stat — retry at once
+      }
+      if (Date.now() > deadline) throw new Error('secrets.json is locked by another writer')
+      sleepSync(25)
+    }
+  }
+  lockDepth = 1
+  lockPathHeld = lockPath
+  try {
+    return fn()
+  } finally {
+    lockDepth = 0
+    lockPathHeld = null
+    fs.rmSync(lockPath, { force: true })
+  }
 }
 
 /**
@@ -124,29 +200,35 @@ export function loadSecretsMasked(): Array<{ key: string; configured: boolean; m
  * Set a secret (encrypts and saves)
  */
 export function setSecret(key: string, value: string): void {
-  const file = loadSecrets()
-  file.env[key] = value ? encrypt(value) : ''
-  saveSecrets(file)
+  withSecretsFileLock(() => {
+    const file = loadSecrets()
+    file.env[key] = value ? encrypt(value) : ''
+    saveSecrets(file)
+  })
 }
 
 /**
  * Set multiple secrets at once (encrypts and saves)
  */
 export function setSecrets(secrets: Record<string, string>): void {
-  const file = loadSecrets()
-  for (const [key, value] of Object.entries(secrets)) {
-    file.env[key] = value ? encrypt(value) : ''
-  }
-  saveSecrets(file)
+  withSecretsFileLock(() => {
+    const file = loadSecrets()
+    for (const [key, value] of Object.entries(secrets)) {
+      file.env[key] = value ? encrypt(value) : ''
+    }
+    saveSecrets(file)
+  })
 }
 
 /**
  * Delete a secret
  */
 export function deleteSecret(key: string): void {
-  const file = loadSecrets()
-  delete file.env[key]
-  saveSecrets(file)
+  withSecretsFileLock(() => {
+    const file = loadSecrets()
+    delete file.env[key]
+    saveSecrets(file)
+  })
 }
 
 /** Keys currently managed by injectSecretsIntoEnv — used to clean up removed secrets */

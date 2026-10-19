@@ -127,19 +127,26 @@ each one has a concrete reason.
   four-digit PIN would rewrite every port number, date and line number that
   happens to contain those digits. Resolving such a value **through its
   handle** keeps working; only the global search-and-replace has this floor.
-- **Trivial values are not replaced globally either** (since 2026-10-19).
-  A stored value that is a common word (`secret`, `password`, `session`,
-  `admin`, …), a placeholder (`xxxxxx`, `changeme`, `<token>`), a short
-  Bitwarden CLI status line (`Your vault is locked.`, `Not found.`) or a
-  model id from `providers.json` is skipped by the search-and-replace
-  (`packages/core/src/secret-triviality.ts`). Such values got into the store
-  through fail-closed sealing of a whole command output or through a
-  `url-password` match on `user:secret@host`, and then rewrote every
-  ordinary occurrence of the word — including `/data/secrets` and model ids.
-  The form refuses to store them (`value_too_trivial`). Existing junk handles
-  are listed and, with `--apply`, removed after a backup of `secrets.json`
-  by `npx tsx scripts/cleanup-trivial-secret-handles.ts` (prints slug, kind,
-  length and reason, never a value).
+- **Placeholders in tool output do not create handles** (since 2026-10-19).
+  Rule: an exception never lifts the redaction of a real, deliberately
+  stored secret. Every stored handle, `secrets.json` env value, provider key
+  and vault value is always redacted, whatever it looks like — a dictionary
+  word, `<geheim>`, `$PASS` or a model id. The one narrow exception sits at
+  the source: a NEW `url-password` finding in a tool output (`tool:*`
+  source, e.g. `postgres://user:password@host` in a README) whose value is a
+  documentation placeholder or ordinary word
+  (`packages/core/src/secret-triviality.ts`) is not sealed into the store.
+  A value that is already stored is redacted as usual. The form stores weak
+  passwords like any other and only adds `warning: "value_looks_trivial"`
+  to the response.
+- **Junk handles are removed by slug, never by value.**
+  `npx tsx scripts/cleanup-trivial-secret-handles.ts --slugs a,b,c` lists
+  the named handles (slug, kind, source, length — never a value);
+  `--apply` removes them. Only handles with source `tool:shell` or
+  `vaultwarden` can be removed; one unknown or refused slug aborts the whole
+  run. The origin is checked again under the `secrets.json.lock` file lock,
+  right before the write, after an exclusive `secrets.json.bak-<timestamp>`
+  (mode 0600) was written. `secrets.json` itself is 0600 after every write.
 - **Background jobs can be skipped instead of downgraded.** A background job
   without its own model (session summary, fact extraction, memory
   consolidation, plan verification) falls back to the active chat model. That
@@ -209,10 +216,14 @@ directory that holds `secrets.json` and `<DATA_DIR>/secrets` (override with
 - a PEM private-key block as a whole,
 - a file that contains a single token on one line (session keys).
 
-Env keys that name a model (`MODEL`, `ANTHROPIC_MODEL_POLISH`,
-`OPENAI_MODELS`) are configuration and skipped, unless the key also contains
-a credential word (`MODEL_API_KEY`). Trivial values (see above) are skipped
-as well.
+An env line whose key names a model (`MODEL`, `ANTHROPIC_MODEL_POLISH`,
+`OPENAI_MODELS`, no credential word such as `KEY`/`TOKEN`/`PASS` in the key)
+is skipped only when ALL of these hold: the value is shaped like a model id
+(`^[A-Za-z0-9][A-Za-z0-9._:/-]{1,80}$`, no `://`, no 24+ character
+alphanumeric run), no detector rule fires on it, and it is not already a
+known secret (handle, `secrets.json` env, provider key, credential env var,
+or any non-model line of a secret file). Otherwise it is redacted like
+every other file value.
 
 Those values are redacted **opaquely**: they turn into <code v-pre>{{secret:redacted}}</code>,
 they never become a handle and nothing is written to the store — reading a

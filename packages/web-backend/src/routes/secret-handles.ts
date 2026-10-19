@@ -26,7 +26,6 @@ import {
   isSecretHandleKind,
   isSecretHandleSlug,
   isTrivialSecretValue,
-  providerModelIds,
   listSecrets,
   removeSecret,
   renameSecret,
@@ -169,15 +168,6 @@ export function createSecretHandlesRouter(options: SecretHandlesRouterOptions): 
       res.status(400).json({ error: `Value is too long (maximum ${SECRET_HANDLE_MAX_VALUE_LENGTH} characters).` })
       return
     }
-    // Fix 2026-10-19: a common word, placeholder or model id would rewrite
-    // ordinary text everywhere once it is a known value.
-    if (isTrivialSecretValue(body.value, providerModelIds())) {
-      res.status(400).json({
-        code: 'value_too_trivial',
-        error: 'Value is too trivial to be a secret (common word, placeholder or model id).',
-      })
-      return
-    }
     if (!isSecretHandleKind(body.kind)) {
       res.status(400).json({ error: `Unknown kind. Allowed: ${SECRET_HANDLE_KINDS.join(', ')}.` })
       return
@@ -205,10 +195,16 @@ export function createSecretHandlesRouter(options: SecretHandlesRouterOptions): 
       }
 
       const info = listSecrets().find(entry => entry.slug === slug)
+      // A weak value (dictionary word, placeholder shape) is stored and
+      // redacted like any other — refusing it would leave the user's real
+      // password unprotected. The response only carries a warning
+      // (review 2026-10-19, finding 2).
+      const weak = isTrivialSecretValue(body.value)
       res.status(201).json({
         slug,
         handle: secretHandle(slug),
         kind: info?.kind ?? body.kind,
+        ...(weak ? { warning: 'value_looks_trivial' } : {}),
       })
     } catch {
       // Deliberately not forwarding the thrown message: it may quote input.

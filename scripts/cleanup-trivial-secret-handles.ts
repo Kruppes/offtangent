@@ -1,67 +1,48 @@
 /**
- * Remove junk handles from `<DATA_DIR>/config/secrets.json` (fix 2026-10-19).
+ * Remove named junk handles from `<DATA_DIR>/config/secrets.json`
+ * (fix 2026-10-19, narrowed after review finding 6).
  *
- * A handle is junk when its value is trivial by `isTrivialSecretValue()` —
- * common word, placeholder, Bitwarden CLI status line, or a model id from
- * providers.json. Such handles made the global redaction rewrite ordinary
- * text. The runtime already ignores them for redaction after the fix; this
- * script removes them from the store so they also stop being resolvable and
- * listed.
+ * Nothing is selected by value. You name the slugs; the script only removes
+ * handles whose source is automatic (`tool:shell`, `vaultwarden`), re-checks
+ * that origin inside the secrets.json lock right before the write, and removes
+ * nothing at all if one slug is unknown or refused. A `form`/`chat`/provider
+ * handle can never be removed this way.
  *
- * NEVER prints a value: only slug, kind, source, length and the reason.
+ * NEVER prints a value: only slug, kind, source and length.
  *
- *   npx tsx scripts/cleanup-trivial-secret-handles.ts            # dry run
- *   npx tsx scripts/cleanup-trivial-secret-handles.ts --apply    # backup + remove
+ *   npx tsx scripts/cleanup-trivial-secret-handles.ts --slugs a,b,c            # dry run
+ *   npx tsx scripts/cleanup-trivial-secret-handles.ts --slugs a,b,c --apply    # backup + remove
  *
  * Needs the same DATA_DIR / ENCRYPTION_KEY as the backend (run it inside the
  * container, e.g. with `env $(cat /proc/<backend-pid>/environ | tr '\0' '\n' | grep -E '^(DATA_DIR|ENCRYPTION_KEY)=')`).
- * `--apply` copies secrets.json to secrets.json.bak-<timestamp> first.
- * Rollback: copy the backup back over secrets.json (mode 600).
+ * `--apply` first creates secrets.json.bak-<timestamp> exclusively with mode
+ * 0600 and fills it with the current bytes. Rollback: copy the backup back over
+ * secrets.json and `chmod 600` it.
  */
-import fs from 'node:fs'
-import path from 'node:path'
-import { providerModelIds } from '../packages/core/src/secret-boundary.js'
-import { getConfigDir } from '../packages/core/src/config.js'
-import { invalidateSecretHandleCache, knownSecretValues, listSecrets, removeSecret } from '../packages/core/src/secret-store.js'
-import { isTrivialSecretValue, TRIVIAL_SECRET_WORDS } from '../packages/core/src/secret-triviality.js'
+import { cleanupSecretHandlesBySlug, CLEANUP_ALLOWED_SOURCES, parseSlugList } from '../packages/core/src/secret-handle-cleanup.js'
 
-const apply = process.argv.includes('--apply')
-const modelIds = providerModelIds()
-const meta = new Map(listSecrets().map(s => [s.slug, s]))
-
-function reason(value: string): string | null {
-  const v = value.trim()
-  if (modelIds.has(v) || modelIds.has(v.toLowerCase())) return 'model-id'
-  if (TRIVIAL_SECRET_WORDS.has(v.toLowerCase())) return 'common-word'
-  if (isTrivialSecretValue(v)) return 'placeholder-or-vault-cli-message'
-  return null
+const args = process.argv.slice(2)
+const apply = args.includes('--apply')
+const slugArgIndex = args.indexOf('--slugs')
+const slugArg = slugArgIndex >= 0 ? args[slugArgIndex + 1] : args.find(a => a.startsWith('--slugs='))?.slice('--slugs='.length)
+if (!slugArg) {
+  console.error('usage: cleanup-trivial-secret-handles.ts --slugs a,b,c [--apply]')
+  process.exit(2)
 }
+const slugs = parseSlugList(slugArg)
 
-const junk: Array<{ slug: string; kind: string; source: string; length: number; reason: string }> = []
-let shortCount = 0
-for (const [value, slug] of knownSecretValues()) {
-  const r = reason(value)
-  if (value.length < 6) shortCount++
-  if (!r) continue
-  const m = meta.get(slug)
-  junk.push({ slug, kind: m?.kind ?? '?', source: m?.source ?? '?', length: value.length, reason: r })
+const result = cleanupSecretHandlesBySlug({ slugs, apply })
+for (const h of result.handles) {
+  const meta = h.kind ? `\tkind=${h.kind}\tsource=${h.source}\tlen=${h.length}` : ''
+  console.log(`  ${h.slug}\t${h.status}${meta}`)
 }
-
-console.log(`handles: ${meta.size}, junk: ${junk.length}, below 6 chars (kept, never redacted globally): ${shortCount}`)
-for (const j of junk) console.log(`  ${j.slug}\tkind=${j.kind}\tsource=${j.source}\tlen=${j.length}\t${j.reason}`)
-
+if (result.refused) {
+  console.error(`refused: only handles with source ${[...CLEANUP_ALLOWED_SOURCES].join('/')} that exist can be removed — nothing was changed`)
+  process.exit(1)
+}
 if (!apply) {
-  console.log('dry run — pass --apply to back up secrets.json and remove these handles')
+  console.log(`dry run — ${result.handles.length} handle(s) eligible; pass --apply to back up secrets.json and remove them`)
   process.exit(0)
 }
-if (junk.length === 0) process.exit(0)
-
-const file = path.join(getConfigDir(), 'secrets.json')
-const backup = `${file}.bak-${new Date().toISOString().replace(/[:.]/g, '-')}`
-fs.copyFileSync(file, backup)
-fs.chmodSync(backup, 0o600)
-console.log(`backup: ${backup}`)
-let removed = 0
-for (const j of junk) if (removeSecret(j.slug)) removed++
-invalidateSecretHandleCache()
-console.log(`removed: ${removed}`)
+console.log(`backup: ${result.backupPath}`)
+console.log(`removed: ${result.removed}`)

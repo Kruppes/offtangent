@@ -445,14 +445,15 @@ export {
   KNOWN_ENV_SCAN_TTL_MS,
   REDACTED_HANDLE,
   SECRET_HANDLE_RE,
-  providerModelIds,
 } from './secret-boundary.js'
-export { isTrivialSecretValue, TRIVIAL_SECRET_WORDS } from './secret-triviality.js'
+export { cleanupSecretHandlesBySlug, CLEANUP_ALLOWED_SOURCES, parseSlugList, writeExclusiveBackup } from './secret-handle-cleanup.js'
+export type { CleanupHandleReport, CleanupResult } from './secret-handle-cleanup.js'
+export { isTrivialSecretValue, skipTrivialAutomaticFinding, TRIVIAL_SECRET_WORDS, TRIVIALITY_CHECKED_KINDS } from './secret-triviality.js'
 export type { SealTextOptions, SealTextResult, SealedRef } from './secret-boundary.js'
 // Secret values that only exist in files (`<DATA_DIR>/secrets/*.env`) and the
 // sealing of password-manager CLI output (maintainer request, privacy plan 2026-09-26).
-export { secretFileDirs, secretFileValues, secretFilesSignature, invalidateSecretFilesSignature, SECRET_FILES_SIGNATURE_TTL_MS, SECRET_FILE_DIRS_ENV } from './secret-files.js'
-export type { SecretFileValuesOptions } from './secret-files.js'
+export { isModelConfigCandidate, isModelConfigEnvKey, secretFileDirs, secretFileEntries, secretFileValues, secretFilesSignature, invalidateSecretFilesSignature, SECRET_FILES_SIGNATURE_TTL_MS, SECRET_FILE_DIRS_ENV } from './secret-files.js'
+export type { SecretFileEntry, SecretFileValuesOptions } from './secret-files.js'
 export {
   commandInvokesVaultCli,
   classifyVaultCliCommand,

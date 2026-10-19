@@ -171,15 +171,24 @@ describe('POST /api/secrets/handles', () => {
     expect(exactly.status).toBe(201)
   })
 
-  it('rejects a trivial value (common word / placeholder) with a code', async () => {
-    for (const value of ['secret', 'password', 'session', 'changeme', 'xxxxxxxx']) {
+  it('stores a weak password (word / placeholder shape) with a warning instead of refusing it', async () => {
+    // Review 2026-10-19, finding 2: refusing a weak password would leave the
+    // user's real password unprotected. It is stored and redacted like any
+    // other handle; the response only carries a warning.
+    // ('$PASS' itself has 5 characters and is refused by the existing
+    // 6-character floor, value_too_short; that rule is unchanged.)
+    const weak = ['password', '<geheim>', '$PASSWORD', 'aaaaaaaaaaaa']
+    for (const value of weak) {
       const res = await createHandle({ value, kind: 'password' })
-      expect(res.status).toBe(400)
-      expect(res.body.code).toBe('value_too_trivial')
+      expect(res.status).toBe(201)
+      expect(res.body.warning).toBe('value_looks_trivial')
+      // ('password' is also the kind and slug prefix, so only the others can be checked)
+      if (value !== 'password') expect(JSON.stringify(res.body)).not.toContain(value)
     }
-    expect(listSecrets()).toHaveLength(0)
+    expect(listSecrets()).toHaveLength(weak.length)
     const real = await createHandle({ value: 'Tr0ub4dor&3-horse', kind: 'password' })
     expect(real.status).toBe(201)
+    expect(real.body.warning).toBeUndefined()
   })
 
   it('validates value, kind and slug without echoing the value', async () => {

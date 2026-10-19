@@ -19,7 +19,7 @@ import fs from 'node:fs'
 import path from 'node:path'
 import { getConfigDir } from './config.js'
 import { encrypt, decrypt, isEncrypted } from './encryption.js'
-import { loadSecrets, saveSecrets, type SecretHandleRecord, type SecretsFile } from './secrets-config.js'
+import { loadSecrets, saveSecrets, withSecretsFileLock, type SecretHandleRecord, type SecretsFile } from './secrets-config.js'
 
 /** Metadata about a sealed secret. Never contains the value. */
 export interface SecretHandleInfo {
@@ -129,11 +129,13 @@ function readHandles(): Record<string, SecretHandleRecord> {
 }
 
 function writeHandles(mutate: (handles: Record<string, SecretHandleRecord>) => void): void {
-  const file: SecretsFile = loadSecrets()
-  const handles = { ...(file.handles ?? {}) }
-  mutate(handles)
-  saveSecrets({ ...file, handles })
-  invalidateSecretHandleCache()
+  withSecretsFileLock(() => {
+    const file: SecretsFile = loadSecrets()
+    const handles = { ...(file.handles ?? {}) }
+    mutate(handles)
+    saveSecrets({ ...file, handles })
+    invalidateSecretHandleCache()
+  })
 }
 
 function decryptRecord(slug: string, record: SecretHandleRecord): string | null {
@@ -160,6 +162,10 @@ function decryptRecord(slug: string, record: SecretHandleRecord): string | null 
  */
 export function sealSecret(value: string, kind: string, source: string): string {
   if (!value) throw new Error('sealSecret: value must not be empty')
+  return withSecretsFileLock(() => sealSecretLocked(value, kind, source))
+}
+
+function sealSecretLocked(value: string, kind: string, source: string): string {
   const hash = dedupHash(value)
   const legacy = legacySha256(value)
   const file = loadSecrets()

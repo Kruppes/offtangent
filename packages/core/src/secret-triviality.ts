@@ -1,39 +1,35 @@
 /**
- * Which known values are too trivial for the GLOBAL search-and-replace of the
- * secret boundary (fix 2026-10-19, "model IDs and plain words redacted").
+ * Which AUTOMATIC detector findings are too trivial to become a new handle
+ * (fix 2026-10-19, "plain words redacted"; narrowed after review 2026-10-19).
  *
- * The known-value index in `secret-boundary.ts` rewrites every occurrence of a
- * stored value in every tool output, message and system prompt. That is right
- * for an API key and vandalism for an ordinary word: a URL detector hit on
- * `postgres://user:password@host` (a documentation placeholder) or a `bw`
- * status line sealed as a "session" turned plain English words into handles
- * everywhere, and an env file holding a model id (`*_MODEL=claude-…`) made a
- * model id unreadable for the agent.
+ * The URL-credential rule of `secret-detect.ts` reads the part after the
+ * colon of `scheme://user:<value>@host`. In documentation, READMEs and help
+ * texts that value is a placeholder (`postgres://user:password@host`), and
+ * sealing it into the store turned plain English words into handles that the
+ * global redaction then rewrote in every later output.
  *
- * Rules (case-insensitive):
+ * Guiding rule: an exception may NEVER lift the redaction of a real,
+ * deliberately stored secret. So this module does NOT filter the known-value
+ * index, explicit handles (form, vault, provider keys) or detector findings
+ * in general. It is consulted at exactly one place: `sealText()` in
+ * `secret-boundary.ts`, before a NEW handle is created for a `url-password`
+ * finding in a tool output (`tool:*` source) whose value is not already a
+ * stored handle. Everything that is already stored is always redacted.
  *
- * 1. a common word or placeholder from {@link TRIVIAL_SECRET_WORDS};
- * 2. a placeholder shape (`${VAR}`, `<password>`, `***`, `xxxx`);
- * 3. a model id configured in providers.json (passed in by the caller, which
- *    owns that file — see `secret-boundary.ts`);
- * 4. a Bitwarden CLI status/error line ({@link VAULT_CLI_MESSAGE_RE}).
+ * Rules (case-insensitive, trimmed):
  *
- * The length floor (`SECRET_HANDLE_MIN_VALUE_LENGTH`, 6) stays where it
- * was, in the boundary: it applies to the global replacement only, so a 4-digit
- * PIN the user-tier detector finds is still sealed into a handle. A length or
- * character-class rule here was considered and rejected — it would have lifted
- * the deliberate 6-character floor of review F5.
+ * 1. a placeholder or ordinary word from {@link TRIVIAL_SECRET_WORDS};
+ * 2. a placeholder shape (`$VAR`, `${VAR}`, `<password>`, `[hidden]`,
+ *    `{{name}}`, one repeated character such as `xxxxxxxx`).
  *
- * Scope: this ONLY decides what the global redaction and the structural
- * detector skip. A handle that already exists keeps resolving (`resolveSecret`),
- * and the vault CLI still seals every `bw get password` output whole, so the
- * first read of a short vault password never reaches the model.
+ * The form route (`POST /api/secrets/handles`) uses the same check only to
+ * attach a warning to its response; it never refuses a weak password.
  */
 
 /**
- * Words that show up as "secrets" only because a detector or a CLI status line
- * caught them: placeholders in docs and examples, CLI vocabulary, booleans.
- * Lower-case; compared against the lower-cased, trimmed value.
+ * Words that show up as URL "passwords" only because the detector caught a
+ * documentation placeholder. Lower-case; compared against the lower-cased,
+ * trimmed value.
  */
 export const TRIVIAL_SECRET_WORDS: ReadonlySet<string> = new Set([
   // placeholders / documentation
@@ -42,7 +38,7 @@ export const TRIVIAL_SECRET_WORDS: ReadonlySet<string> = new Set([
   'your-password', 'yourpassword', 'mypassword', 'my-password', 'your_password',
   'password123', 'secret123', 'example-password', 'example-secret', 'dummy', 'testing',
   'username', 'user:password', 'token', 'apikey', 'api-key', 'api_key',
-  // ordinary words that ended up in the store
+  // ordinary words seen as URL "passwords" in tool output
   'finished', 'session', 'sessions', 'default', 'unknown', 'localhost', 'undefined',
   'nothing', 'something', 'anything', 'everything', 'enabled', 'disabled',
   'admin', 'administrator', 'postgres',
@@ -58,33 +54,30 @@ const PLACEHOLDER_RES: readonly RegExp[] = [
 ]
 
 /**
- * Status and error lines of the Bitwarden CLI. A `bw unlock --raw` or
- * `bw get password` that fails prints one of these instead of a value, and
- * the vault boundary seals the whole output fail-closed — correct for that
- * one output, but as a known value the line then rewrote every later echo of
- * the same English sentence. A real session key or password never starts
- * like this.
- */
-const VAULT_CLI_MESSAGE_RE = /^(?:\?\s*)?(?:your vault is|vault is (?:locked|unlocked)|you are (?:already )?(?:not )?logged|you are logged out|session key is invalid|not found\.?$|more than one result was found|syncing complete|logged in|saved setting|invalid master password|username or password is incorrect|master password|mac failed|mac comparison failed|you must (?:login|unlock)|unexpected token|error:|failed to)/i
-
-const VAULT_CLI_MESSAGE_MAX_LENGTH = 120
-/** A run that looks like a key, session token or hash. */
-const TOKEN_RUN_RE = /[A-Za-z0-9+/=_-]{16,}/
-
-/**
- * True when `value` must not be used for the global search-and-replace.
+ * True when `value` looks like a documentation placeholder or an ordinary
+ * word rather than a credential. Pure; no I/O.
  *
- * Model ids from providers.json are passed in by the caller so this module
- * stays free of config I/O.
+ * Only for the two call sites named in the module docs — never use it to
+ * skip a value that is already stored.
  */
-export function isTrivialSecretValue(value: string, extraDenied?: ReadonlySet<string>): boolean {
+export function isTrivialSecretValue(value: string): boolean {
   const trimmed = value.trim()
   if (!trimmed) return true
-  const lower = trimmed.toLowerCase()
-  if (TRIVIAL_SECRET_WORDS.has(lower)) return true
-  if (extraDenied && (extraDenied.has(trimmed) || extraDenied.has(lower))) return true
-  // Only short prose: an error line that quotes a token or a long output is
-  // kept as a secret (fail closed).
-  if (trimmed.length <= VAULT_CLI_MESSAGE_MAX_LENGTH && !TOKEN_RUN_RE.test(trimmed) && VAULT_CLI_MESSAGE_RE.test(trimmed)) return true
+  if (TRIVIAL_SECRET_WORDS.has(trimmed.toLowerCase())) return true
   return PLACEHOLDER_RES.some(re => re.test(trimmed))
+}
+
+/** Detector kinds whose NEW automatic findings are checked for triviality. */
+export const TRIVIALITY_CHECKED_KINDS: ReadonlySet<string> = new Set(['url-password'])
+
+/**
+ * True when a new automatic finding must not create a handle: only a
+ * `url-password` finding from a tool output (`tool:<name>` source) with a
+ * trivial value. Chat input, system-prompt text, the form and the vault CLI
+ * are never filtered.
+ */
+export function skipTrivialAutomaticFinding(value: string, kind: string, source: string): boolean {
+  if (!source.startsWith('tool:')) return false
+  if (!TRIVIALITY_CHECKED_KINDS.has(kind)) return false
+  return isTrivialSecretValue(value)
 }

@@ -2908,6 +2908,39 @@ export function resolveProviderModelId(value?: string): {
   return { provider, modelId }
 }
 
+/** Lower-case, separators (space, dot, underscore, slash) folded to `-`. */
+function normalizeModelKey(value: string): string {
+  return value.trim().toLowerCase().replace(/[\s._/]+/g, '-').replace(/-+/g, '-').replace(/^-|-$/g, '')
+}
+
+type ModelMatchMode = 'exact' | 'case' | 'lenient'
+const MODEL_MATCH_MODES: readonly ModelMatchMode[] = ['exact', 'case', 'lenient']
+
+/**
+ * Find an enabled model of `provider` for a user-facing key.
+ *
+ * Three tiers, the caller takes the first that yields a hit (fix 2026-10-19,
+ * review finding 5):
+ * - `exact`: byte-identical id;
+ * - `case`: case-insensitive id (several hits are reported as ambiguous);
+ * - `lenient`: name match, so "Opus 4.6" or "opus-4.6" finds
+ *   `claude-opus-4-6`: the normalized key equals the normalized id or display
+ *   name, or the normalized id ends with `-<key>`.
+ */
+function matchEnabledModels(provider: ProviderConfig, modelKey: string, mode: ModelMatchMode): string[] {
+  const enabled = provider.enabledModels ?? []
+  if (mode === 'exact') return enabled.filter(m => m === modelKey)
+  if (mode === 'case') return enabled.filter(m => m.toLowerCase() === modelKey.toLowerCase())
+  const key = normalizeModelKey(modelKey)
+  if (!key) return []
+  return enabled.filter(id => {
+    const normalizedId = normalizeModelKey(id)
+    if (normalizedId === key || normalizedId.endsWith(`-${key}`)) return true
+    const name = provider.models?.find(m => m.id === id)?.name
+    return typeof name === 'string' && normalizeModelKey(name) === key
+  })
+}
+
 /**
  * Resolve a user-friendly `(provider, model)` pair into a concrete provider
  * and model id. Used by agent tools like `create_cronjob`, `edit_cronjob`,
@@ -2922,35 +2955,6 @@ export function resolveProviderModelId(value?: string): {
  * Provider lookup is case-insensitive on both `id` and `name`, matching the
  * pattern used by `resolveProvider` in runtime-composition.
  */
-/** Lower-case, separators (space, dot, underscore, slash) folded to `-`. */
-function normalizeModelKey(value: string): string {
-  return value.trim().toLowerCase().replace(/[\s._/]+/g, '-').replace(/-+/g, '-').replace(/^-|-$/g, '')
-}
-
-/**
- * Find an enabled model of `provider` for a user-facing key.
- *
- * Exact (case-insensitive) id match first. Otherwise a lenient name match
- * (fix 2026-10-19), so "Opus 4.6" or "opus-4.6" finds `claude-opus-4-6`: the
- * normalized key equals the normalized id or display name, or the normalized
- * id ends with `-<key>`. The caller decides what to do with several hits.
- */
-function matchEnabledModels(provider: ProviderConfig, modelKey: string, mode: 'exact' | 'lenient'): string[] {
-  const enabled = provider.enabledModels ?? []
-  if (mode === 'exact') {
-    const hit = enabled.find(m => m.toLowerCase() === modelKey.toLowerCase())
-    return hit ? [hit] : []
-  }
-  const key = normalizeModelKey(modelKey)
-  if (!key) return []
-  return enabled.filter(id => {
-    const normalizedId = normalizeModelKey(id)
-    if (normalizedId === key || normalizedId.endsWith(`-${key}`)) return true
-    const name = provider.models?.find(m => m.id === id)?.name
-    return typeof name === 'string' && normalizeModelKey(name) === key
-  })
-}
-
 export function resolveProviderModelInput(input: {
   provider?: string | null
   model?: string | null
@@ -2977,8 +2981,11 @@ export function resolveProviderModelInput(input: {
 
     let modelId: string
     if (modelKey) {
-      const exact = matchEnabledModels(match, modelKey, 'exact')
-      const candidates = exact.length > 0 ? exact : matchEnabledModels(match, modelKey, 'lenient')
+      let candidates: string[] = []
+      for (const mode of MODEL_MATCH_MODES) {
+        candidates = matchEnabledModels(match, modelKey, mode)
+        if (candidates.length > 0) break
+      }
       if (candidates.length > 1) {
         return { ok: false, error: `Model "${modelKey}" is ambiguous for provider "${match.name}": ${candidates.join(', ')}. Pass the exact id.` }
       }
@@ -2994,12 +3001,16 @@ export function resolveProviderModelInput(input: {
   }
 
   // Case 3: model only — search all providers for any enabled model that matches
-  // Exact id matches win; the lenient name match only runs when no provider
-  // has the exact id, so an existing exact call never changes its target.
-  const collect = (mode: 'exact' | 'lenient'): Array<{ provider: ProviderConfig; modelId: string }> =>
+  // A byte-identical id wins, then a case-insensitive id, then the lenient
+  // name match — each tier only runs when no provider matched the previous
+  // one, so an existing exact call never changes its target.
+  const collect = (mode: ModelMatchMode): Array<{ provider: ProviderConfig; modelId: string }> =>
     providers.flatMap(p => matchEnabledModels(p, modelKey, mode).map(modelId => ({ provider: p, modelId })))
-  let hits = collect('exact')
-  if (hits.length === 0) hits = collect('lenient')
+  let hits: Array<{ provider: ProviderConfig; modelId: string }> = []
+  for (const mode of MODEL_MATCH_MODES) {
+    hits = collect(mode)
+    if (hits.length > 0) break
+  }
 
   if (hits.length === 0) {
     return { ok: false, error: `Model "${modelKey}" not found in any configured provider. Configured providers: ${providers.map(p => `${p.name} (${(p.enabledModels ?? []).join(', ')})`).join('; ') || '(none)'}.` }

@@ -51,11 +51,36 @@ const MAX_VALUE_LENGTH = 8192
 const SKIPPED_FILENAMES = new Set(['secrets.json', 'providers.json', 'settings.json'])
 
 /**
- * Env keys whose value is configuration, never a credential: `MODEL`,
- * `ANTHROPIC_MODEL_POLISH`, `OPENAI_MODELS`, `FOO_MODEL_ID`. A key that also
- * carries a credential word (`MODEL_API_KEY`) is still a secret.
+ * Env keys that NAME a model setting: `MODEL`, `ANTHROPIC_MODEL_POLISH`,
+ * `OPENAI_MODELS`, `FOO_MODEL_ID` (fix 2026-10-19). A key that also carries a
+ * credential word (`MODEL_API_KEY`) never qualifies. The name alone does NOT
+ * exempt a value: the boundary additionally requires
+ * {@link isModelConfigCandidate}, no detector hit and no known secret with the
+ * same value (secret detection wins over this configuration heuristic).
  */
-const NON_SECRET_ENV_KEY_RE = /^(?!.*(?:KEY|SECRET|TOKEN|PASSWORD|PASS|AUTH|CREDENTIAL))(?:.*_)?MODELS?(?:_.*)?$/i
+const MODEL_CONFIG_ENV_KEY_RE = /^(?!.*(?:KEY|SECRET|TOKEN|PASSWORD|PASS|PWD|AUTH|CREDENTIAL|COOKIE|SESSION|PRIVATE))(?:.*_)?MODELS?(?:_.*)?$/i
+
+/** Narrow model-id shape: no whitespace, no URL, no query, <= 81 chars. */
+const MODEL_ID_VALUE_RE = /^[A-Za-z0-9][A-Za-z0-9._:/-]{1,80}$/
+
+/**
+ * True when `value` is shaped like a model id (`claude-opus-4-6`,
+ * `gpt-5.1`, `openrouter/meta-llama-3:70b`). Rejects URLs (`://`) and long
+ * single-class runs that look like tokens.
+ */
+export function isModelConfigCandidate(value: string): boolean {
+  if (!MODEL_ID_VALUE_RE.test(value)) return false
+  if (value.includes('://')) return false
+  // A model id is made of words and version numbers separated by `-._:/`;
+  // a long unbroken alphanumeric run (>= 24) is a token, not a model name.
+  if (/[A-Za-z0-9]{24,}/.test(value)) return false
+  return true
+}
+
+/** True when `key` names a model setting (see {@link MODEL_CONFIG_ENV_KEY_RE}). */
+export function isModelConfigEnvKey(key: string): boolean {
+  return MODEL_CONFIG_ENV_KEY_RE.test(key)
+}
 
 /** `KEY=VALUE`, optionally `export KEY=VALUE`, quotes optional. */
 const ENV_LINE_RE = /^\s*(?:export\s+)?([A-Za-z_][A-Za-z0-9_]*)\s*=\s*(.*)$/
@@ -181,20 +206,17 @@ function isPemBlock(content: string): boolean {
   return /-----BEGIN [A-Z0-9 ]*PRIVATE KEY(?: BLOCK)?-----/.test(content)
 }
 
-function envValues(content: string, minLength: number): string[] {
-  const values: string[] = []
+function envValues(content: string, minLength: number): SecretFileEntry[] {
+  const values: SecretFileEntry[] = []
   for (const line of content.split(/\r?\n/)) {
     if (!line.trim() || line.trim().startsWith('#')) continue
     const match = ENV_LINE_RE.exec(line)
     if (!match) continue
-    // A `*_MODEL…` variable names a model, it is configuration and not a
-    // credential; redacting it hid model ids everywhere (fix 2026-10-19).
-    if (NON_SECRET_ENV_KEY_RE.test(match[1] ?? '')) continue
     const value = unquote(match[2] ?? '')
     if (value.length < minLength || value.length > MAX_VALUE_LENGTH) continue
     // `$VAR` references are not values of their own.
     if (/^\$[A-Za-z_{]/.test(value)) continue
-    values.push(value)
+    values.push({ value, modelConfig: isModelConfigEnvKey(match[1] ?? '') })
   }
   return values
 }
@@ -223,15 +245,25 @@ export interface SecretFileValuesOptions {
 }
 
 /**
+ * One value read from a secret file. `modelConfig` is true only for an env
+ * line whose KEY names a model setting ({@link isModelConfigEnvKey}); the
+ * boundary still decides with the VALUE whether it may skip it.
+ */
+export interface SecretFileEntry {
+  value: string
+  modelConfig: boolean
+}
+
+/**
  * Collect the secret values stored in files.
  *
  * Returns plaintext values without any metadata: the caller treats them as
  * opaque known values (`{{secret:redacted}}`).
  */
-export function secretFileValues(options: SecretFileValuesOptions): string[] {
+export function secretFileEntries(options: SecretFileValuesOptions): SecretFileEntry[] {
   const { minLength } = options
   const dirs = options.dirs ?? secretFileDirs()
-  const values: string[] = []
+  const values: SecretFileEntry[] = []
 
   for (const dir of dirs) {
     for (const file of listCandidateFiles(dir)) {
@@ -253,7 +285,7 @@ export function secretFileValues(options: SecretFileValuesOptions): string[] {
         // (`cat id_ed25519`). A *partial* print is caught by the structural
         // PEM rule in secret-detect.ts instead.
         const trimmed = content.trim()
-        if (trimmed.length >= minLength && trimmed.length <= MAX_VALUE_LENGTH) values.push(trimmed)
+        if (trimmed.length >= minLength && trimmed.length <= MAX_VALUE_LENGTH) values.push({ value: trimmed, modelConfig: false })
         continue
       }
 
@@ -270,10 +302,18 @@ export function secretFileValues(options: SecretFileValuesOptions): string[] {
         && trimmed.length <= MAX_VALUE_LENGTH
         && !/\s/.test(trimmed)
       ) {
-        values.push(trimmed)
+        values.push({ value: trimmed, modelConfig: false })
       }
     }
   }
 
-  return dedupe(values)
+  return values
+}
+
+/**
+ * Collect the secret values stored in files (plaintext only, every entry —
+ * including model settings). Kept for callers that need the raw list.
+ */
+export function secretFileValues(options: SecretFileValuesOptions): string[] {
+  return secretFileEntries(options).map(entry => entry.value)
 }

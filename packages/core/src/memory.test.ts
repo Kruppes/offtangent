@@ -29,6 +29,8 @@ import {
   getAgentMemoryDir,
   resolveAgentMemoryDir,
   ensurePersonaMemoryRoots,
+  PROMPT_OTHER_MODELS_BUDGET_CHARS,
+  PROMPT_OTHER_MODELS_PER_PROVIDER,
 } from './memory.js'
 import { clearPersonaCache } from './persona-loader.js'
 import { SYSTEM_PROMPT_CACHE_MARKER, splitSystemPromptAtCacheMarker } from './prompt-cache.js'
@@ -1027,6 +1029,47 @@ describe('memory', () => {
       expect(prompt).toContain('<available_providers>')
       expect(prompt).toContain('(no model carries a description yet)')
       expect(prompt).toContain('- Only Hidden: mystery-model, claude-opus-4-6\n</available_providers>')
+    })
+
+    it('caps the further-models lines per provider and in total, and drops unsafe ids (review finding 8)', () => {
+      const dir = makeTmpDir()
+      ensureMemoryStructure(dir)
+
+      const many = Array.from({ length: 1000 }, (_, i) => ({ id: `bulk-model-${String(i).padStart(4, '0')}-preview` }))
+      const prompt = assembleSystemPrompt({
+        memoryDir: dir,
+        availableProviders: [
+          {
+            name: 'Odd',
+            models: [
+              { id: 'ok-model-1' },
+              { id: 'has space' },
+              { id: 'line\nbreak' },
+              { id: 'ctl\u0007char' },
+              { id: 'https://evil.example/m' },
+              { id: 'q?x' },
+              { id: 'a=b' },
+            ],
+          },
+          { name: 'Bulk', models: many },
+          { name: 'Bulk Two', models: many.map(m => ({ id: `two-${m.id}` })) },
+        ],
+      })
+
+      expect(prompt).toContain('- Odd: ok-model-1\n')
+      const block = prompt.slice(prompt.indexOf('Further enabled models'), prompt.indexOf('</available_providers>'))
+      const lines = block.split('\n').filter(l => l.startsWith('- '))
+      const total = lines.reduce((n, l) => n + l.length + 1, 0)
+      expect(total).toBeLessThanOrEqual(PROMPT_OTHER_MODELS_BUDGET_CHARS)
+      const bulk = lines.find(l => l.startsWith('- Bulk: '))!
+      expect(bulk).toBeDefined()
+      expect(bulk.split(', ').length).toBeLessThanOrEqual(PROMPT_OTHER_MODELS_PER_PROVIDER)
+      expect(bulk).toMatch(/\(\+\d+ more; the full list is in the error message of create_task/)
+      expect(prompt).not.toContain('bulk-model-0999-preview')
+      // unsafe ids never reach the prompt
+      for (const bad of ['has space', 'line\nbreak', 'ctl\u0007char', 'evil.example', 'q?x', 'a=b']) {
+        expect(prompt.includes(bad)).toBe(false)
+      }
     })
 
     it('omits available_providers block when no provider has an enabled model', () => {

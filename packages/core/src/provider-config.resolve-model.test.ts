@@ -97,4 +97,28 @@ describe('resolveProviderModelInput', () => {
     expect(r2.ok).toBe(false)
     if (!r2.ok) expect(r2.error).toContain('OpenAI (gpt-5.5, gpt-5.5-mini)')
   })
+
+  it('a byte-identical id wins over a case-insensitive one; case-only matches are ambiguous (review finding 5)', () => {
+    fs.writeFileSync(path.join(tmpDir, 'config', 'providers.json'), JSON.stringify({
+      providers: [
+        { id: 'a', name: 'Alpha', type: 'anthropic-messages', provider: 'anthropic', enabledModels: ['Model-X', 'model-x'] },
+        { id: 'b', name: 'Beta', type: 'anthropic-messages', provider: 'anthropic', enabledModels: ['MODEL-Y'] },
+        { id: 'c', name: 'Gamma', type: 'anthropic-messages', provider: 'anthropic', enabledModels: ['model-y'] },
+      ],
+    }))
+    // within one provider
+    expect(resolveProviderModelInput({ provider: 'Alpha', model: 'model-x' })).toMatchObject({ ok: true, modelId: 'model-x' })
+    expect(resolveProviderModelInput({ provider: 'Alpha', model: 'Model-X' })).toMatchObject({ ok: true, modelId: 'Model-X' })
+    const amb = resolveProviderModelInput({ provider: 'Alpha', model: 'MODEL-X' })
+    expect(amb.ok).toBe(false)
+    if (!amb.ok) expect(amb.error).toContain('ambiguous')
+    // across providers (model only)
+    expect(resolveProviderModelInput({ model: 'model-y' })).toMatchObject({ ok: true, providerId: 'c', modelId: 'model-y' })
+    expect(resolveProviderModelInput({ model: 'MODEL-Y' })).toMatchObject({ ok: true, providerId: 'b', modelId: 'MODEL-Y' })
+    const amb2 = resolveProviderModelInput({ model: 'Model-Y' })
+    expect(amb2.ok).toBe(false)
+    if (!amb2.ok) expect(amb2.error).toContain('ambiguous')
+    // a unique case-insensitive hit still resolves
+    expect(resolveProviderModelInput({ provider: 'Beta', model: 'model-Y' })).toMatchObject({ ok: true, modelId: 'MODEL-Y' })
+  })
 })
