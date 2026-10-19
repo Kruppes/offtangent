@@ -30,7 +30,8 @@ export interface SecretHandleRecord {
   /**
    * Set when a value first sealed automatically (tool output, vault CLI) was
    * later stored explicitly (form, settings, chat); `source` then carries the
-   * explicit origin. The junk cleanup refuses such handles (re-review N4).
+   * explicit origin. The flag preserves that origin: a later automatic hit
+   * never downgrades the record back to an automatic source (re-review N4).
    */
   explicitlyStored?: boolean
 }

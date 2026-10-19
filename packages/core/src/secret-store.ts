@@ -173,9 +173,10 @@ export function sealSecret(value: string, kind: string, source: string): string 
     // file does not end up with duplicates.)
     if (record.hash === hash || record.hash === legacy) {
       // An explicit store (form, settings, chat …) of a value that was first
-      // sealed automatically from tool output upgrades the origin, so the
-      // slug-based junk cleanup can never remove a value the user filed on
-      // purpose (re-review N4). An automatic hit never downgrades a record.
+      // sealed automatically from tool output upgrades the origin and marks
+      // it explicitlyStored, so the record keeps the explicit origin of a
+      // value the user filed on purpose (re-review N4). An automatic hit
+      // never downgrades a record.
       const upgrade = !isAutomaticSecretSource(source) && isAutomaticSecretSource(record.source)
       handles[slug] = {
         ...record,
