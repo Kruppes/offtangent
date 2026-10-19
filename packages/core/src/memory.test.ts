@@ -957,7 +957,7 @@ describe('memory', () => {
       expect(prompt).not.toContain('<user_profile>')
     })
 
-    it('renders only annotated + default models in available_providers', () => {
+    it('renders annotated + default models in full and every other enabled model in a compact line', () => {
       const dir = makeTmpDir()
       ensureMemoryStructure(dir)
 
@@ -998,26 +998,44 @@ describe('memory', () => {
       expect(prompt).toContain('- Anthropic OAuth — opus-4.8: default agent model. Starkes Modell für komplexe Analyse und Coding.')
       expect(prompt).toContain('- OpenAI — gpt-5.5: default task model')
       expect(prompt).toContain('- OpenCode — glm-5.2: Schnelles aber leistungsfähiges Model für Textverarbeitung wie Twitter/Reddit Digest.')
-      // Models without a description and not a default are hidden
-      expect(prompt).not.toContain('claude-haiku')
-      expect(prompt).not.toContain('gpt-4o-mini')
-      expect(prompt).not.toContain('no-description-model')
-      // A provider with no routable models is omitted entirely
-      expect(prompt).not.toContain('Empty Provider')
+      // Models without a description and not a default get no routing line…
+      expect(prompt).not.toContain('— claude-haiku')
+      expect(prompt).not.toContain('— gpt-4o-mini')
+      expect(prompt).not.toContain('— no-description-model')
+      // …but are findable: one compact line per provider (fix 2026-10-19)
+      expect(prompt).toContain('Further enabled models without a description — use them only when the user asks for one explicitly')
+      expect(prompt).toContain('- Anthropic OAuth: claude-haiku\n')
+      expect(prompt).toContain('- OpenAI: gpt-4o-mini\n')
+      expect(prompt).toContain('- Empty Provider: no-description-model\n')
+      expect(prompt).not.toContain('- OpenCode:')
       // Routing guidance for the agent
       expect(prompt).toContain('Prefer cost-effective models for simple work')
       expect(prompt).toContain('auto-detect the provider from this list')
     })
 
-    it('omits available_providers block when no model qualifies', () => {
+    it('lists enabled models without a description even when no model is routable', () => {
       const dir = makeTmpDir()
       ensureMemoryStructure(dir)
 
       const prompt = assembleSystemPrompt({
         memoryDir: dir,
         availableProviders: [
-          { name: 'Only Hidden', models: [{ id: 'mystery-model' }] },
+          { name: 'Only Hidden', models: [{ id: 'mystery-model' }, { id: 'claude-opus-4-6' }] },
         ],
+      })
+
+      expect(prompt).toContain('<available_providers>')
+      expect(prompt).toContain('(no model carries a description yet)')
+      expect(prompt).toContain('- Only Hidden: mystery-model, claude-opus-4-6\n</available_providers>')
+    })
+
+    it('omits available_providers block when no provider has an enabled model', () => {
+      const dir = makeTmpDir()
+      ensureMemoryStructure(dir)
+
+      const prompt = assembleSystemPrompt({
+        memoryDir: dir,
+        availableProviders: [{ name: 'Nothing Enabled', models: [] }],
       })
 
       expect(prompt).not.toContain('<available_providers>')

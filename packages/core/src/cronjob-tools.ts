@@ -88,7 +88,7 @@ export function createCronjobTool(options: CronjobToolsOptions): AgentTool {
       ),
       model: Type.Optional(
         Type.String({
-          description: 'Specific model id to use for this cronjob (e.g. "kimi-k2.6", "gpt-5", "claude-sonnet-4-5"). Choose based on the descriptions in `<available_providers>` — prefer cost-effective models for simple work and stronger models for complex coding or research. Only pass this if you have a specific reason to deviate from the default task model. If `provider` is omitted, the provider is auto-detected from the configured providers (requires a unique match). Only relevant for action_type "task".',
+          description: 'Specific model id to use for this cronjob (e.g. "kimi-k2.6", "gpt-5", "claude-sonnet-4-5"). Choose based on the descriptions in `<available_providers>` — prefer cost-effective models for simple work and stronger models for complex coding or research. Every enabled model is accepted, also the ones listed there without a description; a user-facing name such as \"Opus 4.6\" is mapped to its id, and an unknown model returns the list of enabled ids. Only pass this if you have a specific reason to deviate from the default task model. If `provider` is omitted, the provider is auto-detected from the configured providers (requires a unique match). Only relevant for action_type "task".',
         })
       ),
       attached_skills: Type.Optional(

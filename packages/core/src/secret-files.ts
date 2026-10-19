@@ -50,6 +50,13 @@ const MAX_VALUE_LENGTH = 8192
 /** Files that other sources already cover, or that must never be scanned. */
 const SKIPPED_FILENAMES = new Set(['secrets.json', 'providers.json', 'settings.json'])
 
+/**
+ * Env keys whose value is configuration, never a credential: `MODEL`,
+ * `ANTHROPIC_MODEL_POLISH`, `OPENAI_MODELS`, `FOO_MODEL_ID`. A key that also
+ * carries a credential word (`MODEL_API_KEY`) is still a secret.
+ */
+const NON_SECRET_ENV_KEY_RE = /^(?!.*(?:KEY|SECRET|TOKEN|PASSWORD|PASS|AUTH|CREDENTIAL))(?:.*_)?MODELS?(?:_.*)?$/i
+
 /** `KEY=VALUE`, optionally `export KEY=VALUE`, quotes optional. */
 const ENV_LINE_RE = /^\s*(?:export\s+)?([A-Za-z_][A-Za-z0-9_]*)\s*=\s*(.*)$/
 
@@ -180,6 +187,9 @@ function envValues(content: string, minLength: number): string[] {
     if (!line.trim() || line.trim().startsWith('#')) continue
     const match = ENV_LINE_RE.exec(line)
     if (!match) continue
+    // A `*_MODEL…` variable names a model, it is configuration and not a
+    // credential; redacting it hid model ids everywhere (fix 2026-10-19).
+    if (NON_SECRET_ENV_KEY_RE.test(match[1] ?? '')) continue
     const value = unquote(match[2] ?? '')
     if (value.length < minLength || value.length > MAX_VALUE_LENGTH) continue
     // `$VAR` references are not values of their own.

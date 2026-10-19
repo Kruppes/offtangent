@@ -25,6 +25,8 @@ import type { Database } from '@axiom/core'
 import {
   isSecretHandleKind,
   isSecretHandleSlug,
+  isTrivialSecretValue,
+  providerModelIds,
   listSecrets,
   removeSecret,
   renameSecret,
@@ -165,6 +167,15 @@ export function createSecretHandlesRouter(options: SecretHandlesRouterOptions): 
     }
     if (body.value.length > SECRET_HANDLE_MAX_VALUE_LENGTH) {
       res.status(400).json({ error: `Value is too long (maximum ${SECRET_HANDLE_MAX_VALUE_LENGTH} characters).` })
+      return
+    }
+    // Fix 2026-10-19: a common word, placeholder or model id would rewrite
+    // ordinary text everywhere once it is a known value.
+    if (isTrivialSecretValue(body.value, providerModelIds())) {
+      res.status(400).json({
+        code: 'value_too_trivial',
+        error: 'Value is too trivial to be a secret (common word, placeholder or model id).',
+      })
       return
     }
     if (!isSecretHandleKind(body.kind)) {

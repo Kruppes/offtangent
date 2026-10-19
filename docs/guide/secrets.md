@@ -127,6 +127,19 @@ each one has a concrete reason.
   four-digit PIN would rewrite every port number, date and line number that
   happens to contain those digits. Resolving such a value **through its
   handle** keeps working; only the global search-and-replace has this floor.
+- **Trivial values are not replaced globally either** (since 2026-10-19).
+  A stored value that is a common word (`secret`, `password`, `session`,
+  `admin`, …), a placeholder (`xxxxxx`, `changeme`, `<token>`), a short
+  Bitwarden CLI status line (`Your vault is locked.`, `Not found.`) or a
+  model id from `providers.json` is skipped by the search-and-replace
+  (`packages/core/src/secret-triviality.ts`). Such values got into the store
+  through fail-closed sealing of a whole command output or through a
+  `url-password` match on `user:secret@host`, and then rewrote every
+  ordinary occurrence of the word — including `/data/secrets` and model ids.
+  The form refuses to store them (`value_too_trivial`). Existing junk handles
+  are listed and, with `--apply`, removed after a backup of `secrets.json`
+  by `npx tsx scripts/cleanup-trivial-secret-handles.ts` (prints slug, kind,
+  length and reason, never a value).
 - **Background jobs can be skipped instead of downgraded.** A background job
   without its own model (session summary, fact extraction, memory
   consolidation, plan verification) falls back to the active chat model. That
@@ -195,6 +208,11 @@ directory that holds `secrets.json` and `<DATA_DIR>/secrets` (override with
 - `KEY=VALUE` lines from env files (quotes and `export` are handled),
 - a PEM private-key block as a whole,
 - a file that contains a single token on one line (session keys).
+
+Env keys that name a model (`MODEL`, `ANTHROPIC_MODEL_POLISH`,
+`OPENAI_MODELS`) are configuration and skipped, unless the key also contains
+a credential word (`MODEL_API_KEY`). Trivial values (see above) are skipped
+as well.
 
 Those values are redacted **opaquely**: they turn into <code v-pre>{{secret:redacted}}</code>,
 they never become a handle and nothing is written to the store — reading a

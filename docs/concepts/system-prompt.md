@@ -71,9 +71,11 @@ A bullet list of every built-in tool the agent can call this turn, with a one-li
 
 *Present when at least one LLM provider has a routable model (see below).*
 
-A listing of provider/model pairs that the agent can route background tasks to. Only models that carry a **description** (set via the [Edit Model dialog](./../web-ui/providers#edit-model-dialog)) or are the active agent model / default task model are included — models without a description and without a default flag are hidden, so the description doubles as an opt-in gate for agent model routing.
+A listing of provider/model pairs that the agent can route background tasks to. Models that carry a **description** (set via the [Edit Model dialog](./../web-ui/providers#edit-model-dialog)) or are the active agent model / default task model get a full line — the description stays the opt-in gate for the agent's *own* model choice.
 
-Each entry shows the provider name, the model id, default-model labels (*"default agent model"*, *"default task model"*), and the free-form description. The block also instructs the agent to autonomously choose models based on these descriptions (preferring cost-effective models for simple work, stronger models for complex tasks) rather than only passing through user-specified names. Dropped entirely if no provider has a routable model. See [Providers](./../web-ui/providers).
+Each such entry shows the provider name, the model id, default-model labels (*"default agent model"*, *"default task model"*), and the free-form description. The block instructs the agent to choose models autonomously based on these descriptions (preferring cost-effective models for simple work, stronger models for complex tasks).
+
+Every other enabled model is listed below that, by id only, in one compact line per provider (*"Further enabled models without a description — use them only when the user asks for one explicitly"*). So when the user asks for *"Opus 4.6"*, the agent finds `claude-opus-4-6` without guessing, but it never picks such a model on its own. `create_task`, `create_cronjob` and `edit_cronjob` accept every enabled model and map user-facing names to ids (`Opus 4.6`, `opus-4.6` → `claude-opus-4-6`; exact ids win, several hits are reported as ambiguous); an unknown model returns the enabled ids in the error. The block is dropped only if no provider has an enabled model. See [Providers](./../web-ui/providers).
 
 ### 9. `<wiki_pages>`: `memory/wiki/*.md`
 

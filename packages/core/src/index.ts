@@ -445,7 +445,9 @@ export {
   KNOWN_ENV_SCAN_TTL_MS,
   REDACTED_HANDLE,
   SECRET_HANDLE_RE,
+  providerModelIds,
 } from './secret-boundary.js'
+export { isTrivialSecretValue, TRIVIAL_SECRET_WORDS } from './secret-triviality.js'
 export type { SealTextOptions, SealTextResult, SealedRef } from './secret-boundary.js'
 // Secret values that only exist in files (`<DATA_DIR>/secrets/*.env`) and the
 // sealing of password-manager CLI output (maintainer request, privacy plan 2026-09-26).

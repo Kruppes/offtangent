@@ -24,6 +24,7 @@ import { getConfigDir } from './config.js'
 import { detectSecrets, type SecretTier } from './secret-detect.js'
 import { invalidateSecretFilesSignature, secretFileValues, secretFilesSignature } from './secret-files.js'
 import { knownSecretValues, resolveSecret, sealSecret } from './secret-store.js'
+import { isTrivialSecretValue } from './secret-triviality.js'
 import { commandInvokesVaultCli, sealVaultCliOutput } from './secret-vault-cli.js'
 import { loadSecretsDecrypted } from './secrets-config.js'
 import { loadProvidersDecrypted } from './provider-config.js'
@@ -89,6 +90,8 @@ interface KnownIndex {
   replacements: Map<string, string>
   /** Combined alternation over all known values, longest first. */
   regex: RegExp | null
+  /** Model ids from providers.json; never treated as secrets. */
+  modelIds: Set<string>
 }
 
 let _index: KnownIndex | null = null
@@ -199,6 +202,36 @@ function providerSecretValues(): string[] {
   return values
 }
 
+/**
+ * Every model id configured in providers.json (`enabledModels`, `pinnedModels`,
+ * `knownModels`, `models`). A model id is public configuration, never a
+ * credential: when it also sits in an env file (`ANTHROPIC_MODEL_…=…`) or in
+ * the store, redacting it hid the id from the agent everywhere (fix
+ * 2026-10-19). Unreadable providers.json → empty set.
+ */
+export function providerModelIds(): Set<string> {
+  const ids = new Set<string>()
+  const add = (entry: unknown): void => {
+    const id = typeof entry === 'string' ? entry : (entry as { id?: unknown } | null)?.id
+    if (typeof id === 'string' && id.trim()) {
+      ids.add(id.trim())
+      ids.add(id.trim().toLowerCase())
+    }
+  }
+  try {
+    for (const provider of loadProvidersDecrypted().providers ?? []) {
+      const record = provider as unknown as Record<string, unknown>
+      for (const key of ['enabledModels', 'pinnedModels', 'knownModels', 'models']) {
+        const list = record[key]
+        if (Array.isArray(list)) list.forEach(add)
+      }
+    }
+  } catch {
+    // no / unreadable providers.json — nothing to exempt
+  }
+  return ids
+}
+
 /** Drop the cached combined regex. */
 export function invalidateKnownValues(): void {
   _index = null
@@ -211,15 +244,22 @@ export function invalidateKnownValues(): void {
 
 function buildIndex(): KnownIndex {
   const replacements = new Map<string, string>()
+  // Values that are ordinary text, not secrets: common words, placeholders,
+  // low-entropy single-class strings and configured model ids (fix
+  // 2026-10-19). They stay resolvable through their handle; only the global
+  // search-and-replace skips them.
+  const modelIds = providerModelIds()
+  const skipGlobal = (value: string): boolean =>
+    RESERVED_OUTPUT_VALUES.has(value) || isTrivialSecretValue(value, modelIds)
 
   // 1. Sealed handles — these have a slug, so the text keeps its meaning.
   for (const [value, slug] of knownSecretValues()) {
-    if (value.length < MIN_HANDLE_VALUE_LENGTH || RESERVED_OUTPUT_VALUES.has(value)) continue
+    if (value.length < MIN_HANDLE_VALUE_LENGTH || skipGlobal(value)) continue
     replacements.set(value, secretHandle(slug))
   }
 
   const addOpaque = (value: string | undefined): void => {
-    if (!value || value.length < MIN_ENV_VALUE_LENGTH || RESERVED_OUTPUT_VALUES.has(value)) return
+    if (!value || value.length < MIN_ENV_VALUE_LENGTH || skipGlobal(value)) return
     if (replacements.has(value)) return
     replacements.set(value, REDACTED_HANDLE)
   }
@@ -254,7 +294,7 @@ function buildIndex(): KnownIndex {
     ? new RegExp(values.map(escapeRegExp).join('|'), 'g')
     : null
 
-  return { signature: sourceSignature(), replacements, regex }
+  return { signature: sourceSignature(), replacements, regex, modelIds }
 }
 
 function getIndex(): KnownIndex {
@@ -402,8 +442,13 @@ export function sealText(text: string, options: SealTextOptions): SealTextResult
   // as the PEM block could span the gap) is dropped instead of nested.
   const protectedRanges = handleRanges(text)
   const detectable = maskRanges(text, protectedRanges)
+  // A detector hit on a trivial value (`postgres://user:password@host` in a
+  // README) is a placeholder, not a credential: sealing it would put an
+  // ordinary word into the store (fix 2026-10-19).
+  const modelIds = getIndex().modelIds
   const spans = detectSecrets(detectable, { tier: options.tier })
     .filter(span => !overlapsRange(protectedRanges, span.start, span.end))
+    .filter(span => !isTrivialSecretValue(text.slice(span.start, span.end), modelIds))
   if (spans.length === 0) return { text: redactKnown(text), sealed: [] }
 
   const sealed: SealedRef[] = []

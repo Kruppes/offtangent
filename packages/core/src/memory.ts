@@ -916,9 +916,9 @@ export interface BuiltinToolsPromptConfig {
 
 /**
  * Per-model entry surfaced in the system prompt's `<available_providers>`
- * block. Only models that carry a description or are the active/task default
- * are rendered, so the description doubles as the opt-in gate for agent
- * model routing.
+ * block. Models that carry a description or are the active/task default get
+ * a full line (the description doubles as the opt-in gate for autonomous
+ * routing); all other enabled models are listed by id only, per provider.
  */
 export interface AvailableProviderModelPromptEntry {
   id: string
@@ -1155,18 +1155,24 @@ export function assembleSystemPrompt(options?: {
   sections.push(buildInteractiveQuestionsPrompt())
 
   // 7b. Configured LLM providers — lets the agent route background tasks to
-  // an annotated model. Only models with a description or the active/task
-  // default are listed; the description is the user's opt-in gate for agent
-  // autonomy (no description + not a default → hidden from the agent).
+  // an annotated model. Models with a description or the active/task default
+  // get a full line; the description is the user's opt-in gate for agent
+  // autonomy. Every other enabled model is listed by id in one compact line
+  // per provider, for explicit user requests only.
   if (options?.availableProviders && options.availableProviders.length > 0) {
     const providerLines: string[] = []
+    const otherLines: string[] = []
     for (const provider of options.availableProviders) {
+      const others: string[] = []
       for (const model of provider.models) {
         const isRoutable =
           Boolean(model.description) ||
           model.isDefaultAgentModel === true ||
           model.isDefaultTaskModel === true
-        if (!isRoutable) continue
+        if (!isRoutable) {
+          others.push(model.id)
+          continue
+        }
 
         const labels: string[] = []
         if (model.isDefaultAgentModel) labels.push('default agent model')
@@ -1177,15 +1183,23 @@ export function assembleSystemPrompt(options?: {
           suffix ? `- ${provider.name} — ${model.id}: ${suffix}` : `- ${provider.name} — ${model.id}`,
         )
       }
+      // Every other enabled model, one compact line per provider (fix
+      // 2026-10-19): without it the agent could not find e.g. an older Opus
+      // the user asked for by name. Still not for autonomous routing — the
+      // description stays the opt-in gate for that.
+      if (others.length > 0) otherLines.push(`- ${provider.name}: ${others.join(', ')}`)
     }
 
-    if (providerLines.length > 0) {
+    if (providerLines.length > 0 || otherLines.length > 0) {
+      const otherBlock = otherLines.length > 0
+        ? `\n\nFurther enabled models without a description — use them only when the user asks for one explicitly (by id or by name, e.g. "Opus 4.6" → the matching \`claude-opus-…\` id below), not for your own routing choices:\n${otherLines.join('\n')}`
+        : ''
       sections.push(`<available_providers>
 Configured LLM providers and their enabled models. When the user asks for a task or cronjob with a specific model or provider, pass it through to \`create_task\` / \`create_cronjob\` / \`edit_cronjob\` via their \`provider\` and/or \`model\` parameters. If the user names only a model (e.g. "run this with kimi-k2.6"), pass it as \`model\` — the tool will auto-detect the provider from this list.
 
 For background tasks, you may choose the most appropriate model based on the descriptions below. Prefer cost-effective models for simple work; use stronger models for complex coding or research. When a description indicates a model is suited for a specific task type (e.g. "Textverarbeitung wie Twitter/Reddit Digest"), prefer that model for matching tasks.
 
-${providerLines.join('\n')}
+${providerLines.length > 0 ? providerLines.join('\n') : '(no model carries a description yet)'}${otherBlock}
 </available_providers>`)
     }
   }

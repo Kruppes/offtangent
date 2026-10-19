@@ -171,6 +171,17 @@ describe('POST /api/secrets/handles', () => {
     expect(exactly.status).toBe(201)
   })
 
+  it('rejects a trivial value (common word / placeholder) with a code', async () => {
+    for (const value of ['secret', 'password', 'session', 'changeme', 'xxxxxxxx']) {
+      const res = await createHandle({ value, kind: 'password' })
+      expect(res.status).toBe(400)
+      expect(res.body.code).toBe('value_too_trivial')
+    }
+    expect(listSecrets()).toHaveLength(0)
+    const real = await createHandle({ value: 'Tr0ub4dor&3-horse', kind: 'password' })
+    expect(real.status).toBe(201)
+  })
+
   it('validates value, kind and slug without echoing the value', async () => {
     const empty = await createHandle({ value: '', kind: 'password' })
     expect(empty.status).toBe(400)

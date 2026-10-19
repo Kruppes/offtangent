@@ -2922,6 +2922,35 @@ export function resolveProviderModelId(value?: string): {
  * Provider lookup is case-insensitive on both `id` and `name`, matching the
  * pattern used by `resolveProvider` in runtime-composition.
  */
+/** Lower-case, separators (space, dot, underscore, slash) folded to `-`. */
+function normalizeModelKey(value: string): string {
+  return value.trim().toLowerCase().replace(/[\s._/]+/g, '-').replace(/-+/g, '-').replace(/^-|-$/g, '')
+}
+
+/**
+ * Find an enabled model of `provider` for a user-facing key.
+ *
+ * Exact (case-insensitive) id match first. Otherwise a lenient name match
+ * (fix 2026-10-19), so "Opus 4.6" or "opus-4.6" finds `claude-opus-4-6`: the
+ * normalized key equals the normalized id or display name, or the normalized
+ * id ends with `-<key>`. The caller decides what to do with several hits.
+ */
+function matchEnabledModels(provider: ProviderConfig, modelKey: string, mode: 'exact' | 'lenient'): string[] {
+  const enabled = provider.enabledModels ?? []
+  if (mode === 'exact') {
+    const hit = enabled.find(m => m.toLowerCase() === modelKey.toLowerCase())
+    return hit ? [hit] : []
+  }
+  const key = normalizeModelKey(modelKey)
+  if (!key) return []
+  return enabled.filter(id => {
+    const normalizedId = normalizeModelKey(id)
+    if (normalizedId === key || normalizedId.endsWith(`-${key}`)) return true
+    const name = provider.models?.find(m => m.id === id)?.name
+    return typeof name === 'string' && normalizeModelKey(name) === key
+  })
+}
+
 export function resolveProviderModelInput(input: {
   provider?: string | null
   model?: string | null
@@ -2948,11 +2977,15 @@ export function resolveProviderModelInput(input: {
 
     let modelId: string
     if (modelKey) {
-      const modelMatch = enabledModels.find(m => m.toLowerCase() === modelKey.toLowerCase())
-      if (!modelMatch) {
-        return { ok: false, error: `Model "${modelKey}" is not enabled for provider "${match.name}". Enabled models: ${enabledModels.join(', ')}.` }
+      const exact = matchEnabledModels(match, modelKey, 'exact')
+      const candidates = exact.length > 0 ? exact : matchEnabledModels(match, modelKey, 'lenient')
+      if (candidates.length > 1) {
+        return { ok: false, error: `Model "${modelKey}" is ambiguous for provider "${match.name}": ${candidates.join(', ')}. Pass the exact id.` }
       }
-      modelId = modelMatch
+      if (candidates.length === 0) {
+        return { ok: false, error: `Model "${modelKey}" is not enabled for provider "${match.name}". Enabled models: ${enabledModels.join(', ') || '(none)'}.` }
+      }
+      modelId = candidates[0]!
     } else {
       modelId = getProviderDefaultModel(match)
     }
@@ -2961,18 +2994,18 @@ export function resolveProviderModelInput(input: {
   }
 
   // Case 3: model only — search all providers for any enabled model that matches
-  const hits: Array<{ provider: ProviderConfig; modelId: string }> = []
-  for (const p of providers) {
-    const enabledModels = p.enabledModels ?? []
-    const modelMatch = enabledModels.find(m => m.toLowerCase() === modelKey.toLowerCase())
-    if (modelMatch) hits.push({ provider: p, modelId: modelMatch })
-  }
+  // Exact id matches win; the lenient name match only runs when no provider
+  // has the exact id, so an existing exact call never changes its target.
+  const collect = (mode: 'exact' | 'lenient'): Array<{ provider: ProviderConfig; modelId: string }> =>
+    providers.flatMap(p => matchEnabledModels(p, modelKey, mode).map(modelId => ({ provider: p, modelId })))
+  let hits = collect('exact')
+  if (hits.length === 0) hits = collect('lenient')
 
   if (hits.length === 0) {
     return { ok: false, error: `Model "${modelKey}" not found in any configured provider. Configured providers: ${providers.map(p => `${p.name} (${(p.enabledModels ?? []).join(', ')})`).join('; ') || '(none)'}.` }
   }
   if (hits.length > 1) {
-    return { ok: false, error: `Model "${modelKey}" is ambiguous — enabled in multiple providers: ${hits.map(h => h.provider.name).join(', ')}. Specify the provider explicitly.` }
+    return { ok: false, error: `Model "${modelKey}" is ambiguous — matches ${hits.map(h => `${h.provider.name}: ${h.modelId}`).join(', ')}. Specify the provider and/or the exact model id.` }
   }
 
   const { provider: match, modelId } = hits[0]!
