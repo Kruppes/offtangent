@@ -34,7 +34,7 @@ import { isTrivialSecretValue, skipTrivialAutomaticFinding, TRIVIAL_SECRET_WORDS
 
 const MODEL_ID = ['claude', 'opus', '4', '6'].join('-')
 // Synthetic credentials, assembled at runtime so no literal key sits in the file.
-const ANTHROPIC_SHAPED = ['sk', 'ant', 'api03', 'Zq8Lm2Np9Rv4Tz8WQx7Lm2Np9Rv4Tz8W'].join('-')
+const ANTHROPIC_SHAPED = ['sk', 'ant', 'api03', ['Zq8Lm2Np', '9Rv4Tz8W', 'Qx7Lm2Np', '9Rv4Tz8W'].join('')].join('-')
 const GITHUB_SHAPED = ['ghp', 'Q7x2Lm9Np4Rv8Tz3Wk6Yb1Hc5Jd0Fg2Se7Ua4'].join('_')
 // Model-id-shaped opaque values (no detector rule fires on them).
 const PROVIDER_KEY_MODEL_SHAPED = ['acct', '7f3k', '9q2m', 'x8v1'].join('-')
