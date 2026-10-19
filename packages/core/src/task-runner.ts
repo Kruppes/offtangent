@@ -20,10 +20,11 @@ import type { SettingsThinkingLevel } from './contracts/settings.js'
 import { formatTaskRouting } from './task-policy.js'
 import { readBackgroundThinkingLevelFromConfig, resolveBackgroundReasoning, toPiAiReasoning } from './thinking-level.js'
 import { parseOutputSchema, checkOutputAgainstSchema, buildSchemaCorrectionPrompt, buildOutputSchemaInstruction } from './task-output-schema.js'
+import { LEAN_LOCAL_PROFILE, LEAN_NON_SUCCESS_MAX_CHARS, LEAN_SYSTEM_PROMPT, buildLeanKickoff, checkLeanPreconditions, compactLeanText, isLocalProvider, parseLeanOutputSchema, selectLeanTools } from './lean-worker-profile.js'
 import { withTimeout } from './promise-utils.js'
 import { TaskStore, taskOwnerAgentId } from './task-store.js'
 import { finishTaskDelegation } from './persona-delegation-log.js'
-import type { Task, TaskResultStatus, TaskTriggerType } from './task-store.js'
+import type { Task, TaskResultStatus, TaskTriggerType, UpdateTaskInput } from './task-store.js'
 import type { SessionManager, SessionType } from './session-manager.js'
 import { logTokenUsage, logToolCall } from './token-logger.js'
 import { estimateCost, parseProviderModelId, buildStreamFn, getProviderDefaultModel } from './provider-config.js'
@@ -284,6 +285,12 @@ interface RunningTask {
    * provider; a model/provider fallback inside the run does not change it.
    */
   slotProviderKey: string
+  /**
+   * First user message of the run. Null = the generic kickoff (the task brief
+   * lives in the system prompt). Lean local workers carry their brief here so
+   * the system prompt stays a byte-stable, cacheable prefix.
+   */
+  kickoff?: string | null
   abortController: AbortController
   timeoutTimer: ReturnType<typeof setTimeout> | null
   /**
@@ -710,7 +717,7 @@ export class TaskRunner {
       if (parentTaskSession && parentTaskSession !== sessionId) snapshotContextWindow(this.db, parentTaskSession, sessionId)
     }
 
-    this.store.update(task.id, { sessionId })
+    this.updateTaskRow(task.id, { sessionId })
     task.sessionId = sessionId
     const origin = resolveContextScope(this.db, sessionId, task.agentId ?? 'main')
     this.db.prepare('UPDATE sessions SET context_origin_scope = ? WHERE id = ?')
@@ -851,6 +858,14 @@ export class TaskRunner {
       // Consolidation uses the same root resolver as its scheduler/prompt.
       const dataMemoryDir = dataScope ? contextMemoryDir(
         resolveAgentMemoryDir(task.agentId, task.triggerType === 'consolidation' ? undefined : { fallbackMemoryDir: this.options.memoryDir }) ?? getMemoryDir(), dataScope) : undefined
+      // Lean local worker (plan 2026-10-18-lokale-worker, B2): fixed system
+      // prompt, fixed tool whitelist, brief in the first user message. Refuses
+      // to start (task fails, no fallback) without a local provider or schema.
+      const lean = task.workerProfile === LEAN_LOCAL_PROFILE
+      if (lean) {
+        const refusal = checkLeanPreconditions({ provider, outputSchema: task.outputSchema })
+        if (refusal) throw new Error(refusal)
+      }
       // Determine effective system prompt
       const baseSystemPrompt = overrides?.systemPromptOverride
         ? `<global_rules>\n${readAgentsRulesFile(this.options.configDir)}\n</global_rules>\n${overrides.systemPromptOverride}`
@@ -885,13 +900,35 @@ export class TaskRunner {
       // in the context transform does not see it. `sealSystemText` is the same
       // strong-tier + known-value seal the interactive system prompt uses and
       // is deterministic, so the prompt prefix cache stays stable.
-      const systemPrompt = sealSystemText(systemPromptRaw, 'task')
+      // Lean: the fixed constant is sent as-is, NOT through `sealSystemText`.
+      // It is a compile-time literal without task text, paths or secrets, so
+      // there is nothing to seal — but the known-value redaction inside the
+      // seal would rewrite any substring that happens to equal a stored secret
+      // value, making the cacheable prefix depend on the secret store. The
+      // per-task kickoff below (brief, skills) is still sealed.
+      const systemPrompt = lean ? LEAN_SYSTEM_PROMPT : sealSystemText(systemPromptRaw, 'task')
+      // Lean: everything per-task goes AFTER the cacheable prefix. Sealed with
+      // the same strong tier as the normal task system prompt would be.
+      const leanKickoff = lean
+        ? sealSystemText([
+            attachedSkillsBlock,
+            buildLeanKickoff({
+              taskPrompt: task.prompt,
+              serializedSchema: task.outputSchema ?? '',
+              budgetMinutes: this.resolveBudgetMinutes(task),
+              workspaceDir: getWorkspaceDir(),
+            }),
+          ].filter(Boolean).join('\n\n'), 'task')
+        : null
 
       // Determine effective tools (filter out disabled tools).
       // Privacy (plan 2026-09-26, step 3): the task agent gets the same
       // secret boundary as the interactive runtime — tool results and error
       // texts are sealed, only `shell` resolves handles (D5).
       let effectiveTools = withSecretBoundary(this.options.tools)
+      // Lean: fixed whitelist in fixed order, so the tool block is the same
+      // bytes for every lean task.
+      if (lean) effectiveTools = selectLeanTools(effectiveTools)
       if (task.triggerType === 'consolidation') {
         effectiveTools = scopedConsolidationTools(effectiveTools, dataMemoryDir, dataScope?.sessionId, () => {
           const current = resolveContextScope(this.options.db, sessionId, task.agentId ?? 'main')
@@ -918,7 +955,7 @@ export class TaskRunner {
       // override filter), so a script can never reach a disabled tool; the
       // override can also disable `codemode` itself. Fails closed.
       try {
-        if (task.triggerType !== 'consolidation') effectiveTools = withCodemodeTool(effectiveTools, loadCodemodeSettings(), model.id, () => agent)
+        if (task.triggerType !== 'consolidation' && !lean) effectiveTools = withCodemodeTool(effectiveTools, loadCodemodeSettings(), model.id, () => agent)
           .filter(t => !disabledTools.includes(t.name))
       } catch (err) {
         console.error(`[task-runner] codemode tool assembly failed for task ${taskId}, continuing without it:`, err)
@@ -956,7 +993,9 @@ export class TaskRunner {
           // Native Ollama (plan 2026-10-05-ollama-native-context): the task
           // reads ITS OWN session row — the snapshot copied from the parent at
           // creation — once per request; later parent changes never leak in.
-          getContextWindowChoice: () => readStrandContextWindow(this.db, sessionId),
+          // Lean: never a per-request num_ctx — the server keeps its one
+          // window, so no request can force a model reload between turns.
+          getContextWindowChoice: () => lean ? null : readStrandContextWindow(this.db, sessionId),
         }),
         // Real Eco (plan 2026-10-05-real-eco): a NEW tool result is compacted
         // once, before the model ever sees it, and that projection is what the
@@ -1033,6 +1072,7 @@ export class TaskRunner {
         agent,
         provider,
         slotProviderKey: providerKeyOf(provider),
+        kickoff: leanKickoff,
         abortController,
         timeoutTimer: null,
         wrapUpTimer: null,
@@ -1074,7 +1114,7 @@ export class TaskRunner {
 
       // Update task as started
       const now = new Date().toISOString().replace('T', ' ').slice(0, 19)
-      this.store.update(taskId, {
+      this.updateTaskRow(taskId, {
         startedAt: now,
         provider: provider.name,
         model: getProviderDefaultModel(provider),
@@ -1102,7 +1142,7 @@ export class TaskRunner {
       const errorMessage = err instanceof Error ? err.message : String(err)
       const now = new Date().toISOString().replace('T', ' ').slice(0, 19)
       try {
-        this.store.update(taskId, {
+        this.updateTaskRow(taskId, {
           status: 'failed',
           resultStatus: 'failed',
           resultSummary: `Task failed to start: ${errorMessage}`,
@@ -1205,6 +1245,9 @@ export class TaskRunner {
     const task = this.store.getById(taskId)
     if (!task) return null
     if (!['user', 'agent', 'cronjob'].includes(task.triggerType)) return null
+    // Lean local worker: the output_schema is the check. A reviewer round
+    // would resend the private raw data — possibly to a cloud reviewer.
+    if (task.workerProfile === LEAN_LOCAL_PROFILE) return null
 
     try {
       const dedicatedReviewer = cfg?.providerId ? this.options.getProviderById?.(cfg.providerId) ?? null : null
@@ -1304,15 +1347,27 @@ export class TaskRunner {
     taskProvider: ProviderConfig | null,
   ): Promise<{ status: TaskResultStatus; summary: string } | null> {
     const task = this.store.getById(taskId)
-    if (!task?.outputSchema) return null
-    const parsedSchema = parseOutputSchema(task.outputSchema)
+    // Lean local worker: the schema IS the result contract. Without a usable
+    // schema nothing was validated, so fail closed instead of accepting, and
+    // on success hand back only the validated JSON (no prose around it).
+    const lean = task?.workerProfile === LEAN_LOCAL_PROFILE
+    if (!task?.outputSchema) {
+      return lean ? { status: 'failed', summary: `worker_profile "${LEAN_LOCAL_PROFILE}": no output_schema stored; result not accepted` } : null
+    }
+    // Lean: re-check the stored schema against the supported dialect (a row
+    // changed mid-run must not authorize a result it cannot really check).
+    const parsedSchema = lean ? parseLeanOutputSchema(task.outputSchema) : parseOutputSchema(task.outputSchema)
     if (!parsedSchema.ok) {
+      if (lean) {
+        console.warn(`[task-runner] Stored output_schema of lean task ${taskId} is unusable (${parsedSchema.error}); failing the task`)
+        return { status: 'failed', summary: `output_schema unusable: ${parsedSchema.error}; result not accepted` }
+      }
       console.warn(`[task-runner] Stored output_schema of task ${taskId} is unusable (${parsedSchema.error}); accepting result`)
       return null
     }
 
     const first = checkOutputAgainstSchema(parsedSchema.schema, summary)
-    if (first.ok) return null
+    if (first.ok) return lean ? { status: 'completed', summary: JSON.stringify(first.value) } : null
 
     console.log(`[task-runner] output_schema violated by task ${taskId}: ${first.errors.join('; ')}. Running the one correction turn`)
     this.emitStatusChange(taskId, 'running', `Result does not match output_schema (${first.errors.length} error${first.errors.length === 1 ? '' : 's'}), one correction round`)
@@ -1331,8 +1386,18 @@ export class TaskRunner {
     if (corrected.status !== 'completed') {
       return { status: 'failed', summary: `output_schema not satisfied after the correction turn (task reported ${corrected.status}).\n\nValidation errors:\n${first.errors.map(e => `- ${e}`).join('\n')}` }
     }
-    const second = checkOutputAgainstSchema(parsedSchema.schema, corrected.summary)
-    if (second.ok) return { status: 'completed', summary: corrected.summary }
+    // Lean: the correction round awaited the model, so the snapshot above may
+    // be stale. Re-read the current contract; missing, unusable or changed
+    // (even if still valid) fails closed without another model round.
+    let releaseSchema = parsedSchema.schema
+    if (lean) {
+      const current = parseLeanOutputSchema(this.store.getById(taskId)?.outputSchema ?? null)
+      if (!current.ok) return { status: 'failed', summary: `output_schema unusable after the correction turn: ${current.error}; result not accepted` }
+      if (current.serialized !== parsedSchema.serialized) return { status: 'failed', summary: 'output_schema changed during the correction turn; result not accepted' }
+      releaseSchema = current.schema
+    }
+    const second = checkOutputAgainstSchema(releaseSchema, corrected.summary)
+    if (second.ok) return { status: 'completed', summary: lean ? JSON.stringify(second.value) : corrected.summary }
     return {
       status: 'failed',
       summary: `output_schema not satisfied after the correction turn.\n\nValidation errors:\n${second.errors.map(e => `- ${e}`).join('\n')}\n\nLast SUMMARY:\n${corrected.summary.slice(0, 4000)}`,
@@ -1356,7 +1421,7 @@ export class TaskRunner {
   private finalizeTaskFailure(taskId: string, runningTask: RunningTask, errorMessage: string): void {
     const now = new Date().toISOString().replace('T', ' ').slice(0, 19)
 
-    const updatedTask = this.store.update(taskId, {
+    const updatedTask = this.updateTaskRow(taskId, {
       status: 'failed',
       resultStatus: 'failed',
       resultSummary: `Task failed: ${errorMessage}`,
@@ -1400,7 +1465,7 @@ export class TaskRunner {
       // Prompt the task agent with the task — the system prompt already contains the full task description
       await runWithTaskExecutionContext(
         this.taskExecutionContext(taskId, runningTask.provider ?? null),
-        () => agent.prompt('Begin working on the task described in your system prompt. Work autonomously and report your results when done.'),
+        () => agent.prompt(runningTask.kickoff ?? 'Begin working on the task described in your system prompt. Work autonomously and report your results when done.'),
       )
 
       // Task completed successfully
@@ -1476,7 +1541,7 @@ export class TaskRunner {
         }
         this.pausedTasks.set(taskId, pausedTask)
 
-        this.store.update(taskId, {
+        this.updateTaskRow(taskId, {
           status: 'paused',
           resultStatus: 'question',
           resultSummary: summary,
@@ -1500,7 +1565,7 @@ export class TaskRunner {
 
       // Handle "silent" status — record as completed but skip injection/notification
       if (status === 'silent') {
-        this.store.update(taskId, {
+        this.updateTaskRow(taskId, {
           status: 'completed',
           resultStatus: 'silent',
           resultSummary: summary || 'Nothing to report.',
@@ -1517,7 +1582,7 @@ export class TaskRunner {
         return
       }
 
-      const updatedTask = this.store.update(taskId, {
+      const updatedTask = this.updateTaskRow(taskId, {
         status: status === 'failed' ? 'failed' : 'completed',
         resultStatus: status,
         resultSummary: summary,
@@ -1559,7 +1624,7 @@ export class TaskRunner {
       const errorMessage = err instanceof Error ? err.message : String(err)
       const now = new Date().toISOString().replace('T', ' ').slice(0, 19)
 
-      const updatedTask = this.store.update(taskId, {
+      const updatedTask = this.updateTaskRow(taskId, {
         status: 'failed',
         resultStatus: 'failed',
         resultSummary: `Task failed with error: ${errorMessage}`,
@@ -1825,6 +1890,10 @@ export class TaskRunner {
 
     const resolvedProvider = this.options.getProviderById(providerId)
     if (!resolvedProvider) return
+    // Lean local worker: the tool history carries private arguments/results.
+    // It may only go to a local detector; otherwise the systematic check
+    // (no LLM) is all this task gets.
+    if (this.store.getById(runningTask.taskId)?.workerProfile === LEAN_LOCAL_PROFILE && !isLocalProvider(resolvedProvider)) return
 
     // Apply specific model override if provided
     const provider = modelId ? { ...resolvedProvider, enabledModels: [modelId] } : resolvedProvider
@@ -1926,7 +1995,7 @@ export class TaskRunner {
     this.cleanupRunningTask(taskId)
 
     const now = new Date().toISOString().replace('T', ' ').slice(0, 19)
-    this.store.update(taskId, {
+    this.updateTaskRow(taskId, {
       status: 'failed',
       resultStatus: 'failed',
       resultSummary: reason,
@@ -2021,7 +2090,7 @@ Hint: Inspect it with get_task (task_id ${task.id}); use cancel_task if anything
     this.cleanupRunningTask(taskId)
 
     const now = new Date().toISOString().replace('T', ' ').slice(0, 19)
-    this.store.update(taskId, {
+    this.updateTaskRow(taskId, {
       status: 'failed',
       resultStatus: 'failed',
       resultSummary: trip.message,
@@ -2174,6 +2243,13 @@ Hint: Inspect it with get_task (task_id ${task.id}); use cancel_task if anything
    * Emit a status change event to the task event bus
    */
   private emitStatusChange(taskId: string, status: string, message?: string): void {
+    // Lean non-success status texts (question, failure, error, abort) share
+    // the row limit; the paths pass the raw text, so cap it here centrally.
+    // A validated success (status 'completed') and normal tasks are unchanged.
+    if (message && message.length > LEAN_NON_SUCCESS_MAX_CHARS && status !== 'completed'
+      && this.store.getById(taskId)?.workerProfile === LEAN_LOCAL_PROFILE) {
+      message = compactLeanText(message)
+    }
     this.options.taskEventBus?.emitTaskEvent({
       type: 'status_change',
       taskId,
@@ -2260,7 +2336,7 @@ Hint: Inspect it with get_task (task_id ${task.id}); use cancel_task if anything
         return
       }
 
-      this.store.update(taskId, {
+      this.updateTaskRow(taskId, {
         status: 'failed',
         resultStatus: 'failed',
         resultSummary: reason,
@@ -2287,7 +2363,7 @@ Hint: Inspect it with get_task (task_id ${task.id}); use cancel_task if anything
     runningTask.agent.abort()
     this.cleanupRunningTask(taskId)
 
-    this.store.update(taskId, {
+    this.updateTaskRow(taskId, {
       status: 'failed',
       resultStatus: 'failed',
       resultSummary: reason,
@@ -2324,7 +2400,7 @@ Hint: Inspect it with get_task (task_id ${task.id}); use cancel_task if anything
       pausedTask.agent.abort()
       this.pausedTasks.delete(taskId)
     }
-    this.store.update(taskId, {
+    this.updateTaskRow(taskId, {
       status: 'failed',
       resultStatus: 'failed',
       resultSummary: reason,
@@ -2380,7 +2456,7 @@ Hint: Inspect it with get_task (task_id ${task.id}); use cancel_task if anything
       if (!row || row.status !== 'running') {
         return { delivered: false, mode: 'none', reason: `the task is ${row?.status ?? 'missing'}` }
       }
-      this.store.update(taskId, { prompt: `${row.prompt}\n\n${text}` })
+      this.updateTaskRow(taskId, { prompt: `${row.prompt}\n\n${text}` })
       console.log(`[task-runner] Orchestrator steer appended to the prompt of queued task ${taskId}`)
       return { delivered: true, mode: 'queued_prompt' }
     }
@@ -2559,6 +2635,28 @@ Hint: Inspect it with get_task (task_id ${task.id}); use cancel_task if anything
    * work. Best effort — a failed handoff write must never change the outcome
    * of the task itself.
    */
+  /**
+   * Every task row write of the runner goes through here. Normal tasks are
+   * passed through untouched. A lean_local row gets its non-success texts
+   * (failed/question/silent summaries, error messages, handoff) capped to
+   * LEAN_NON_SUCCESS_MAX_CHARS, because the orchestrator reads them via the
+   * injection, get_task and list_tasks. A validated `completed` summary is
+   * the schema result and is not cut.
+   */
+  private updateTaskRow(id: string, input: UpdateTaskInput): Task | null {
+    if (input.resultSummary == null && input.errorMessage == null && input.handoff == null) return this.store.update(id, input)
+    const row = this.store.getById(id)
+    if (row?.workerProfile !== LEAN_LOCAL_PROFILE) return this.store.update(id, input)
+    const resultStatus = input.resultStatus !== undefined ? input.resultStatus : row.resultStatus
+    const status = input.status !== undefined ? input.status : row.status
+    const success = resultStatus === 'completed' && status === 'completed'
+    const out: UpdateTaskInput = { ...input }
+    if (typeof out.resultSummary === 'string' && !success) out.resultSummary = compactLeanText(out.resultSummary)
+    if (typeof out.errorMessage === 'string') out.errorMessage = compactLeanText(out.errorMessage)
+    if (typeof out.handoff === 'string') out.handoff = compactLeanText(out.handoff)
+    return this.store.update(id, out)
+  }
+
   private persistHandoff(
     taskId: string,
     reason: HandoffReason,
@@ -2575,7 +2673,7 @@ Hint: Inspect it with get_task (task_id ${task.id}); use cancel_task if anything
         errorMessage: extra.errorMessage ?? null,
         summary: extra.summary ?? null,
       })
-      this.store.update(taskId, { handoff })
+      this.updateTaskRow(taskId, { handoff })
     } catch (err) {
       console.warn(`[task-runner] Could not persist handoff for task ${taskId}:`, err)
     }
@@ -2583,7 +2681,7 @@ Hint: Inspect it with get_task (task_id ${task.id}); use cancel_task if anything
 
   private persistLiveMetrics(runningTask: RunningTask): void {
     try {
-      this.store.update(runningTask.taskId, {
+      this.updateTaskRow(runningTask.taskId, {
         promptTokens: runningTask.promptTokens,
         completionTokens: runningTask.completionTokens,
         cacheRead: runningTask.cacheRead,
@@ -2678,7 +2776,7 @@ Hint: Inspect it with get_task (task_id ${task.id}); use cancel_task if anything
     this.pausedTasks.delete(taskId)
 
     // Update status back to running
-    this.store.update(taskId, {
+    this.updateTaskRow(taskId, {
       status: 'running',
     })
 
@@ -2793,6 +2891,14 @@ Hint: Inspect it with get_task (task_id ${task.id}); use cancel_task if anything
         }
       }
 
+      // Lean: the stored contract may have broken while paused. Check it
+      // before the resumed model call so an unusable schema costs no prompt;
+      // the throw lands in the failure path below.
+      if (taskRow?.workerProfile === LEAN_LOCAL_PROFILE) {
+        const leanSchema = parseLeanOutputSchema(taskRow.outputSchema ?? null)
+        if (!leanSchema.ok) throw new Error(`worker_profile "${LEAN_LOCAL_PROFILE}": ${leanSchema.error}; resume refused`)
+      }
+
       // Send the follow-up via prompt (which adds a user message and continues the agentic loop)
       await runWithTaskExecutionContext(
         this.taskExecutionContext(taskId, ctxProvider),
@@ -2861,7 +2967,7 @@ Hint: Inspect it with get_task (task_id ${task.id}); use cancel_task if anything
         }
         this.pausedTasks.set(taskId, pausedTask)
 
-        this.store.update(taskId, {
+        this.updateTaskRow(taskId, {
           status: 'paused',
           resultStatus: 'question',
           resultSummary: summary,
@@ -2883,7 +2989,7 @@ Hint: Inspect it with get_task (task_id ${task.id}); use cancel_task if anything
 
       // Handle "silent" status — record as completed but skip injection/notification
       if (status === 'silent') {
-        this.store.update(taskId, {
+        this.updateTaskRow(taskId, {
           status: 'completed',
           resultStatus: 'silent',
           resultSummary: summary || 'Nothing to report.',
@@ -2899,7 +3005,7 @@ Hint: Inspect it with get_task (task_id ${task.id}); use cancel_task if anything
         return
       }
 
-      this.store.update(taskId, {
+      this.updateTaskRow(taskId, {
         status: status === 'failed' ? 'failed' : 'completed',
         resultStatus: status,
         resultSummary: summary,
@@ -2926,7 +3032,7 @@ Hint: Inspect it with get_task (task_id ${task.id}); use cancel_task if anything
       const errorMessage = err instanceof Error ? err.message : String(err)
       const now = new Date().toISOString().replace('T', ' ').slice(0, 19)
 
-      this.store.update(taskId, {
+      this.updateTaskRow(taskId, {
         status: 'failed',
         resultStatus: 'failed',
         resultSummary: `Task failed with error: ${errorMessage}`,
@@ -2994,7 +3100,7 @@ Hint: Inspect it with get_task (task_id ${task.id}); use cancel_task if anything
 
       // Mark as failed in DB
       const nowStr = new Date().toISOString().replace('T', ' ').slice(0, 19)
-      this.store.update(taskId, {
+      this.updateTaskRow(taskId, {
         status: 'failed',
         resultStatus: 'failed',
         resultSummary: reason,
@@ -3039,7 +3145,7 @@ Hint: Inspect it with get_task (task_id ${task.id}); use cancel_task if anything
     const pausedTasks = this.store.list({ status: 'paused' })
     for (const task of pausedTasks) {
       const now = new Date().toISOString().replace('T', ' ').slice(0, 19)
-      this.store.update(task.id, {
+      this.updateTaskRow(task.id, {
         status: 'failed',
         resultStatus: 'failed',
         resultSummary: 'server restart — please re-ask your question',
@@ -3070,7 +3176,7 @@ Hint: Inspect it with get_task (task_id ${task.id}); use cancel_task if anything
           ? `provider "${task.provider ?? '(none)'}" is no longer configured`
           : `model "${task.model}" is no longer enabled on provider "${task.provider}"`
         const now = new Date().toISOString().replace('T', ' ').slice(0, 19)
-        this.store.update(task.id, {
+        this.updateTaskRow(task.id, {
           status: 'failed',
           resultStatus: 'failed',
           resultSummary: `server restart — not resumed: ${missing}. Restart the task with an available model.`,
@@ -3086,6 +3192,28 @@ Hint: Inspect it with get_task (task_id ${task.id}); use cancel_task if anything
           : baseProvider)
         : defaultProvider
 
+      // Lean local worker: never resumed on the default (cloud) provider or
+      // on a provider that is no longer local. Its brief, schema and progress
+      // are private-data work — fail it clearly instead, the user restarts.
+      const lean = task.workerProfile === LEAN_LOCAL_PROFILE
+      if (lean) {
+        const refusal = !baseProvider
+          ? `worker_profile "${LEAN_LOCAL_PROFILE}": provider "${task.provider ?? '(none)'}" is no longer configured; no cloud fallback`
+          : checkLeanPreconditions({ provider, outputSchema: task.outputSchema ?? null })
+        if (refusal) {
+          const now = new Date().toISOString().replace('T', ' ').slice(0, 19)
+          this.updateTaskRow(task.id, {
+            status: 'failed',
+            resultStatus: 'failed',
+            resultSummary: `server restart — not resumed: ${refusal}. Restart the task on a local provider.`,
+            errorMessage: `server restart; not resumed: ${refusal}`,
+            completedAt: now,
+          })
+          failed++
+          continue
+        }
+      }
+
       // Note: rows that were still queued at shutdown (startedAt = NULL) are
       // recovered through the same "(resumed)" copy path as interrupted runs
       // — existing recovery semantics are kept unchanged. What changed is that
@@ -3097,7 +3225,11 @@ Hint: Inspect it with get_task (task_id ${task.id}); use cancel_task if anything
 
       let progressSummary = ''
       if (toolCalls.length > 0) {
+        // Lean: the resumed prompt is stored on the task row (visible to the
+        // orchestrator via get_task/list_tasks), so it never carries raw tool
+        // output — tool names only; the local worker re-reads what it needs.
         const toolSummaries = toolCalls.slice(-10).map(tc => {
+          if (lean) return `- ${tc.tool_name}`
           const outputPreview = tc.output?.slice(0, 200) ?? ''
           return `- ${tc.tool_name}: ${outputPreview}`
         })
@@ -3129,11 +3261,15 @@ Hint: Inspect it with get_task (task_id ${task.id}); use cancel_task if anything
         // above) thinks exactly like the original.
         thinkingLevel: task.thinkingLevel ?? undefined,
         routing: task.routing ?? undefined,
+        // The resumed run is checked against the same schema and keeps the
+        // worker profile (lean_local: fixed envelope, local-only guards).
+        outputSchema: task.outputSchema ?? undefined,
+        workerProfile: task.workerProfile ?? undefined,
       })
 
       // Mark the old task as failed
       const now = new Date().toISOString().replace('T', ' ').slice(0, 19)
-      this.store.update(task.id, {
+      this.updateTaskRow(task.id, {
         status: 'failed',
         resultStatus: 'failed',
         resultSummary: 'server restart — task being resumed',
@@ -3153,7 +3289,7 @@ Hint: Inspect it with get_task (task_id ${task.id}); use cancel_task if anything
         resumed++
       } catch {
         // If we can't start the resumed task, mark it as failed too
-        this.store.update(resumedTask.id, {
+        this.updateTaskRow(resumedTask.id, {
           status: 'failed',
           resultStatus: 'failed',
           resultSummary: 'Failed to resume after server restart',

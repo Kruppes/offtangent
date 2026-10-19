@@ -12,6 +12,7 @@ const guideSidebar: DefaultTheme.SidebarItem[] = [
       { text: 'Deployment', link: '/guide/deployment' },
       { text: 'Configuration', link: '/guide/configuration' },
       { text: 'Models & Providers', link: '/guide/models' },
+      { text: 'Lean Local Worker', link: '/guide/lean-local-worker' },
       { text: 'Secrets', link: '/guide/secrets' },
       { text: 'Telegram Bot', link: '/guide/telegram' },
       { text: 'Home Assistant via MQTT', link: '/guide/home-assistant-mqtt' },

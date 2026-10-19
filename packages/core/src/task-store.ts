@@ -5,6 +5,8 @@ import type { SettingsThinkingLevel } from './contracts/settings.js'
 import { normalizeThinkingLevel } from './thinking-level.js'
 import { parseTaskRouting, serializeTaskRouting } from './task-policy.js'
 import type { TaskRouting } from './task-policy.js'
+import { normalizeWorkerProfile } from './lean-worker-profile.js'
+import type { WorkerProfile } from './lean-worker-profile.js'
 
 export type TaskStatus = 'running' | 'paused' | 'completed' | 'failed'
 export type TaskTriggerType = 'user' | 'agent' | 'cronjob' | 'heartbeat' | 'consolidation'
@@ -72,6 +74,11 @@ export interface Task {
    * control belong to the delegating persona. `null`/absent = not delegated.
    */
   delegatedBy?: string | null
+  /**
+   * Lean local worker profile (plan 2026-10-18-lokale-worker, B2), or null
+   * for the normal task envelope. See lean-worker-profile.ts.
+   */
+  workerProfile?: WorkerProfile | null
 }
 
 /**
@@ -114,6 +121,8 @@ export interface CreateTaskInput {
   routing?: TaskRouting | null
   /** Delegating persona when the task runs as another persona (see Task.delegatedBy). */
   delegatedBy?: string | null
+  /** Lean local worker profile; omit for the normal task envelope. */
+  workerProfile?: WorkerProfile | null
 }
 
 export interface UpdateTaskInput {
@@ -232,6 +241,7 @@ interface TaskRow {
   thinking_level?: string | null
   routing?: string | null
   delegated_by?: string | null
+  worker_profile?: string | null
 }
 
 function rowToTask(row: TaskRow): Task {
@@ -270,6 +280,7 @@ function rowToTask(row: TaskRow): Task {
     thinkingLevel: normalizeThinkingLevel(row.thinking_level) ?? null,
     routing: parseTaskRouting(row.routing),
     delegatedBy: row.delegated_by ?? null,
+    workerProfile: normalizeWorkerProfile(row.worker_profile),
   }
 }
 
@@ -337,6 +348,8 @@ export function initTasksTable(db: Database): void {
     'ALTER TABLE tasks ADD COLUMN routing TEXT DEFAULT NULL',
     // Persona delegation (plan persona-architektur 1c): who delegated the task.
     'ALTER TABLE tasks ADD COLUMN delegated_by TEXT DEFAULT NULL',
+    // Lean local worker profile (plan 2026-10-18-lokale-worker, B2).
+    'ALTER TABLE tasks ADD COLUMN worker_profile TEXT DEFAULT NULL',
   ]) {
     try {
       db.exec(stmt)
@@ -379,8 +392,8 @@ export class TaskStore {
     const now = new Date().toISOString().replace('T', ' ').slice(0, 19)
 
     this.db.prepare(`
-      INSERT INTO tasks (id, name, prompt, status, trigger_type, trigger_source_id, provider, model, is_default_model, max_duration_minutes, session_id, agent_id, output_schema, context_mode, thinking_level, routing, delegated_by, created_at)
-      VALUES (?, ?, ?, 'running', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      INSERT INTO tasks (id, name, prompt, status, trigger_type, trigger_source_id, provider, model, is_default_model, max_duration_minutes, session_id, agent_id, output_schema, context_mode, thinking_level, routing, delegated_by, worker_profile, created_at)
+      VALUES (?, ?, ?, 'running', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `).run(
       id,
       input.name,
@@ -398,6 +411,7 @@ export class TaskStore {
       normalizeThinkingLevel(input.thinkingLevel) ?? null,
       input.routing ? serializeTaskRouting(input.routing) : null,
       input.delegatedBy ?? null,
+      input.workerProfile ?? null,
       now,
     )
 

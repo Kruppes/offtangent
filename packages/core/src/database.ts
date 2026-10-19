@@ -396,6 +396,14 @@ export function initDatabase(dbPath?: string): Database {
     db.exec("CREATE INDEX IF NOT EXISTS idx_scheduled_tasks_agent_id ON scheduled_tasks(agent_id)")
   }
 
+  // Lean local worker (plan 2026-10-18-lokale-worker): profile + output contract per cronjob.
+  if (!scheduledCols.find(c => c.name === 'worker_profile')) {
+    db.exec("ALTER TABLE scheduled_tasks ADD COLUMN worker_profile TEXT DEFAULT NULL")
+  }
+  if (!scheduledCols.find(c => c.name === 'output_schema')) {
+    db.exec("ALTER TABLE scheduled_tasks ADD COLUMN output_schema TEXT DEFAULT NULL")
+  }
+
   // Fork: add agent_id column to tasks for multi-persona task routing.
   // (Also done in initTasksTable for store-level callers — this covers the
   // initDatabase path used by the app bootstrap and tests.)
@@ -608,6 +616,12 @@ export function initDatabase(dbPath?: string): Database {
   // initTasksTable for store-level callers.
   if (!taskColsForCache.find(c => c.name === 'delegated_by')) {
     db.exec('ALTER TABLE tasks ADD COLUMN delegated_by TEXT DEFAULT NULL')
+  }
+
+  // Migration (plan 2026-10-18-lokale-worker, B2): lean local worker profile.
+  // NULL = normal task envelope. Also done in initTasksTable.
+  if (!taskColsForCache.find(c => c.name === 'worker_profile')) {
+    db.exec('ALTER TABLE tasks ADD COLUMN worker_profile TEXT DEFAULT NULL')
   }
 
   // Migration (W5/P3): bookkeeping for outcomes that never reach a strand

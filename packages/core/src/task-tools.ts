@@ -29,6 +29,7 @@ import { failPersonaDelegation, recordPersonaDelegation } from './persona-delega
 import { getSubtreeCostForTasks } from './task-cost.js'
 import type { TaskCostSummary } from './task-cost.js'
 import { loadHeuristics } from './heuristics.js'
+import { checkLeanPreconditions, parseWorkerProfileInput } from './lean-worker-profile.js'
 
 export interface TaskToolsOptions {
   taskRuntime: TaskRuntimeTaskBoundary
@@ -274,6 +275,11 @@ export function createTaskTool(options: TaskToolsOptions): AgentTool {
           description: 'Optional JSON Schema (as a JSON string, type "object") that the task\'s SUMMARY must satisfy. Use it when you will process the result programmatically or need a fixed shape (e.g. {"type":"object","required":["findings"],"properties":{"findings":{"type":"array","items":{"type":"string"}}}}). The runner validates the result and allows the task exactly one correction round; a result that still fails the schema fails the task.',
         })
       ),
+      worker_profile: Type.Optional(
+        Type.String({
+          description: 'Optional "lean_local": run as a lean LOCAL worker (local Ollama model only) that reads private raw data itself and returns only the schema-validated result. Short fixed system prompt, no memory/skills/persona files, tools read_file/list_files/shell/email_list/email_read only, no reviewer round. Requires output_schema and a local provider; refuses to start otherwise (no cloud fallback). Put everything the worker needs (paths, ids) into prompt.',
+        })
+      ),
       context_mode: Type.Optional(
         Type.String({
           description: 'What the task receives besides the prompt: "clean" (default, prompt only; use for reviews and critique), "selected" (prompt plus the items named in `context`), or "fork" (prompt plus the verbatim recent window of this conversation, for decisions that depend on the history).',
@@ -293,8 +299,9 @@ export function createTaskTool(options: TaskToolsOptions): AgentTool {
       ),
     }),
     execute: async (_toolCallId, params) => {
-      const { prompt, name, provider: providerName, model: modelName, max_duration_minutes, attached_skills, output_schema, context_mode, context, continuation_of, task_kind, difficulty, thinking, model_reason, persona } = params as {
+      const { prompt, name, provider: providerName, model: modelName, max_duration_minutes, attached_skills, output_schema, context_mode, context, continuation_of, task_kind, difficulty, thinking, model_reason, persona, worker_profile } = params as {
         prompt: string
+        worker_profile?: string
         persona?: string
         name: string
         provider?: string
@@ -427,6 +434,18 @@ export function createTaskTool(options: TaskToolsOptions): AgentTool {
           return { content: [{ type: 'text' as const, text: `Error: ${policy.error}` }], details: { error: true } }
         }
         const provider: ProviderConfig = policy.provider
+        // Lean local worker (plan 2026-10-18-lokale-worker, B2): validated
+        // here so a wrong pin is the caller's error at once — never a task
+        // that silently runs on the cloud default instead.
+        const parsedProfile = parseWorkerProfileInput(worker_profile)
+        if (!parsedProfile.ok) {
+          return { content: [{ type: 'text' as const, text: parsedProfile.error }], details: { error: true } }
+        }
+        const workerProfile = parsedProfile.profile
+        if (workerProfile) {
+          const refusal = checkLeanPreconditions({ provider, outputSchema })
+          if (refusal) return { content: [{ type: 'text' as const, text: `Error: ${refusal}. Pin a local provider/model (e.g. provider "Ollama") and pass output_schema.` }], details: { error: true } }
+        }
         // "Default model" = nobody chose it: no explicit pin, no profile and no
         // strand tie-breaker pick — i.e. exactly the inherited/default chain.
         const isDefaultModel = noExplicitPin
@@ -521,6 +540,7 @@ export function createTaskTool(options: TaskToolsOptions): AgentTool {
           contextMode: effectiveMode,
           thinkingLevel: policy.thinking,
           routing: policy.routing,
+          workerProfile,
         })
 
         if (delegatedBy && taskAgentId) {
@@ -541,7 +561,7 @@ export function createTaskTool(options: TaskToolsOptions): AgentTool {
           ? `Attached skills: ${attachedSkills.join(', ')}\n`
           : ''
         const contextLine = effectiveMode !== 'clean' || outputSchema
-          ? `Context mode: ${effectiveMode}${droppedMessageIds.length ? ` (dropped message ids: ${droppedMessageIds.join(', ')})` : ''}${outputSchema ? '; output_schema enforced' : ''}\n`
+          ? `Context mode: ${effectiveMode}${droppedMessageIds.length ? ` (dropped message ids: ${droppedMessageIds.join(', ')})` : ''}${outputSchema ? '; output_schema enforced' : ''}${workerProfile ? `; worker_profile ${workerProfile}` : ''}\n`
           : ''
         const continuationLine = continuationOfId ? `Continuation of: ${continuationOfId}\n` : ''
         const personaLine = delegatedBy

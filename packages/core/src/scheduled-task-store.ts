@@ -1,5 +1,7 @@
 import { randomUUID } from 'node:crypto'
 import type { Database } from './database.js'
+import { normalizeWorkerProfile } from './lean-worker-profile.js'
+import type { WorkerProfile } from './lean-worker-profile.js'
 
 export type ScheduledTaskActionType = 'task' | 'injection'
 
@@ -24,6 +26,10 @@ export interface ScheduledTask {
   attachedSkills: string[] | null
   /** Persona the cronjob belongs to (multi-persona scoping; default 'main'). */
   agentId: string
+  /** Lean local worker profile for every run (plan 2026-10-18-lokale-worker), or null. */
+  workerProfile: WorkerProfile | null
+  /** Output contract for every run (validated JSON Schema string), or null. */
+  outputSchema: string | null
   lastRunAt: string | null
   lastRunTaskId: string | null
   lastRunStatus: string | null
@@ -40,6 +46,8 @@ export interface CreateScheduledTaskInput {
   enabled?: boolean
   attachedSkills?: string[] | null
   agentId?: string
+  workerProfile?: WorkerProfile | null
+  outputSchema?: string | null
 }
 
 export interface UpdateScheduledTaskInput {
@@ -54,6 +62,8 @@ export interface UpdateScheduledTaskInput {
   systemPromptOverride?: string | null
   attachedSkills?: string[] | null
   agentId?: string
+  workerProfile?: WorkerProfile | null
+  outputSchema?: string | null
   lastRunAt?: string
   lastRunTaskId?: string
   lastRunStatus?: string
@@ -72,6 +82,8 @@ interface ScheduledTaskRow {
   system_prompt_override: string | null
   attached_skills: string | null
   agent_id: string
+  worker_profile?: string | null
+  output_schema?: string | null
   last_run_at: string | null
   last_run_task_id: string | null
   last_run_status: string | null
@@ -112,6 +124,8 @@ function rowToScheduledTask(row: ScheduledTaskRow): ScheduledTask {
     systemPromptOverride: row.system_prompt_override,
     attachedSkills: parseAttachedSkills(row.attached_skills),
     agentId: row.agent_id ?? 'main',
+    workerProfile: normalizeWorkerProfile(row.worker_profile),
+    outputSchema: row.output_schema ?? null,
     lastRunAt: row.last_run_at,
     lastRunTaskId: row.last_run_task_id,
     lastRunStatus: row.last_run_status,
@@ -151,6 +165,14 @@ export function initScheduledTasksTable(db: Database): void {
     db.exec(`ALTER TABLE scheduled_tasks ADD COLUMN agent_id TEXT NOT NULL DEFAULT 'main'`)
     db.exec(`CREATE INDEX IF NOT EXISTS idx_scheduled_tasks_agent_id ON scheduled_tasks(agent_id)`)
   }
+  addLeanWorkerColumns(db)
+}
+
+/** Additive migration (plan 2026-10-18-lokale-worker): lean worker profile + output contract per cronjob. */
+export function addLeanWorkerColumns(db: Database): void {
+  const cols = db.prepare("PRAGMA table_info(scheduled_tasks)").all() as { name: string }[]
+  if (!cols.some(c => c.name === 'worker_profile')) db.exec('ALTER TABLE scheduled_tasks ADD COLUMN worker_profile TEXT DEFAULT NULL')
+  if (!cols.some(c => c.name === 'output_schema')) db.exec('ALTER TABLE scheduled_tasks ADD COLUMN output_schema TEXT DEFAULT NULL')
 }
 
 /**
@@ -167,8 +189,8 @@ export class ScheduledTaskStore {
     const now = new Date().toISOString().replace('T', ' ').slice(0, 19)
 
     this.db.prepare(`
-      INSERT INTO scheduled_tasks (id, name, prompt, schedule, action_type, provider, enabled, attached_skills, agent_id, created_at, updated_at)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      INSERT INTO scheduled_tasks (id, name, prompt, schedule, action_type, provider, enabled, attached_skills, agent_id, worker_profile, output_schema, created_at, updated_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `).run(
       id,
       input.name,
@@ -179,6 +201,8 @@ export class ScheduledTaskStore {
       input.enabled !== undefined ? (input.enabled ? 1 : 0) : 1,
       serializeAttachedSkills(input.attachedSkills ?? null),
       input.agentId ?? 'main',
+      input.workerProfile ?? null,
+      input.outputSchema ?? null,
       now,
       now,
     )
@@ -260,6 +284,14 @@ export class ScheduledTaskStore {
     if (input.agentId !== undefined) {
       setClauses.push('agent_id = ?')
       params.push(input.agentId)
+    }
+    if (input.workerProfile !== undefined) {
+      setClauses.push('worker_profile = ?')
+      params.push(input.workerProfile)
+    }
+    if (input.outputSchema !== undefined) {
+      setClauses.push('output_schema = ?')
+      params.push(input.outputSchema)
     }
     if (input.lastRunAt !== undefined) {
       setClauses.push('last_run_at = ?')

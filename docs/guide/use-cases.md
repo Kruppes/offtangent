@@ -30,7 +30,7 @@ Mechanism: [Tasks & Cronjobs](../concepts/tasks-and-cronjobs), [Web UI → Cronj
 
 ### 4. Longer research as a background task
 
-Some questions need twenty tool calls and fifteen minutes. Running them in the chat means staring at a spinner. `create_task` hands the work to an isolated agent instance with its own time budget, its own model and a chosen slice of context (`context_mode`: clean, selected or fork), and an `output_schema` when you need the answer in a fixed shape. You get a report when it is done; meanwhile the chat stays usable.
+Some questions need twenty tool calls and fifteen minutes. Running them in the chat means staring at a spinner. `create_task` hands the work to an isolated agent instance with its own time budget, its own model and a chosen slice of context (`context_mode`: clean, selected or fork), and an `output_schema` when you need the answer in a fixed shape. You get a report when it is done; meanwhile the chat stays usable. Small extraction jobs can run as a [lean local worker](./lean-local-worker) on a local model to save cloud tokens.
 
 Mechanism: [Tasks & Cronjobs](../concepts/tasks-and-cronjobs), [Web UI → Tasks](../web-ui/tasks), [Tasks API](../reference/tasks-api).
 

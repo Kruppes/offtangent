@@ -3,6 +3,7 @@ import { Type } from '@earendil-works/pi-ai'
 import type { Database } from './database.js'
 import { normalizeFtsQuery } from './fts-utils.js'
 import { resolveAgentReadScope } from './agent-read-scope.js'
+import { createLeanShield, leanSessionExcludeSql } from './lean-session-shield.js'
 
 export interface ChatHistoryToolsOptions {
   db: Database
@@ -269,6 +270,12 @@ export function createReadChatHistoryTool(options: ChatHistoryToolsOptions): Age
           baseParams.push(session_id)
         }
 
+        // Lean local worker transcripts: rows are masked below for non-local
+        // callers. A full-text query additionally must not act as an oracle
+        // over their private content, so query matches skip lean sessions.
+        const leanShield = createLeanShield(options.db)
+        const leanQueryExclusion = leanShield.active && query ? [leanSessionExcludeSql('cm.session_id')] : []
+
         let countConditions = [...baseConditions]
         let countParams = [...baseParams]
         let selectConditions = [...baseConditions]
@@ -285,6 +292,7 @@ export function createReadChatHistoryTool(options: ChatHistoryToolsOptions): Age
 
           countConditions = [
             ...baseConditions,
+            ...leanQueryExclusion,
             `(cm.id IN (SELECT rowid FROM chat_messages_fts WHERE chat_messages_fts MATCH ?) OR ${toolCallQueryCondition})`,
           ]
           countParams = [...baseParams, ftsQuery, pattern, pattern]
@@ -297,6 +305,7 @@ export function createReadChatHistoryTool(options: ChatHistoryToolsOptions): Age
           ) ranked_matches ON ranked_matches.rowid = cm.id`
           selectConditions = [
             ...baseConditions,
+            ...leanQueryExclusion,
             `(ranked_matches.rowid IS NOT NULL OR ${toolCallQueryCondition})`,
           ]
           selectParams = [ftsQuery, ...baseParams, pattern, pattern]
@@ -353,9 +362,10 @@ export function createReadChatHistoryTool(options: ChatHistoryToolsOptions): Age
 
           // Truncate very long messages to keep output manageable
           const maxContentLength = 2000
-          const content = row.content.length > maxContentLength
-            ? row.content.slice(0, maxContentLength) + `\n... (truncated, ${row.content.length} chars total)`
-            : row.content
+          const raw = leanShield.replacement(row) ?? row.content
+          const content = raw.length > maxContentLength
+            ? raw.slice(0, maxContentLength) + `\n... (truncated, ${raw.length} chars total)`
+            : raw
 
           parts.push(content)
 

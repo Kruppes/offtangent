@@ -5,6 +5,8 @@ import type { TaskRuntimeScheduleBoundary } from './task-runtime.js'
 import { validateCronExpression, cronToHumanReadable, parseCronExpression, getNextRunTime } from './cron-parser.js'
 import { resolveProviderModelInput } from './provider-config.js'
 import { normalizeAttachedSkills } from './attached-skills.js'
+import { parseOutputSchema } from './task-output-schema.js'
+import { parseWorkerProfileInput } from './lean-worker-profile.js'
 
 /**
  * Resolve the (provider, model) pair a user may pass to a cronjob tool into
@@ -99,9 +101,21 @@ export function createCronjobTool(options: CronjobToolsOptions): AgentTool {
           description: 'Persona agent ID this cronjob belongs to (e.g. "analyst"). Defaults to the current persona. Only specify to override.',
         })
       ),
+      worker_profile: Type.Optional(
+        Type.String({
+          description: 'Optional "lean_local": every run is a lean LOCAL worker (short fixed prompt, restricted tool set including shell, no memory/skills list, no reviewer). Requires provider/model pinned to a local Ollama model and output_schema; a run on a non-local provider fails instead of falling back. Only for action_type "task".',
+        })
+      ),
+      output_schema: Type.Optional(
+        Type.String({
+          description: 'Optional JSON Schema (JSON string, type "object") every run\'s SUMMARY must satisfy. Required with worker_profile "lean_local". Only for action_type "task".',
+        })
+      ),
     }),
     execute: async (_toolCallId, params) => {
-      const { prompt, name, schedule, action_type, provider, model, attached_skills, agent_id } = params as {
+      const { prompt, name, schedule, action_type, provider, model, attached_skills, agent_id, worker_profile, output_schema } = params as {
+        worker_profile?: string
+        output_schema?: string
         prompt: string
         name: string
         schedule: string
@@ -139,6 +153,27 @@ export function createCronjobTool(options: CronjobToolsOptions): AgentTool {
 
         const normalizedAttachedSkills = normalizeAttachedSkills(attached_skills)
 
+        // Lean local worker + output contract (plan 2026-10-18-lokale-worker).
+        let outputSchema: string | null = null
+        if (output_schema !== undefined && output_schema !== null && String(output_schema).trim() !== '') {
+          const parsedSchema = parseOutputSchema(output_schema)
+          if (!parsedSchema.ok) {
+            return { content: [{ type: 'text' as const, text: `Error: invalid output_schema: ${parsedSchema.error}` }], details: { error: true } }
+          }
+          outputSchema = parsedSchema.serialized
+        }
+        const parsedProfile = parseWorkerProfileInput(worker_profile)
+        if (!parsedProfile.ok) {
+          return { content: [{ type: 'text' as const, text: parsedProfile.error }], details: { error: true } }
+        }
+        const workerProfile = parsedProfile.profile
+        if (workerProfile && (actionType !== 'task' || !outputSchema || !providerValue)) {
+          return {
+            content: [{ type: 'text' as const, text: `Error: worker_profile "${workerProfile}" needs action_type "task", an output_schema and a provider/model pinned to a local model.` }],
+            details: { error: true },
+          }
+        }
+
         // Resolve agentId: explicit param > current persona > 'main'
         const resolvedAgentId = agent_id ?? options.getCurrentAgentId?.() ?? 'main'
 
@@ -153,6 +188,8 @@ export function createCronjobTool(options: CronjobToolsOptions): AgentTool {
           attachedSkills: normalizedAttachedSkills && normalizedAttachedSkills.length > 0 ? normalizedAttachedSkills : undefined,
           // Fork multi-persona: attribute the cronjob's spawned task to the persona.
           agentId: resolvedAgentId,
+          ...(workerProfile ? { workerProfile } : {}),
+          ...(outputSchema ? { outputSchema } : {}),
         })
 
         // Register with scheduler

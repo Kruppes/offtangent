@@ -6,6 +6,7 @@ import { RECALLED_MARKER } from './message-digest.js'
 import { toolResultText } from './eco-tool-projection.js'
 import { resolveEcoOwner } from './eco-tool-freeze.js'
 import { getCurrentTaskExecutionContext } from './task-execution-context.js'
+import { createLeanShield } from './lean-session-shield.js'
 
 const isHigh = (c: number): boolean => c >= 0xd800 && c <= 0xdbff
 const isLow = (c: number): boolean => c >= 0xdc00 && c <= 0xdfff
@@ -181,6 +182,17 @@ export function createRecallMessageTool(options: RecallMessageToolOptions): Agen
           : (currentUserId === undefined || row.user_id === currentUserId || row.user_id === null))
       if (!row || !visible) {
         return { content: [{ type: 'text' as const, text: `Error: message ${id} not found.` }], details: { error: true, notFound: true } }
+      }
+
+      // Lean local worker transcripts never reach a non-local caller: the row
+      // (incl. any Eco original) is replaced by the placeholder, or by the
+      // validated result on the session's final assistant row.
+      const leanReplacement = createLeanShield(options.db).replacement(row)
+      if (leanReplacement !== null) {
+        return {
+          content: [{ type: 'text' as const, text: `${RECALLED_MARKER} message ${row.id} (${row.role}, ${row.timestamp})\n${leanReplacement}` }],
+          details: { messageId: row.id, role: row.role, leanWithheld: true },
+        }
       }
 
       let body = row.content

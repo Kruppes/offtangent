@@ -385,6 +385,10 @@ export class TaskScheduler {
       // Route the task result back to the cronjob's persona (runtime +
       // Telegram bot). Deterministic from the DB row, never LLM-inferred.
       agentId: scheduledTask.agentId,
+      // Lean local worker: the runner refuses a non-local provider or a
+      // missing schema at start (task fails, no fallback to the default).
+      ...(scheduledTask.workerProfile ? { workerProfile: scheduledTask.workerProfile } : {}),
+      ...(scheduledTask.outputSchema ? { outputSchema: scheduledTask.outputSchema } : {}),
     })
 
     // Update last_run_at on the scheduled task

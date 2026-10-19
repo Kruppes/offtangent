@@ -16,6 +16,7 @@ import {
   listActiveDescendants,
 } from './task-control.js'
 import type { TaskControlCaller } from './task-control.js'
+import { LEAN_LOCAL_PROFILE } from './lean-worker-profile.js'
 
 export interface TaskControlToolsOptions {
   taskRuntime: TaskRuntimeTaskBoundary
@@ -191,8 +192,14 @@ export function createGetTaskTool(options: TaskControlToolsOptions): AgentTool {
         const caller = resolveCaller(options)
         const task = getManageableTask(options.db, options.taskRuntime, caller, String(task_id ?? '').trim())
         if (!task) return notFound(task_id)
-        const limit = Math.max(0, Math.min(Math.floor(events ?? DEFAULT_EVENT_LIMIT), MAX_EVENT_LIMIT))
-        const text = formatTaskInspection(options.db, options.taskRuntime, task, Number.isFinite(limit) ? limit : DEFAULT_EVENT_LIMIT)
+        // Lean local worker: its tool calls carry the private raw data it read
+        // locally. Only the schema result leaves the machine, so the
+        // inspection never lists events for it (status, routing, cost stay).
+        const lean = task.workerProfile === LEAN_LOCAL_PROFILE
+        const requested = Math.max(0, Math.min(Math.floor(events ?? DEFAULT_EVENT_LIMIT), MAX_EVENT_LIMIT))
+        const limit = lean ? 0 : requested
+        const inspection = formatTaskInspection(options.db, options.taskRuntime, task, Number.isFinite(limit) ? limit : DEFAULT_EVENT_LIMIT)
+        const text = lean ? `${inspection}\nEvents: withheld (worker_profile ${LEAN_LOCAL_PROFILE}: raw tool data stays local).` : inspection
         return {
           content: [{ type: 'text' as const, text }],
           details: { taskId: task.id, status: task.status, resultStatus: task.resultStatus },
