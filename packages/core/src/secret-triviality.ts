@@ -1,5 +1,6 @@
 /**
- * Which AUTOMATIC detector findings are too trivial to become a new handle
+ * Which AUTOMATIC detector findings are too trivial to become a new LASTING
+ * handle (they are still redacted on the spot)
  * (fix 2026-10-19, "plain words redacted"; narrowed after review 2026-10-19).
  *
  * The URL-credential rule of `secret-detect.ts` reads the part after the
@@ -14,7 +15,10 @@
  * in general. It is consulted at exactly one place: `sealText()` in
  * `secret-boundary.ts`, before a NEW handle is created for a `url-password`
  * finding in a tool output (`tool:*` source) whose value is not already a
- * stored handle. Everything that is already stored is always redacted.
+ * stored handle. Such a finding is replaced by the anonymous handle
+ * (`REDACTED_HANDLE`) instead of a slug — the plaintext never passes, only
+ * the global re-redaction of later occurrences is skipped (re-review N1).
+ * Everything that is already stored is always redacted.
  *
  * Rules (case-insensitive, trimmed):
  *
@@ -71,7 +75,8 @@ export function isTrivialSecretValue(value: string): boolean {
 export const TRIVIALITY_CHECKED_KINDS: ReadonlySet<string> = new Set(['url-password'])
 
 /**
- * True when a new automatic finding must not create a handle: only a
+ * True when a new automatic finding must not create a lasting handle (the
+ * caller still replaces it with the anonymous handle): only a
  * `url-password` finding from a tool output (`tool:<name>` source) with a
  * trivial value. Chat input, system-prompt text, the form and the vault CLI
  * are never filtered.

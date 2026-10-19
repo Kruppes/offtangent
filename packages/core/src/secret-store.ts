@@ -19,7 +19,7 @@ import fs from 'node:fs'
 import path from 'node:path'
 import { getConfigDir } from './config.js'
 import { encrypt, decrypt, isEncrypted } from './encryption.js'
-import { loadSecrets, saveSecrets, withSecretsFileLock, type SecretHandleRecord, type SecretsFile } from './secrets-config.js'
+import { loadSecrets, saveSecrets, type SecretHandleRecord, type SecretsFile } from './secrets-config.js'
 
 /** Metadata about a sealed secret. Never contains the value. */
 export interface SecretHandleInfo {
@@ -129,13 +129,11 @@ function readHandles(): Record<string, SecretHandleRecord> {
 }
 
 function writeHandles(mutate: (handles: Record<string, SecretHandleRecord>) => void): void {
-  withSecretsFileLock(() => {
-    const file: SecretsFile = loadSecrets()
-    const handles = { ...(file.handles ?? {}) }
-    mutate(handles)
-    saveSecrets({ ...file, handles })
-    invalidateSecretHandleCache()
-  })
+  const file: SecretsFile = loadSecrets()
+  const handles = { ...(file.handles ?? {}) }
+  mutate(handles)
+  saveSecrets({ ...file, handles })
+  invalidateSecretHandleCache()
 }
 
 function decryptRecord(slug: string, record: SecretHandleRecord): string | null {
@@ -162,10 +160,6 @@ function decryptRecord(slug: string, record: SecretHandleRecord): string | null 
  */
 export function sealSecret(value: string, kind: string, source: string): string {
   if (!value) throw new Error('sealSecret: value must not be empty')
-  return withSecretsFileLock(() => sealSecretLocked(value, kind, source))
-}
-
-function sealSecretLocked(value: string, kind: string, source: string): string {
   const hash = dedupHash(value)
   const legacy = legacySha256(value)
   const file = loadSecrets()
@@ -178,7 +172,17 @@ function sealSecretLocked(value: string, kind: string, source: string): string {
     // instance there is no store yet — this path exists so an early tester's
     // file does not end up with duplicates.)
     if (record.hash === hash || record.hash === legacy) {
-      handles[slug] = { ...record, hash, lastSeenAt: new Date().toISOString() }
+      // An explicit store (form, settings, chat …) of a value that was first
+      // sealed automatically from tool output upgrades the origin, so the
+      // slug-based junk cleanup can never remove a value the user filed on
+      // purpose (re-review N4). An automatic hit never downgrades a record.
+      const upgrade = !isAutomaticSecretSource(source) && isAutomaticSecretSource(record.source)
+      handles[slug] = {
+        ...record,
+        ...(upgrade ? { source, explicitlyStored: true } : {}),
+        hash,
+        lastSeenAt: new Date().toISOString(),
+      }
       saveSecrets({ ...file, handles })
       invalidateSecretHandleCache()
       return slug
@@ -200,6 +204,15 @@ function sealSecretLocked(value: string, kind: string, source: string): string {
   saveSecrets({ ...file, handles })
   invalidateSecretHandleCache()
   return slug
+}
+
+/**
+ * True for sources that seal values automatically (redaction of tool output,
+ * the vault CLI). Every other source — `form`, `settings`, `chat`, … — is an
+ * explicit store by the user.
+ */
+export function isAutomaticSecretSource(source: string): boolean {
+  return source.startsWith('tool:') || source === 'vaultwarden'
 }
 
 /** Return the plaintext for a slug, or `null` when unknown/undecryptable. */

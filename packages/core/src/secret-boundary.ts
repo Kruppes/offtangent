@@ -22,7 +22,7 @@ import path from 'node:path'
 import { SECRET_HANDLE_MIN_VALUE_LENGTH } from './contracts/secrets.js'
 import { getConfigDir } from './config.js'
 import { detectSecrets, type SecretTier } from './secret-detect.js'
-import { invalidateSecretFilesSignature, isModelConfigCandidate, secretFileEntries, secretFilesSignature } from './secret-files.js'
+import { invalidateSecretFilesSignature, secretFileEntries, secretFilesSignature, type SecretFileEntry } from './secret-files.js'
 import { knownSecretValues, resolveSecret, sealSecret } from './secret-store.js'
 import { skipTrivialAutomaticFinding } from './secret-triviality.js'
 import { commandInvokesVaultCli, sealVaultCliOutput } from './secret-vault-cli.js'
@@ -164,6 +164,8 @@ function sourceSignature(): string {
   return [
     statStamp(path.join(configDir, 'secrets.json')),
     statStamp(path.join(configDir, 'providers.json')),
+    // `secrets.nonSecretEnvKeys` lives here.
+    statStamp(path.join(configDir, 'settings.json')),
     // Secret files (`<DATA_DIR>/secrets/*.env`, key files) — see secret-files.ts.
     secretFilesSignature(),
     envSignature(),
@@ -210,6 +212,24 @@ export function invalidateKnownValues(): void {
   envSignatureCache = null
 }
 
+/**
+ * The explicit allowlist `secrets.nonSecretEnvKeys` from settings.json: env
+ * KEY names (exact, case-sensitive) whose values in secret files are
+ * configuration, not credentials. Default empty. Read raw (no template
+ * creation, no normalization) so a missing or corrupt file means "no
+ * exemptions", never an error.
+ */
+function nonSecretEnvKeys(): Set<string> {
+  try {
+    const raw = JSON.parse(fs.readFileSync(path.join(getConfigDir(), 'settings.json'), 'utf-8')) as { secrets?: { nonSecretEnvKeys?: unknown } }
+    const list = raw?.secrets?.nonSecretEnvKeys
+    if (!Array.isArray(list)) return new Set()
+    return new Set(list.filter((key): key is string => typeof key === 'string' && /^[A-Za-z_][A-Za-z0-9_]*$/.test(key)))
+  } catch {
+    return new Set()
+  }
+}
+
 function buildIndex(): KnownIndex {
   const replacements = new Map<string, string>()
 
@@ -245,27 +265,23 @@ function buildIndex(): KnownIndex {
   // files). Opaque on purpose: nothing is written to the store, so reading a
   // credentials file never creates a handle (maintainer request).
   //
-  // Runs LAST so every other source is already in `replacements`: a model
-  // setting (`ANTHROPIC_MODEL_POLISH=claude-…`, fix 2026-10-19) is skipped
-  // only when its value is shaped like a model id, no detector rule fires on
-  // it and it is not already a known secret (handle, secrets.json env,
-  // provider key, credential env var). Secret detection always wins over the
-  // configuration heuristic.
+  // An env KEY that the operator listed explicitly in settings.json
+  // `secrets.nonSecretEnvKeys` (e.g. `ANTHROPIC_MODEL_POLISH`, fix
+  // 2026-10-19) is a configuration value, not a credential. Its value is
+  // still read as a known secret when a detector rule fires on it or when it
+  // is known from any other source (handle, secrets.json env, provider key,
+  // credential env var, a non-allowlisted line of any file). That is why the
+  // allowlisted lines are judged LAST. No key-name heuristic.
   try {
     const entries = secretFileEntries({ minLength: MIN_ENV_VALUE_LENGTH })
-    // Pass 1: every non-model line, so a value that sits under a credential
-    // key in ANY file is known before a model line is judged.
+    const allowed = nonSecretEnvKeys()
+    const isAllowed = (entry: SecretFileEntry): boolean => entry.key !== null && allowed.has(entry.key)
     for (const entry of entries) {
-      if (!entry.modelConfig) addOpaque(entry.value)
+      if (!isAllowed(entry)) addOpaque(entry.value)
     }
-    // Pass 2: model settings, skipped only when they cannot be a secret.
     for (const entry of entries) {
-      if (!entry.modelConfig) continue
-      if (
-        !replacements.has(entry.value)
-        && isModelConfigCandidate(entry.value)
-        && detectSecrets(entry.value, { tier: 'user' }).length === 0
-      ) continue
+      if (!isAllowed(entry)) continue
+      if (!replacements.has(entry.value) && detectSecrets(entry.value, { tier: 'user' }).length === 0) continue
       addOpaque(entry.value)
     }
   } catch (err) {
@@ -425,18 +441,16 @@ export function sealText(text: string, options: SealTextOptions): SealTextResult
   // as the PEM block could span the gap) is dropped instead of nested.
   const protectedRanges = handleRanges(text)
   const detectable = maskRanges(text, protectedRanges)
-  // A NEW automatic url-password finding in a tool output whose value is a
-  // documentation placeholder (`postgres://user:password@host` in a README)
-  // must not create a handle (fix 2026-10-19). Narrow on purpose: a value
-  // that is already stored is always sealed/redacted, and every other kind,
-  // source and tier is never filtered.
+  // A NEW automatic url-password finding in a tool output whose value looks
+  // trivial (`postgres://user:password@host` in a README) gets NO lasting
+  // handle — otherwise every later occurrence of the word would be redacted
+  // everywhere. It is still replaced HERE by the anonymous handle: the value
+  // may be a real (weak) password, and plaintext must never pass (re-review
+  // N1). A value that is already stored is always sealed, and every other
+  // kind, source and tier is never treated this way.
   const stored = knownSecretValues()
   const spans = detectSecrets(detectable, { tier: options.tier })
     .filter(span => !overlapsRange(protectedRanges, span.start, span.end))
-    .filter(span => {
-      const value = text.slice(span.start, span.end)
-      return stored.has(value) || !skipTrivialAutomaticFinding(value, span.kind, options.source)
-    })
   if (spans.length === 0) return { text: redactKnown(text), sealed: [] }
 
   const sealed: SealedRef[] = []
@@ -450,6 +464,11 @@ export function sealText(text: string, options: SealTextOptions): SealTextResult
     // by the anonymous handle instead of being passed through.
     let replacement = REDACTED_HANDLE
     let slug: string | null = null
+    if (!stored.has(value) && skipTrivialAutomaticFinding(value, span.kind, options.source)) {
+      out += text.slice(cursor, span.start) + replacement
+      cursor = span.end
+      continue
+    }
     try {
       slug = sealSecret(value, span.kind, options.source)
       replacement = secretHandle(slug)

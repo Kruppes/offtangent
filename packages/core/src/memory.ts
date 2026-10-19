@@ -957,16 +957,27 @@ export const PROMPT_OTHER_MODELS_PER_PROVIDER = 40
 export const PROMPT_OTHER_MODELS_BUDGET_CHARS = 2000
 
 /**
- * A model id safe to put into the system prompt: no control characters or
- * whitespace, no URL, no query string, bounded length (review 2026-10-19,
- * finding 8 — the ids come from provider APIs and are not validated on save).
+ * Conservative allowlist for a model id in the "further models" line
+ * (re-review N7): letters, digits and `. _ : / @ + -`, starting with a letter
+ * or digit, at most 121 characters, and no URL. Everything else — `<`, `>`,
+ * `&`, quotes, whitespace, control characters, `?`, `=` — is left out. The
+ * ids come from provider APIs and are not validated on save.
  */
-function isPromptSafeModelId(id: string): boolean {
-  if (!id || id.length > 120) return false
+const PROMPT_SAFE_MODEL_ID_RE = /^[A-Za-z0-9][A-Za-z0-9._:/@+-]{0,120}$/
+
+export function isPromptSafeModelId(id: string): boolean {
+  return PROMPT_SAFE_MODEL_ID_RE.test(id) && !id.includes('://')
+}
+
+/**
+ * Provider display name for the "further models" line: printable characters
+ * only, no `<`, `>` or `&` (they could close or open a prompt block), at most
+ * 80 characters. Falls back to `provider` when nothing is left.
+ */
+export function promptSafeProviderName(name: string): string {
   // eslint-disable-next-line no-control-regex
-  if (/[\s\u0000-\u001f\u007f]/.test(id)) return false
-  if (id.includes('://') || id.includes('?') || id.includes('=')) return false
-  return true
+  const cleaned = name.replace(/[\u0000-\u001f\u007f-\u009f\u2028\u2029<>&]+/g, ' ').replace(/\s+/g, ' ').trim().slice(0, 80)
+  return cleaned || 'provider'
 }
 
 /**
@@ -978,8 +989,7 @@ function isPromptSafeModelId(id: string): boolean {
 function formatOtherModelsLine(providerName: string, ids: readonly string[], budget: number): string | null {
   const safe = ids.filter(isPromptSafeModelId)
   if (safe.length === 0) return null
-  // eslint-disable-next-line no-control-regex
-  const name = providerName.replace(/[\u0000-\u001f\u007f]+/g, ' ').slice(0, 80)
+  const name = promptSafeProviderName(providerName)
   const more = (n: number): string => ` (+${n} more; the full list is in the error message of create_task for an unknown model)`
   const head = `- ${name}: `
   const shown: string[] = []

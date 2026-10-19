@@ -3,11 +3,12 @@
  * id were rewritten into handles in every output. The fix corrects the SOURCES
  * instead of exempting values globally:
  *
- * - a model setting in `<DATA_DIR>/secrets/*.env` (`*_MODEL*`) is not read as
- *   a known value, but only when the value is shaped like a model id, no
- *   detector fires on it and it is not a known secret otherwise;
- * - a NEW url-password finding in a tool output whose value is a placeholder
- *   (`://user:password@`) does not create a handle.
+ * - a value in `<DATA_DIR>/secrets/*.env` is skipped only when its KEY is in
+ *   the explicit settings.json allowlist `secrets.nonSecretEnvKeys`, no
+ *   detector fires on it and it is not a known secret otherwise (no key-name
+ *   heuristic, re-review 2026-10-19);
+ * - a NEW trivial url-password finding in a tool output gets no lasting
+ *   handle but is still replaced by the anonymous handle (re-review N1).
  *
  * Guiding rule under test: no exception ever lifts the redaction of a real,
  * deliberately stored secret. All values here are synthetic; assertions use
@@ -27,7 +28,7 @@ import {
   sealToolText,
   secretHandle,
 } from './secret-boundary.js'
-import { invalidateSecretFilesSignature, isModelConfigCandidate, isModelConfigEnvKey, SECRET_FILE_DIRS_ENV, secretFileEntries } from './secret-files.js'
+import { invalidateSecretFilesSignature, SECRET_FILE_DIRS_ENV } from './secret-files.js'
 import { invalidateSecretHandleCache, listSecrets, sealSecret } from './secret-store.js'
 import { isTrivialSecretValue, skipTrivialAutomaticFinding, TRIVIAL_SECRET_WORDS } from './secret-triviality.js'
 
@@ -169,8 +170,30 @@ describe('finding 2: weak explicit passwords and detector findings are always re
   it('does not create handles for documentation placeholders in tool output', () => {
     const text = 'see postgres://user:password@db:5432/x and redis://:secret@cache:6379'
     const result = sealText(text, { tier: 'strong', source: 'tool:shell' })
-    expect(result.text).toBe(text)
+    // no lasting handle, but no plaintext either (re-review N1)
+    expect(result.text).not.toBe(text)
+    expect(result.text.startsWith('see postgres://user:' + REDACTED_HANDLE + '@db:5432/x')).toBe(true)
     expect(result.sealed).toEqual([])
+    expect(listSecrets()).toHaveLength(0)
+  })
+
+  it('a NEW trivial url-password from a tool output is redacted on the spot without a handle (re-review N1)', () => {
+    // Weak but real passwords that the placeholder rules classify as trivial.
+    const weak = [
+      ['pass', 'word'].join(''),
+      ['post', 'gres'].join(''),
+      ['admin', 'istrator'].join(''),
+      'a'.repeat(12),
+      ['chan', 'geme'].join(''),
+    ]
+    for (const pw of weak) expect({ pw: pw.length, trivial: isTrivialSecretValue(pw) }).toEqual({ pw: pw.length, trivial: true })
+    for (const [i, pw] of weak.entries()) {
+      const result = sealText(`dsn=postgres://app:${pw}@db.internal:5432/app`, { tier: 'strong', source: 'tool:shell' })
+      expect({ i, hidden: !result.text.includes(`:${pw}@`) }).toEqual({ i, hidden: true })
+      expect(result.text).toBe(`dsn=postgres://app:${REDACTED_HANDLE}@db.internal:5432/app`)
+      expect(result.sealed).toEqual([])
+    }
+    // the global re-redaction is what is skipped: no handle was stored
     expect(listSecrets()).toHaveLength(0)
   })
 
@@ -211,65 +234,55 @@ describe('finding 3: no Bitwarden status-line exemption', () => {
   })
 })
 
-describe('finding 4: a *_MODEL* env key needs a model-shaped, undetected, unknown value', () => {
-  function writeEnv(lines: string[]): void {
-    fs.writeFileSync(path.join(tmpDir, 'secrets', 'svc.env'), lines.join('\n') + '\n')
+describe('secrets.nonSecretEnvKeys: explicit allowlist instead of a *_MODEL* name heuristic', () => {
+  function writeEnv(lines: string[], file = 'svc.env'): void {
+    fs.writeFileSync(path.join(tmpDir, 'secrets', file), lines.join('\n') + '\n')
     invalidateSecretFilesSignature()
     invalidateKnownValues()
   }
+  function writeSettings(settings: unknown): void {
+    fs.writeFileSync(path.join(tmpDir, 'config', 'settings.json'), typeof settings === 'string' ? settings : JSON.stringify(settings))
+    invalidateKnownValues()
+  }
 
-  it('skips a real model setting but keeps the API key next to it', () => {
-    writeEnv([`ANTHROPIC_API_KEY=${ANTHROPIC_SHAPED}`, `ANTHROPIC_MODEL_POLISH=${MODEL_ID}`, 'OPENAI_MODELS=gpt-5.5-codex-mini'])
-    const out = redactKnown(`echo ${MODEL_ID} gpt-5.5-codex-mini ${ANTHROPIC_SHAPED}`)
-    expect(out).toBe(`echo ${MODEL_ID} gpt-5.5-codex-mini ${REDACTED_HANDLE}`)
+  it('without an allowlist entry a *_MODEL* value in a secret file is redacted (no key-name heuristic)', () => {
+    writeEnv([`ANTHROPIC_MODEL_POLISH=${MODEL_ID}`, `TENANT_MODEL=${HANDLE_MODEL_SHAPED}`])
+    expect(redactKnown(`${MODEL_ID} ${HANDLE_MODEL_SHAPED}`)).toBe(`${REDACTED_HANDLE} ${REDACTED_HANDLE}`)
+    writeSettings({ secrets: { nonSecretEnvKeys: [] } })
+    expect(redactKnown(`${MODEL_ID} ${HANDLE_MODEL_SHAPED}`)).toBe(`${REDACTED_HANDLE} ${REDACTED_HANDLE}`)
   })
 
-  it('OPENAI_MODEL with a value that is not a model id stays redacted', () => {
-    const urlValue = ['https:', '', 'h.example', 'x?k=v9q2m'].join('/')
-    const tokenRun = ['Zq8Lm2Np9Rv4Tz8W', 'Qx7Lm2Np9Rv4Tz8W'].join('')
-    const withSpaceButLong = ['pass', 'phrase'].join('') + '!' + 'Z9q'
-    writeEnv([
-      `OPENAI_MODEL=${GITHUB_SHAPED}`, // detector hit
-      `MODEL=${ANTHROPIC_SHAPED}`, // detector hit
-      `FOO_MODEL=${urlValue}`, // URL
-      `BAR_MODEL_ID=${tokenRun}`, // token-like run
-      `BAZ_MODELS=${withSpaceButLong}`, // `!` is outside the model-id charset
-    ])
-    const values = [GITHUB_SHAPED, ANTHROPIC_SHAPED, urlValue, tokenRun, withSpaceButLong]
-    const out = redactKnown(values.map(v => `<${v}>`).join(' '))
-    for (const [i, v] of values.entries()) expect({ i, hidden: !out.includes(v) }).toEqual({ i, hidden: true })
+  it('an allowlisted key is not read as a known value; the API key next to it is', () => {
+    writeSettings({ secrets: { nonSecretEnvKeys: ['ANTHROPIC_MODEL_POLISH', 'OPENAI_MODELS'] } })
+    writeEnv([`ANTHROPIC_API_KEY=${ANTHROPIC_SHAPED}`, `ANTHROPIC_MODEL_POLISH=${MODEL_ID}`, 'OPENAI_MODELS=gpt-5.5-codex-mini', `TENANT_MODEL=${HANDLE_MODEL_SHAPED}`])
+    const out = redactKnown(`echo ${MODEL_ID} gpt-5.5-codex-mini ${ANTHROPIC_SHAPED} ${HANDLE_MODEL_SHAPED}`)
+    expect(out).toBe(`echo ${MODEL_ID} gpt-5.5-codex-mini ${REDACTED_HANDLE} ${REDACTED_HANDLE}`)
   })
 
-  it('a model-shaped value under a *_MODEL key stays redacted when it is a provider key or a handle', () => {
+  it('an allowlisted key stays redacted when a detector fires or the value is known from another source', () => {
     writeProvidersJson([provider({ apiKey: PROVIDER_KEY_MODEL_SHAPED })])
     const slug = sealSecret(HANDLE_MODEL_SHAPED, 'password', 'form')
-    writeEnv([`OPENAI_MODEL=${PROVIDER_KEY_MODEL_SHAPED}`, `TENANT_MODEL=${HANDLE_MODEL_SHAPED}`])
-    const out = redactKnown(`${PROVIDER_KEY_MODEL_SHAPED} ${HANDLE_MODEL_SHAPED}`)
-    expect(out).toBe(`${REDACTED_HANDLE} ${secretHandle(slug)}`)
+    const otherFile = ['svc', 'k8m2', 'q7z4'].join('-')
+    writeSettings({ secrets: { nonSecretEnvKeys: ['OPENAI_MODEL', 'MODEL', 'TENANT_MODEL', 'FOO_MODEL'] } })
+    writeEnv([`OPENAI_MODEL=${GITHUB_SHAPED}`, `MODEL=${PROVIDER_KEY_MODEL_SHAPED}`, `TENANT_MODEL=${HANDLE_MODEL_SHAPED}`, `FOO_MODEL=${otherFile}`])
+    writeEnv([`SERVICE_TOKEN=${otherFile}`], 'other.env')
+    const out = redactKnown(`${GITHUB_SHAPED} ${PROVIDER_KEY_MODEL_SHAPED} ${HANDLE_MODEL_SHAPED} ${otherFile}`)
+    expect(out).toBe(`${REDACTED_HANDLE} ${REDACTED_HANDLE} ${secretHandle(slug)} ${REDACTED_HANDLE}`)
   })
 
-  it('a model-shaped value that ALSO sits under a credential key in any file stays redacted', () => {
-    writeEnv([`OPENAI_MODEL=${PROVIDER_KEY_MODEL_SHAPED}`])
-    fs.writeFileSync(path.join(tmpDir, 'secrets', 'other.env'), `SERVICE_TOKEN=${PROVIDER_KEY_MODEL_SHAPED}\n`)
-    invalidateSecretFilesSignature()
-    invalidateKnownValues()
-    expect(redactKnown(PROVIDER_KEY_MODEL_SHAPED)).toBe(REDACTED_HANDLE)
-  })
-
-  it('a MODEL key that carries a credential word is never a model setting', () => {
-    expect(isModelConfigEnvKey('MODEL_API_KEY')).toBe(false)
-    expect(isModelConfigEnvKey('OPENAI_MODEL_TOKEN')).toBe(false)
-    expect(isModelConfigEnvKey('ANTHROPIC_MODEL_POLISH')).toBe(true)
-    expect(isModelConfigEnvKey('MODEL')).toBe(true)
-    expect(isModelConfigEnvKey('MODELLER_NAME')).toBe(false)
-    writeEnv([`MODEL_API_KEY=${MODEL_ID}x9`])
-    expect(secretFileEntries({ minLength: 8 }).every(e => !e.modelConfig)).toBe(true)
-    expect(redactKnown(`${MODEL_ID}x9`)).toBe(REDACTED_HANDLE)
-  })
-
-  it('isModelConfigCandidate accepts model ids and rejects other shapes', () => {
-    for (const id of [MODEL_ID, 'gpt-5.5', 'openrouter/meta-llama-3:70b', 'gemini-3.1-pro-preview']) expect(isModelConfigCandidate(id)).toBe(true)
-    for (const v of ['has space', 'https://x.example/m', 'a', 'Zq8Lm2Np9Rv4Tz8WQx7Lm2Np9Rv4', 'x?y=z', '-leading']) expect(isModelConfigCandidate(v)).toBe(false)
+  it('the allowlist matches exact key names only; malformed entries or a corrupt settings.json exempt nothing', () => {
+    writeEnv([`ANTHROPIC_MODEL_POLISH=${MODEL_ID}`])
+    for (const settings of [
+      { secrets: { nonSecretEnvKeys: ['anthropic_model_polish', 'ANTHROPIC_MODEL', '*', 'ANTHROPIC_MODEL_POLISH '] } },
+      { secrets: { nonSecretEnvKeys: 'ANTHROPIC_MODEL_POLISH' } },
+      { nonSecretEnvKeys: ['ANTHROPIC_MODEL_POLISH'] },
+      '{ not json',
+    ]) {
+      writeSettings(settings)
+      expect(redactKnown(MODEL_ID)).toBe(REDACTED_HANDLE)
+    }
+    writeSettings({ secrets: { nonSecretEnvKeys: ['ANTHROPIC_MODEL_POLISH'] } })
+    expect(redactKnown(MODEL_ID)).toBe(MODEL_ID)
   })
 })
 

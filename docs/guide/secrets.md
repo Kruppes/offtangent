@@ -135,18 +135,28 @@ each one has a concrete reason.
   the source: a NEW `url-password` finding in a tool output (`tool:*`
   source, e.g. `postgres://user:password@host` in a README) whose value is a
   documentation placeholder or ordinary word
-  (`packages/core/src/secret-triviality.ts`) is not sealed into the store.
+  (`packages/core/src/secret-triviality.ts`) gets no handle in the store, but is still
+  redacted on the spot as <code v-pre>{{secret:redacted}}</code>
+  (re-review 2026-10-19). Only the later re-redaction of that value elsewhere
+  is lost; it never leaks in plain text.
   A value that is already stored is redacted as usual. The form stores weak
   passwords like any other and only adds `warning: "value_looks_trivial"`
-  to the response.
-- **Junk handles are removed by slug, never by value.**
-  `npx tsx scripts/cleanup-trivial-secret-handles.ts --slugs a,b,c` lists
-  the named handles (slug, kind, source, length — never a value);
-  `--apply` removes them. Only handles with source `tool:shell` or
-  `vaultwarden` can be removed; one unknown or refused slug aborts the whole
-  run. The origin is checked again under the `secrets.json.lock` file lock,
-  right before the write, after an exclusive `secrets.json.bak-<timestamp>`
-  (mode 0600) was written. `secrets.json` itself is 0600 after every write.
+  to the response. Storing a value via the form (or any other explicit
+  source) that was first sealed from tool output upgrades the handle's
+  `source` to the explicit one and sets `explicitlyStored: true`.
+- **Junk handles are removed by slug, never by value — with the backend
+  stopped.** `npx tsx scripts/cleanup-trivial-secret-handles.ts --slugs a,b,c`
+  lists the named handles (slug, kind, source, length — never a value);
+  `--apply` removes them. Only handles with source `tool:*` or `vaultwarden`
+  that were never stored explicitly can be removed; one unknown or refused
+  slug aborts the whole run. There is no file lock: the script refuses
+  (exit 3, no change) while an Offtangent backend runs — a process with
+  `dist/server.js` in its command line, or anything accepting connections on
+  127.0.0.1:3000 (`CLEANUP_BACKEND_PORT` overrides the port). `--apply`
+  first writes `secrets.json.bak-<timestamp>` exclusively with mode 0600,
+  completely, and compares it byte by byte with the original; on a mismatch
+  nothing is removed. `secrets.json` itself is always written atomically
+  (0600 temp file in the same directory, fsync, rename).
 - **Background jobs can be skipped instead of downgraded.** A background job
   without its own model (session summary, fact extraction, memory
   consolidation, plan verification) falls back to the active chat model. That
@@ -216,14 +226,18 @@ directory that holds `secrets.json` and `<DATA_DIR>/secrets` (override with
 - a PEM private-key block as a whole,
 - a file that contains a single token on one line (session keys).
 
-An env line whose key names a model (`MODEL`, `ANTHROPIC_MODEL_POLISH`,
-`OPENAI_MODELS`, no credential word such as `KEY`/`TOKEN`/`PASS` in the key)
-is skipped only when ALL of these hold: the value is shaped like a model id
-(`^[A-Za-z0-9][A-Za-z0-9._:/-]{1,80}$`, no `://`, no 24+ character
-alphanumeric run), no detector rule fires on it, and it is not already a
-known secret (handle, `secrets.json` env, provider key, credential env var,
-or any non-model line of a secret file). Otherwise it is redacted like
-every other file value.
+An env line is skipped only when its KEY is listed in the explicit
+allowlist `secrets.nonSecretEnvKeys` in `settings.json` (array of exact,
+case-sensitive key names, default empty) — AND no detector rule fires on the
+value — AND the value is not already a known secret from another source
+(handle, `secrets.json` env, provider key, credential env var, any line of a
+secret file under a key that is not allowlisted). A key name alone, such as
+`*_MODEL*`, never exempts a value. Example for a model setting that should
+stay readable in tool output:
+
+```json
+{ "secrets": { "nonSecretEnvKeys": ["ANTHROPIC_MODEL_POLISH"] } }
+```
 
 Those values are redacted **opaquely**: they turn into <code v-pre>{{secret:redacted}}</code>,
 they never become a handle and nothing is written to the store — reading a
