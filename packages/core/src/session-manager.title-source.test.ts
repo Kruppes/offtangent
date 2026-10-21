@@ -17,6 +17,7 @@ import path from 'node:path'
 import { SessionManager } from './session-manager.js'
 import { initDatabase } from './database.js'
 import type { Database } from './database.js'
+import { applyAutoTitle, planStrandAutoTitle } from './strand-auto-title.js'
 
 describe('SessionManager title source', () => {
   let db: Database
@@ -144,6 +145,23 @@ describe('SessionManager title source', () => {
       sm.updateThread('1', a.id, { title: 'A2' })
       const listed = sm.listThreads('1').find(t => t.id === a.id)
       expect(listed).toMatchObject({ titleSource: 'manual', previousTitle: 'A' })
+    })
+  })
+  describe('auto-title undo (Paket 8)', () => {
+    it('restoring previous_title is a manual rename: the auto-title never touches the strand again', () => {
+      const sm = manager()
+      const thread = sm.createThread('1', 'main', 'Hallo, kannst du mir')
+      expect(applyAutoTitle(db, thread.id, 'Hallo, kannst du mir', 'Gießkanne Bootshaus')).toBe(true)
+      expect(sm.getThread('1', thread.id)).toMatchObject({ title: 'Gießkanne Bootshaus', titleSource: 'ai', previousTitle: 'Hallo, kannst du mir' })
+
+      // What the web "Undo title" and the Android undo send: PATCH { title: previousTitle }.
+      sm.updateThread('1', thread.id, { title: 'Hallo, kannst du mir' })
+      expect(raw(thread.id)).toMatchObject({ title: 'Hallo, kannst du mir', title_source: 'manual', previous_title: 'Gießkanne Bootshaus', auto_title_changes: 1 })
+      for (let i = 0; i < 20; i += 1) {
+        db.prepare("INSERT INTO chat_messages (session_id, user_id, role, content) VALUES (?, 1, 'user', 'weiter')").run(thread.id)
+      }
+      expect(planStrandAutoTitle(db, thread.id, 'message')).toMatchObject({ run: false, reason: 'manual_title' })
+      expect(applyAutoTitle(db, thread.id, 'Hallo, kannst du mir', 'Gießkanne')).toBe(false)
     })
   })
 })

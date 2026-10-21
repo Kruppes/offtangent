@@ -1764,3 +1764,38 @@ export { scopedConsolidationTools } from './consolidation-tools.js'
 export type { ContextScope } from './context-scope.js'
 export { purgeContextManifests, recordContextManifest, readContextManifest } from './context-provenance.js'
 export type { ContextManifest, ContextSource } from './context-provenance.js'
+export {
+  AUTO_TITLE_COOLDOWN_HOURS,
+  AUTO_TITLE_COOLDOWN_MESSAGES,
+  AUTO_TITLE_FIRST_TURN,
+  AUTO_TITLE_MAX_CHANGES,
+  AUTO_TITLE_MAX_SIMILARITY,
+  AUTO_TITLE_TURN_INTERVAL,
+  DEFAULT_TITLE_CHAIN,
+  applyAutoTitle,
+  buildAutoTitleInput,
+  buildAutoTitlePrompt,
+  ensureStrandTitleTables,
+  evaluateStrandAutoTitle,
+  getStrandTitleRun,
+  loadTitleChain,
+  normalizeAutoTitle,
+  parseAutoTitleOutput,
+  planStrandAutoTitle,
+  resolveTitleChain,
+  runAutoTitleModel,
+  titleJaccard,
+} from './strand-auto-title.js'
+export type {
+  AutoTitleAnswer,
+  AutoTitleCompletion,
+  AutoTitleInput,
+  AutoTitleModelResult,
+  AutoTitleOutcome,
+  AutoTitlePlan,
+  AutoTitleResult,
+  AutoTitleSkipReason,
+  AutoTitleTrigger,
+  RunAutoTitleOptions,
+  StrandTitleRun,
+} from './strand-auto-title.js'

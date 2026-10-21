@@ -38,7 +38,7 @@ import { gateRoleSpec, type ResolvedRoleModel } from './role-model-gate.js'
 import { TASK_MODEL_ROLE_KINDS } from './task-model-policy.js'
 
 /** Roles whose value is an ordered chain (`a, b:0.9, c`), not a single entry. */
-export const MODEL_POLICY_CHAIN_ROLES = ['router', 'projectAssignment'] as const
+export const MODEL_POLICY_CHAIN_ROLES = ['router', 'projectAssignment', 'title'] as const
 
 export type ModelPolicyChainRole = (typeof MODEL_POLICY_CHAIN_ROLES)[number]
 

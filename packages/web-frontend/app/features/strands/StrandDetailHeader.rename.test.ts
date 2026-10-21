@@ -33,6 +33,17 @@ describe('strand detail header, rename by title click', () => {
   })
 })
 
+describe('strand detail header, auto-title badge (Paket 8)', () => {
+  it('has the badge, hint and undo texts in both languages', () => {
+    for (const lang of [en, de]) {
+      expect(lang.strandDetail.autoTitleBadge).toBe('auto')
+      expect(lang.strandDetail.autoTitleHint).toContain('{previous}')
+      expect(lang.strandDetail.autoTitleHintNoPrevious).toBeTruthy()
+      expect(lang.strandDetail.autoTitleUndo).toBeTruthy()
+    }
+  })
+})
+
 describe('strand search hint', () => {
   it('says that message content and word beginnings are searched', () => {
     expect(en.strandsW3.searchHint).toMatch(/titles and message content/)

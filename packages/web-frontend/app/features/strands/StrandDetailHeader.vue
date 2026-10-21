@@ -120,6 +120,25 @@ async function mutate(action: () => Promise<Thread>) {
   catch (cause) { error.value = t(strandErrorKey(cause)) }
   finally { saving.value = false }
 }
+/*
+ * Auto-title (plan strand-titel, Paket 8): a model-set title carries a small
+ * "auto" badge, and the title before it can be restored in one click. The
+ * restore is a normal rename, so the backend marks it 'manual' and the
+ * auto-title leaves the strand alone from then on (concept: "Rückgängig =
+ * PATCH, setzt manual").
+ */
+const autoTitled = computed(() => strand.value?.titleSource === 'ai')
+/** Same rule as Android's autoTitleUndoTarget: no undo that would restore the title already shown. */
+const undoTitle = computed(() => {
+  if (!autoTitled.value) return null
+  const previous = strand.value?.previousTitle?.trim() || null
+  return previous && previous !== (strand.value?.title ?? '').trim() ? previous : null
+})
+async function undoAutoTitle() {
+  const previous = undoTitle.value
+  if (!previous) return
+  await mutate(() => api.patch(props.strandId, { title: previous }))
+}
 async function save() {
   if (!strand.value || saving.value) return
   saving.value = true
@@ -170,6 +189,8 @@ onMounted(() => { void load(); void loadProjects(); void loadPersonas() })
         </button>
         <template v-else>{{ t('strandDetail.untitled') }}</template>
       </h1>
+      <span v-if="autoTitled" data-strand-title-auto class="shrink-0 rounded-md bg-muted px-2 py-1 text-xs text-muted-foreground" :title="undoTitle ? t('strandDetail.autoTitleHint', { previous: undoTitle }) : t('strandDetail.autoTitleHintNoPrevious')">{{ t('strandDetail.autoTitleBadge') }}</span>
+      <Button v-if="undoTitle" data-strand-title-undo class="min-h-11" variant="ghost" :disabled="saving" :title="t('strandDetail.autoTitleHint', { previous: undoTitle })" @click="undoAutoTitle">{{ t('strandDetail.autoTitleUndo') }}</Button>
       <Button v-if="strand" class="min-h-11" variant="outline" :disabled="saving" :aria-expanded="editing" @click="editing ? editing = false : edit()">{{ t('strandDetail.edit') }}</Button>
       <!-- Shell controls of the strand view (context column toggle, W3). -->
       <slot name="actions" />

@@ -104,6 +104,7 @@ import { registerTurnRetryChatChannel } from '../turn-retry-chat.js'
 import type { TurnRetryChatChannel } from '../turn-retry-chat.js'
 import { triggerFactExtractionForSessionEnd } from '../fact-extraction-session-end.js'
 import { triggerProjectAssignment } from '../project-assignment-trigger.js'
+import { triggerStrandAutoTitle } from '../strand-auto-title-trigger.js'
 import { HealthMonitorService } from '../health-monitor.js'
 import { MemoryConsolidationScheduler } from '../memory-consolidation-scheduler.js'
 import { QuotaMonitorService } from '../quota-monitor.js'
@@ -788,6 +789,9 @@ export async function createRuntimeComposition(options: RuntimeCompositionOption
       // happens in a detached promise, so no chat turn ever waits for it.
       if (!failed) {
         triggerProjectAssignment({ db, sessionId: turn.sessionId, trigger: 'message', chatEventBus })
+        // Strand auto-title (plan strand-titel, Paket 5): same contract,
+        // detached, never awaited, an Ollama outage only logs.
+        triggerStrandAutoTitle({ db, sessionId: turn.sessionId, trigger: 'message' })
       }
     },
     onTurnFailed: failure => {
@@ -2043,6 +2047,9 @@ export async function createRuntimeComposition(options: RuntimeCompositionOption
       // conversation that ends before the throttle would fire again is still
       // classified. Fire and forget, like the fact extraction above.
       triggerProjectAssignment({ db, sessionId, trigger: 'session_end', chatEventBus })
+      // Auto-title: runs after the summary above, so a new summary version
+      // can retitle a strand that ends before the 12-turn interval.
+      triggerStrandAutoTitle({ db, sessionId, trigger: 'session_end' })
     })
 
     // Per-injection streaming state, keyed by the unique `injectionId`

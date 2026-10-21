@@ -43,6 +43,7 @@ import {
 import { MODEL_POLICY_ROLES, resolveRoleSpec } from './model-policy.js'
 import { resolveEffectiveModel } from './model-resolution.js'
 import { resolveRouterChain } from './router-model.js'
+import { resolveTitleChain } from './strand-auto-title.js'
 import { resolveSpeechSummaryModel } from './speech-summary.js'
 import { resolveTaskModelRoleFrom } from './task-model-policy.js'
 import { resolveGeminiTtsCredentials, TtsPolicyBlockedError } from './tts.js'
@@ -450,6 +451,11 @@ describe('audit ring', () => {
 function useRole(role: string, provider: FixtureProvider): string {
   if (role === 'router' || role === 'projectAssignment') {
     const chain = resolveRouterChain([{ spec: spec(provider), threshold: null }], { role })
+    return chain.length > 0 ? `${chain[0]!.providerId}:${chain[0]!.modelId}` : ''
+  }
+  if (role === 'title') {
+    // The real reader: settings.json `modelPolicy.roles.title` through the gate.
+    const chain = resolveTitleChain()
     return chain.length > 0 ? `${chain[0]!.providerId}:${chain[0]!.modelId}` : ''
   }
   if (role.startsWith('task:')) {

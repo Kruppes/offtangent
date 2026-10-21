@@ -250,7 +250,7 @@ import { useSettingsApi } from '~/api/settings'
 
 /** Provider types that must never be an automatic choice (mirrors the server guardrail). */
 const BLOCKED_PROVIDER_TYPES = new Set(['zai', 'zai-coding', 'zai-coding-plan', 'kimi', 'kimi-coding', 'kimi-coding-oauth', 'moonshot'])
-const CHAIN_ROLES = new Set(['router', 'projectAssignment'])
+const CHAIN_ROLES = new Set(['router', 'projectAssignment', 'title'])
 
 const { t } = useI18n()
 const { getModelPolicy, updateModelPolicy, resolveRole, getModelGateAudit } = useModelPolicyApi()

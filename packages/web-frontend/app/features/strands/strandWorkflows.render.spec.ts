@@ -233,6 +233,53 @@ describe('strand mutation workflows', () => {
     expect(topBarCalls.at(-1)).toEqual(['release', 's', null])
   })
 
+  it('auto-title: shows the auto badge with the previous title and restores it with one PATCH', async () => {
+    const base = { id: 's', tags: [], projectId: null, pinned: false }
+    const api = setupHeader()
+    api.mockResolvedValueOnce({ strand: { ...base, title: 'Gießkanne Bootshaus', titleSource: 'ai', previousTitle: 'Hallo, kannst du mir' } })
+    const { root } = mount(Header, { strandId: 's' }); await flush()
+    const badge = all(root).find(n => n.props['data-strand-title-auto'] !== undefined)
+    expect(text(badge!)).toContain('strandDetail.autoTitleBadge')
+    expect(String(badge!.props.title)).toContain('strandDetail.autoTitleHint')
+    expect(String(badge!.props.title)).toContain('Hallo, kannst du mir')
+
+    api.mockResolvedValueOnce({ strand: { ...base, title: 'Hallo, kannst du mir', titleSource: 'manual', previousTitle: 'Gießkanne Bootshaus' } })
+    await click(root, 'strandDetail.autoTitleUndo')
+    expect(api.mock.calls.at(-1)).toEqual(['/api/strands/s', { method: 'PATCH', body: '{"title":"Hallo, kannst du mir"}' }])
+    expect(text(root)).toContain('Hallo, kannst du mir')
+    expect(all(root).some(n => n.props['data-strand-title-auto'] !== undefined)).toBe(false)
+    expect(text(root)).not.toContain('strandDetail.autoTitleUndo')
+  })
+
+  it('auto-title: no badge for derived or manual titles, no undo without a previous title', async () => {
+    const base = { id: 's', tags: [], projectId: null, pinned: false }
+    for (const titleSource of ['derived', 'manual', null]) {
+      const api = setupHeader()
+      api.mockResolvedValueOnce({ strand: { ...base, title: 'Titel', titleSource, previousTitle: 'Alt' } })
+      const { root } = mount(Header, { strandId: 's' }); await flush()
+      expect(all(root).some(n => n.props['data-strand-title-auto'] !== undefined), String(titleSource)).toBe(false)
+      expect(text(root)).not.toContain('strandDetail.autoTitleUndo')
+    }
+    const api = setupHeader()
+    api.mockResolvedValueOnce({ strand: { ...base, title: 'Neu', titleSource: 'ai', previousTitle: null } })
+    const { root } = mount(Header, { strandId: 's' }); await flush()
+    const badge = all(root).find(n => n.props['data-strand-title-auto'] !== undefined)
+    expect(String(badge!.props.title)).toBe('strandDetail.autoTitleHintNoPrevious')
+    expect(text(root)).not.toContain('strandDetail.autoTitleUndo')
+  })
+
+  it('auto-title: no undo and no PATCH when the previous title equals the current one', async () => {
+    const base = { id: 's', tags: [], projectId: null, pinned: false }
+    const api = setupHeader()
+    api.mockResolvedValueOnce({ strand: { ...base, title: 'Gießkanne', titleSource: 'ai', previousTitle: '  Gießkanne ' } })
+    const { root } = mount(Header, { strandId: 's' }); await flush()
+    const badge = all(root).find(n => n.props['data-strand-title-auto'] !== undefined)
+    expect(badge).toBeDefined()
+    expect(String(badge!.props.title)).toBe('strandDetail.autoTitleHintNoPrevious')
+    expect(text(root)).not.toContain('strandDetail.autoTitleUndo')
+    expect(api.mock.calls.some(call => (call[1] as { method?: string } | undefined)?.method === 'PATCH')).toBe(false)
+  })
+
   it('W5b: shows the lineage both ways, linked, only when present', async () => {
     const api = setupHeader()
     api.mockResolvedValueOnce({ strand: { id: 'child', title: 'Child', tags: [], projectId: null, pinned: false, parentStrandId: 'parent', parentStrandTitle: 'Parent strand', forkedFromMessageId: 12, childStrands: [{ id: 'grandchild', title: 'Grandchild', forkedAt: null, forkedFromMessageId: 3 }] } })

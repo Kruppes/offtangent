@@ -95,6 +95,10 @@ const MODEL_CALL_SITES: Record<string, { class: CallClass; why: string }> = {
     class: 'sealed-text',
     why: 'Project assignment of a capture. The prompt is built from the capture text, which CapturesService seals before it is stored.',
   },
+  'core/src/strand-auto-title.ts#defaultCompletion': {
+    class: 'sealed-text',
+    why: 'Strand auto-title (plan strand-titel, Paket 5). The prompt is built from the current title, the latest session summary goal and the last user rows of chat_messages, all stored behind the boundary (rows sealed at the entry paths, the summary generated from that sealed transcript). The chain goes through resolveRouterChain with role `title`, so the data-policy gate applies.',
+  },
   'core/src/capture-router.ts#defaultCompletion': {
     class: 'sealed-text',
     why: 'Router decision over the sealed capture text (proven end to end in privacy-secret-wiring.test.ts: the canary never reaches the router model).',

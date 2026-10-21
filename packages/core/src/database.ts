@@ -8,6 +8,7 @@ import { ensureSessionSummariesTable } from './session-summary-store.js'
 import { ensureContextProvenanceSchema } from './context-provenance.js'
 import { ensureOfftangentTables } from './offtangent-schema.js'
 import { ensureProjectAssignmentTables } from './project-assignment-schema.js'
+import { ensureStrandTitleTables } from './strand-title-schema.js'
 import { ensureStrandTaskDismissalTable } from './strand-task-dismissals.js'
 import { ensureArtifactTables } from './artifact-store.js'
 import { ensureUserSettingsTable } from './user-settings.js'
@@ -1014,6 +1015,10 @@ export function initDatabase(dbPath?: string): Database {
   // tables (suggestion, dismissal, run bookkeeping), no column on `sessions`,
   // no backfill — see project-assignment-schema.ts.
   ensureProjectAssignmentTables(db)
+
+  // Strand auto-title (plan strand-titel, Paket 5): run bookkeeping for the
+  // throttle. One additive table, idempotent, no backfill.
+  ensureStrandTitleTables(db)
 
   // W6c: acknowledged entries of the strand activity list. One additive
   // table, idempotent, no backfill (no row = not dismissed).

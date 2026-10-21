@@ -83,6 +83,11 @@ const TEMPLATES: Record<string, object> = {
     projectAssignment: {
       enabled: true,
     },
+    // Strand auto-title (plan strand-titel, Paket 5). Kill switch for the
+    // background title service; manual titles are never touched either way.
+    autoTitle: {
+      enabled: true,
+    },
     agentHeartbeat: {
       enabled: false,
       intervalMinutes: 60,
