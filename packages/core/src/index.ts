@@ -132,6 +132,7 @@ export type {
   Thread,
   ListThreadsOptions,
   UpdateThreadPatch,
+  StrandTitleSource,
 } from './session-manager.js'
 export {
   loadProviders,

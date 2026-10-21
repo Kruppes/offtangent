@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onMounted, onUnmounted, ref, watch } from 'vue'
+import { computed, nextTick, onMounted, onUnmounted, ref, watch } from 'vue'
 import type { Thread, Project } from '@axiom/core'
 import { useModelsApi, type ModelSelection, type SelectableModel } from '~/api/models'
 import { useProjectsApi } from '~/api/projects'
@@ -100,11 +100,17 @@ async function loadProjects() {
   try { projects.value = await projectApi.list() }
   catch { projectsError.value = true }
 }
-function edit() {
+const titleInput = ref<HTMLInputElement | null>(null)
+async function edit(focus?: 'title') {
   title.value = strand.value?.title ?? ''
   tags.value = strand.value?.tags.join(', ') ?? ''
   projectId.value = strand.value?.projectId ?? ''
   editing.value = true
+  if (focus === 'title') {
+    await nextTick()
+    titleInput.value?.focus()
+    titleInput.value?.select()
+  }
 }
 async function mutate(action: () => Promise<Thread>) {
   if (saving.value) return
@@ -156,7 +162,14 @@ onMounted(() => { void load(); void loadProjects(); void loadPersonas() })
     </p>
     <div class="flex items-center gap-3">
       <Button v-if="showBack" class="min-h-11 min-w-11" variant="ghost" :aria-label="t('strandDetail.back')" @click="emit('back')"><AppIcon name="arrowLeft" class="h-5 w-5" /></Button>
-      <h1 class="min-w-0 flex-1 break-words text-lg font-semibold">{{ strand?.title || t('strandDetail.untitled') }}</h1>
+      <h1 class="min-w-0 flex-1 break-words text-lg font-semibold">
+        <button v-if="strand" type="button" class="group inline-flex min-h-11 max-w-full items-center gap-2 rounded-md text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:cursor-default" :disabled="saving" :title="t('strandDetail.renameHint')" data-strand-title-rename @click="edit('title')">
+          <span class="min-w-0 break-words">{{ strand.title || t('strandDetail.untitled') }}</span>
+          <AppIcon name="edit" size="sm" class="shrink-0 text-muted-foreground opacity-60 group-hover:opacity-100" />
+          <span class="sr-only">{{ t('strandDetail.renameHint') }}</span>
+        </button>
+        <template v-else>{{ t('strandDetail.untitled') }}</template>
+      </h1>
       <Button v-if="strand" class="min-h-11" variant="outline" :disabled="saving" :aria-expanded="editing" @click="editing ? editing = false : edit()">{{ t('strandDetail.edit') }}</Button>
       <!-- Shell controls of the strand view (context column toggle, W3). -->
       <slot name="actions" />
@@ -222,7 +235,7 @@ onMounted(() => { void load(); void loadProjects(); void loadPersonas() })
         <Button class="min-h-11" variant="ghost" :disabled="saving" @click="mutate(() => api.suggestion(strandId, 'dismiss'))">{{ t('strandDetail.dismiss') }}</Button>
       </section>
       <form v-if="editing" class="my-3 grid gap-3 rounded-lg border border-border p-3" @submit.prevent="save">
-        <label class="grid gap-1 text-sm">{{ t('strandDetail.title') }}<input v-model="title" maxlength="200" :disabled="saving" class="min-h-11 min-w-0 w-full rounded-md border border-input bg-background px-3 focus-visible:outline-ring" /></label>
+        <label class="grid gap-1 text-sm">{{ t('strandDetail.title') }}<input ref="titleInput" v-model="title" maxlength="200" :disabled="saving" class="min-h-11 min-w-0 w-full rounded-md border border-input bg-background px-3 focus-visible:outline-ring" /></label>
         <label class="grid gap-1 text-sm">{{ t('strandDetail.project') }}<select v-model="projectId" :disabled="saving || projectsError" class="min-h-11 min-w-0 w-full rounded-md border border-input bg-background px-3"><option value="">{{ t('strandDetail.noProject') }}</option><option v-if="strand.projectId && !projects.some(p => p.id === strand!.projectId)" :value="strand.projectId">{{ projectName }}</option><option v-for="project in projects" :key="project.id" :value="project.id">{{ project.name }}</option></select></label>
         <div v-if="projectsError" role="alert" class="text-sm">{{ t('strandDetail.projectsError') }} <Button class="min-h-11" variant="outline" type="button" @click="loadProjects">{{ t('strandDetail.retry') }}</Button></div>
         <label class="grid gap-1 text-sm">{{ t('strandDetail.tags') }}<input v-model="tags" :disabled="saving" class="min-h-11 min-w-0 w-full rounded-md border border-input bg-background px-3 focus-visible:outline-ring" /></label>

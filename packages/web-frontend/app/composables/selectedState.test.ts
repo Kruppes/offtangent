@@ -15,7 +15,6 @@ const SITES: Array<[file: string, carrier: RegExp]> = [
   ['../components/CommandPalette.vue', /selected-marker/],
   ['../features/strands/StrandList.vue', /selected-marker/],
   ['../features/memory/components/MemoryFileTreeItem.vue', /selected-marker/],
-  ['../components/ThreadRow.vue', /selected-marker/],
   ['../components/ModelPickerDialog.vue', /v-if="!pinned" name="check"/],
   ['../components/NewThreadDialog.vue', /persona === agentId \? 'check'/],
   ['../components/chat/ChatActionCard.vue', /pickerResolvedCommand" name="check"/],

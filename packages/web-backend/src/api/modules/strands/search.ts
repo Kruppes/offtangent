@@ -76,6 +76,11 @@ export function searchStrands(
   q: string,
   options: { includeArchived: boolean },
 ): StrandSearchHits {
+  // Defence in depth (review m6): the route already refuses q longer than
+  // STRAND_SEARCH_MAX_LENGTH, but any other caller must not be able to push a
+  // huge string through the regex, FTS and LIKE paths. Cut it here as well.
+  q = q.trim().slice(0, STRAND_SEARCH_MAX_LENGTH).trim()
+  if (q.length === 0) return { ids: [], snippets: new Map() }
   const user = String(userId)
   const archived = options.includeArchived ? '' : 'AND s.archived = 0'
   const ids: string[] = []

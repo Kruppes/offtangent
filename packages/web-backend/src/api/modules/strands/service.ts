@@ -1008,6 +1008,7 @@ export function createStrandsService(options: StrandsServiceOptions) {
         userId,
         parentStrandId: strandId,
         title,
+        titleSource: body.title ? 'manual' : 'derived',
         seed,
         forkedFromMessageId: message.id,
         autoRun: false,

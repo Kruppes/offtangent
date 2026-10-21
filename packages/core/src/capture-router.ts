@@ -19,6 +19,7 @@ import type { DecisionAlternative, ProjectSuggestion, RouterAction, RouterIntent
 import { buildRouterModel, resolveRouterChain } from './router-model.js'
 import type { ResolvedRouterModel } from './router-model.js'
 import { deriveStrandTitle } from './strand-title.js'
+import type { StrandTitleSource } from './session-manager.js'
 
 export const ROUTER_CANDIDATE_CAP = 25
 export const ROUTER_RECENT_STRANDS = 20
@@ -123,7 +124,12 @@ export interface RouterProposal {
   action: RouterAction
   strandId: string | null
   secondaryStrandId: string | null
-  newStrand: { title: string; personaId: string; tags: string[]; projectId: string | null } | null
+  /**
+   * `titleSource` says who wrote the title: 'ai' only when it is the model's
+   * own title, 'derived' for a title cut from the capture, 'manual' for one the
+   * user typed. Absent reads as 'derived' (never claim more than we know).
+   */
+  newStrand: { title: string; personaId: string; tags: string[]; projectId: string | null; titleSource?: StrandTitleSource } | null
   intent: RouterIntent
   confidence: number
   tags: string[]
@@ -719,7 +725,7 @@ export function parseRouterOutput(text: string, input: RouterInput): ParseRouter
     } else if (rawProject !== undefined && rawProject !== null && rawProject !== '') {
       return { ok: false, error: 'newStrand.projectId must be a project id or null' }
     }
-    newStrand = { title, personaId, tags: cleanTags(nsObj.tags), projectId }
+    newStrand = { title, personaId, tags: cleanTags(nsObj.tags), projectId, titleSource: 'ai' }
   }
 
   const confidence = clamp01(obj.confidence)
@@ -828,7 +834,7 @@ export function guardLowConfidenceAppend(proposal: RouterProposal, input: Router
     // No project rides along: the router only ever proposed one for the
     // existing target, and a container the user never confirmed must not be
     // written onto a strand the guard created (SPEC 4.2b).
-    newStrand: { title, personaId, tags: proposal.tags, projectId: null },
+    newStrand: { title, personaId, tags: proposal.tags, projectId: null, titleSource: suggestedTitle ? 'ai' : 'derived' },
     intent: proposal.intent,
     confidence: proposal.confidence,
     tags: proposal.tags,
@@ -848,7 +854,7 @@ export function syntheticProposal(input: RouterInput, reason: string): RouterPro
     action: 'new_strand',
     strandId: null,
     secondaryStrandId: null,
-    newStrand: { title, personaId, tags: [], projectId: null },
+    newStrand: { title, personaId, tags: [], projectId: null, titleSource: 'derived' },
     intent: ROUTED_INTENT,
     confidence: 0,
     tags: [],

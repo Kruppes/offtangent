@@ -89,6 +89,12 @@ describe('fork_strand tool', () => {
     expect(seed.content).toContain('welche Scopes')
   })
 
+  it('marks the model-chosen fork title as ai (review F1)', async () => {
+    const result = await run(tool(), { title: 'Privacy: Gmail-Scopes', seed: 'Eigener Nebenpfad.' })
+    const row = db.prepare('SELECT title_source FROM sessions WHERE id = ?').get(result.details!.strandId as string) as { title_source: string }
+    expect(row.title_source).toBe('ai')
+  })
+
   it('starts exactly one turn with the seed when run_agent is true', async () => {
     const result = await run(tool(), { title: 'Privacy', seed: 'Nebenpfad Datenschutz.', run_agent: true })
     const newStrandId = result.details!.strandId as string

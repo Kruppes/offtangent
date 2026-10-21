@@ -378,6 +378,12 @@ describe('archive and un-archive (SPEC 7.5b)', () => {
     const renamed = await api('PATCH', `/api/strands/${strand.id}`, { title: 'New title', pinned: true })
     expect((renamed.body.strand as Thread).title).toBe('New title')
     expect((renamed.body.strand as Thread).pinned).toBe(true)
+    // Paket 4 (strand-titel): a rename over the API is the user's title.
+    expect((renamed.body.strand as Thread).titleSource).toBe('manual')
+    expect((renamed.body.strand as Thread).previousTitle).toBe('Old title')
+    expect((db.prepare('SELECT title_source FROM sessions WHERE id = ?').get(strand.id) as { title_source: string }).title_source).toBe('manual')
+    const pinnedOnly = await api('PATCH', `/api/strands/${strand.id}`, { pinned: false })
+    expect((pinnedOnly.body.strand as Thread).titleSource).toBe('manual')
 
     expect((await api('PATCH', `/api/strands/${strand.id}`, {})).body.code).toBe('empty_patch')
     expect((await api('PATCH', `/api/strands/${strand.id}`, { archived: 'yes' })).body.code).toBe('invalid_archived')
@@ -385,6 +391,24 @@ describe('archive and un-archive (SPEC 7.5b)', () => {
     expect((await api('PATCH', `/api/strands/${strand.id}`, { title: 5 })).body.code).toBe('invalid_title')
     expect((await api('PATCH', `/api/strands/${strand.id}`, { archived: true }, otherToken)).status).toBe(404)
     expect((await api('PATCH', '/api/strands/does-not-exist', { archived: true })).status).toBe(404)
+  })
+
+  it('clears the title source only on an explicit null and refuses a blank title (review m1)', async () => {
+    const strand = sessionManager.createThread('1', 'main', 'Mein Name', null, 'main', 'manual')
+    const row = () => db.prepare('SELECT title, title_source FROM sessions WHERE id = ?').get(strand.id)
+    for (const blank of ['', '   ', '\t\n']) {
+      const res = await api('PATCH', `/api/strands/${strand.id}`, { title: blank })
+      expect(res.status).toBe(400)
+      expect(res.body.code).toBe('invalid_title')
+      expect(row()).toEqual({ title: 'Mein Name', title_source: 'manual' })
+    }
+    const cleared = await api('PATCH', `/api/strands/${strand.id}`, { title: null })
+    expect(cleared.status).toBe(200)
+    expect((cleared.body.strand as Thread)).toMatchObject({ title: null, titleSource: null, previousTitle: 'Mein Name' })
+    expect(row()).toEqual({ title: null, title_source: null })
+    // Released: the automatic title may name the strand again.
+    sessionManager.ensureThreadTitle(strand.id, 'Neues Thema')
+    expect(row()).toMatchObject({ title_source: 'derived' })
   })
 })
 

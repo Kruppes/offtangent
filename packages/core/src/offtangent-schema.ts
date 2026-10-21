@@ -99,6 +99,7 @@ export function ensureOfftangentTables(db: Database): void {
       new_strand_title TEXT,
       new_strand_persona TEXT,
       new_strand_project TEXT,
+      new_strand_title_source TEXT,
       project_suggestion TEXT,
       model TEXT,
       latency_ms INTEGER,
@@ -223,6 +224,12 @@ export function ensureOfftangentTables(db: Database): void {
   // applied by the server). Both narrow and nullable; old rows read as null.
   if (!decisionCols.find(c => c.name === 'new_strand_project')) {
     db.exec('ALTER TABLE router_decisions ADD COLUMN new_strand_project TEXT')
+  }
+  // Who wrote `new_strand_title` ('ai' | 'derived' | 'manual'), so a decision
+  // confirmed later still creates its strand with the right title_source.
+  // Old rows read as null, which the service treats as 'derived'.
+  if (!decisionCols.find(c => c.name === 'new_strand_title_source')) {
+    db.exec('ALTER TABLE router_decisions ADD COLUMN new_strand_title_source TEXT')
   }
   if (!decisionCols.find(c => c.name === 'project_suggestion')) {
     db.exec('ALTER TABLE router_decisions ADD COLUMN project_suggestion TEXT')

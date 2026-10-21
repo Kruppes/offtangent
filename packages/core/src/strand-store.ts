@@ -483,6 +483,8 @@ export interface Decision {
   personaId: string | null
   /** Project set on the strand a `new_strand` decision creates, null otherwise. */
   projectId: string | null
+  /** Who wrote `title` ('ai' | 'derived' | 'manual'); null when unknown (older rows). */
+  titleSource?: 'ai' | 'derived' | 'manual' | null
   /** Proposal for the target strand of an `append`/`link`, never applied. */
   projectSuggestion: ProjectSuggestion | null
   alternatives: DecisionAlternative[]
@@ -537,6 +539,7 @@ interface DecisionRow {
   new_strand_title: string | null
   new_strand_persona: string | null
   new_strand_project: string | null
+  new_strand_title_source: string | null
   project_suggestion: string | null
   model: string | null
   latency_ms: number | null
@@ -552,7 +555,7 @@ interface DecisionRow {
 }
 
 const CAPTURE_COLUMNS = 'id, user_id, agent_id, client_message_id, text, kind, source, attachments, status, strand_id, message_id, created_at, filed_at'
-const DECISION_COLUMNS = 'id, capture_id, action, target_strand_id, secondary_strand_id, created_strand_id, intent, confidence, alternatives, tags, rationale, new_strand_title, new_strand_persona, new_strand_project, project_suggestion, model, latency_ms, state, created_at, applied_at, resolved_at, part_index, part_count, part_text, part_title, sentence_ids'
+const DECISION_COLUMNS = 'id, capture_id, action, target_strand_id, secondary_strand_id, created_strand_id, intent, confidence, alternatives, tags, rationale, new_strand_title, new_strand_persona, new_strand_project, new_strand_title_source, project_suggestion, model, latency_ms, state, created_at, applied_at, resolved_at, part_index, part_count, part_text, part_title, sentence_ids'
 
 /** A stored project suggestion; anything unreadable counts as absent. */
 function parseProjectSuggestion(raw: string | null | undefined): ProjectSuggestion | null {
@@ -602,6 +605,9 @@ function toDecision(row: DecisionRow): Decision {
     title: row.new_strand_title ?? null,
     personaId: row.new_strand_persona ?? null,
     projectId: row.new_strand_project ?? null,
+    titleSource: row.new_strand_title_source === 'ai' || row.new_strand_title_source === 'derived' || row.new_strand_title_source === 'manual'
+      ? row.new_strand_title_source
+      : null,
     projectSuggestion: parseProjectSuggestion(row.project_suggestion),
     alternatives: parseJsonArray<DecisionAlternative>(row.alternatives),
     partIndex: row.part_index ?? 0,
@@ -746,6 +752,7 @@ export interface InsertDecisionInput {
   title?: string | null
   personaId?: string | null
   projectId?: string | null
+  titleSource?: 'ai' | 'derived' | 'manual' | null
   projectSuggestion?: ProjectSuggestion | null
   alternatives: DecisionAlternative[]
   model: string | null
@@ -764,9 +771,9 @@ export function insertDecision(db: Database, input: InsertDecisionInput): Decisi
   db.prepare(
     `INSERT INTO router_decisions
        (id, capture_id, action, target_strand_id, secondary_strand_id, created_strand_id, intent, confidence,
-        alternatives, tags, rationale, new_strand_title, new_strand_persona, new_strand_project, project_suggestion,
-        model, latency_ms, state, applied_at, part_index, part_count, part_text, part_title, sentence_ids)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        alternatives, tags, rationale, new_strand_title, new_strand_persona, new_strand_project, new_strand_title_source,
+        project_suggestion, model, latency_ms, state, applied_at, part_index, part_count, part_text, part_title, sentence_ids)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
   ).run(
     id,
     input.captureId,
@@ -782,6 +789,7 @@ export function insertDecision(db: Database, input: InsertDecisionInput): Decisi
     input.title ?? null,
     input.personaId ?? null,
     input.projectId ?? null,
+    input.title ? (input.titleSource ?? null) : null,
     input.projectSuggestion ? JSON.stringify(input.projectSuggestion) : null,
     input.model,
     input.latencyMs,

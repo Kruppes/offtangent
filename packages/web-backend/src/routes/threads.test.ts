@@ -97,6 +97,8 @@ describe('POST /api/threads', () => {
 
     const row = db.prepare('SELECT type, source, session_user, agent_id, title FROM sessions WHERE id = ?').get(thread.id)
     expect(row).toEqual({ type: 'interactive', source: 'web', session_user: '1', agent_id: 'coder', title: 'Deploy plan' })
+    // Paket 4 (strand-titel): a title typed into "new strand" is manual.
+    expect(thread.titleSource).toBe('manual')
   })
 
   it("defaults to 'main' without agentId and refuses unknown personas", async () => {
@@ -107,6 +109,16 @@ describe('POST /api/threads', () => {
     const refused = await api('POST', '/api/threads', { agentId: 'advisor' })
     expect(refused.status).toBe(400)
     expect(refused.body.error).toBe('Unknown agentId')
+  })
+
+  it('stores a client-derived title as derived, a typed one as manual (review m3)', async () => {
+    const derived = await api('POST', '/api/threads', { agentId: 'coder', title: 'Erste Worte', titleSource: 'derived' })
+    expect(derived.status).toBe(201)
+    expect((derived.body.thread as Thread).titleSource).toBe('derived')
+    const typed = await api('POST', '/api/threads', { agentId: 'coder', title: 'Getippt', titleSource: 'manual' })
+    expect((typed.body.thread as Thread).titleSource).toBe('manual')
+    expect((await api('POST', '/api/threads', { agentId: 'coder', title: 'x', titleSource: 'ai' })).status).toBe(400)
+    expect((await api('POST', '/api/threads', { agentId: 'coder', title: 'x', titleSource: 7 })).status).toBe(400)
   })
 
   it('rejects a non-string title', async () => {
@@ -329,6 +341,18 @@ describe('PATCH /api/threads/:id', () => {
 
     const cleared = await api('PATCH', `/api/threads/${thread.id}`, { title: null })
     expect((cleared.body.thread as Thread).title).toBeNull()
+  })
+
+  it('refuses a blank title and resets the source only on explicit null (review m1)', async () => {
+    const thread = (await api('POST', '/api/threads', { agentId: 'coder', title: 'Mein Name' })).body.thread as Thread
+    const row = () => db.prepare('SELECT title, title_source FROM sessions WHERE id = ?').get(thread.id)
+    for (const blank of ['', '  ']) {
+      expect((await api('PATCH', `/api/threads/${thread.id}`, { title: blank })).status).toBe(400)
+      expect(row()).toEqual({ title: 'Mein Name', title_source: 'manual' })
+    }
+    const cleared = await api('PATCH', `/api/threads/${thread.id}`, { title: null })
+    expect(cleared.status).toBe(200)
+    expect(row()).toEqual({ title: null, title_source: null })
   })
 
   it('404s for unknown and foreign threads without touching them', async () => {

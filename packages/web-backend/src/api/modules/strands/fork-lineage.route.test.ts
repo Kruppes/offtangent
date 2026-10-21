@@ -129,4 +129,29 @@ describe('fork lineage over the strands API', () => {
       childStrandIds: [],
     })
   })
+
+  it('marks a typed fork title manual and a defaulted one derived (review F1)', async () => {
+    const parent = sessionManager.createThread('1', 'main', 'Gmail integration')
+    const msg = db.prepare(
+      "INSERT INTO chat_messages (session_id, user_id, role, content, agent_id) VALUES (?, 1, 'user', ?, 'main')",
+    ).run(parent.id, 'Wie speichern wir die Scopes?')
+    const post = async (payload: Record<string, unknown>) => {
+      const res = await fetch(`${baseUrl}/api/strands/${parent.id}/fork`, {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload),
+      })
+      return { status: res.status, body: await res.json() as { strandId?: string; strand?: { id: string } } }
+    }
+    const source = (id: string) => (db.prepare('SELECT title_source FROM sessions WHERE id = ?').get(id) as { title_source: string }).title_source
+    const idOf = (b: { strandId?: string; strand?: { id: string } }) => (b.strandId ?? b.strand?.id)!
+
+    const typed = await post({ messageId: Number(msg.lastInsertRowid), title: 'Mein Titel' })
+    expect(typed.status).toBeLessThan(300)
+    expect(source(idOf(typed.body))).toBe('manual')
+
+    const plain = await post({ messageId: Number(msg.lastInsertRowid) })
+    expect(plain.status).toBeLessThan(300)
+    expect(source(idOf(plain.body))).toBe('derived')
+  })
 })

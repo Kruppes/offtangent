@@ -7,8 +7,15 @@
  *   GET   /api/threads?agent_id=&include_archived=0|1&limit=50&offset=0
  *                     &project_id=<id>|none
  *           -> { threads: Thread[] }  (last activity first)
- *   POST  /api/threads          { agentId, title?, projectId? } -> 201 { thread }
+ *   POST  /api/threads          { agentId, title?, projectId?, titleSource? } -> 201 { thread }
+ *           `titleSource` ('manual' | 'derived', default 'manual'): a client
+ *           that computed the title itself (e.g. Android's topic-shift move,
+ *           first words of the message) sends 'derived' so the auto-title may
+ *           still replace it. Anything else is a 400.
  *   PATCH /api/threads/:id      { title?, pinned?, archived?, projectId? } -> { thread }
+ *           `title`: a non-blank string renames (source 'manual'); explicit
+ *           `null` clears the title AND its source (auto-title may run again);
+ *           '' or whitespace only is a 400, never a silent reset.
  *           404 for unknown or foreign threads, 400 `project_not_found`
  *           for a project that is unknown, foreign or archived.
  *   DELETE /api/threads/:id     -> 204, only for threads without messages
@@ -125,6 +132,11 @@ export function createThreadsRouter(options: ThreadsRouterOptions = {}): Router 
       res.status(400).json({ error: 'projectId must be a string or null' })
       return
     }
+    const rawTitleSource = req.body?.titleSource
+    if (rawTitleSource !== undefined && rawTitleSource !== 'manual' && rawTitleSource !== 'derived') {
+      res.status(400).json({ error: "titleSource must be 'manual' or 'derived'" })
+      return
+    }
 
     try {
       const thread = manager.createThread(
@@ -132,6 +144,10 @@ export function createThreadsRouter(options: ThreadsRouterOptions = {}): Router 
         agentId,
         rawTitle ?? null,
         rawProjectId ?? null,
+        'main',
+        // A title sent with "new strand" is typed by the user, unless the
+        // client says it derived the title itself (review m3).
+        rawTitleSource ?? 'manual',
       )
       res.status(201).json({ thread })
     } catch (err) {
@@ -153,6 +169,12 @@ export function createThreadsRouter(options: ThreadsRouterOptions = {}): Router 
     const { title, pinned, archived, projectId } = req.body ?? {}
     if (title !== undefined && title !== null && typeof title !== 'string') {
       res.status(400).json({ error: 'title must be a string or null' })
+      return
+    }
+    // Only an explicit null resets the title (review m1); a blank string is
+    // almost always a client bug and must not wipe a manual title.
+    if (typeof title === 'string' && title.trim() === '') {
+      res.status(400).json({ error: 'title must not be blank; send null to clear it' })
       return
     }
     if (pinned !== undefined && typeof pinned !== 'boolean') {

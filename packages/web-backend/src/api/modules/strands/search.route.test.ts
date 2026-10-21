@@ -144,6 +144,19 @@ describe('strand search without a usable FTS index (LIKE fallback)', () => {
     }
   })
 
+  it('caps an oversized query itself instead of trusting the route (review m6)', () => {
+    const hit = strand('Plain title')
+    message(hit.id, `lamp ${'x'.repeat(300)}`)
+    const huge = `lamp ${'x'.repeat(100000)}`
+    const started = Date.now()
+    const hits = searchStrands(db, 1, huge, { includeArchived: false })
+    expect(Date.now() - started).toBeLessThan(2000)
+    // Same answer as the query cut to STRAND_SEARCH_MAX_LENGTH.
+    expect(hits.ids).toEqual(searchStrands(db, 1, huge.slice(0, 200), { includeArchived: false }).ids)
+    expect(hits.ids).toEqual([hit.id])
+    expect(searchStrands(db, 1, ' '.repeat(100000), { includeArchived: false })).toEqual({ ids: [], snippets: new Map() })
+  })
+
   it('searches message content literally when the query has no word characters', () => {
     const percent = strand('Plain title')
     message(percent.id, 'Battery at 5%% right now')
@@ -177,6 +190,16 @@ describe('GET /api/strands?q=', () => {
     expect(res.strands.map(s => s.id)).toEqual([messageHit.id, titleHit.id])
     expect(res.strands[0]!.matchSnippet).toContain('budget')
     expect(res.strands[1]!.matchSnippet).toBeUndefined()
+  })
+
+  it('finds a German compound by its beginning (Hausordnung finds Hausordnungen, also with umlauts)', async () => {
+    const hit = strand('Plain')
+    message(hit.id, 'Die Hausordnungen für das Erdgeschoss liegen bei Müller.', 'assistant')
+    strand('Other')
+    expect((await list('q=Hausordnung')).strands.map(s => s.id)).toEqual([hit.id])
+    expect((await list('q=hausordn')).strands.map(s => s.id)).toEqual([hit.id])
+    expect((await list('q=Mueller')).strands).toEqual([])
+    expect((await list('q=Mull')).strands.map(s => s.id)).toEqual([hit.id])
   })
 
   it('matches the word being typed as a prefix and is case-insensitive', async () => {

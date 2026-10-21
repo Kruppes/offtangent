@@ -193,6 +193,11 @@ export function parsePatchStrandBody(body: unknown): ParseResult<PatchStrandBody
     if (b.title !== null && typeof b.title !== 'string') {
       return { ok: false, error: 'title must be a string or null', code: 'invalid_title' }
     }
+    // Only an explicit null clears the title and hands it back to the
+    // auto-title; '' or whitespace is refused instead of read as a reset.
+    if (typeof b.title === 'string' && b.title.trim() === '') {
+      return { ok: false, error: 'title must not be blank; send null to clear it', code: 'invalid_title' }
+    }
     value.title = b.title as string | null
   }
   if (Object.keys(value).length === 0) {

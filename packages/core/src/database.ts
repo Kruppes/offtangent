@@ -789,6 +789,32 @@ export function initDatabase(dbPath?: string): Database {
   if (!threadCols.find(c => c.name === 'last_read_at')) {
     db.exec('ALTER TABLE sessions ADD COLUMN last_read_at TEXT')
   }
+  // Strand title provenance (plan strand-titel, Paket 4). `title_source`
+  // tells who set the title: 'derived' (first words of the first message,
+  // capture fallback, every title that existed before this column), 'ai'
+  // (a model: capture router, later the auto-title service) or 'manual' (the
+  // user renamed the strand). A manual title is never replaced automatically.
+  // NULL means "no title yet". `previous_title` keeps the title before the
+  // last change (undo), `auto_title_changes` counts automatic renames for the
+  // hysteresis of the auto-title service. Additive; the one-time backfill
+  // runs in the same transaction as the ALTER, so a crash in between cannot
+  // leave existing titles without a source.
+  if (!threadCols.find(c => c.name === 'title_source')) {
+    const localDb = db
+    localDb.transaction(() => {
+      localDb.exec("ALTER TABLE sessions ADD COLUMN title_source TEXT CHECK (title_source IS NULL OR title_source IN ('derived', 'ai', 'manual'))")
+      localDb.exec("UPDATE sessions SET title_source = 'derived' WHERE title IS NOT NULL AND TRIM(title) != ''")
+    })()
+  }
+  if (!threadCols.find(c => c.name === 'title_updated_at')) {
+    db.exec('ALTER TABLE sessions ADD COLUMN title_updated_at TEXT')
+  }
+  if (!threadCols.find(c => c.name === 'auto_title_changes')) {
+    db.exec('ALTER TABLE sessions ADD COLUMN auto_title_changes INTEGER NOT NULL DEFAULT 0')
+  }
+  if (!threadCols.find(c => c.name === 'previous_title')) {
+    db.exec('ALTER TABLE sessions ADD COLUMN previous_title TEXT')
+  }
   // Strand forks (`fork_strand`, see strand-fork.ts): the strand this one was
   // branched off, when that happened and the last message of the parent at
   // that moment. Additive, nullable and without a foreign key, for the same

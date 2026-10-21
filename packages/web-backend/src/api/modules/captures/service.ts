@@ -746,7 +746,10 @@ export function createCapturesService(options: CapturesServiceOptions) {
         ?? { title: capture.text.slice(0, 60), personaId: capture.agentId ?? 'main', tags: [], projectId: null }
       const personaId = personaList().includes(ns.personaId) ? ns.personaId : defaultPersona()
       const selection = selectionFor(capture)
-      const strand = manager().createThread(String(userId), personaId, ns.title, usableProjectId(userId, ns.projectId), personaId === 'main' ? strandWorkingModeOf(capture) : 'main')
+      // Each path says who wrote its title (model 'ai', user 'manual');
+      // anything unmarked, including the 60-character fallback, is 'derived'.
+      const titleSource = ns.titleSource ?? 'derived'
+      const strand = manager().createThread(String(userId), personaId, ns.title, usableProjectId(userId, ns.projectId), personaId === 'main' ? strandWorkingModeOf(capture) : 'main', titleSource)
       if (selection) db.prepare('UPDATE sessions SET model_provider_id = ?, model_id = ? WHERE id = ?')
         .run(selection.providerId, selection.modelId, strand.id)
       if (ns.tags.length > 0) addStrandTags(db, String(userId), strand.id, ns.tags, 'router')
@@ -916,6 +919,7 @@ export function createCapturesService(options: CapturesServiceOptions) {
           personaId: decision.personaId ?? defaultPersona(),
           tags: decision.tags,
           projectId: decision.projectId,
+          titleSource: decision.titleSource ?? 'derived',
         }
         : null,
       intent: decision.intent,
@@ -954,6 +958,7 @@ export function createCapturesService(options: CapturesServiceOptions) {
       title: proposal.newStrand?.title ?? null,
       personaId: proposal.newStrand?.personaId ?? null,
       projectId: proposal.newStrand?.projectId ?? null,
+      titleSource: proposal.newStrand ? (proposal.newStrand.titleSource ?? 'derived') : null,
       projectSuggestion: proposal.projectSuggestion,
       alternatives: proposal.alternatives,
       model: extra.model,
@@ -1284,7 +1289,7 @@ export function createCapturesService(options: CapturesServiceOptions) {
       }
       : {
         action: 'new_strand', strandId: null, secondaryStrandId: null, intent: 'ask',
-        newStrand: { title: plan.strandTitle, personaId: agentId, tags: [], projectId: null },
+        newStrand: { title: plan.strandTitle, personaId: agentId, tags: [], projectId: null, titleSource: 'derived' },
         confidence: 1, tags: [], rationale: `${QUICK_MODE_RATIONALE} (${body.source})`,
         alternatives: [], projectSuggestion: null,
       }
@@ -1315,7 +1320,7 @@ export function createCapturesService(options: CapturesServiceOptions) {
     rememberSelection(capture, selection, body.mode, body.agentId ? 'main' : 'auto')
     const proposal: RouterProposal = {
       action: 'new_strand', strandId: null, secondaryStrandId: null, intent: body.intent ?? 'ask',
-      newStrand: { title: newStrandTitle(body), personaId: agentId, tags: [], projectId: null },
+      newStrand: { title: newStrandTitle(body), personaId: agentId, tags: [], projectId: null, titleSource: body.strandTitle?.trim() ? 'manual' : 'derived' },
       confidence: 1, tags: [], rationale: body.forceNewStrand ? FORCED_NEW_STRAND_RATIONALE : NEW_STRAND_RATIONALE,
       alternatives: [], projectSuggestion: null,
     }
@@ -1527,9 +1532,24 @@ export function createCapturesService(options: CapturesServiceOptions) {
     db.prepare('UPDATE captures SET metadata = ? WHERE id = ?').run(JSON.stringify(metadata), captureId)
   }
 
+  /**
+   * Who wrote the title of a hand-applied `new_strand`: a title the user typed
+   * is 'manual'; the stored proposal's own title keeps its source, and a title
+   * the user picked from the model's alternatives stays 'ai'.
+   */
+  function manualTitleSource(typed: string | null | undefined, base: Decision): 'ai' | 'derived' | 'manual' {
+    const baseSource = base.action === 'new_strand' ? (base.titleSource ?? 'derived') : 'derived'
+    if (typed === undefined || typed === null) return base.title ? baseSource : 'derived'
+    const t = typed.trim()
+    if (base.title && t === base.title.trim()) return baseSource
+    if (base.alternatives.some(a => a.action === 'new_strand' && a.title?.trim() === t)) return 'ai'
+    return 'manual'
+  }
+
   function manualProposal(capture: Capture, body: ApplyCaptureBody, base: Decision): RouterProposal {
     const action: RouterAction = body.action ?? base.action
     const title = body.title ?? base.title ?? 'New strand'
+    const titleSource = manualTitleSource(body.title, base)
     const personaId = body.personaId ?? base.personaId ?? capture.agentId ?? 'main'
     return {
       action,
@@ -1538,7 +1558,7 @@ export function createCapturesService(options: CapturesServiceOptions) {
       // No project: this is the product owner correcting the router, and a
       // project the router guessed must not ride along into a target the user
       // picked by hand (SPEC 4.2b).
-      newStrand: action === 'new_strand' ? { title, personaId, tags: base.tags, projectId: null } : null,
+      newStrand: action === 'new_strand' ? { title, personaId, tags: base.tags, projectId: null, titleSource } : null,
       intent: base.intent,
       confidence: 1,
       tags: base.tags,

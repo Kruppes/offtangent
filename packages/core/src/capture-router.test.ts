@@ -228,7 +228,7 @@ describe('parseRouterOutput', () => {
     }), input())
     expect(created.ok).toBe(true)
     if (created.ok) {
-      expect(created.proposal.newStrand).toEqual({ title: 'Fresh', personaId: 'main', tags: ['a'], projectId: null })
+      expect(created.proposal.newStrand).toEqual({ title: 'Fresh', personaId: 'main', tags: ['a'], projectId: null, titleSource: 'ai' })
       expect(created.proposal.projectSuggestion).toBeNull()
     }
   })
@@ -311,6 +311,8 @@ describe('runRouter', () => {
     expect(result.proposal.newStrand?.personaId).toBe('main')
     expect(result.proposal.newStrand?.tags).toEqual(['haus'])
     expect(result.proposal.newStrand?.projectId).toBeNull()
+    // Cut from the capture, not written by the model.
+    expect(result.proposal.newStrand?.titleSource).toBe('derived')
     // The model's target survives as a proposal the user can merge by hand.
     expect(result.proposal.alternatives[0]).toMatchObject({ action: 'append', strandId: 's1', confidence: 0.66 })
     expect(result.proposal.alternatives.map(a => a.strandId)).toContain('s2')
@@ -343,6 +345,7 @@ describe('runRouter', () => {
     expect(result.proposal.action).toBe('new_strand')
     expect(result.proposal.secondaryStrandId).toBeNull()
     expect(result.proposal.newStrand?.title).toBe('Dachangebot Nord')
+    expect(result.proposal.newStrand?.titleSource).toBe('ai')
     expect(result.proposal.alternatives.map(a => [a.action, a.strandId])).toEqual([
       ['append', 's1'],
       ['append', 's2'],
@@ -737,5 +740,6 @@ describe('Main orchestration versus explicit specialist direct chats', () => {
     if (!result.ok) throw new Error(result.error)
     expect(result.proposal.newStrand?.personaId).toBe(personaHint ?? 'main')
     expect(syntheticProposal(data, 'fallback').newStrand?.personaId).toBe(personaHint ?? 'main')
+    expect(syntheticProposal(data, 'fallback').newStrand?.titleSource).toBe('derived')
   })
 })

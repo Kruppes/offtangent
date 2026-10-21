@@ -26,6 +26,9 @@
  *        100-per-page cap of the list. `firstAwaitingStrandId` is the strand
  *        with the oldest open question.
  *   PATCH  /api/strands/:id { archived?, pinned?, title? } -> { strand }
+ *        `title`: non-blank string = rename (source 'manual'); explicit null =
+ *        clear title and source (auto-title may run again); '' or whitespace
+ *        only = 400 invalid_title.
  *   POST /api/strands/:id/read -> 204 (server side read state, idempotent)
  *        Every strand of the list and detail read carries `lastActivityAt`
  *        (newest non-user message), `unread` derived from it, and `attention`

@@ -168,6 +168,7 @@ export function createForkStrandTool(options: ForkStrandToolOptions): AgentTool 
           userId,
           parentStrandId,
           title: args.title as string,
+          titleSource: 'ai',
           seed: args.seed as string,
           includeParentSummary: args.include_parent_summary === true,
           inheritProject: args.inherit_project !== false,

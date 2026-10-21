@@ -1,4 +1,5 @@
 import { readStrandWorkingMode, type StrandWorkingMode } from './strand-working-mode.js'
+import type { StrandTitleSource } from './session-manager.js'
 /**
  * strand-fork.ts: branching a strand instead of cutting it.
  *
@@ -73,7 +74,7 @@ export class ForkStrandError extends Error {
 
 /** The slice of `SessionManager` a fork needs; keeps this module testable. */
 export interface ForkSessionManagerLike {
-  createThread(userId: string, agentId?: string, title?: string | null, projectId?: string | null, workingMode?: StrandWorkingMode): { id: string }
+  createThread(userId: string, agentId?: string, title?: string | null, projectId?: string | null, workingMode?: StrandWorkingMode, titleSource?: StrandTitleSource): { id: string }
   getThread(userId: string, strandId: string): {
     id: string
     agentId: string
@@ -91,6 +92,8 @@ export interface ForkStrandInput {
   /** The strand the fork branches off. */
   parentStrandId: string
   title: string
+  /** Who made the title: 'manual' = typed by the user, 'ai' = model, default 'derived'. */
+  titleSource?: StrandTitleSource
   seed: string
   /** Append the parent's latest structured summary to the seed (default false). */
   includeParentSummary?: boolean
@@ -342,9 +345,9 @@ export function forkStrand(input: ForkStrandInput): StrandFork {
   // the fork, so it degrades to "no project" exactly like a capture does.
   let child: { id: string }
   try {
-    child = sessions.createThread(userId, parent.agentId, title, inheritProject ? parent.projectId : null, readStrandWorkingMode(db, parent.id))
+    child = sessions.createThread(userId, parent.agentId, title, inheritProject ? parent.projectId : null, readStrandWorkingMode(db, parent.id), input.titleSource)
   } catch {
-    child = sessions.createThread(userId, parent.agentId, title, null, readStrandWorkingMode(db, parent.id))
+    child = sessions.createThread(userId, parent.agentId, title, null, readStrandWorkingMode(db, parent.id), input.titleSource)
   }
 
   const forkedAt = new Date().toISOString()

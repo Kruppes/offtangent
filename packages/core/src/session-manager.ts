@@ -89,12 +89,15 @@ interface ThreadRow {
   message_count: number
   parent_strand_id: string | null
   forked_at: string | null
+  title_source: StrandTitleSource | null
+  title_updated_at: string | null
+  previous_title: string | null
 }
 
 /** Columns every thread read selects (kept in one place, used three times). */
 const THREAD_COLUMNS =
   'id, agent_id, title, pinned, archived, project_id, started_at, last_activity, ended_at, message_count, '
-  + 'parent_strand_id, forked_at, working_mode'
+  + 'parent_strand_id, forked_at, working_mode, title_source, title_updated_at, previous_title'
 
 /**
  * Normalize a user-supplied thread title: trimmed, capped, and `null` for
@@ -202,7 +205,21 @@ export interface Thread {
   tags: string[]
   nowRank: number | null
   links: number
+  /**
+   * Who set the title (plan strand-titel, Paket 4): 'derived' from the first
+   * message or a pre-existing title, 'ai' by a model, 'manual' by the user.
+   * `null` while the strand has no title. A manual title is never replaced
+   * automatically.
+   */
+  titleSource: StrandTitleSource | null
+  /** When the title last changed through this tracking, `null` when unknown (older titles). */
+  titleUpdatedAt: string | null
+  /** The title before the last change, for undo; `null` when there was none. */
+  previousTitle: string | null
 }
+
+/** Provenance of a strand title, see {@link Thread.titleSource}. */
+export type StrandTitleSource = 'derived' | 'ai' | 'manual'
 
 export interface ListThreadsOptions {
   agentId?: string
@@ -1674,6 +1691,7 @@ export class SessionManager {
     title?: string | null,
     projectId?: string | null,
     workingMode: StrandWorkingMode = 'main',
+    titleSource: StrandTitleSource = 'derived',
   ): Thread {
     if (!isStrandWorkingMode(workingMode) || (workingMode === 'auto' && agentId !== 'main')) {
       throw new Error('Auto mode requires the Main persona')
@@ -1688,7 +1706,9 @@ export class SessionManager {
     this.db.prepare('UPDATE sessions SET working_mode = ? WHERE id = ?').run(workingMode, session.id)
     const normalizedTitle = normalizeThreadTitle(title)
     if (normalizedTitle !== null) {
-      this.db.prepare('UPDATE sessions SET title = ? WHERE id = ?').run(normalizedTitle, session.id)
+      this.db.prepare(
+        "UPDATE sessions SET title = ?, title_source = ?, title_updated_at = datetime('now') WHERE id = ?",
+      ).run(normalizedTitle, titleSource, session.id)
     }
     const thread = this.getThread(userId, session.id)
     if (!thread) throw new Error(`[session] Thread ${session.id} vanished right after creation`)
@@ -1701,14 +1721,17 @@ export class SessionManager {
    * (no router, no explicit thread) stays untitled forever: unreadable in the
    * list and, worse, a blank candidate the router can only guess about.
    * Idempotent and write-once: an existing title is never overwritten, so no
-   * later message can rename a strand behind the user's back.
+   * later message can rename a strand behind the user's back. The title is
+   * marked 'derived'; a 'manual' source is never touched, even without a
+   * title (defensive: clearing a title also clears its source).
    */
   ensureThreadTitle(sessionId: string, firstMessage: string): void {
     const title = deriveStrandTitle(firstMessage)
     if (!title) return
     this.db.prepare(
-      `UPDATE sessions SET title = ?
-       WHERE id = ? AND type = 'interactive' AND (title IS NULL OR TRIM(title) = '')`,
+      `UPDATE sessions SET title = ?, title_source = 'derived', title_updated_at = datetime('now')
+       WHERE id = ? AND type = 'interactive' AND (title IS NULL OR TRIM(title) = '')
+         AND (title_source IS NULL OR title_source != 'manual')`,
     ).run(title, sessionId)
   }
 
@@ -1748,8 +1771,19 @@ export class SessionManager {
       params.push(agentId, workingMode)
     }
     if (patch.title !== undefined) {
-      sets.push('title = ?')
-      params.push(normalizeThreadTitle(patch.title))
+      // A PATCH with a title is the user renaming the strand: the title
+      // becomes 'manual' and is never replaced automatically. An unchanged
+      // title (e.g. the web form saving tags with the title field untouched)
+      // is no rename and leaves the source alone, so a derived title stays
+      // open for the auto-title. Clearing the title clears the source too,
+      // which hands the strand back to the automatic title. The HTTP layer
+      // only lets an explicit `null` through as a clear; a blank string is
+      // refused there with 400 (review m1), so '' here is internal use only.
+      const title = normalizeThreadTitle(patch.title)
+      if (title !== existing.title) {
+        sets.push("title = ?, title_source = ?, previous_title = title, title_updated_at = datetime('now')")
+        params.push(title, title === null ? null : 'manual')
+      }
     }
     if (patch.pinned !== undefined) {
       sets.push('pinned = ?')
@@ -2019,6 +2053,9 @@ export class SessionManager {
       tags: getStrandTags(this.db, row.id),
       nowRank: nowRanks.get(row.id) ?? null,
       links: countStrandLinks(this.db, row.id),
+      titleSource: row.title_source ?? null,
+      titleUpdatedAt: row.title_updated_at ? toIsoUtc(row.title_updated_at) : null,
+      previousTitle: row.previous_title ?? null,
       lastMessage: last
         ? {
           role: last.role === 'user' ? 'user' : 'assistant',
