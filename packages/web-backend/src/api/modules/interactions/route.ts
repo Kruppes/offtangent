@@ -13,7 +13,12 @@ import { Router } from 'express'
 import type { Database } from '@axiom/core'
 import { jwtMiddleware } from '../../../auth.js'
 import { createInteractionsController } from './controller.js'
-import { createInteractionsService, type CaptureBlockConfirmer, type InteractionTurnStarter } from './service.js'
+import {
+  createInteractionsService,
+  type CaptureBlockConfirmer,
+  type InteractionTurnStarter,
+  type InteractionsService,
+} from './service.js'
 import type { ChatEventBus } from '../../../chat-event-bus.js'
 
 export interface InteractionsRouterOptions {
@@ -24,8 +29,13 @@ export interface InteractionsRouterOptions {
   getCaptureConfirmer?: () => CaptureBlockConfirmer | null
 }
 
-export function createInteractionsRouter(options: InteractionsRouterOptions): Router {
-  const service = createInteractionsService({
+/**
+ * The one interactions service of the app. Exported so a second door (the LED
+ * clock, `/api/device/clock/answer`) answers through the very same code path,
+ * broadcast included, instead of a copy that could drift.
+ */
+export function createSharedInteractionsService(options: InteractionsRouterOptions): InteractionsService {
+  return createInteractionsService({
     db: options.db,
     getTurnRunner: options.getTurnRunner,
     getCaptureConfirmer: options.getCaptureConfirmer,
@@ -42,6 +52,12 @@ export function createInteractionsRouter(options: InteractionsRouterOptions): Ro
       })
     },
   })
+}
+
+export function createInteractionsRouter(
+  options: InteractionsRouterOptions & { service?: InteractionsService },
+): Router {
+  const service = options.service ?? createSharedInteractionsService(options)
   const controller = createInteractionsController(service)
 
   const router = Router()

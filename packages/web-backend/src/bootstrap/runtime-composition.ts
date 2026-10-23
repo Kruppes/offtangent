@@ -114,6 +114,7 @@ import { PushDeviceRegistry } from '../push/device-registry.js'
 import { FcmClient, resolveServiceAccountFile } from '../push/fcm-client.js'
 import { PushSender, resolvePresencePolicy, resolvePreviewChars } from '../push/sender.js'
 import { sendTaskDoorbell, sendTurnDoorbell } from '../push/triggers.js'
+import { ClockNotifier, resolveClockWakeConfig } from '../api/modules/clock-device/notifier.js'
 import { broadcastTaskActivity } from '../task-activity.js'
 import {
   TaskReplyNotFoundError,
@@ -736,6 +737,21 @@ export async function createRuntimeComposition(options: RuntimeCompositionOption
       error: msg => logger.error(msg),
     },
   })
+  // LED clock wake call (TC002 Berry app). Rides on every doorbell, before
+  // the FCM gates, so it also works on an instance without Firebase. Off
+  // unless CLOCK_WAKE_URL points into the LAN; never blocks the phone push.
+  const clockWake = resolveClockWakeConfig()
+  if (clockWake.config) {
+    const clockNotifier = new ClockNotifier({
+      db,
+      config: clockWake.config,
+      logger: { info: msg => logger.log(msg), warn: msg => logger.warn(msg) },
+    })
+    pushSender.addObserver(doorbell => clockNotifier.observe(doorbell))
+    logger.log(`[clock] Wake calls on, target ${clockWake.config.url}`)
+  } else if (process.env.CLOCK_WAKE_URL?.trim()) {
+    logger.warn(`[clock] Wake calls off: ${clockWake.reason}`)
+  }
   if (!pushSender.isConfigured()) {
     logger.log('[push] No FCM service account found, push notifications are off')
   } else if (pushPresencePolicy !== 'off' || pushPreviewChars > 0) {

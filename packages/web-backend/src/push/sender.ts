@@ -146,6 +146,12 @@ export class PushSender {
   private readonly lastSentByStrand = new Map<string, number>()
   /** The "no service account" warning is worth one line per process, not one per turn. */
   private warnedUnconfigured = false
+  /**
+   * Side listeners (the LED clock wake call). Called synchronously at the top
+   * of {@link send}, before any FCM gate, each in its own try/catch: an
+   * observer can neither block nor break the phone doorbell.
+   */
+  private readonly observers: Array<(doorbell: PushDoorbell) => void> = []
 
   constructor(options: PushSenderOptions) {
     this.registry = options.registry
@@ -167,7 +173,27 @@ export class PushSender {
     return this.client.isConfigured()
   }
 
+  /** Registers a side listener; see {@link observers}. Returns an unsubscribe function. */
+  addObserver(observer: (doorbell: PushDoorbell) => void): () => void {
+    this.observers.push(observer)
+    return () => {
+      const index = this.observers.indexOf(observer)
+      if (index >= 0) this.observers.splice(index, 1)
+    }
+  }
+
+  private notifyObservers(doorbell: PushDoorbell): void {
+    for (const observer of this.observers) {
+      try {
+        observer(doorbell)
+      } catch (err) {
+        this.logger.warn(`[push] observer failed: ${(err as Error).message}`)
+      }
+    }
+  }
+
   async send(doorbell: PushDoorbell): Promise<PushSendOutcome> {
+    this.notifyObservers(doorbell)
     const empty: PushSendOutcome = {
       delivered: 0, failed: 0, disabled: 0, coalesced: false, suppressed: false, messageNames: [],
     }

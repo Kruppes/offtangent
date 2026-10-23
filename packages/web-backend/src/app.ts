@@ -40,7 +40,8 @@ import { createDeepgramRouter } from './routes/deepgram.js'
 import { createCapturesRouters } from './api/modules/captures/route.js'
 import { createFeedRouter } from './api/modules/feed/route.js'
 import { createBoardsRouter } from './api/modules/boards/route.js'
-import { createInteractionsRouter } from './api/modules/interactions/route.js'
+import { createInteractionsRouter, createSharedInteractionsService } from './api/modules/interactions/route.js'
+import { createClockDeviceRouter } from './api/modules/clock-device/route.js'
 import type { CaptureTurnStarter } from './api/modules/captures/service.js'
 import type { StrandTurnGuard } from './api/modules/strands/service.js'
 import type { PersonaTurnGuard } from './api/modules/personas/service.js'
@@ -228,7 +229,7 @@ export function createApp(options?: AppOptions): express.Express {
     // Offtangent (SPEC 7.4c): answering an interactive block. The answer is
     // filed as an ordinary user message in the strand, so it shares the turn
     // runner with the captures path.
-    app.use('/api/interactions', createInteractionsRouter({
+    const interactionsService = createSharedInteractionsService({
       db: options.db,
       getTurnRunner: options.getTurnRunner,
       chatEventBus: options.chatEventBus ?? null,
@@ -237,6 +238,13 @@ export function createApp(options?: AppOptions): express.Express {
       // "answer it" takes exactly the path the `needs_review` confirmation
       // takes.
       getCaptureConfirmer: () => captureRouters.service,
+    })
+    app.use('/api/interactions', createInteractionsRouter({ db: options.db, service: interactionsService }))
+    // The LED clock (TC002 Berry app): status, notices and knob answers. Own
+    // device tokens, LAN only; answers go through the same service as a tap.
+    app.use('/api/device/clock', createClockDeviceRouter({
+      db: options.db,
+      getInteractions: () => interactionsService,
     }))
     const strandRouters = createStrandsRouters({
       db: options.db,

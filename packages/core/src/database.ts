@@ -968,6 +968,7 @@ export function initDatabase(dbPath?: string): Database {
   // FCM sender reads. Purely additive, no table is rebuilt: the live database
   // is large and a rebuild is the one migration shape we refuse here.
   ensurePushDeviceTable(db)
+  ensureClockDeviceTable(db)
 
   // Per-user preferences (voice replies, and whatever comes next). Own table,
   // created if missing; nothing existing is touched.
@@ -1098,6 +1099,39 @@ export function ensureMemoryProvenanceColumns(db: Database): void {
   db.exec(`
     CREATE INDEX IF NOT EXISTS idx_memories_status ON memories(status);
     CREATE INDEX IF NOT EXISTS idx_memories_supersession ON memories(supersession_key, agent_id, user_id, status);
+  `)
+}
+
+/**
+ * `clock_devices`: one row per LED clock (TC002 Berry app "Offtangent") that
+ * may read `/api/device/clock/state` and answer through
+ * `/api/device/clock/answer`. Only the SHA-256 of the device token is kept;
+ * the token itself is shown once at creation. `revoked_at` ends the token
+ * immediately; the row stays for the audit trail (until the user itself is
+ * deleted, see the trigger below). `privacy` = 1 strips every
+ * title and question text from the state the clock receives.
+ */
+function ensureClockDeviceTable(db: Database): void {
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS clock_devices (
+      id TEXT PRIMARY KEY,
+      user_id INTEGER NOT NULL,
+      name TEXT NOT NULL,
+      token_hash TEXT NOT NULL UNIQUE,
+      scopes TEXT NOT NULL DEFAULT 'clock:state clock:answer',
+      privacy INTEGER NOT NULL DEFAULT 0,
+      created_at TEXT NOT NULL DEFAULT (datetime('now')),
+      last_seen_at TEXT,
+      revoked_at TEXT
+    );
+    CREATE INDEX IF NOT EXISTS idx_clock_devices_user ON clock_devices(user_id, revoked_at);
+    -- A clock never outlives its user: deleting the user removes its device
+    -- rows, so no token of a deleted account stays valid. A trigger instead
+    -- of a FOREIGN KEY so it also covers tables created by an earlier build
+    -- (additive, no table rebuild).
+    CREATE TRIGGER IF NOT EXISTS clock_devices_user_deleted AFTER DELETE ON users BEGIN
+      DELETE FROM clock_devices WHERE user_id = OLD.id;
+    END;
   `)
 }
 
