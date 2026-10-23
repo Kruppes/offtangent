@@ -377,12 +377,37 @@ describe('voiceReplyHintFor', () => {
     expect(voiceReplyHintFor(db, 1)).toBeNull()
     setVoiceRepliesEnabled(db, 1, true)
     expect(voiceReplyHintFor(db, 1)).toBe(VOICE_REPLY_TURN_HINT)
-    // Never a system-prompt block, and unmistakable about what not to do.
     expect(VOICE_REPLY_TURN_HINT).toContain('<voice_reply>')
-    expect(VOICE_REPLY_TURN_HINT.toLowerCase()).toContain('do not record')
     expect(voiceReplyHintFor(db, null)).toBeNull()
     expect(voiceReplyHintFor(db, 2)).toBeNull()
     db.close()
+  })
+})
+
+describe('VOICE_REPLY_TURN_HINT scope', () => {
+  const hint = VOICE_REPLY_TURN_HINT.toLowerCase()
+
+  it('still forbids a second voicing of the normal chat answer', () => {
+    expect(hint).toContain('automatically')
+    expect(hint).toContain('second time')
+    expect(hint).toContain('just to read it out')
+  })
+
+  it('does not blanket-forbid audio files, synthesis or send_voice_message', () => {
+    expect(hint).not.toContain('do not record')
+    expect(hint).not.toContain('do not call the')
+    expect(hint).not.toContain('any other spoken version')
+    expect(hint).not.toContain('already being spoken')
+  })
+
+  it('explicitly allows requested audio artifacts and their tools', () => {
+    expect(hint).toContain('explicitly asks for an audio artifact')
+    expect(hint).toContain('audio file')
+    expect(hint).toContain('ogg')
+    expect(hint).toContain('benchmark')
+    expect(hint).toContain('comparison')
+    expect(hint).toContain('synthesis and delivery tools')
+    expect(hint).toContain('including send_voice_message when the user asked for a voice message')
   })
 })
 

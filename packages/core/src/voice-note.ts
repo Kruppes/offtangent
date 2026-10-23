@@ -669,9 +669,13 @@ export function voiceReplyHintFor(db: Database, userId: number | null): string |
 export const VOICE_REPLY_TURN_HINT = [
   '<voice_reply>',
   'A spoken version of your written answer is generated automatically by the',
-  'server after this turn. Do not record, synthesize or send a voice message,',
-  'audio file or any other spoken version yourself, and do not call the',
-  'send_voice_message tool — the answer is already being spoken.',
+  'server after this turn. Do not voice that same written answer a second time',
+  'yourself, and do not call send_voice_message just to read it out.',
+  'This only concerns the automatic reading of your normal chat answer. If the',
+  'user explicitly asks for an audio artifact (an audio file, OGG report, voice',
+  'model benchmark or comparison, generated speech or sound), produce and',
+  'deliver it as requested, using the synthesis and delivery tools it needs,',
+  'including send_voice_message when the user asked for a voice message.',
   '</voice_reply>',
 ].join('\n')
 
