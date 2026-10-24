@@ -13,6 +13,9 @@ import type {
 import { buildTurnErrorMetadata, formatTurnErrorContent } from './turn-error.js'
 import { newTurnRetryActionId } from './turn-retry-action.js'
 import { sealText } from './secret-boundary.js'
+import { classifyInteractionFences, extractAnswerableInteractionBlocks } from './contracts/interaction-blocks.js'
+import type { InteractionParseOutcome } from './contracts/interaction-blocks.js'
+import { recordInteractionEvent } from './interaction-telemetry.js'
 import type { UploadDescriptor } from './uploads.js'
 import { serializeUploadsMetadata } from './uploads.js'
 import { extractVoiceNoteFromToolResult } from './voice-note-tool.js'
@@ -333,18 +336,43 @@ interface TurnState {
   sessionId: string
   /** Fork multi-persona: persona attribution for persisted rows. */
   agentId: string
+  /** Channel of the turn (`web`, `android`, `telegram`, ...), for telemetry. */
+  source: string
   startedAt: number
   buffer: TurnEvent[]
   /** Turn-level abort: user initiated, never retried. */
   abortController: AbortController
   /** Per-attempt abort (watchdog stall): kills one attempt, not the turn. */
   attemptController: AbortController
+  /**
+   * The assistant row the last committed attempt wrote, or null. Carried on
+   * the one `done` chunk (S0-B/QW2) so a client can wire the card buttons to
+   * the persisted message without waiting for a history reload.
+   */
+  finalMessage: { messageId: number; blockId: string | null } | null
   ended: boolean
   endedAt: number | null
   /** Strand statistics: the turn row was written (persisting turn). */
   statsRecorded?: boolean
   statsFirstToken?: boolean
   statsFailed?: boolean
+}
+
+/** The answerable block ids of a finished answer, in document order. */
+function findAnswerableInteractionBlockIds(content: string): string[] {
+  try {
+    return extractAnswerableInteractionBlocks(content).map(block => block.id)
+  } catch {
+    return []
+  }
+}
+
+/** The terminal chunk of a turn, naming the persisted answer when there is one. */
+function doneChunk(finalMessage: TurnState['finalMessage']): ResponseChunk {
+  if (!finalMessage) return { type: 'done' }
+  return finalMessage.blockId
+    ? { type: 'done', messageId: finalMessage.messageId, blockId: finalMessage.blockId }
+    : { type: 'done', messageId: finalMessage.messageId }
 }
 
 /**
@@ -674,10 +702,12 @@ export class TurnRunner {
       userId: input.userId,
       sessionId: input.sessionId,
       agentId: input.agentId ?? 'main',
+      source: input.source ?? 'web',
       startedAt: Date.now(),
       buffer: [],
       abortController: new AbortController(),
       attemptController: new AbortController(),
+      finalMessage: null,
       ended: false,
       endedAt: null,
     }
@@ -956,7 +986,9 @@ export class TurnRunner {
 
     // Exactly one `done` per turn, emitted after the last attempt, so consumers
     // never get stuck on a streaming indicator and never see a turn "end" twice.
-    this.emitChunk(turn, { type: 'done' })
+    // It names the persisted assistant row (S0-B/QW2): without it a card's
+    // buttons stay dead until the client reloads the history.
+    this.emitChunk(turn, doneChunk(turn.finalMessage))
     this.finishTurn(turn)
   }
 
@@ -1063,12 +1095,12 @@ export class TurnRunner {
     // A user abort ends the turn even if the watchdog fired first: only the
     // watchdog's own kill counts as a retryable failure.
     if (turn.abortController.signal.aborted) {
-      this.commitTranscript(transcript)
+      this.commitTranscript(turn, transcript)
       return { status: 'aborted' }
     }
 
     if (!failure) {
-      this.commitTranscript(transcript)
+      this.commitTranscript(turn, transcript)
       return { status: 'completed' }
     }
 
@@ -1086,7 +1118,7 @@ export class TurnRunner {
     // attempt that is about to be replaced; a terminal failure keeps whatever
     // the provider managed to produce.
     if (willRetry) transcript.discard()
-    else this.commitTranscript(transcript)
+    else this.commitTranscript(turn, transcript)
 
     return { status: 'failed', error: failure.error, retryable: failure.retryable, willRetry, authRetry }
   }
@@ -1145,9 +1177,14 @@ export class TurnRunner {
    * Flush any trailing thinking that wasn't closed by text/tool/done (e.g.
    * aborted/errored streams) and write the assistant row.
    */
-  private commitTranscript(transcript: TurnTranscript): void {
+  private commitTranscript(turn: TurnState, transcript: TurnTranscript): void {
     transcript.flushThinking()
-    transcript.finalize()
+    const written = transcript.finalize()
+    if (!written) return
+    turn.finalMessage = { messageId: written.messageId, blockId: written.blockId }
+    // S0-B/B1+QW3: one counter per card fence of the persisted answer, by
+    // parse outcome and channel. Outcomes only, never content.
+    for (const outcome of written.parseOutcomes) recordInteractionEvent(turn.source, `parse_${outcome}`)
   }
 
   private isAttemptAborted(turn: TurnState): boolean {
@@ -1626,9 +1663,9 @@ class TurnTranscript {
    * Write the assistant row. A turn that produced only attachments still gets
    * a row (with empty content) so the download card survives a history reload.
    */
-  finalize(): void {
-    if (!this.persists) return
-    if (!this.fullResponse && this.uploads.length === 0 && !this.voiceNote) return
+  finalize(): { messageId: number; blockId: string | null; parseOutcomes: InteractionParseOutcome[] } | null {
+    if (!this.persists) return null
+    if (!this.fullResponse && this.uploads.length === 0 && !this.voiceNote) return null
     let metadata = this.uploads.length > 0 ? serializeUploadsMetadata(this.uploads) : undefined
     // A voice note produced by a tool belongs to THIS answer: it goes into the
     // same metadata blob the app already reads, next to `files`.
@@ -1637,9 +1674,13 @@ class TurnTranscript {
       this.db, this.sessionId, this.userId, 'assistant', this.fullResponse, metadata, this.agentId,
     )
     this.remember(messageId)
-    if (messageId !== null) {
-      this.recordArtifacts(messageId)
-      this.notifyAssistantMessage(messageId)
+    if (messageId === null) return null
+    this.recordArtifacts(messageId)
+    this.notifyAssistantMessage(messageId)
+    return {
+      messageId,
+      blockId: findAnswerableInteractionBlockIds(this.fullResponse)[0] ?? null,
+      parseOutcomes: classifyInteractionFences(this.fullResponse),
     }
   }
 

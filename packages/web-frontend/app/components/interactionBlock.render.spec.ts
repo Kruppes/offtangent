@@ -229,12 +229,13 @@ describe('ChatInteractionBlock', () => {
     expect(html).not.toContain('bg-selected-container')
   })
 
-  it('renders a closed card when the question was answered in the chat', async () => {
-    const html = await render({ block: choice, messageId: 42, answeredElsewhere: true })
+  it('renders a closed "skipped" card when the shared stale rule passed it by', async () => {
+    const html = await render({ block: choice, messageId: 42, skipped: true })
 
     expect(html).toContain('Hand this to Bob?')
-    expect(html).toContain('chat.interaction.answeredInChat')
-    expect(html).toContain('data-icon="edit"')
+    expect(html).toContain('chat.interaction.skipped')
+    expect(html).toContain('data-icon="skip"')
+    expect(html).not.toContain('chat.interaction.answeredInChat')
     expect(html).not.toContain('<button')
     expect(html).not.toContain('Keep it here')
     expect(html).toContain('role="status"')
@@ -318,7 +319,7 @@ describe('the segment loop of ChatView (parser inside the markdown renderer)', (
     const parts: string[] = []
     for (const segment of parseInteractionMessage(content)) {
       if (segment.type === 'text') parts.push(marked.parse(segment.text) as string)
-      else parts.push(await render({ block: segment.block, messageId: 5 }))
+      else if (segment.type === 'block') parts.push(await render({ block: segment.block, messageId: 5 }))
     }
     return parts.join('')
   }
@@ -363,12 +364,14 @@ describe('the segment loop of ChatView (parser inside the markdown renderer)', (
     expect(html).not.toContain('"block"')
   })
 
-  it('degrades a broken fence to a code block without breaking the message', async () => {
+  it('degrades a broken fence to a readable hint without breaking the message', async () => {
     const html = await renderMessage('Before\n\n```offtangent\n{ "block": "choice", "id":\n```\n\nAfter')
 
     expect(html).toContain('Before')
     expect(html).toContain('After')
-    expect(html).toContain('<code')
+    expect(html).toContain('(A question could not be displayed.)')
+    expect(html).not.toContain('<code')
+    expect(html).not.toContain('&quot;block&quot;')
     expect(html).not.toContain('role="group"')
   })
 

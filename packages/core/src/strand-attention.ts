@@ -78,6 +78,7 @@ import { loadConfig, warnConfigReadFailed } from './config.js'
 import { parseAttentionMaxAgeHours } from './contracts/settings.js'
 import {
   extractAnswerableInteractionBlocks,
+  interactionSkipReason,
   resolveInteractionBlockState,
   type InteractionBlock,
 } from './contracts/interaction-blocks.js'
@@ -284,23 +285,30 @@ export function getStrandAttentions(
     const lastUserTurn = new Map<string, number>()
     for (const row of lastUserTurnRows) lastUserTurn.set(row.session_id, row.last_user_message_id)
 
-    // Rule 2: only the newest open card of a strand can be attention. The rows
-    // arrive oldest first, so the last open one per strand wins.
-    const newestOpenCard = new Map<string, { row: BlockMessageRow; block: InteractionBlock }>()
+    // Rules 1 and 2 are THE shared stale rule (`interactionSkipReason`, S0-B/
+    // QW7), the same function web and app use to draw a card as "skipped".
+    // Rule 2 compares against the newest OPEN card of the strand: a newer card
+    // that is already answered was answered by a user turn, which rule 1
+    // covers. The rows arrive oldest first.
+    const openCards: Array<{ row: BlockMessageRow; block: InteractionBlock }> = []
+    const newestOpenAt = new Map<string, number>()
     for (const row of blockRows) {
       const open = firstOpenBlock(row, options.now)
       if (!open) continue
-      const held = newestOpenCard.get(row.session_id)
-      if (!held || row.id > held.row.id) newestOpenCard.set(row.session_id, { row, block: open })
+      openCards.push({ row, block: open })
+      newestOpenAt.set(row.session_id, Math.max(newestOpenAt.get(row.session_id) ?? row.id, row.id))
     }
 
-    for (const [strandId, { row, block }] of newestOpenCard) {
+    for (const { row, block } of openCards) {
+      const strandId = row.session_id
       const since = toIsoUtcOrNull(row.timestamp)
       if (!since) continue
-      // Rule 1. An older card of the same strand cannot survive this either:
-      // its id is smaller, so the same user turn is newer than it as well.
-      const lastUserMessageId = lastUserTurn.get(strandId)
-      if (lastUserMessageId !== undefined && lastUserMessageId > row.id) continue
+      const skipped = interactionSkipReason({
+        at: row.id,
+        lastUserTurnAt: lastUserTurn.get(strandId) ?? null,
+        newestCardAt: newestOpenAt.get(strandId) ?? null,
+      })
+      if (skipped) continue
       // Rule 3.
       if (!isFresh(since)) continue
       consider(attentions, strandId, {

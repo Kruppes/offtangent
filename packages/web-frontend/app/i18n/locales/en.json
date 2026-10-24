@@ -164,6 +164,8 @@
       "ownAnswerPlaceholder": "Your answer…",
       "multiHint": "Several possible",
       "answeredInChat": "Answered in the chat",
+      "skipped": "Skipped",
+      "preparing": "Preparing a question…",
       "cancel": "Cancel"
     },
     "taskResult": {

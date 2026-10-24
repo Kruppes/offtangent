@@ -185,7 +185,14 @@ export {
   withInteractionAnswer,
   validateInteractionAnswer,
   resolveInteractionBlockState,
+  interactionSkipReason,
+  resolveInteractionCardDisplay,
   findOpenInteractionBlocks,
+  classifyInteractionFences,
+  parseInteractionFenceBody,
+  repairInteractionJson,
+  INTERACTION_INCOMPLETE_TEXT,
+  INTERACTION_BROKEN_TEXT,
 } from './interaction-blocks.js'
 
 export type {
@@ -197,6 +204,11 @@ export type {
   InteractionAnswerState,
   InteractionBlockClosedReason,
   InteractionBlockState,
+  InteractionParseOutcome,
+  ParseInteractionMessageOptions,
+  InteractionSkipReason,
+  InteractionCardPosition,
+  InteractionCardDisplay,
 } from './interaction-blocks.js'
 
 export {

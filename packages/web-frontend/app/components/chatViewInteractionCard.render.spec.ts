@@ -138,13 +138,13 @@ describe('ChatView: the interaction card next to the bubble', () => {
     expect(findAll(bubble, isCard)).toHaveLength(0)
   })
 
-  it('hands free text to the ordinary send path and tells the card about later user messages', () => {
+  it('hands free text to the ordinary send path and tells the card whether it was skipped', () => {
     const card = findAll(template, isCard)[0]!
     const handler = card.props?.find(p => p.type === 7 && p.arg?.content === 'own-answer')?.exp?.content
     expect(handler).toBe('handleOwnAnswer')
     expect(bindingOf(card, 'bind')).toBeDefined()
-    const answeredElsewhere = card.props?.find(p => p.type === 7 && p.arg?.content === 'answered-elsewhere')?.exp?.content
-    expect(answeredElsewhere).toContain('answeredElsewhere')
+    const skipped = card.props?.find(p => p.type === 7 && p.arg?.content === 'skipped')?.exp?.content
+    expect(skipped).toContain('cardSkipped')
   })
 })
 
@@ -172,7 +172,14 @@ describe('ChatView: the free text send path', () => {
     expect(script.match(/await sendMessage\(/g)?.length).toBe(2)
   })
 
-  it('treats any later user message as an answer given in the chat', () => {
-    expect(script).toMatch(/function answeredElsewhere\(index: number\): boolean[\s\S]*?role === 'user'/)
+  it('closes a card through the shared core stale rule (later user turn or newer open card)', () => {
+    expect(script).toMatch(/function cardSkipped\(index: number\): boolean[\s\S]*?role === 'user'[\s\S]*?interactionSkipReason\(/)
+    expect(script).toMatch(/import \{[^}]*interactionSkipReason[^}]*\} from '@axiom\/core\/contracts'/)
+  })
+
+  it('draws a placeholder instead of raw JSON while a card fence streams', () => {
+    expect(script).toMatch(/segmentsOf\(content, \{ streaming \}\)/)
+    expect(script).toMatch(/function hasPendingCard\([\s\S]*?segment\.type === 'pending'/)
+    expect(descriptor.template!.content).toContain('data-testid="interaction-pending"')
   })
 })

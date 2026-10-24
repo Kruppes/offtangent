@@ -116,6 +116,13 @@ export interface ResponseChunk {
   retry?: RetryInfo
   /** Terminal-error details (for `type: 'error'`), when the turn persisted one. */
   errorInfo?: TurnErrorInfo
+  /**
+   * For `type: 'done'`: id of the assistant row the turn persisted (S0-B/QW2).
+   * Absent when the turn persisted nothing (aborted before any text, no DB).
+   */
+  messageId?: number
+  /** For `type: 'done'`: id of the first answerable interaction block of that row. */
+  blockId?: string
 }
 
 /**

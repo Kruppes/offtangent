@@ -39,3 +39,15 @@ Consumers:
   `packages/web-frontend/app/composables/useChat.test.ts`
 - Android app: `app/src/test/resources/protocol/canvas-view-updated.frame.json`
   (companion repository)
+
+## Protocol change: `done` carries `messageId` / `blockId` (S0-B/QW2, 2026-10-24)
+
+Not a recorded frame yet. The turn `done` frame now names the persisted
+assistant row (`messageId`) and its first answerable interaction card
+(`blockId`); both are optional and absent when there is nothing to name.
+Contract and fallback: [interaction blocks, `done`](../reference/interaction-blocks.md#done-names-the-persisted-message-s0-bqw2).
+
+Sources: `packages/core/src/turn-runner.ts` (`doneChunk`),
+`packages/web-backend/src/ws-chat.ts` (`chunkToResponse`, task injections).
+Consumers: `packages/web-frontend/app/composables/useChat.ts`, Android
+`ChatViewModel` (companion repository).

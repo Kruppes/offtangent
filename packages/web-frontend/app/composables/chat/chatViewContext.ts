@@ -45,7 +45,8 @@ export interface ChatViewContext {
   messageTextSegments: (msg: ChatMessage) => Array<Extract<InteractionSegment, { type: 'text' }>>
   hasBubbleBody: (msg: ChatMessage) => boolean
   artifactFences: (msg: ChatMessage) => ArtifactFence[]
-  answeredElsewhere: (index: number) => boolean
+  hasPendingCard: (msg: ChatMessage, index: number) => boolean
+  cardSkipped: (index: number) => boolean
   handleOwnAnswer: (text: string) => Promise<void>
   handleChatAction: (messageId: string, actionId: string) => Promise<void>
   handlePickerSelect: (msg: ChatMessage, command: string) => void

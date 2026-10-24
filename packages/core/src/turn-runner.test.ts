@@ -12,6 +12,7 @@ import type { ProviderStallMetadata } from './provider-stall.js'
 import { TURN_ERROR_KIND, parseTurnErrorMetadata } from './turn-error.js'
 import type { TurnErrorMetadata } from './turn-error.js'
 import type { Database } from './database.js'
+import { getInteractionTelemetry, resetInteractionTelemetry } from './interaction-telemetry.js'
 
 const SESSION_ID = 'session-turn-runner'
 const USER_ID = 7
@@ -386,6 +387,35 @@ describe('TurnRunner', () => {
 
     expect(persisted[2]!.content).toBe('Answer.')
     expect(persisted[2]!.metadata).toBeNull()
+  })
+
+  it('names the persisted row and its card on the done chunk (S0-B/QW2)', async () => {
+    const db = freshDb()
+    resetInteractionTelemetry({ logger: null })
+    const card = 'Pick:\n\n```offtangent\n{"block":"confirm","id":"c-1","question":"Go?",}\n```'
+    const runner = startRunner(db, scriptedAgent([{ type: 'text', text: card }, { type: 'done' }]))
+    const events: TurnEvent[] = []
+    runner.subscribe(USER_ID, collect(events))
+
+    runner.startTurn({ userId: USER_ID, sessionId: SESSION_ID, text: 'hi' })
+    await waitFor(() => !runner.hasActiveTurn(USER_ID))
+
+    const assistant = db.prepare("SELECT id FROM chat_messages WHERE session_id = ? AND role = 'assistant'").get(SESSION_ID) as { id: number }
+    const done = events.filter(e => e.type === 'chunk').map(e => (e as { chunk: ResponseChunk }).chunk).find(c => c.type === 'done')
+    expect(done).toEqual({ type: 'done', messageId: assistant.id, blockId: 'c-1' })
+    // B1: the persisted fence parsed only after the repair pass (trailing comma).
+    expect(getInteractionTelemetry().counters.web).toMatchObject({ parse_repaired: 1 })
+  })
+
+  it('keeps done bare when the turn persisted nothing (S0-B/QW2)', async () => {
+    const db = freshDb()
+    const runner = startRunner(db, scriptedAgent([{ type: 'done' }]))
+    const events: TurnEvent[] = []
+    runner.subscribe(USER_ID, collect(events))
+    runner.startTurn({ userId: USER_ID, sessionId: SESSION_ID, text: 'hi' })
+    await waitFor(() => !runner.hasActiveTurn(USER_ID))
+    const done = events.filter(e => e.type === 'chunk').map(e => (e as { chunk: ResponseChunk }).chunk).find(c => c.type === 'done')
+    expect(done).toEqual({ type: 'done' })
   })
 
   it('emits and persists preamble tool calls ahead of the agent stream', async () => {

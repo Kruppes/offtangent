@@ -106,10 +106,57 @@ export interface InteractionBlock {
 export type InteractionSegment =
   | { type: 'text'; text: string }
   | { type: 'block'; block: InteractionBlock; raw: string }
+  /**
+   * A card that is still being streamed (S0-B/QW1): an unterminated
+   * `offtangent` fence while the message is live. Only produced with
+   * `{ streaming: true }`; the client draws a placeholder instead of raw JSON.
+   */
+  | { type: 'pending' }
+
+/** Options of {@link parseInteractionMessage}. */
+export interface ParseInteractionMessageOptions {
+  /**
+   * The message is still streaming. An unterminated fence then becomes a
+   * `pending` segment. Without it (a finished or aborted message) the fence
+   * degrades to readable text: the block's numbered list when the partial
+   * JSON can be repaired, else {@link INTERACTION_INCOMPLETE_TEXT}.
+   */
+  streaming?: boolean
+}
+
+/** What an aborted card leaves behind when nothing readable can be salvaged. */
+export const INTERACTION_INCOMPLETE_TEXT = '(The question was cut off before it was complete.)'
+
+/**
+ * What a closed card fence leaves behind when its JSON is broken beyond the
+ * repair pass (S0-B review finding 7): a readable hint, never the raw JSON.
+ */
+export const INTERACTION_BROKEN_TEXT = '(A question could not be displayed.)'
+
+/**
+ * A trailing line that is the start of a card fence whose language tag is
+ * still arriving (`\`\`\`off` at the very end of a streamed chunk, S0-B review
+ * finding 1). Three or more fence characters followed by a non-empty prefix
+ * of `offtangent`; a bare fence opener stays text because it may open any
+ * ordinary code block.
+ */
+const PARTIAL_FENCE_OPENER = /(?:^|\n)[ \t]*(?:`{3,}|~{3,})[ \t]*([A-Za-z]{1,10})[ \t]*$/
+
+function partialFenceStart(content: string): number {
+  const match = PARTIAL_FENCE_OPENER.exec(content)
+  if (!match) return -1
+  const tag = match[1]!.toLowerCase()
+  if (tag === FENCE_LANGUAGE || !FENCE_LANGUAGE.startsWith(tag)) return -1
+  return match.index + (match[0].startsWith('\n') ? 1 : 0)
+}
+
+/** How one fence body parsed (S0-B telemetry). */
+export type InteractionParseOutcome = 'ok' | 'repaired' | 'broken'
 
 /** Info string of the fenced interactive block (```offtangent). */
 export const INTERACTION_FENCE_LANGUAGE = 'offtangent'
 const FENCE_LANGUAGE = INTERACTION_FENCE_LANGUAGE
+
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value)
@@ -248,17 +295,19 @@ function findFences(content: string): RawFence[] {
   let openIndex = -1
   let openOffset = 0
   let bodyLines: string[] = []
+  let closer: '`' | '~' = '`'
 
   for (const line of lines) {
     const lineLength = line.length + 1
     const trimmed = line.trim()
     if (openIndex === -1) {
-      if (/^`{3,}\s*offtangent\s*$/i.test(trimmed)) {
+      if (/^(`{3,}|~{3,})\s*offtangent\s*$/i.test(trimmed)) {
+        closer = trimmed.startsWith('~') ? '~' : '`'
         openIndex = fences.length
         openOffset = offset
         bodyLines = []
       }
-    } else if (/^`{3,}\s*$/.test(trimmed)) {
+    } else if ((closer === '~' ? /^~{3,}\s*$/ : /^`{3,}\s*$/).test(trimmed)) {
       const end = offset + line.length
       fences.push({
         start: openOffset,
@@ -287,6 +336,134 @@ function findFences(content: string): RawFence[] {
   return fences
 }
 
+/**
+ * Repair pass (S0-B/QW3): the mistakes models actually make in a block body,
+ * fixed conservatively. Returns the repaired JSON text, or null when nothing
+ * was changed. Every step is purely syntactic; the repaired payload still has
+ * to pass {@link parseInteractionBlockPayload}, so a repair can never invent
+ * an option or a question.
+ *
+ *   - typographic quotes (\u201C \u201D \u201E) used as JSON quotes
+ *   - a trailing comma before `}` or `]`
+ *   - missing closing brackets at the end (a cut-off body)
+ */
+export function repairInteractionJson(body: string): string | null {
+  let text = body.trim().replace(/^\uFEFF/, '')
+  const original = text
+  text = text.replace(/[\u201C\u201D\u201E]/g, '"')
+  text = text.replace(/,\s*([}\]])/g, '$1')
+  // Close what is still open, ignoring brackets inside strings.
+  const stack: string[] = []
+  let inString = false
+  let escaped = false
+  for (const char of text) {
+    if (inString) {
+      if (escaped) escaped = false
+      else if (char === '\\') escaped = true
+      else if (char === '"') inString = false
+      continue
+    }
+    if (char === '"') inString = true
+    else if (char === '{') stack.push('}')
+    else if (char === '[') stack.push(']')
+    else if (char === '}' || char === ']') {
+      if (stack.pop() !== char) return null
+    }
+  }
+  if (inString) text += '"'
+  text = text.replace(/,\s*$/, '')
+  while (stack.length) text += stack.pop()
+  text = text.replace(/,\s*([}\]])/g, '$1')
+  return text === original ? null : text
+}
+
+function parseJsonOrNull(text: string): unknown {
+  try {
+    return JSON.parse(text) as unknown
+  } catch {
+    return undefined
+  }
+}
+
+/**
+ * Parse one fence body: strict first, then the repair pass. `outcome` is what
+ * the telemetry counts; the body itself never leaves this function.
+ */
+export function parseInteractionFenceBody(body: string): { block: InteractionBlock | null; outcome: InteractionParseOutcome } {
+  let payload = parseJsonOrNull(body)
+  let repaired = false
+  if (payload === undefined) {
+    const fixed = repairInteractionJson(body)
+    payload = fixed === null ? undefined : parseJsonOrNull(fixed)
+    if (payload === undefined) return { block: null, outcome: 'broken' }
+    repaired = true
+  }
+  const block = parseInteractionBlockPayload(payload)
+  if (block) return { block, outcome: repaired ? 'repaired' : 'ok' }
+  const normalized = repairInteractionPayload(payload)
+  const salvaged = normalized ? parseInteractionBlockPayload(normalized) : null
+  return salvaged ? { block: salvaged, outcome: 'repaired' } : { block: null, outcome: 'broken' }
+}
+
+/** Cut a too-long label at a word boundary and mark the cut with an ellipsis. */
+function shorten(value: string, max: number): string {
+  const trimmed = value.trim()
+  if (trimmed.length <= max) return trimmed
+  const cut = trimmed.slice(0, max - 1)
+  const space = cut.lastIndexOf(' ')
+  return `${(space > max * 0.6 ? cut.slice(0, space) : cut).trimEnd()}\u2026`
+}
+
+/**
+ * Payload half of the repair pass (S0-B/QW3), run only when the strict schema
+ * rejects a payload that is valid JSON:
+ *
+ *   - synonyms: `type` for `block`, `prompt`/`title` for `question`,
+ *     `choices` for `options`, `text`/`title` for an option `label`
+ *   - an option label over 120 characters (or a question over 500) is cut at a
+ *     word boundary with an ellipsis; the option id, which is what an answer
+ *     carries, stays untouched
+ *
+ * Returns a new payload, or null when nothing applied. Never adds an option.
+ */
+export function repairInteractionPayload(payload: unknown): Record<string, unknown> | null {
+  if (!isRecord(payload)) return null
+  const next: Record<string, unknown> = { ...payload }
+  let changed = false
+  if (next.block === undefined && next.kind === undefined && typeof next.type === 'string') {
+    next.block = next.type
+    changed = true
+  }
+  if (next.question === undefined) {
+    const alt = typeof next.prompt === 'string' ? next.prompt : typeof next.title === 'string' ? next.title : undefined
+    if (alt !== undefined) { next.question = alt; changed = true }
+  }
+  if (typeof next.question === 'string' && next.question.trim().length > QUESTION_MAX) {
+    next.question = shorten(next.question, QUESTION_MAX)
+    changed = true
+  }
+  if (next.options === undefined && Array.isArray(next.choices)) {
+    next.options = next.choices
+    changed = true
+  }
+  if (Array.isArray(next.options)) {
+    next.options = next.options.map((entry: unknown) => {
+      if (!isRecord(entry)) return entry
+      const option: Record<string, unknown> = { ...entry }
+      if (option.label === undefined) {
+        const alt = typeof option.text === 'string' ? option.text : typeof option.title === 'string' ? option.title : undefined
+        if (alt !== undefined) { option.label = alt; changed = true }
+      }
+      if (typeof option.label === 'string' && option.label.trim().length > LABEL_MAX) {
+        option.label = shorten(option.label, LABEL_MAX)
+        changed = true
+      }
+      return option
+    })
+  }
+  return changed ? next : null
+}
+
 function pushText(segments: InteractionSegment[], text: string): void {
   if (!text) return
   const last = segments[segments.length - 1]
@@ -302,16 +479,31 @@ function pushText(segments: InteractionSegment[], text: string): void {
  *
  * Guarantees, all of them covered by tests:
  *   - never throws, whatever the message contains
- *   - broken / incomplete JSON stays verbatim text (it renders as a code
- *     block, the message around it is unaffected)
+ *   - a closed fence with broken JSON gets the repair pass
+ *     ({@link repairInteractionJson}); what still fails becomes the readable
+ *     hint {@link INTERACTION_BROKEN_TEXT}, never the raw JSON (the message
+ *     around it is unaffected)
+ *   - an unterminated fence is a `pending` segment while `streaming`, and
+ *     readable text otherwise (S0-B/QW1) — never raw JSON
+ *   - while `streaming`, a trailing fence opener whose language tag is a
+ *     partial `offtangent` (`\`\`\`offt`) is a `pending` segment too
  *   - at most `INTERACTION_BLOCKS_PER_MESSAGE` block segments; every further
  *     valid block degrades to its readable numbered-list form so no user ever
  *     sees raw JSON
  */
-export function parseInteractionMessage(content: string): InteractionSegment[] {
-  if (!content || !content.includes(FENCE_LANGUAGE)) {
-    return content ? [{ type: 'text', text: content }] : []
+export function parseInteractionMessage(
+  content: string,
+  options: ParseInteractionMessageOptions = {},
+): InteractionSegment[] {
+  if (!content) return []
+  if (options.streaming) {
+    const partial = partialFenceStart(content)
+    if (partial !== -1) {
+      const head = parseInteractionMessage(content.slice(0, partial), options)
+      return [...head, { type: 'pending' }]
+    }
   }
+  if (!content.includes(FENCE_LANGUAGE)) return [{ type: 'text', text: content }]
 
   const segments: InteractionSegment[] = []
   const fences = findFences(content)
@@ -322,18 +514,23 @@ export function parseInteractionMessage(content: string): InteractionSegment[] {
     pushText(segments, content.slice(cursor, fence.start))
     cursor = fence.end
 
-    let block: InteractionBlock | null = null
-    if (fence.closed) {
-      try {
-        block = parseInteractionBlockPayload(JSON.parse(fence.body) as unknown)
-      } catch {
-        block = null
+    if (!fence.closed) {
+      if (options.streaming) {
+        segments.push({ type: 'pending' })
+        continue
       }
+      // Aborted mid-card: salvage the question as text, never the raw JSON.
+      const salvaged = parseInteractionFenceBody(fence.body).block
+      pushText(segments, salvaged ? formatInteractionBlockAsText(salvaged) : INTERACTION_INCOMPLETE_TEXT)
+      continue
     }
 
+    const block = parseInteractionFenceBody(fence.body).block
+
     if (!block) {
-      // Broken, incomplete or unknown payload: keep the fence as text.
-      pushText(segments, fence.raw)
+      // Broken, incomplete or unknown payload beyond the repair pass: a
+      // readable hint instead of the raw JSON (review finding 7).
+      pushText(segments, INTERACTION_BROKEN_TEXT)
       continue
     }
 
@@ -428,12 +625,7 @@ export function extractAnswerableInteractionBlocks(content: string): Interaction
   const seen = new Set<string>()
   for (const fence of findFences(content)) {
     if (!fence.closed) continue
-    let block: InteractionBlock | null = null
-    try {
-      block = parseInteractionBlockPayload(JSON.parse(fence.body) as unknown)
-    } catch {
-      block = null
-    }
+    const block = parseInteractionFenceBody(fence.body).block
     // A `draft` is output, not a question: there is nothing to answer, so it
     // is invisible here and `POST /api/interactions` replies 404 unknown_block
     // for it — the same answer an id that does not exist gets.
@@ -480,7 +672,9 @@ export function formatInteractionBlockAsText(block: InteractionBlock): string {
 export function renderInteractionMessageAsText(content: string): string {
   if (!content) return content
   return parseInteractionMessage(content)
-    .map(segment => segment.type === 'text' ? segment.text : formatInteractionBlockAsText(segment.block))
+    .map(segment => segment.type === 'text'
+      ? segment.text
+      : segment.type === 'block' ? formatInteractionBlockAsText(segment.block) : '')
     .join('')
     .replace(/\n{3,}/g, '\n\n')
     .trim()
@@ -504,12 +698,7 @@ export function extractDraftText(content: string): string | null {
   if (!content || !content.includes(FENCE_LANGUAGE)) return null
   for (const fence of findFences(content)) {
     if (!fence.closed) continue
-    let block: InteractionBlock | null = null
-    try {
-      block = parseInteractionBlockPayload(JSON.parse(fence.body) as unknown)
-    } catch {
-      block = null
-    }
+    const block = parseInteractionFenceBody(fence.body).block
     if (block?.kind === 'draft' && block.text) return block.text
   }
   return null
@@ -640,6 +829,64 @@ export function resolveInteractionBlockState(
 }
 
 /**
+ * Why an unanswered, unexpired card is shown closed anyway (S0-B/QW7).
+ *
+ *   - `later_user_turn`: the user wrote in the strand after the card (in
+ *     prose, by typing, or answered something else) — the card was passed by
+ *   - `newer_card`: a newer card in the same strand replaces it
+ *
+ * Both close the card as **skipped** ("übergangen"), never as "answered
+ * elsewhere": nobody knows whether the prose was an answer.
+ */
+export type InteractionSkipReason = 'later_user_turn' | 'newer_card'
+
+/**
+ * Where a card sits in its strand. Positions are any monotonic order of the
+ * strand's rows — `chat_messages.id` on the server, the same id or the list
+ * index on a client — as long as all three use the same one.
+ */
+export interface InteractionCardPosition {
+  /** The row carrying the card. */
+  at: number
+  /** The newest genuine user turn (`role = 'user'`) of the strand, or null. */
+  lastUserTurnAt: number | null
+  /** The newest row of the strand that carries a card, or null. */
+  newestCardAt: number | null
+}
+
+/**
+ * THE stale rule shared by web, app (mirrored in Kotlin, pinned by
+ * `fixtures/interaction-contract.json`) and `strand-attention.ts`. Returns null while
+ * the card is neither passed by a user turn nor replaced by a newer card.
+ * `expiresAt` is not part of this: {@link resolveInteractionBlockState}
+ * covers it, and {@link resolveInteractionCardDisplay} folds both.
+ */
+export function interactionSkipReason(position: InteractionCardPosition): InteractionSkipReason | null {
+  if (position.lastUserTurnAt !== null && position.lastUserTurnAt > position.at) return 'later_user_turn'
+  if (position.newestCardAt !== null && position.newestCardAt > position.at) return 'newer_card'
+  return null
+}
+
+/** What a client draws for one card. */
+export type InteractionCardDisplay = 'open' | 'answered' | 'expired' | 'skipped'
+
+/**
+ * The display state of a card: the endpoint's answer first (answered /
+ * expired, see {@link resolveInteractionBlockState}), then the skip rule.
+ * A skipped card is drawn closed and not clickable.
+ */
+export function resolveInteractionCardDisplay(
+  block: InteractionBlock,
+  metadata: unknown,
+  position: InteractionCardPosition,
+  options: { now?: number } = {},
+): InteractionCardDisplay {
+  const state = resolveInteractionBlockState(block, metadata, options)
+  if (state.closedReason) return state.closedReason
+  return interactionSkipReason(position) ? 'skipped' : 'open'
+}
+
+/**
  * Every block of a message that is still answerable right now, in document
  * order. Thin fold of {@link extractAnswerableInteractionBlocks} over
  * {@link resolveInteractionBlockState}.
@@ -670,4 +917,14 @@ export function validateInteractionAnswer(
   }
   if (!ids.has(value)) return { ok: false, code: 'invalid_value' }
   return { ok: true, label: block.options.find(option => option.id === value)!.label, value }
+}
+
+/**
+ * Parse outcome of every `offtangent` fence of a finished message, in order
+ * (S0-B/B1 telemetry). Unterminated fences count as broken. Only the outcome
+ * leaves this function, never content.
+ */
+export function classifyInteractionFences(content: string): InteractionParseOutcome[] {
+  if (!content || !content.includes(FENCE_LANGUAGE)) return []
+  return findFences(content).map(fence => fence.closed ? parseInteractionFenceBody(fence.body).outcome : 'broken')
 }

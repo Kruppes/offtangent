@@ -990,6 +990,49 @@ describe('useChat thread binding', () => {
     expect(chat.isStreaming.value).toBe(true)
   })
 
+  it('makes a card answerable on done itself, before the history catch-up (S0-B/QW2)', async () => {
+    let release!: (value: unknown) => void
+    const chat = useChat()
+    await chat.openThread('sess-a', 'coder')
+    chat.connect()
+    receive({ type: 'thinking', text: 'hm', sessionId: 'sess-a' })
+    receive({ type: 'text', text: 'answer', sessionId: 'sess-a' })
+    apiResponder = () => new Promise(resolve => { release = resolve })
+    receive({ type: 'done', sessionId: 'sess-a', messageId: 41, blockId: 'c-1' })
+    const answer = chat.messages.value.find(m => !m.isThinking)
+    const thinking = chat.messages.value.find(m => m.isThinking)
+    expect(answer?.id).toBe(41)
+    expect(answer?.streaming).toBe(false)
+    expect(thinking?.id).toBeUndefined()
+    release({ messages: [] })
+  })
+
+  it('counts an open card fence closed by a regular done (aborted turn) as stream_cut (S0-B review 6)', async () => {
+    apiResponder = () => ({ messages: [] })
+    const chat = useChat()
+    await chat.openThread('sess-a', 'coder')
+    chat.connect()
+    receive({ type: 'text', text: 'Intro\n\n```offtangent\n{"block":"choice",', sessionId: 'sess-a' })
+    receive({ type: 'done', sessionId: 'sess-a' })
+    await new Promise(resolve => setTimeout(resolve, 0))
+
+    const cuts = apiCalls.filter(call => call.path === '/api/interactions/telemetry')
+    expect(cuts).toHaveLength(1)
+    expect(JSON.parse(String(cuts[0]!.options?.body))).toEqual({ channel: 'web', event: 'stream_cut' })
+  })
+
+  it('does not count a done without an open card fence as stream_cut', async () => {
+    apiResponder = () => ({ messages: [] })
+    const chat = useChat()
+    await chat.openThread('sess-a', 'coder')
+    chat.connect()
+    receive({ type: 'text', text: 'Intro\n\n```offtangent\n{"block":"confirm","id":"k","question":"Go?"}\n```', sessionId: 'sess-a' })
+    receive({ type: 'done', sessionId: 'sess-a' })
+    await new Promise(resolve => setTimeout(resolve, 0))
+
+    expect(apiCalls.filter(call => call.path === '/api/interactions/telemetry')).toHaveLength(0)
+  })
+
   it('tracks the queue position of another thread without touching the open one', async () => {
     apiResponder = () => ({ messages: [] })
     const chat = useChat()

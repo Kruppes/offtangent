@@ -163,12 +163,12 @@ const props = defineProps<{
   /** Answer restored from `chat_messages.metadata` after a reload. */
   answered?: { label: string } | null
   /**
-   * A later user message exists in the strand, so the question was already
-   * taken care of in the chat itself. Free text answers are ordinary
-   * messages and leave no trace in `interactionAnswers`, which is why the
-   * card has to read the strand to know it is done.
+   * The shared stale rule (`interactionSkipReason`, S0-B/QW7) says the card
+   * was passed by: a later user turn or a newer open card. It renders closed
+   * as "skipped" — not "answered", since nobody knows whether the prose was
+   * an answer.
    */
-  answeredElsewhere?: boolean
+  skipped?: boolean
 }>()
 
 const emit = defineEmits<{
@@ -177,7 +177,7 @@ const emit = defineEmits<{
   ownAnswer: [text: string]
 }>()
 
-const { answerBlock, newClientMessageId } = useInteractions()
+const { answerBlock, newClientMessageId, reportInteractionEvent } = useInteractions()
 const { t } = useI18n()
 
 const localAnswer = ref<string | null>(null)
@@ -206,7 +206,7 @@ const answeredLabel = computed(() => localAnswer.value ?? props.answered?.label 
 // motion (`prefers-reduced-motion`).
 const settleClass = computed(() => settled.value ? 'motion-safe:animate-pulse' : '')
 
-interface ClosedRow { icon: 'check' | 'edit'; label: string }
+interface ClosedRow { icon: 'check' | 'edit' | 'skip'; label: string }
 
 /**
  * The rows an answered card keeps. Option answers carry a check, a free text
@@ -219,8 +219,8 @@ const closedRows = computed<ClosedRow[]>(() => {
     for (const optionLabel of optionLabelsOf(label)) rows.push({ icon: 'check', label: optionLabel })
   }
   if (localOwnAnswer.value) rows.push({ icon: 'edit', label: localOwnAnswer.value })
-  if (rows.length === 0 && props.answeredElsewhere) {
-    rows.push({ icon: 'edit', label: t('chat.interaction.answeredInChat') })
+  if (rows.length === 0 && props.skipped) {
+    rows.push({ icon: 'skip', label: t('chat.interaction.skipped') })
   }
   return rows
 })
@@ -327,6 +327,7 @@ async function submit(value: string | string[]) {
     // A streaming message has no row id yet; answering has to wait for the
     // turn to be persisted rather than post against nothing.
     errorMessage.value = t('chat.interaction.notReady')
+    reportInteractionEvent('click_not_ready')
     return
   }
   errorMessage.value = null

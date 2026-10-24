@@ -70,6 +70,56 @@ consult that list: they degrade every kind to the numbered list.
 - A `multi` answer is stored and filed as the chosen labels joined with `, `,
   in the order they were ticked.
 
+### Streaming, cut-off cards and the repair pass (S0-B)
+
+- **While streaming**, an `offtangent` fence that has not closed yet is a
+  `pending` segment (`parseInteractionMessage(content, { streaming: true })`).
+  Web and app draw a placeholder card ("Preparing a question…"), never the
+  growing JSON.
+- **After an abort, error or reconnect** without a closing fence the same
+  fence becomes readable text: the block's numbered list when the partial JSON
+  can be closed, else `(The question was cut off before it was complete.)`.
+- **Repair pass** (`parseInteractionFenceBody`), only after the strict parse
+  fails: typographic quotes as JSON delimiters, trailing commas, a cut-off
+  object closed; then the synonyms `type`→`block`, `prompt`/`title`→`question`,
+  `choices`→`options`, `text`/`title`→option `label`; an option label over 120
+  characters (question over 500) is cut at a word boundary with `…`. Option ids
+  are never changed and no option is ever added. `~~~offtangent` fences are
+  accepted like backtick fences.
+- Every persisted fence is counted as `parse_ok`, `parse_repaired` or
+  `parse_broken` (see [Telemetry](#telemetry-s0-b1)).
+
+### `done` names the persisted message (S0-B/QW2)
+
+The websocket `done` frame of a turn carries the id of the assistant row the
+turn persisted, and the id of its first answerable card when there is one:
+
+```json
+{ "type": "done", "messageId": 4711, "blockId": "c-1" }
+```
+
+- `messageId` is absent only when the turn persisted nothing (aborted before
+  any text). `blockId` is absent when the answer has no answerable card.
+- A task-injection `done` (`isTaskInjection: true`) carries `messageId` too.
+- Clients set the id on the live message as soon as `done` arrives, so a card
+  is answerable immediately instead of after the next history reload. Older
+  clients ignore the fields; older servers send a bare `done`, and the clients
+  keep their history-reload fallback for that case.
+
+### Telemetry (S0-B/B1)
+
+Counters only, never content: per channel (`web`, `android`, `telegram`,
+`other`) and event (`stream_placeholder`, `stream_raw`, `stream_cut`,
+`parse_ok`, `parse_repaired`, `parse_broken`, `click_not_ready`, `answered`,
+`dismissed`, `superseded`). In memory per backend process, readable as
+`interactionTelemetry` in the admin `GET /api/health`, and one log line per
+event (`[interaction-telemetry] channel=… event=… count=…`) for longer windows.
+Clients report their own events with
+`POST /api/interactions/telemetry { "channel": "android", "event": "click_not_ready", "count": 1 }`
+(only the client events are accepted). Parse counters are attributed to the
+channel that generated the turn; app turns over the shared websocket count as
+`web`. Baseline before the repair: `scripts/s0b/interaction-baseline.mjs`.
+
 ## `draft`
 
 `draft` (W1 of the puck assist waves, see

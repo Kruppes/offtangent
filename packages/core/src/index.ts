@@ -1808,3 +1808,18 @@ export type {
   RunAutoTitleOptions,
   StrandTitleRun,
 } from './strand-auto-title.js'
+export {
+  INTERACTION_TELEMETRY_CHANNELS,
+  INTERACTION_TELEMETRY_EVENTS,
+  CLIENT_INTERACTION_TELEMETRY_EVENTS,
+  normalizeInteractionChannel,
+  isInteractionTelemetryEvent,
+  recordInteractionEvent,
+  getInteractionTelemetry,
+  resetInteractionTelemetry,
+} from './interaction-telemetry.js'
+export type {
+  InteractionTelemetryChannel,
+  InteractionTelemetryEvent,
+  InteractionTelemetrySnapshot,
+} from './interaction-telemetry.js'

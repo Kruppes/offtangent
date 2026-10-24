@@ -1,0 +1,43 @@
+{
+  "generated_at": "2026-10-24T10:05:51.165Z",
+  "db": "/data/db/axiom.db",
+  "channel_note": "web_android: web client and Android app share strands; the DB has no client per row",
+  "per_channel": {
+    "telegram": {
+      "messages": 1,
+      "parse_ok": 0,
+      "parse_repaired": 0,
+      "parse_broken": 0,
+      "cards": 0,
+      "answered": 0,
+      "expired": 0,
+      "skipped_later_user_turn": 0,
+      "skipped_newer_card": 0,
+      "open": 0
+    },
+    "web_android": {
+      "messages": 904,
+      "parse_ok": 872,
+      "parse_repaired": 17,
+      "parse_broken": 4,
+      "cards": 880,
+      "answered": 624,
+      "expired": 0,
+      "skipped_later_user_turn": 248,
+      "skipped_newer_card": 0,
+      "open": 8
+    },
+    "other": {
+      "messages": 6,
+      "parse_ok": 1,
+      "parse_repaired": 0,
+      "parse_broken": 0,
+      "cards": 0,
+      "answered": 0,
+      "expired": 0,
+      "skipped_later_user_turn": 0,
+      "skipped_newer_card": 0,
+      "open": 0
+    }
+  }
+}

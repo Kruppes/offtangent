@@ -1,0 +1,395 @@
+{
+  "_comment": "S0-B shared contract fixture for the offtangent block parser (TS core and Kotlin app). Byte-identical copies: packages/core/src/contracts/fixtures/interaction-contract.json and app/src/test/resources/interaction-contract.json. Synthetic content only. Every case binds both parsers. A case may only be excluded from one platform with an explicit 'platforms' list AND a 'platformsReason'; both tests fail on a 'platforms' list without a reason and print every excluded case.",
+  "parse": [
+    {
+      "name": "choice card",
+      "content": "Which one?\n\n```offtangent\n{\"block\": \"choice\", \"id\": \"c-1\", \"question\": \"Pick a base\", \"options\": [{\"id\": \"a\", \"label\": \"Alpha\"}, {\"id\": \"b\", \"label\": \"Beta\"}]}\n```",
+      "expect": {
+        "blocks": [
+          {
+            "kind": "choice",
+            "id": "c-1",
+            "question": "Pick a base",
+            "optionIds": [
+              "a",
+              "b"
+            ]
+          }
+        ],
+        "text": "Which one?\n\nPick a base\n1. Alpha\n2. Beta\n(Reply with the number or the label.)"
+      }
+    },
+    {
+      "name": "confirm without options gets yes/no",
+      "content": "```offtangent\n{\"block\": \"confirm\", \"id\": \"k-1\", \"question\": \"Delete the file?\"}\n```",
+      "expect": {
+        "blocks": [
+          {
+            "kind": "confirm",
+            "id": "k-1",
+            "question": "Delete the file?",
+            "optionIds": [
+              "yes",
+              "no"
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "name": "draft degrades to its own text",
+      "content": "Here is a draft.\n\n```offtangent\n{\"block\": \"draft\", \"text\": \"Dear team, the release moves to Monday.\"}\n```",
+      "expect": {
+        "blocks": [],
+        "draft": "Dear team, the release moves to Monday.",
+        "text": "Here is a draft.\n\nDear team, the release moves to Monday."
+      }
+    },
+    {
+      "name": "draft with a fence inside is not a draft",
+      "content": "```offtangent\n{\"block\": \"draft\", \"text\": \"a ``` b\"}\n```",
+      "expect": {
+        "blocks": [],
+        "draft": null
+      }
+    },
+    {
+      "name": "unknown kind becomes the readable hint",
+      "content": "```offtangent\n{\"block\": \"poll\", \"id\": \"p\", \"question\": \"Q\", \"options\": [{\"id\": \"a\", \"label\": \"A\"}]}\n```",
+      "expect": {
+        "blocks": [],
+        "text": "(A question could not be displayed.)"
+      }
+    },
+    {
+      "name": "only one card per message",
+      "content": "```offtangent\n{\"block\": \"choice\", \"id\": \"one\", \"question\": \"First\", \"options\": [{\"id\": \"a\", \"label\": \"A\"}, {\"id\": \"b\", \"label\": \"B\"}]}\n```\n\n```offtangent\n{\"block\": \"choice\", \"id\": \"two\", \"question\": \"Second\", \"options\": [{\"id\": \"c\", \"label\": \"C\"}, {\"id\": \"d\", \"label\": \"D\"}]}\n```",
+      "expect": {
+        "blocks": [
+          {
+            "kind": "choice",
+            "id": "one",
+            "question": "First",
+            "optionIds": [
+              "a",
+              "b"
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "name": "trailing comma is repaired",
+      "content": "```offtangent\n{\"block\":\"choice\",\"id\":\"r\",\"question\":\"Q\",\"options\":[{\"id\":\"a\",\"label\":\"A\"},{\"id\":\"b\",\"label\":\"B\"},]}\n```",
+      "expect": {
+        "blocks": [
+          {
+            "kind": "choice",
+            "id": "r",
+            "question": "Q",
+            "optionIds": [
+              "a",
+              "b"
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "name": "cut-off card after the stream is readable text",
+      "content": "Intro\n\n```offtangent\n{\"block\":\"choice\",\"id\":\"x\",\"question\":\"Q",
+      "expect": {
+        "blocks": [],
+        "text": "Intro\n\n(The question was cut off before it was complete.)"
+      }
+    },
+    {
+      "name": "open fence while streaming is a pending placeholder",
+      "streaming": true,
+      "content": "Intro\n\n```offtangent\n{\"block\":\"choice\",\"id\":\"x\"",
+      "expect": {
+        "blocks": [],
+        "pending": true
+      }
+    },
+    {
+      "name": "partial fence opener while streaming is a pending placeholder",
+      "streaming": true,
+      "content": "Hello\n```offt",
+      "expect": {
+        "blocks": [],
+        "pending": true
+      }
+    },
+    {
+      "name": "bare fence opener while streaming stays text",
+      "streaming": true,
+      "content": "Hello\n```",
+      "expect": {
+        "blocks": [],
+        "pending": false
+      }
+    },
+    {
+      "name": "closed irreparable fence becomes a readable hint",
+      "content": "Before\n\n```offtangent\n{\"block\":\"choice\", BAD}\n```\n\nAfter",
+      "expect": {
+        "blocks": [],
+        "text": "Before\n\n(A question could not be displayed.)\n\nAfter"
+      }
+    },
+    {
+      "name": "id as a number is not a card",
+      "content": "```offtangent\n{\"block\": \"confirm\", \"id\": 123, \"question\": \"Go?\"}\n```",
+      "expect": {
+        "blocks": [],
+        "text": "(A question could not be displayed.)"
+      }
+    },
+    {
+      "name": "question as a boolean is not a card",
+      "content": "```offtangent\n{\"block\": \"confirm\", \"id\": \"k-2\", \"question\": true}\n```",
+      "expect": {
+        "blocks": [],
+        "text": "(A question could not be displayed.)"
+      }
+    },
+    {
+      "name": "option id as a number is not a card",
+      "content": "```offtangent\n{\"block\": \"choice\", \"id\": \"c-3\", \"question\": \"Pick\", \"options\": [{\"id\": 1, \"label\": \"One\"}, {\"id\": \"b\", \"label\": \"Two\"}]}\n```",
+      "expect": {
+        "blocks": [],
+        "text": "(A question could not be displayed.)"
+      }
+    },
+    {
+      "name": "unquoted keys are not a card",
+      "content": "```offtangent\n{block: \"confirm\", id: \"k-3\", question: \"Go?\"}\n```",
+      "expect": {
+        "blocks": [],
+        "text": "(A question could not be displayed.)"
+      }
+    },
+    {
+      "name": "payload aliases are repaired",
+      "content": "```offtangent\n{\"type\":\"choice\",\"id\":\"al\",\"prompt\":\"Which?\",\"choices\":[{\"id\":\"a\",\"text\":\"A\"},{\"id\":\"b\",\"title\":\"B\"}]}\n```",
+      "expect": {
+        "blocks": [
+          {
+            "kind": "choice",
+            "id": "al",
+            "question": "Which?",
+            "optionIds": [
+              "a",
+              "b"
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "name": "unclosed brackets in a closed fence are repaired",
+      "content": "```offtangent\n{\"block\":\"confirm\",\"id\":\"u\",\"question\":\"Go?\"\n```",
+      "expect": {
+        "blocks": [
+          {
+            "kind": "confirm",
+            "id": "u",
+            "question": "Go?",
+            "optionIds": [
+              "yes",
+              "no"
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "name": "tilde fence is a card",
+      "content": "Ready?\n\n~~~offtangent\n{\"block\": \"confirm\", \"id\": \"t-1\", \"question\": \"Go?\"}\n~~~\n\nAfter.",
+      "expect": {
+        "blocks": [
+          {
+            "kind": "confirm",
+            "id": "t-1",
+            "question": "Go?",
+            "optionIds": [
+              "yes",
+              "no"
+            ]
+          }
+        ],
+        "text": "Ready?\n\nGo?\n1. Yes\n2. No\n(Reply with the number or the label.)\n\nAfter."
+      }
+    },
+    {
+      "name": "tilde fence is not closed by backticks",
+      "content": "~~~offtangent\n{\"block\": \"confirm\", \"id\": \"t-2\", \"question\": \"Go?\"}\n```",
+      "expect": {
+        "blocks": [],
+        "text": "(The question was cut off before it was complete.)"
+      }
+    },
+    {
+      "name": "backtick fence is not closed by tildes",
+      "content": "```offtangent\n{\"block\": \"confirm\", \"id\": \"t-3\", \"question\": \"Go?\"}\n~~~",
+      "expect": {
+        "blocks": [],
+        "text": "(The question was cut off before it was complete.)"
+      }
+    },
+    {
+      "name": "open tilde fence while streaming is a pending placeholder",
+      "streaming": true,
+      "content": "Ready?\n\n~~~offtangent\n{\"block\": \"confirm\", \"id\": \"t-4\"",
+      "expect": {
+        "blocks": [],
+        "pending": true,
+        "text": "Ready?\n\n(The question was cut off before it was complete.)"
+      }
+    },
+    {
+      "name": "duplicate id key: the last value wins (string)",
+      "content": "```offtangent\n{\"block\": \"confirm\", \"id\": 123, \"id\": \"d-1\", \"question\": \"Go?\"}\n```",
+      "expect": {
+        "blocks": [
+          {
+            "kind": "confirm",
+            "id": "d-1",
+            "question": "Go?",
+            "optionIds": [
+              "yes",
+              "no"
+            ]
+          }
+        ],
+        "text": "Go?\n1. Yes\n2. No\n(Reply with the number or the label.)"
+      }
+    },
+    {
+      "name": "duplicate id key: the last value wins (number is not a card)",
+      "content": "```offtangent\n{\"block\": \"confirm\", \"id\": \"d-2\", \"id\": 123, \"question\": \"Go?\"}\n```",
+      "expect": {
+        "blocks": [],
+        "text": "(A question could not be displayed.)"
+      }
+    },
+    {
+      "name": "BOM before valid JSON is broken",
+      "content": "```offtangent\n\ufeff{\"block\": \"confirm\", \"id\": \"bom-1\", \"question\": \"Go?\"}\n```",
+      "expect": {
+        "blocks": [],
+        "text": "(A question could not be displayed.)"
+      }
+    },
+    {
+      "name": "BOM plus trailing comma is repaired",
+      "content": "```offtangent\n\ufeff{\"block\": \"confirm\", \"id\": \"bom-2\", \"question\": \"Go?\",}\n```",
+      "expect": {
+        "blocks": [
+          {
+            "kind": "confirm",
+            "id": "bom-2",
+            "question": "Go?",
+            "optionIds": [
+              "yes",
+              "no"
+            ]
+          }
+        ],
+        "text": "Go?\n1. Yes\n2. No\n(Reply with the number or the label.)"
+      }
+    },
+    {
+      "name": "surrounding whitespace in the body is ok",
+      "content": "```offtangent\n   \n  {\"block\": \"confirm\", \"id\": \"ws-1\", \"question\": \"Go?\"}  \n\t\n```",
+      "expect": {
+        "blocks": [
+          {
+            "kind": "confirm",
+            "id": "ws-1",
+            "question": "Go?",
+            "optionIds": [
+              "yes",
+              "no"
+            ]
+          }
+        ],
+        "text": "Go?\n1. Yes\n2. No\n(Reply with the number or the label.)"
+      }
+    }
+  ],
+  "skip": [
+    {
+      "name": "newest card, no later user turn",
+      "position": {
+        "at": 10,
+        "lastUserTurnAt": 9,
+        "newestCardAt": 10
+      },
+      "expect": null
+    },
+    {
+      "name": "no user turn at all",
+      "position": {
+        "at": 10,
+        "lastUserTurnAt": null,
+        "newestCardAt": null
+      },
+      "expect": null
+    },
+    {
+      "name": "later user turn passes the card",
+      "position": {
+        "at": 10,
+        "lastUserTurnAt": 12,
+        "newestCardAt": 10
+      },
+      "expect": "later_user_turn"
+    },
+    {
+      "name": "newer card replaces it",
+      "position": {
+        "at": 10,
+        "lastUserTurnAt": 9,
+        "newestCardAt": 14
+      },
+      "expect": "newer_card"
+    },
+    {
+      "name": "user turn wins over newer card",
+      "position": {
+        "at": 10,
+        "lastUserTurnAt": 15,
+        "newestCardAt": 14
+      },
+      "expect": "later_user_turn"
+    }
+  ],
+  "expiry": [
+    {
+      "name": "before expiresAt the card is open",
+      "content": "```offtangent\n{\"block\":\"confirm\",\"id\":\"e1\",\"question\":\"Still?\",\"expiresAt\":\"2026-10-24T12:00:00Z\"}\n```",
+      "now": "2026-10-24T11:59:59.999Z",
+      "expect": "open"
+    },
+    {
+      "name": "exactly at expiresAt the card is expired",
+      "content": "```offtangent\n{\"block\":\"confirm\",\"id\":\"e2\",\"question\":\"Still?\",\"expiresAt\":\"2026-10-24T12:00:00Z\"}\n```",
+      "now": "2026-10-24T12:00:00.000Z",
+      "expect": "expired"
+    },
+    {
+      "name": "an offset expiresAt is compared as an instant",
+      "content": "```offtangent\n{\"block\":\"confirm\",\"id\":\"e3\",\"question\":\"Still?\",\"expiresAt\":\"2026-10-24T14:00:00+02:00\"}\n```",
+      "now": "2026-10-24T12:00:00.001Z",
+      "expect": "expired"
+    },
+    {
+      "name": "an unparsable expiresAt never expires",
+      "content": "```offtangent\n{\"block\":\"confirm\",\"id\":\"e4\",\"question\":\"Still?\",\"expiresAt\":\"next tuesday\"}\n```",
+      "now": "2099-01-01T00:00:00Z",
+      "expect": "open"
+    }
+  ]
+}

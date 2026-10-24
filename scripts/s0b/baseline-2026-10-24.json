@@ -1,0 +1,39 @@
+{
+  "generated_at": "2026-10-24T08:51:23.487Z",
+  "db": "/data/db/axiom.db",
+  "per_channel": {
+    "telegram": {
+      "messages": 1,
+      "parse_ok": 0,
+      "parse_repaired": 0,
+      "parse_broken": 0,
+      "cards": 0,
+      "answered": 0,
+      "superseded_heuristic": 0,
+      "open": 0,
+      "expired": 0
+    },
+    "web": {
+      "messages": 900,
+      "parse_ok": 868,
+      "parse_repaired": 0,
+      "parse_broken": 21,
+      "cards": 859,
+      "answered": 623,
+      "superseded_heuristic": 230,
+      "open": 6,
+      "expired": 0
+    },
+    "other": {
+      "messages": 6,
+      "parse_ok": 1,
+      "parse_repaired": 0,
+      "parse_broken": 0,
+      "cards": 0,
+      "answered": 0,
+      "superseded_heuristic": 0,
+      "open": 0,
+      "expired": 0
+    }
+  }
+}

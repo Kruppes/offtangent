@@ -27,6 +27,9 @@ export type InteractionAnswerOutcome =
   | { status: 'error'; message: string }
 
 /** A per-tap idempotency key; a retry of the same tap reuses it. */
+/** The card events a client counts (S0-B/B1); the server counts the rest. */
+export type InteractionClientEvent = 'stream_placeholder' | 'stream_cut' | 'click_not_ready' | 'superseded'
+
 export function newClientMessageId(): string {
   const cryptoRef = typeof crypto !== 'undefined' ? crypto : undefined
   return cryptoRef?.randomUUID ? cryptoRef.randomUUID() : `ia-${Date.now()}-${Math.random().toString(16).slice(2)}`
@@ -36,9 +39,11 @@ export function useInteractions() {
   const { apiFetch } = useApi()
 
   /** Split one message into text and card segments. Never throws. */
-  function segmentsOf(content: string): InteractionSegment[] {
+  function segmentsOf(content: string, options: { streaming?: boolean } = {}): InteractionSegment[] {
     try {
-      return parseInteractionMessage(content ?? '')
+      // While the message is live an unterminated card fence is a `pending`
+      // segment (placeholder card), never raw JSON (S0-B/QW1).
+      return parseInteractionMessage(content ?? '', { streaming: options.streaming === true })
     } catch {
       // Defence in depth: a broken block must never take down the renderer.
       return content ? [{ type: 'text', text: content }] : []
@@ -77,5 +82,17 @@ export function useInteractions() {
     }
   }
 
-  return { segmentsOf, answerBlock, newClientMessageId }
+  /**
+   * Count one card event for the S0-B telemetry (`POST /api/interactions/
+   * telemetry`). Counters only — never content, never ids. Fire and forget:
+   * telemetry must never surface as an error in the chat.
+   */
+  function reportInteractionEvent(event: InteractionClientEvent): void {
+    void apiFetch('/api/interactions/telemetry', {
+      method: 'POST',
+      body: JSON.stringify({ channel: 'web', event }),
+    }).catch(() => {})
+  }
+
+  return { segmentsOf, answerBlock, newClientMessageId, reportInteractionEvent }
 }

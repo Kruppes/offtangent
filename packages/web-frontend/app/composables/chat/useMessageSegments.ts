@@ -1,5 +1,6 @@
 import type { ComputedRef } from 'vue'
 import type { ChatMessage } from '~/composables/useChat'
+import { interactionSkipReason } from '@axiom/core/contracts'
 import { useInteractions } from '~/composables/useInteractions'
 import { inlineArtifactCount, splitArtifactFences } from '~/utils/inlineArtifacts'
 
@@ -10,7 +11,7 @@ import { inlineArtifactCount, splitArtifactFences } from '~/utils/inlineArtifact
  * renderer.
  */
 export function useMessageSegments(visibleMessages: ComputedRef<ChatMessage[]>) {
-  const { segmentsOf } = useInteractions()
+  const { segmentsOf, reportInteractionEvent } = useInteractions()
   const segmentCache = new Map<string, ReturnType<typeof segmentsOf>>()
 
   /**
@@ -32,14 +33,16 @@ export function useMessageSegments(visibleMessages: ComputedRef<ChatMessage[]>) 
 
   function messageSegments(msg: ChatMessage) {
     const content = bodyText(msg)
-    const cached = segmentCache.get(content)
+    const streaming = msg.streaming === true
+    const key = `${streaming ? 's' : 'f'}:${content}`
+    const cached = segmentCache.get(key)
     if (cached) return cached
-    const segments = segmentsOf(content)
+    const segments = segmentsOf(content, { streaming })
     // The template asks several times per message (card? text? bubble body?);
     // parsing once per distinct content keeps that free and hands out stable
     // array identities.
     if (segmentCache.size > 200) segmentCache.clear()
-    segmentCache.set(content, segments)
+    segmentCache.set(key, segments)
     return segments
   }
 
@@ -52,8 +55,27 @@ export function useMessageSegments(visibleMessages: ComputedRef<ChatMessage[]>) 
 
   /** Everything of an assistant message that stays inside the bubble. */
   function messageTextSegments(msg: ChatMessage) {
-    return messageSegments(msg).filter(segment => segment.type === 'text')
+    return messageSegments(msg).flatMap(segment => segment.type === 'text' ? [segment] : [])
   }
+
+  /**
+   * A card fence that is still streaming (S0-B/QW1): the bubble shows a
+   * placeholder card instead of the growing JSON. Counted once per message.
+   */
+  function hasPendingCard(msg: ChatMessage, index: number): boolean {
+    if (msg.role !== 'assistant' || !msg.streaming) return false
+    const pending = messageSegments(msg).some(segment => segment.type === 'pending')
+    // The live message object is replaced on every chunk, so the key is its
+    // place in the transcript, not its identity.
+    const key = `${msg.timestamp ?? ''}#${index}`
+    if (pending && !pendingCardsSeen.has(key)) {
+      if (pendingCardsSeen.size > 500) pendingCardsSeen.clear()
+      pendingCardsSeen.add(key)
+      reportInteractionEvent('stream_placeholder')
+    }
+    return pending
+  }
+  const pendingCardsSeen = new Set<string>()
 
   /**
    * Does the bubble carry anything at all next to the card? A message that is
@@ -66,18 +88,36 @@ export function useMessageSegments(visibleMessages: ComputedRef<ChatMessage[]>) 
   }
 
   /**
-   * A free text answer is an ordinary user message, so it leaves no trace in
-   * `interactionAnswers`. Any later user message means the question was dealt
-   * with in the chat, and the card renders closed instead of inviting a second
-   * answer to a turn that has long moved on.
+   * The shared stale rule (`interactionSkipReason`, S0-B/QW7 — the same one the
+   * app and `strand-attention.ts` use): an unanswered card is drawn closed as
+   * "skipped" once the user wrote after it or a newer open card replaced it.
+   * Positions are list indexes, which keep the row order.
    */
-  function answeredElsewhere(index: number): boolean {
+  function cardSkipped(index: number): boolean {
     const rows = visibleMessages.value
+    let lastUserTurnAt: number | null = null
+    let newestCardAt: number | null = null
     for (let i = index + 1; i < rows.length; i++) {
-      if (rows[i]?.role === 'user') return true
+      const row = rows[i]
+      if (!row) continue
+      if (row.role === 'user') lastUserTurnAt = i
+      const card = interactionCard(row)
+      if (card && !row.interactionAnswers?.[card.id]) newestCardAt = i
     }
-    return false
+    const skipped = interactionSkipReason({ at: index, lastUserTurnAt, newestCardAt }) !== null
+    // Counted once per persisted card and page life: history reloads replace
+    // the row objects, so the key is the row id, not the object.
+    const row = rows[index]
+    if (skipped && row && typeof row.id === 'number' && !skippedCardsSeen.has(row.id)) {
+      const card = interactionCard(row)
+      if (card && !row.interactionAnswers?.[card.id]) {
+        skippedCardsSeen.add(row.id)
+        reportInteractionEvent('superseded')
+      }
+    }
+    return skipped
   }
+  const skippedCardsSeen = new Set<number>()
 
-  return { interactionCard, messageTextSegments, hasBubbleBody, answeredElsewhere, artifactFences }
+  return { interactionCard, messageTextSegments, hasBubbleBody, hasPendingCard, cardSkipped, artifactFences }
 }

@@ -5,7 +5,7 @@ import { advanceTurn, isTurnActive, type TurnProgress } from '../features/thread
 import { resolveFrameSession } from '../features/threads/frameAssignment'
 import type { ArtifactRef } from '~/api/artifacts'
 import type { FeedItem } from '~/api/feed'
-import { readInteractionAnswers, type InteractionAnswerState } from '@axiom/core/contracts'
+import { parseInteractionMessage, readInteractionAnswers, type InteractionAnswerState } from '@axiom/core/contracts'
 import { ApiError } from './useApi'
 import { readVoiceNote, type VoiceNoteRef } from '~/api/speech'
 import { rememberVoiceNote } from './useMessageSpeech'
@@ -718,6 +718,16 @@ export function applySessionActivity(
   }
 }
 
+/** Does a live message end inside an unterminated `offtangent` fence? */
+function hasOpenInteractionFence(content: string | undefined): boolean {
+  if (!content || !content.includes('offtangent')) return false
+  try {
+    return parseInteractionMessage(content, { streaming: true }).some(segment => segment.type === 'pending')
+  } catch {
+    return false
+  }
+}
+
 /** One row of `GET /api/chat/history`. */
 export interface ChatHistoryRow {
   artifacts?: ArtifactRef[]
@@ -962,6 +972,17 @@ let reconnectDelay = 2000
 let intentionalDisconnect = false
 /** Ensure the global online/visibilitychange listeners are registered only once */
 let globalListenersRegistered = false
+
+/**
+ * S0-B/B1: count a card fence the stream left open (error or aborted turn).
+ * Fire-and-forget, counter only, no message content.
+ */
+function reportStreamCut() {
+  void useApi().apiFetch('/api/interactions/telemetry', {
+    method: 'POST',
+    body: JSON.stringify({ channel: 'web', event: 'stream_cut' }),
+  }).catch(() => {})
+}
 
 function stopHeartbeat() {
   if (heartbeatInterval) { clearInterval(heartbeatInterval); heartbeatInterval = null }
@@ -1457,17 +1478,31 @@ export function useChat() {
         // emitted thinking without follow-up text (rare but possible).
         if (messages.value.length > 0) {
           const updated = [...messages.value]
+          // S0-B/QW2: `done` names the persisted assistant row, so a card is
+          // answerable the moment the stream ends instead of after the history
+          // reload below (no more `notReady` window). Only the newest live
+          // non-thinking message is that row.
+          let idAssigned = typeof msg.messageId !== 'number'
+          let cutFence = false
           for (let i = updated.length - 1; i >= 0; i--) {
             const m = updated[i]!
             if (!m.streaming) break
+            // S0-B review 6: the turn runner also ends an aborted turn with a
+            // regular `done`; a card fence still open at that point was cut.
+            if (!m.isThinking && m.role === 'assistant' && hasOpenInteractionFence(m.content)) cutFence = true
+            const takesId = !idAssigned && !m.isThinking && m.role === 'assistant' && m.id === undefined
+            if (takesId) idAssigned = true
             updated[i] = {
               ...m,
+              ...(takesId ? { id: msg.messageId } : {}),
               streaming: false,
               telegramDelivered: m.isThinking ? m.telegramDelivered : (msg.telegramDelivered || m.telegramDelivered),
               isTaskInjection: m.isThinking ? m.isTaskInjection : (msg.isTaskInjection || m.isTaskInjection),
             }
           }
           messages.value = updated
+          // A replayed turn was already counted when it ended live.
+          if (cutFence && !replayingTurn) reportStreamCut()
         }
         isStreaming.value = false
         // Persisted rows carry artifact refs and interaction message ids. Do
@@ -1488,6 +1523,9 @@ export function useChat() {
         const lastOnError = updatedOnError[updatedOnError.length - 1]
         if (lastOnError && lastOnError.streaming) {
           updatedOnError[updatedOnError.length - 1] = { ...lastOnError, streaming: false }
+          // S0-B/B1: the turn broke while a card fence was still open. The
+          // non-streaming parse now shows it as readable text; count it.
+          if (lastOnError.role === 'assistant' && hasOpenInteractionFence(lastOnError.content)) reportStreamCut()
         }
         if (msg.errorInfo) {
           // A terminal turn failure: the backend persisted it as a chat row and

@@ -2118,6 +2118,8 @@ export async function createRuntimeComposition(options: RuntimeCompositionOption
           })
         }
 
+        // The persisted row of this injection, named on its `done` (S0-B/QW2).
+        let injectionDoneMessageId: number | null = null
         if (chunk.type === 'done') {
           const responseText = streamState.responseText
 
@@ -2158,6 +2160,7 @@ export async function createRuntimeComposition(options: RuntimeCompositionOption
             })
             // Task injections do not run through the TurnRunner, so they need
             // their own call into the same hook.
+            injectionDoneMessageId = injectionMessageId
             if (injectionMessageId !== null) {
               void voiceReplyHook.handle({
                 messageId: injectionMessageId,
@@ -2187,6 +2190,7 @@ export async function createRuntimeComposition(options: RuntimeCompositionOption
             error: chunk.error,
             telegramDelivered: chunk.type === 'done' ? streamState.telegramDelivered : undefined,
             isTaskInjection: true,
+            ...(chunk.type === 'done' && injectionDoneMessageId !== null ? { messageId: injectionDoneMessageId } : {}),
           })
         } catch (err) {
           logger.error('[axiom] Failed to broadcast task injection chunk:', err)

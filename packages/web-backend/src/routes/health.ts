@@ -6,7 +6,7 @@ import type { AuthenticatedRequest } from '../auth.js'
 import type { HealthMonitorService } from '../health-monitor.js'
 import type { RuntimeMetrics } from '../runtime-metrics.js'
 import type { ProviderQuotaContract } from '@axiom/core/contracts'
-import { getProviderConcurrencyLimiter } from '@axiom/core'
+import { getInteractionTelemetry, getProviderConcurrencyLimiter } from '@axiom/core'
 
 export interface HealthRouterOptions {
   db: Database
@@ -66,6 +66,8 @@ export function createHealthRouter(options: HealthRouterOptions): Router {
         // slot of a provider credential. Admin-only, additive field.
         providerConcurrency: getProviderConcurrencyLimiter().getStats(),
         activity,
+        // S0-B/B1: interaction card counters per channel, no content.
+        interactionTelemetry: getInteractionTelemetry(),
         intervalMinutes: snapshot.intervalMinutes,
         quota,
       })

@@ -18,6 +18,11 @@ import {
   parseInteractionMessage,
   readInteractionAnswers,
   renderInteractionMessageAsText,
+  INTERACTION_INCOMPLETE_TEXT,
+  INTERACTION_BROKEN_TEXT,
+  parseInteractionFenceBody,
+  repairInteractionJson,
+  classifyInteractionFences,
   validateInteractionAnswer,
   withInteractionAnswer,
   type InteractionAnswerRecord,
@@ -71,19 +76,99 @@ describe('parseInteractionMessage', () => {
     expect(blocks[0]!.options.map(o => o.label)).toEqual(['Send now', 'Not yet'])
   })
 
-  it('never throws and keeps broken JSON as plain text', () => {
+  it('never throws and turns irreparable JSON into a readable hint, never raw JSON (review 7)', () => {
     const content = `Before\n\n${fence('{ "block": "choice", "id": ')}\n\nAfter`
     const segments = parseInteractionMessage(content)
 
     expect(segments.every(s => s.type === 'text')).toBe(true)
-    expect(segments.map(s => (s as { text: string }).text).join('')).toContain('"block": "choice"')
+    const text = segments.map(s => (s as { text: string }).text).join('')
+    expect(text).not.toContain('"block"')
+    expect(text).not.toContain('```')
+    expect(text).toContain(INTERACTION_BROKEN_TEXT)
+    expect(text).toContain('Before')
+    expect(text).toContain('After')
     expect(hasInteractionBlock(content)).toBe(false)
   })
 
-  it('keeps an unterminated fence as text (a streaming message is not a card yet)', () => {
+  it('treats a fence opener whose language tag is still streaming as a placeholder (review 1)', () => {
+    for (const tail of ['```o', '```off', '```offt', '```offtangen', '~~~offt', '  ```OFFT']) {
+      expect(parseInteractionMessage(`Hello\n${tail}`, { streaming: true }))
+        .toEqual([{ type: 'text', text: 'Hello\n' }, { type: 'pending' }])
+    }
+    // the very first line of a message
+    expect(parseInteractionMessage('```offt', { streaming: true })).toEqual([{ type: 'pending' }])
+    // not a prefix of the card language, a bare opener, or a finished message: text
+    expect(parseInteractionMessage('Hello\n```ts', { streaming: true })).toEqual([{ type: 'text', text: 'Hello\n```ts' }])
+    expect(parseInteractionMessage('Hello\n```', { streaming: true })).toEqual([{ type: 'text', text: 'Hello\n```' }])
+    expect(parseInteractionMessage('Hello ```offt', { streaming: true })).toEqual([{ type: 'text', text: 'Hello ```offt' }])
+    expect(parseInteractionMessage('Hello\n```offt')).toEqual([{ type: 'text', text: 'Hello\n```offt' }])
+  })
+
+  it('turns an unterminated fence of a finished message into readable text, never raw JSON (QW1)', () => {
     const content = `Thinking…\n\n\`\`\`offtangent\n{ "block": "choice", "id": "b1", "question": "Now?"`
     const segments = parseInteractionMessage(content)
     expect(segments.every(s => s.type === 'text')).toBe(true)
+    const text = segments.map(s => (s as { text: string }).text).join('')
+    expect(text).not.toContain('"block"')
+    expect(text).toContain(INTERACTION_INCOMPLETE_TEXT)
+  })
+
+  it('salvages a cut-off card whose JSON can be closed as its numbered list (QW1)', () => {
+    const content = 'Pick:\n\n```offtangent\n{"block":"choice","id":"b1","question":"Now?","options":[{"id":"a","label":"Yes"},{"id":"b","label":"No"}'
+    const text = parseInteractionMessage(content).map(s => (s as { text: string }).text).join('')
+    expect(text).toContain('Now?')
+    expect(text).toContain('Yes')
+    expect(text).not.toContain('"block"')
+  })
+
+  it('draws an unterminated fence as a pending segment while streaming (QW1)', () => {
+    const content = `Thinking…\n\n\`\`\`offtangent\n{ "block": "choice", "id": "b1"`
+    const segments = parseInteractionMessage(content, { streaming: true })
+    expect(segments.map(s => s.type)).toEqual(['text', 'pending'])
+    expect((segments[0] as { text: string }).text).not.toContain('offtangent')
+  })
+
+  describe('repair pass (QW3)', () => {
+    const choice = (body: string) => '```offtangent\n' + body + '\n```'
+    it('repairs typographic quotes', () => {
+      const body = '{\u201Cblock\u201D: \u201Cconfirm\u201D, \u201Cid\u201D: \u201Cc1\u201D, \u201Cquestion\u201D: \u201CGo?\u201D}'
+      expect(parseInteractionFenceBody(body).outcome).toBe('repaired')
+      expect(extractInteractionBlocks(choice(body))[0]?.id).toBe('c1')
+    })
+    it('repairs a trailing comma', () => {
+      const body = '{"block":"confirm","id":"c1","question":"Go?",}'
+      expect(parseInteractionFenceBody(body)).toMatchObject({ outcome: 'repaired', block: { id: 'c1' } })
+    })
+    it('reports strict JSON as ok and garbage as broken', () => {
+      expect(parseInteractionFenceBody('{"block":"confirm","id":"c1","question":"Go?"}').outcome).toBe('ok')
+      expect(parseInteractionFenceBody('not json at all').outcome).toBe('broken')
+      expect(repairInteractionJson('{"a":1]')).toBeNull()
+    })
+    it('never invents content: a repaired payload still has to pass the schema', () => {
+      expect(parseInteractionFenceBody('{"block":"choice","id":"b","question":"q","options":[').block).toBeNull()
+    })
+    it('cuts an over-long option label but keeps its id', () => {
+      const long = 'word '.repeat(40).trim()
+      const body = JSON.stringify({ block: 'choice', id: 'b', question: 'q?', options: [{ id: 'a', label: long }, { id: 'z', label: 'Z' }] })
+      const result = parseInteractionFenceBody(body)
+      expect(result.outcome).toBe('repaired')
+      expect(result.block?.options[0]?.id).toBe('a')
+      expect(result.block!.options[0]!.label.length).toBeLessThanOrEqual(120)
+      expect(result.block!.options[0]!.label.endsWith('\u2026')).toBe(true)
+    })
+    it('accepts the common synonyms', () => {
+      const body = JSON.stringify({ type: 'choice', id: 'b', prompt: 'q?', choices: [{ id: 'a', text: 'A' }, { id: 'c', title: 'C' }] })
+      expect(parseInteractionFenceBody(body)).toMatchObject({ outcome: 'repaired', block: { question: 'q?', options: [{ label: 'A' }, { label: 'C' }] } })
+    })
+    it('accepts a tilde fence', () => {
+      const content = 'x\n~~~offtangent\n{"block":"confirm","id":"t","question":"Go?"}\n~~~\ny'
+      expect(extractInteractionBlocks(content)[0]?.id).toBe('t')
+    })
+    it('classifies the fences of a message for telemetry', () => {
+      const ok = choice('{"block":"confirm","id":"a","question":"Q?"}')
+      const fixed = choice('{"block":"confirm","id":"b","question":"Q?",}')
+      expect(classifyInteractionFences(`${ok}\n${fixed}\n\`\`\`offtangent\n{`)).toEqual(['ok', 'repaired', 'broken'])
+    })
   })
 
   it.each([
@@ -105,7 +190,8 @@ describe('parseInteractionMessage', () => {
     const options = Array.from({ length: INTERACTION_BLOCK_MAX_OPTIONS + 1 }, (_, i) => ({ id: `o${i}`, label: `Option ${i}` }))
     const body = JSON.stringify({ block: 'choice', id: 'b', question: 'q', options })
     expect(hasInteractionBlock(fence(body))).toBe(false)
-    expect(renderInteractionMessageAsText(fence(body))).toContain('"block"')
+    // beyond the repair pass: the readable hint, never the raw JSON (review 7)
+    expect(renderInteractionMessageAsText(fence(body))).toBe(INTERACTION_BROKEN_TEXT)
   })
 
   it('renders at most one card per message and degrades the rest to text', () => {

@@ -88,6 +88,7 @@ import {
   PanelRight,
   Keyboard,
   Command,
+  SkipForward,
 } from 'lucide-vue-next'
 
 const iconMap = {
@@ -109,6 +110,7 @@ const iconMap = {
   compass: Compass,
   dashboard: LayoutDashboard,
   edit: Pencil,
+  skip: SkipForward,
   eye: Eye,
   eyeOff: EyeOff,
   file: FileText,

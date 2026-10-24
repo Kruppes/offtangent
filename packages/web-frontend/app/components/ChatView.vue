@@ -171,7 +171,7 @@ const sessionErrorText = computed(() => {
   }
 })
 
-const { interactionCard, messageTextSegments, hasBubbleBody, answeredElsewhere, artifactFences } = useMessageSegments(filteredMessages)
+const { interactionCard, messageTextSegments, hasBubbleBody, hasPendingCard, cardSkipped, artifactFences } = useMessageSegments(filteredMessages)
 
 /**
  * Free text from a card. It goes out through the ordinary composer send path
@@ -227,7 +227,7 @@ provideChatView({
   expandedInjections: useToggleSet<number>(),
   expandedSummaries: useToggleSet<string>(),
   pendingChatActions,
-  interactionCard, messageTextSegments, hasBubbleBody, answeredElsewhere, artifactFences, handleOwnAnswer,
+  interactionCard, messageTextSegments, hasBubbleBody, hasPendingCard, cardSkipped, artifactFences, handleOwnAnswer,
   handleChatAction, handlePickerSelect, openCanvasAt, sendMessage,
 })
 

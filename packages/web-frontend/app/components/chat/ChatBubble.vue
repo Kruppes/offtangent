@@ -66,6 +66,15 @@
           class="prose-chat max-w-conversation break-words"
           v-html="renderMarkdown(segment.text)"
         />
+        <div
+          v-if="hasPendingCard(msg, index)"
+          class="mt-2 flex items-center gap-2 rounded-xl border border-dashed border-border px-3 py-2 text-xs text-muted-foreground"
+          role="status"
+          data-testid="interaction-pending"
+        >
+          <AppIcon name="loader" size="sm" class="motion-safe:animate-spin" />
+          <span>{{ $t('chat.interaction.preparing') }}</span>
+        </div>
       </template>
       <!-- A user message reads at the size of an answer (16 px), not 14. -->
       <p v-else class="max-w-reading whitespace-pre-wrap break-words" :class="msg.role === 'user' ? 'text-base' : ''">
@@ -114,7 +123,7 @@
       :block="interactionCard(msg)!"
       :message-id="typeof msg.id === 'number' ? msg.id : undefined"
       :answered="msg.interactionAnswers?.[interactionCard(msg)!.id] ?? null"
-      :answered-elsewhere="answeredElsewhere(index)"
+      :skipped="cardSkipped(index)"
       @own-answer="handleOwnAnswer"
     />
     </div>
@@ -143,7 +152,7 @@ const { formatTimeShort } = useFormat()
 const { renderMarkdown } = useMarkdown()
 const {
   user, avatar, persona,
-  interactionCard, messageTextSegments, hasBubbleBody, answeredElsewhere, artifactFences, handleOwnAnswer,
+  interactionCard, messageTextSegments, hasBubbleBody, hasPendingCard, cardSkipped, artifactFences, handleOwnAnswer,
   boundSessionId,
 } = useChatView()
 

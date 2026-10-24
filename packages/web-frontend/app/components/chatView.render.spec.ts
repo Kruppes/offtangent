@@ -599,7 +599,7 @@ describe('ChatView: interaction blocks and actions', () => {
     expect(card).toBeDefined()
     expect((attr(card, 'block') as { id: string }).id).toBe('b1')
     expect(attr(card, 'messageId')).toBe(2)
-    expect(attr(card, 'answeredElsewhere')).toBe(false)
+    expect(attr(card, 'skipped')).toBe(false)
     expect(String(assistantProse(root)[0]!.props.innerHTML)).toContain('Before we start')
     expect(htmlOf(root)).not.toContain('offtangent')
 
@@ -608,7 +608,7 @@ describe('ChatView: interaction blocks and actions', () => {
     expect(sentFrames().some(f => f.type === 'message' && f.content === 'my own answer')).toBe(true)
     expect(textarea(root).value).toBe('draft stays')
     // the free answer is a later user message: the card closes
-    expect(attr(byTag(root, 'chat-interaction-block')[0]!, 'answeredElsewhere')).toBe(true)
+    expect(attr(byTag(root, 'chat-interaction-block')[0]!, 'skipped')).toBe(true)
   })
 
   it('drops the bubble when the message is nothing but a card, keeping the speaker line', async () => {

@@ -103,6 +103,11 @@ interface ChatResponse {
    */
   messageId?: number
   /**
+   * For `done`: id of the first answerable interaction block of the row named
+   * by `messageId` (S0-B/QW2). Absent when the answer carries no card.
+   */
+  blockId?: string
+  /**
    * For `voice_note`: the spoken version of the answer named by `messageId`.
    * Already persisted on that message, so a missed frame costs nothing.
    */
@@ -1123,6 +1128,8 @@ export function setupWebSocketChat(
             retry: event.retry,
             telegramDelivered: event.telegramDelivered,
             isTaskInjection: event.isTaskInjection,
+            // `done` of a task injection names its persisted row (S0-B/QW2).
+            ...(event.type === 'done' && event.messageId !== undefined ? { messageId: event.messageId } : {}),
           })
         }
       }
@@ -1237,5 +1244,8 @@ function chunkToResponse(chunk: ResponseChunk): ChatResponse {
     errorInfo: chunk.errorInfo,
     stall: chunk.stall,
     retry: chunk.retry,
+    // `done` names the persisted answer (S0-B/QW2, docs/protocol/README.md).
+    ...(chunk.type === 'done' && chunk.messageId !== undefined ? { messageId: chunk.messageId } : {}),
+    ...(chunk.type === 'done' && chunk.blockId ? { blockId: chunk.blockId } : {}),
   }
 }

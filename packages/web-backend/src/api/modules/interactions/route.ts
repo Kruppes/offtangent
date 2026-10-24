@@ -8,11 +8,15 @@
  *        404 unknown_message | unknown_block
  *        409 already_answered  (+ the stored value/label)
  *        410 stale             (strand deleted, or the block expired)
+ *
+ *   POST /api/interactions/telemetry { channel: web|android, event, count? }
+ *     -> 204; 400 invalid_body | invalid_channel | invalid_event | invalid_count;
+ *        429 rate_limited (per user)
  */
 import { Router } from 'express'
 import type { Database } from '@axiom/core'
 import { jwtMiddleware } from '../../../auth.js'
-import { createInteractionsController } from './controller.js'
+import { createInteractionsController, type createTelemetryRateLimiter } from './controller.js'
 import {
   createInteractionsService,
   type CaptureBlockConfirmer,
@@ -55,14 +59,18 @@ export function createSharedInteractionsService(options: InteractionsRouterOptio
 }
 
 export function createInteractionsRouter(
-  options: InteractionsRouterOptions & { service?: InteractionsService },
+  options: InteractionsRouterOptions & {
+    service?: InteractionsService
+    telemetryLimiter?: ReturnType<typeof createTelemetryRateLimiter>
+  },
 ): Router {
   const service = options.service ?? createSharedInteractionsService(options)
-  const controller = createInteractionsController(service)
+  const controller = createInteractionsController(service, { telemetryLimiter: options.telemetryLimiter })
 
   const router = Router()
   router.use(jwtMiddleware)
   router.post('/', controller.answer)
+  router.post('/telemetry', controller.telemetry)
 
   return router
 }
