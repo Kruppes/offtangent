@@ -1,3 +1,4 @@
+import type { InteractionRecord } from '@axiom/core'
 import { EventEmitter } from 'node:events'
 import type { CanvasViewUpdate, Capture, Decision, FeedItem, RetryInfo, StallInfo, StrandProjectSuggestion, TurnErrorInfo, UploadDescriptor, VoiceNote } from '@axiom/core'
 import type { ChatActionMessage } from './chat-actions.js'
@@ -41,7 +42,7 @@ export interface CapturePartFrame {
  */
 export interface ChatEvent {
   /** The kind of event being broadcast */
-  type: 'turn_queued' | 'user_message' | 'text' | 'thinking' | 'tool_call_start' | 'tool_call_end' | 'done' | 'error' | 'system' | 'session_end' | 'session_summary' | 'task_completed' | 'task_failed' | 'task_question' | 'task_status_update' | 'task_started' | 'task_progress' | 'task_finished' | 'reminder' | 'attachment' | 'chat_action' | 'chat_action_resolved' | 'stall_warning' | 'stall_resolved' | 'retry_scheduled' | 'capture_routed' | 'capture_needs_review' | 'now_set_changed' | 'feed_item' | 'board_update' | 'strand_project_changed' | 'strand_forked' | 'voice_note' | 'canvas_view_updated'
+  type: 'turn_queued' | 'user_message' | 'text' | 'thinking' | 'tool_call_start' | 'tool_call_end' | 'done' | 'error' | 'system' | 'session_end' | 'session_summary' | 'task_completed' | 'task_failed' | 'task_question' | 'task_status_update' | 'task_started' | 'task_progress' | 'task_finished' | 'reminder' | 'attachment' | 'chat_action' | 'chat_action_resolved' | 'stall_warning' | 'stall_resolved' | 'retry_scheduled' | 'capture_routed' | 'capture_needs_review' | 'now_set_changed' | 'feed_item' | 'board_update' | 'strand_project_changed' | 'strand_forked' | 'voice_note' | 'canvas_view_updated' | 'interaction.open' | 'interaction.updated' | 'interaction.draft'
   /** The Axiom user ID (integer) this event belongs to */
   userId: number
   /** Where the event originated */
@@ -244,6 +245,13 @@ export interface ChatEvent {
    * ended. Additive: a client that does not know it ignores it.
    */
   canvasView?: CanvasViewUpdate
+  /**
+   * Stufe 1 (S1-A): the row of the `interactions` table behind the
+   * `interaction.open` / `interaction.updated` / `interaction.draft` frames.
+   * The row is already persisted when the frame goes out, so a client that
+   * missed it finds the same state in `GET /api/strands/:id/interactions`.
+   */
+  interaction?: InteractionRecord | Omit<InteractionRecord, 'payload'>
 }
 
 /**

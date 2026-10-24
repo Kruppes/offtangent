@@ -1,3 +1,4 @@
+import { ingestInteractionMessage } from './interaction-store.js'
 import { randomUUID } from 'node:crypto'
 import { frozenEcoRowId } from './eco-tool-freeze.js'
 import type { Database } from './database.js'
@@ -1676,11 +1677,33 @@ class TurnTranscript {
     this.remember(messageId)
     if (messageId === null) return null
     this.recordArtifacts(messageId)
+    this.recordInteractions(messageId)
     this.notifyAssistantMessage(messageId)
     return {
       messageId,
       blockId: findAnswerableInteractionBlockIds(this.fullResponse)[0] ?? null,
       parseOutcomes: classifyInteractionFences(this.fullResponse),
+    }
+  }
+
+  /**
+   * Stufe 1 (S1-A): every answerable fence card of the finished answer gets
+   * its row in the `interactions` table, the one source of its state. Same
+   * single place as `recordArtifacts`, so every channel is covered. Wrapped:
+   * a broken card must never lose the turn that already succeeded.
+   */
+  private recordInteractions(messageId: number): void {
+    if (!this.db) return
+    try {
+      ingestInteractionMessage(this.db, {
+        messageId,
+        strandId: this.sessionId,
+        userId: this.userId,
+        agent: this.agentId ?? 'main',
+        content: this.fullResponse,
+      })
+    } catch (err) {
+      console.error('[turn-runner] Failed to record interaction cards:', err)
     }
   }
 

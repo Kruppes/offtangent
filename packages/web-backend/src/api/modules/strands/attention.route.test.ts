@@ -13,8 +13,8 @@ import fs from 'node:fs'
 import http from 'node:http'
 import os from 'node:os'
 import path from 'node:path'
-import { initDatabase, SessionManager } from '@axiom/core'
-import type { AgentCore, Database } from '@axiom/core'
+import { initDatabase, ingestInteractionMessage, SessionManager, getInteraction, interactionEvents } from '@axiom/core'
+import type { AgentCore, Database, InteractionEvent } from '@axiom/core'
 import { createApp } from '../../../app.js'
 import { generateAccessToken } from '../../../auth.js'
 
@@ -133,7 +133,18 @@ function insertBlockMessage(
     `That is a decision for you.\n\n${fence(payload)}`,
     options.timestamp ?? minutesAgo(60),
   )
-  return Number(result.lastInsertRowid)
+  const messageId = Number(result.lastInsertRowid)
+  // The live path (`TurnRunner.finalize`, S1-A): the card gets its row in
+  // `interactions`, the only source attention reads.
+  ingestInteractionMessage(db, {
+    messageId,
+    strandId: sessionId,
+    userId: options.userId ?? 1,
+    agent: 'main',
+    content: `That is a decision for you.\n\n${fence(payload)}`,
+    createdAt: isoOf(options.timestamp ?? minutesAgo(60)),
+  })
+  return messageId
 }
 
 /** A task as the runner leaves it: own session, parent = the strand. */
@@ -266,10 +277,11 @@ describe('staleness reaches the reads, the filter and the summary alike', () => 
     // 1. superseded by a later user turn.
     const answeredInProse = sessionManager.createThread('1', 'main', 'Answered in prose')
     insertBlockMessage(answeredInProse.id, choicePayload('b-prose'), { timestamp: minutesAgo(90) })
-    db.prepare(
-      `INSERT INTO chat_messages (session_id, user_id, role, content, agent_id, timestamp)
-       VALUES (?, 1, 'user', 'keep it here, I will do it', 'main', ?)`,
-    ).run(answeredInProse.id, minutesAgo(80))
+    // The user message goes through the real persist point (POST
+    // /api/chat/message): since review 1, finding 6 there is no SQL trigger,
+    // the route itself supersedes the open cards and emits the event.
+    const posted = await api('POST', '/api/chat/message', token, { content: 'keep it here, I will do it', sessionId: answeredInProse.id })
+    expect(posted.status).toBe(201)
 
     // 2. past the 48 h age limit.
     const aged = sessionManager.createThread('1', 'main', 'Old question')
@@ -459,5 +471,32 @@ describe('GET /api/strands/attention-summary', () => {
   it('requires authentication', async () => {
     const res = await fetch(`${baseUrl}/api/strands/attention-summary`)
     expect(res.status).toBe(401)
+  })
+})
+
+describe('review 1, finding 6: stale rule 1 at the persist point of a user message', () => {
+  it('POST /api/chat/message supersedes the open card in the DB AND emits interaction.updated', async () => {
+    const strand = sessionManager.createThread('1', 'main', 'Persist point')
+    const messageId = insertBlockMessage(strand.id, choicePayload('b-persist'), { timestamp: minutesAgo(5) })
+    const card = (db.prepare('SELECT id FROM interactions WHERE message_id = ?').get(messageId) as { id: string }).id
+    const events: InteractionEvent[] = []
+    const off = interactionEvents.on(event => { events.push(event) })
+    try {
+      const posted = await api('POST', '/api/chat/message', token, { content: 'never mind, next topic', sessionId: strand.id })
+      expect(posted.status).toBe(201)
+    } finally { off() }
+    expect(getInteraction(db, card)).toMatchObject({ status: 'superseded', closeSource: 'user_continued' })
+    expect(events.some(e => e.type === 'updated' && e.interaction.id === card && e.interaction.status === 'superseded')).toBe(true)
+  })
+
+  it('a message of another user does not supersede the card', async () => {
+    const strand = sessionManager.createThread('1', 'main', 'Other user')
+    const messageId = insertBlockMessage(strand.id, choicePayload('b-other'), { timestamp: minutesAgo(5) })
+    const card = (db.prepare('SELECT id FROM interactions WHERE message_id = ?').get(messageId) as { id: string }).id
+    const before = (db.prepare("SELECT COUNT(*) AS n FROM chat_messages WHERE role = 'user'").get() as { n: number }).n
+    db.prepare(`INSERT INTO chat_messages (session_id, user_id, role, content, agent_id) VALUES (?, 2, 'user', 'raw row', 'main')`).run(strand.id)
+    expect((db.prepare("SELECT COUNT(*) AS n FROM chat_messages WHERE role = 'user'").get() as { n: number }).n).toBe(before + 1)
+    // No trigger any more: a raw row closes nothing, only the persist point does.
+    expect(getInteraction(db, card)!.status).toBe('open')
   })
 })

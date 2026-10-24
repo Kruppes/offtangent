@@ -40,7 +40,7 @@ import { createDeepgramRouter } from './routes/deepgram.js'
 import { createCapturesRouters } from './api/modules/captures/route.js'
 import { createFeedRouter } from './api/modules/feed/route.js'
 import { createBoardsRouter } from './api/modules/boards/route.js'
-import { createInteractionsRouter, createSharedInteractionsService } from './api/modules/interactions/route.js'
+import { createInteractionsRouter, createSharedInteractionsService, createStrandInteractionsRouter } from './api/modules/interactions/route.js'
 import { createClockDeviceRouter } from './api/modules/clock-device/route.js'
 import type { CaptureTurnStarter } from './api/modules/captures/service.js'
 import type { StrandTurnGuard } from './api/modules/strands/service.js'
@@ -253,6 +253,8 @@ export function createApp(options?: AppOptions): express.Express {
       getTurnRunner: options.getTurnRunner,
       getQuotaSnapshot: options.getQuotaSnapshot,
     })
+    // S1-A: open/closed question cards of a strand, from the `interactions` table.
+    app.use('/api/strands', createStrandInteractionsRouter({ service: interactionsService }))
     app.use('/api/strands', strandRouters.strands)
     app.use('/api/tags', strandRouters.tags)
     app.use('/api/now', strandRouters.now)

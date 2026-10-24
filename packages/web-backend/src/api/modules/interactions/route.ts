@@ -71,6 +71,23 @@ export function createInteractionsRouter(
   router.use(jwtMiddleware)
   router.post('/', controller.answer)
   router.post('/telemetry', controller.telemetry)
+  // S1-A: the `interactions` table, addressed by its own id.
+  router.post('/:id/answer', controller.answerById)
+  router.post('/:id/dismiss', controller.dismiss)
+  router.put('/:id/draft', controller.saveDraft)
 
+  return router
+}
+
+/**
+ * `GET /api/strands/:id/interactions?status=open` (S1-A). Mounted under
+ * `/api/strands` next to the strands router; same service instance as the
+ * answer endpoints.
+ */
+export function createStrandInteractionsRouter(options: { service: InteractionsService }): Router {
+  const controller = createInteractionsController(options.service)
+  const router = Router()
+  router.use(jwtMiddleware)
+  router.get('/:id/interactions', controller.listForStrand)
   return router
 }

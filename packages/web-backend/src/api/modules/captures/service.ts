@@ -53,6 +53,7 @@ import {
   SILENCE_GUARD_MARKER,
   updateCapture,
   updateDecision,
+  supersedeOpenOnUserMessage,
 } from '@axiom/core'
 import { parseTurnModelSelection } from '../../../model-selection.js'
 import type { ChatEvent, ChatEventBus } from '../../../chat-event-bus.js'
@@ -602,7 +603,10 @@ export function createCapturesService(options: CapturesServiceOptions) {
       `INSERT INTO chat_messages (session_id, user_id, role, content, metadata, agent_id, capture_id, part_index)
        VALUES (?, ?, 'user', ?, ?, ?, ?, ?)`,
     ).run(strand.id, userId, text, merged, strand.agentId, capture.id, part.index)
-    return Number(result.lastInsertRowid)
+    const messageId = Number(result.lastInsertRowid)
+    // Stale rule 1 at the persist point (review 1, finding 6).
+    supersedeOpenOnUserMessage(db, strand.id, userId, messageId)
+    return messageId
   }
 
   /** The `chat_messages` row one part of a capture was filed into, if any. */

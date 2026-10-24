@@ -25,6 +25,8 @@ import {
   listStrandIdsForAttention,
 } from './strand-attention.js'
 import { withInteractionAnswer } from './contracts/interaction-blocks.js'
+import { findInteractionByBlock, ingestInteractionMessage, supersedeOpenOnUserMessage, transitionInteraction } from './interaction-store.js'
+import { toIsoUtcOrNull } from './timestamps.js'
 
 let db: Database
 
@@ -127,7 +129,42 @@ function insertMessage(
     options.timestamp ?? '2026-09-26 10:00:00',
     options.metadata ?? null,
   )
-  return Number(info.lastInsertRowid)
+  const messageId = Number(info.lastInsertRowid)
+  // The live path (`TurnRunner.finalize`, S1-A): the assistant row gets its
+  // `interactions` rows, the only source attention reads.
+  // The live user persist points (ws-chat, REST, captures, Telegram, the
+  // answer path) supersede the open cards above the new row (S1-A review 1,
+  // finding 6; the SQL trigger is gone). A plain user row here stands for
+  // such a persist point.
+  if (options.role === 'user') {
+    supersedeOpenOnUserMessage(db, sessionId, options.userId ?? 1, messageId)
+  }
+  if ((options.role ?? 'assistant') === 'assistant') {
+    ingestInteractionMessage(db, {
+      messageId,
+      strandId: sessionId,
+      userId: options.userId ?? 1,
+      agent: 'main',
+      content,
+      createdAt: toIsoUtcOrNull(options.timestamp ?? '2026-09-26 10:00:00') ?? undefined,
+    })
+  }
+  return messageId
+}
+
+/**
+ * What the interactions service writes for an answer: the metadata map (the
+ * chat render reads it) AND the table transition (attention reads that).
+ */
+function answerCard(messageId: number, metadata: Record<string, unknown>, blockId: string): void {
+  db.prepare('UPDATE chat_messages SET metadata = ? WHERE id = ?').run(JSON.stringify(metadata), messageId)
+  const record = findInteractionByBlock(db, messageId, blockId)
+  if (!record) throw new Error(`no interaction row for ${messageId}/${blockId}`)
+  transitionInteraction(db, record.id, 'answered', {
+    closeSource: 'answer',
+    closedSurface: 'web',
+    answer: { value: 'yes', label: 'Yes', answeredAt: new Date(NOW).toISOString(), clientRequestId: null, resumed: false },
+  })
 }
 
 /**
@@ -229,7 +266,7 @@ describe('getStrandAttentions — interaction blocks', () => {
       clientMessageId: 'cm-1',
       resumed: true,
     })
-    db.prepare('UPDATE chat_messages SET metadata = ? WHERE id = ?').run(JSON.stringify(metadata), messageId)
+    answerCard(messageId, metadata, 'b1')
 
     expect(getStrandAttention(db, strand, { userId: 1, now: NOW })).toBeNull()
   })
@@ -366,7 +403,12 @@ describe('getStrandAttentions — staleness (rule 2: superseded by a newer card)
     })
   })
 
-  it('falls back to the older open card when the newer one was answered', () => {
+  it('does not fall back to the older card when the newer one was answered (S1-A: superseded is final)', () => {
+    // Stufe 1 changed this: before S1-A the older card came back once the
+    // newer one was answered (rule 2 was evaluated on every read). With the
+    // table the newer card closes the older one as `superseded
+    // (newer_question)` when it is written, and that state is stored, so
+    // answering the newer card leaves nothing open (report.md 3.6).
     const strand = createStrand('s-newer-answered')
     const older = insertMessage(strand, blockFence(choiceBlock('b1', 'First question?')), {
       timestamp: hoursBeforeNow(6),
@@ -382,13 +424,32 @@ describe('getStrandAttentions — staleness (rule 2: superseded by a newer card)
       clientMessageId: 'cm-newer',
       resumed: false,
     })
-    db.prepare('UPDATE chat_messages SET metadata = ? WHERE id = ?').run(JSON.stringify(metadata), newer)
+    answerCard(newer, metadata, 'b2')
 
-    // Only OPEN cards supersede: the answered one is no candidate at all.
-    expect(getStrandAttention(db, strand, { userId: 1, now: NOW })).toMatchObject({
-      messageId: older,
-      prompt: 'First question?',
+    expect(findInteractionByBlock(db, older, 'b1')).toMatchObject({ status: 'superseded', closeSource: 'newer_question' })
+    expect(getStrandAttention(db, strand, { userId: 1, now: NOW })).toBeNull()
+  })
+
+  it('reads only the interactions table: a card without a row is no attention', () => {
+    const strand = createStrand('s-table-only')
+    const info = db.prepare(
+      `INSERT INTO chat_messages (session_id, user_id, role, content, agent_id, timestamp)
+       VALUES (?, 1, 'assistant', ?, 'main', ?)`,
+    ).run(strand, blockFence(choiceBlock('b1', 'Only in chat_messages?')), hoursBeforeNow(1))
+    expect(getStrandAttention(db, strand, { userId: 1, now: NOW })).toBeNull()
+
+    // ...and a row whose message text no longer parses still is: the state
+    // lives in the table, not in the markdown.
+    ingestInteractionMessage(db, {
+      messageId: Number(info.lastInsertRowid),
+      strandId: strand,
+      userId: 1,
+      agent: 'main',
+      content: blockFence(choiceBlock('b1', 'Only in chat_messages?')),
+      createdAt: new Date(NOW - 3_600_000).toISOString(),
     })
+    db.prepare("UPDATE chat_messages SET content = 'edited away' WHERE id = ?").run(info.lastInsertRowid)
+    expect(getStrandAttention(db, strand, { userId: 1, now: NOW })).toMatchObject({ prompt: 'Only in chat_messages?' })
   })
 
   it('does not resurrect an older card when the newest one is superseded by a user turn', () => {

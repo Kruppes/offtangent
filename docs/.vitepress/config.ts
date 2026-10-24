@@ -27,6 +27,7 @@ const guideSidebar: DefaultTheme.SidebarItem[] = [
       { text: 'Built-in Tools', link: '/concepts/tools' },
       { text: 'Captures & Strands', link: '/concepts/captures-and-strands' },
       { text: 'Connectors', link: '/concepts/connectors' },
+      { text: 'Interactions', link: '/concepts/interactions' },
       { text: 'Memory System', link: '/concepts/memory' },
       { text: 'Personas', link: '/concepts/personas' },
       { text: 'Skills', link: '/concepts/skills' },

@@ -6,12 +6,51 @@ import {
   normalizeInteractionChannel,
   recordInteractionEvent,
 } from '@axiom/core'
-import { parseAnswerInteractionBody } from './schema.js'
-import { InteractionServiceError, type InteractionsService } from './service.js'
+import {
+  INTERACTION_STATUS_FILTERS,
+  isInteractionId,
+  parseAnswerByIdBody,
+  parseAnswerInteractionBody,
+  parseDraftBody,
+} from './schema.js'
+import type { InteractionStatus, InteractionSurface } from '@axiom/core'
+import { InteractionServiceError, type InteractionActor, type InteractionsService } from './service.js'
 
 export interface InteractionsController {
   answer: (req: AuthenticatedRequest, res: Response) => void
   telemetry: (req: AuthenticatedRequest, res: Response) => void
+  answerById: (req: AuthenticatedRequest, res: Response) => void
+  dismiss: (req: AuthenticatedRequest, res: Response) => void
+  saveDraft: (req: AuthenticatedRequest, res: Response) => void
+  listForStrand: (req: AuthenticatedRequest, res: Response) => void
+}
+
+/** The caller with its admin flag: a card without owner is visible to an admin only (review 1, finding 1). */
+export function requestActor(req: AuthenticatedRequest): InteractionActor {
+  return { userId: req.user!.userId, admin: req.user?.role === 'admin' }
+}
+
+/** The surface a close is recorded with (`closed_surface`). */
+export function requestInteractionSurface(req: AuthenticatedRequest): InteractionSurface {
+  return requestInteractionChannel(req) === 'android' ? 'android' : 'web'
+}
+
+function sendServiceError(res: Response, err: unknown, what: string): void {
+  if (err instanceof InteractionServiceError) {
+    res.status(err.status).json({ error: err.message, code: err.code, ...(err.details ?? {}) })
+    return
+  }
+  console.error(`[interactions] Failed to ${what}:`, err)
+  res.status(500).json({ error: `Failed to ${what}: ${(err as Error).message}` })
+}
+
+function interactionIdParam(req: AuthenticatedRequest, res: Response): string | null {
+  const id = String(req.params?.id ?? '')
+  if (!isInteractionId(id)) {
+    res.status(404).json({ error: 'No such interaction', code: 'unknown_interaction' })
+    return null
+  }
+  return id
 }
 
 /**
@@ -99,7 +138,7 @@ export function createInteractionsController(
         return
       }
       try {
-        const result = service.answer(req.user!.userId, parsed.value)
+        const result = service.answer(requestActor(req), parsed.value, requestInteractionSurface(req))
         if (!result.idempotent) recordInteractionEvent(requestInteractionChannel(req), 'answered')
         res.json(result)
       } catch (err) {
@@ -131,6 +170,71 @@ export function createInteractionsController(
       }
       recordInteractionEvent(parsed.value.channel, parsed.value.event, parsed.value.count)
       res.status(204).end()
+    },
+
+    /** `POST /api/interactions/:id/answer` `{ value, clientRequestId }` (S1-A). */
+    answerById(req, res) {
+      const id = interactionIdParam(req, res)
+      if (!id) return
+      const parsed = parseAnswerByIdBody(req.body)
+      if (!parsed.ok) {
+        res.status(400).json({ error: parsed.error, code: parsed.code })
+        return
+      }
+      try {
+        const result = service.answerById(requestActor(req), id, { ...parsed.value, surface: requestInteractionSurface(req) })
+        if (!result.idempotent) recordInteractionEvent(requestInteractionChannel(req), 'answered')
+        res.json(result)
+      } catch (err) {
+        sendServiceError(res, err, 'apply the answer')
+      }
+    },
+
+    /** `POST /api/interactions/:id/dismiss` (S1-A): closes the card, starts no turn. */
+    dismiss(req, res) {
+      const id = interactionIdParam(req, res)
+      if (!id) return
+      try {
+        const result = service.dismiss(requestActor(req), id, requestInteractionSurface(req))
+        res.json({ dismissed: true, idempotent: result.idempotent, interaction: result.interaction })
+      } catch (err) {
+        sendServiceError(res, err, 'dismiss the question')
+      }
+    },
+
+    /** `PUT /api/interactions/:id/draft` `{ answers }` (S1-A). */
+    saveDraft(req, res) {
+      const id = interactionIdParam(req, res)
+      if (!id) return
+      const parsed = parseDraftBody(req.body)
+      if (!parsed.ok) {
+        res.status(400).json({ error: parsed.error, code: parsed.code })
+        return
+      }
+      try {
+        res.json({ interaction: service.saveDraft(requestActor(req), id, parsed.value.answers) })
+      } catch (err) {
+        sendServiceError(res, err, 'save the draft')
+      }
+    },
+
+    /** `GET /api/strands/:id/interactions?status=open` (S1-A). */
+    listForStrand(req, res) {
+      const rawStatus = req.query?.status
+      let status: InteractionStatus | undefined
+      if (rawStatus !== undefined) {
+        if (typeof rawStatus !== 'string' || !(INTERACTION_STATUS_FILTERS as readonly string[]).includes(rawStatus)) {
+          res.status(400).json({ error: 'unknown status filter', code: 'invalid_status' })
+          return
+        }
+        status = rawStatus as InteractionStatus
+      }
+      try {
+        const interactions = service.listForStrand(requestActor(req), String(req.params?.id ?? ''), status)
+        res.json({ interactions })
+      } catch (err) {
+        sendServiceError(res, err, 'list the interactions')
+      }
     },
   }
 }

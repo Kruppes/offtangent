@@ -1,6 +1,6 @@
 import { Router } from 'express'
 import type { Database, AgentCore } from '@axiom/core'
-import { saveUploadFromFile, resolveStoredUpload, serializeUploadsMetadata, listLoadableSkills, listArtifactsForMessages, toIsoUtc } from '@axiom/core'
+import { saveUploadFromFile, resolveStoredUpload, serializeUploadsMetadata, listLoadableSkills, listArtifactsForMessages, toIsoUtc, supersedeOpenOnUserMessage } from '@axiom/core'
 import type { UploadDescriptor } from '@axiom/core'
 import { jwtMiddleware } from '../auth.js'
 import type { AuthenticatedRequest } from '../auth.js'
@@ -281,6 +281,8 @@ export function createChatRouter(options: ChatRouterOptions): Router {
         'INSERT INTO chat_messages (session_id, user_id, role, content, metadata, agent_id, client_message_id) VALUES (?, ?, ?, ?, ?, ?, ?)'
       ).run(sessionId, userId, 'user', text, metadata, agentId, clientMessageId ?? null)
       insertedId = Number(result.lastInsertRowid)
+      // Stale rule 1 at the persist point (review 1, finding 6).
+      supersedeOpenOnUserMessage(db, sessionId, userId, insertedId)
     } catch (err) {
       // Two concurrent retries with the same key: the loser reads the winner.
       cleanupRequestUploads(req)

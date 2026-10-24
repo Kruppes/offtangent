@@ -112,7 +112,7 @@ afterAll(async () => {
 })
 
 beforeEach(() => {
-  db.exec('DELETE FROM chat_messages; DELETE FROM sessions; DELETE FROM captures; DELETE FROM router_decisions; DELETE FROM tags; DELETE FROM strand_tags; DELETE FROM strand_links; DELETE FROM now_set;')
+  db.exec('DELETE FROM chat_messages; DELETE FROM sessions; DELETE FROM captures; DELETE FROM router_decisions; DELETE FROM tags; DELETE FROM strand_tags; DELETE FROM strand_links; DELETE FROM now_set; DELETE FROM interactions; DELETE FROM interaction_requests;')
   turns = []
   nextAnswers = []
   doorbells = 0

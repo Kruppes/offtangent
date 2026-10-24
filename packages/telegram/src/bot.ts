@@ -41,6 +41,7 @@ import {
   TaskStore,
   ScheduledTaskStore,
   renderInteractionMessageAsText,
+  supersedeOpenOnUserMessage,
 } from '@axiom/core'
 import type { TurnErrorInfo, TurnPreambleToolCall, UploadDescriptor } from '@axiom/core'
 import {
@@ -1166,8 +1167,10 @@ export class TelegramBot {
       const messageText = sealText(caption || upload.originalName, { tier: 'user', source: 'chat:telegram' }).text
 
       if (this.db && numericUserId) {
-        this.db.prepare('INSERT INTO chat_messages (session_id, user_id, role, content, metadata, agent_id) VALUES (?, ?, ?, ?, ?, ?)')
+        const row = this.db.prepare('INSERT INTO chat_messages (session_id, user_id, role, content, metadata, agent_id) VALUES (?, ?, ?, ?, ?, ?)')
           .run(sessionId, numericUserId, 'user', messageText, serializeUploadsMetadata([upload]), this.agentId)
+        // Stale rule 1 at the persist point (S1-A review 1, finding 6).
+        supersedeOpenOnUserMessage(this.db, sessionId, numericUserId, Number(row.lastInsertRowid))
       }
 
       this.onChatEvent?.({ type: 'user_message', userId: numericUserId, sessionId, text: messageText, senderName: this.getSenderName(ctx), agentId: this.agentId })
@@ -1438,9 +1441,11 @@ export class TelegramBot {
     // the web UI can render a WhatsApp/Telegram-style quote bubble on reload.
     if (this.db && numericUserId && !attachments?.length) {
       const metadata = replyContext ? JSON.stringify({ replyContext }) : null
-      this.db.prepare(
+      const row = this.db.prepare(
         'INSERT INTO chat_messages (session_id, user_id, role, content, metadata, agent_id) VALUES (?, ?, ?, ?, ?, ?)'
       ).run(sessionId, numericUserId, 'user', text, metadata, this.agentId)
+      // Stale rule 1 at the persist point (S1-A review 1, finding 6).
+      supersedeOpenOnUserMessage(this.db, sessionId, numericUserId, Number(row.lastInsertRowid))
     }
 
     // Broadcast user message event (skip if already broadcast by attachment

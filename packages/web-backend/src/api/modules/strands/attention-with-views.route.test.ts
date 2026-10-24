@@ -16,7 +16,7 @@ import fs from 'node:fs'
 import http from 'node:http'
 import os from 'node:os'
 import path from 'node:path'
-import { initDatabase, recordMessageArtifacts, saveUpload, SessionManager } from '@axiom/core'
+import { ingestInteractionMessage, initDatabase, recordMessageArtifacts, saveUpload, SessionManager } from '@axiom/core'
 import type { AgentCore, Database } from '@axiom/core'
 import { createApp } from '../../../app.js'
 import { generateAccessToken } from '../../../auth.js'
@@ -90,12 +90,18 @@ async function get(url: string, authToken = token) {
 function insertOpenQuestion(sessionId: string, blockId: string, question: string): number {
   const payload = { block: 'choice', id: blockId, question, options: [{ id: 'yes', label: 'Yes' }, { id: 'no', label: 'No' }] }
   const content = `That is your call.\n\n\`\`\`offtangent\n${JSON.stringify(payload)}\n\`\`\``
-  return Number(db.prepare(
+  const messageId = Number(db.prepare(
     `INSERT INTO chat_messages (session_id, user_id, role, content, agent_id, timestamp)
      VALUES (?, 1, 'assistant', ?, 'main', ?)`,
     // Relative, not a calendar date: attention drops a card older than
     // `ATTENTION_MAX_AGE_MS` (48 h), so a fixed date would go stale.
   ).run(sessionId, content, new Date(Date.now() - 45 * 60_000).toISOString().replace('T', ' ').slice(0, 19)).lastInsertRowid)
+  // The live path (`TurnRunner.finalize`, S1-A) writes the interactions row.
+  ingestInteractionMessage(db, {
+    messageId, strandId: sessionId, userId: 1, agent: 'main', content,
+    createdAt: new Date(Date.now() - 45 * 60_000).toISOString(),
+  })
+  return messageId
 }
 
 /** One revision of a living view, delivered the way a task delivery does it. */

@@ -8,8 +8,8 @@ import type {
   SlashCommandPicker,
   VoiceNote,
 } from '@axiom/core'
-import { isSlashCommandPicker, isSlashCommandAgentTurn, isSessionAccessError, sealText } from '@axiom/core'
-import type { SealedRef } from '@axiom/core'
+import { isSlashCommandPicker, isSlashCommandAgentTurn, isSessionAccessError, sealText, supersedeOpenOnUserMessage } from '@axiom/core'
+import type { InteractionRecord, SealedRef } from '@axiom/core'
 import { parseTurnModelSelection } from './model-selection.js'
 import { normalizeClientMessageId, normalizeSessionId, resolveAgentId } from './persona-request.js'
 import type { TurnPreambleToolCall } from '@axiom/core'
@@ -64,7 +64,7 @@ interface ChatMessage {
 }
 
 interface ChatResponse {
-  type: 'text' | 'thinking' | 'tool_call_start' | 'tool_call_end' | 'error' | 'done' | 'system' | 'external_user_message' | 'session_end' | 'session_summary' | 'task_completed' | 'task_failed' | 'task_question' | 'task_status_update' | 'task_started' | 'task_progress' | 'task_finished' | 'reminder' | 'pong' | 'attachment' | 'chat_action' | 'chat_action_resolved' | 'turn_replay_start' | 'turn_replay_end' | 'stall_warning' | 'stall_resolved' | 'retry_scheduled' | 'message_ack' | 'queued' | 'turn_queued' | 'capture_routed' | 'capture_needs_review' | 'now_set_changed' | 'feed_item' | 'board_updated' | 'strand_project_changed' | 'strand_forked' | 'voice_note' | 'canvas_view_updated'
+  type: 'text' | 'thinking' | 'tool_call_start' | 'tool_call_end' | 'error' | 'done' | 'system' | 'external_user_message' | 'session_end' | 'session_summary' | 'task_completed' | 'task_failed' | 'task_question' | 'task_status_update' | 'task_started' | 'task_progress' | 'task_finished' | 'reminder' | 'pong' | 'attachment' | 'chat_action' | 'chat_action_resolved' | 'turn_replay_start' | 'turn_replay_end' | 'stall_warning' | 'stall_resolved' | 'retry_scheduled' | 'message_ack' | 'queued' | 'turn_queued' | 'capture_routed' | 'capture_needs_review' | 'now_set_changed' | 'feed_item' | 'board_updated' | 'strand_project_changed' | 'strand_forked' | 'voice_note' | 'canvas_view_updated' | 'interaction.open' | 'interaction.updated' | 'interaction.draft'
   text?: string
   /**
    * Machine-readable reason of an `error` frame that refused an explicit
@@ -118,6 +118,8 @@ interface ChatResponse {
    * kind). See `ChatEvent.canvasView`.
    */
   canvasView?: CanvasViewUpdate
+  /** For `interaction.open|updated|draft` (S1-A): the row of the `interactions` table. */
+  interaction?: InteractionRecord | Omit<InteractionRecord, 'payload'>
   /** For `message_ack`: echoes the client's idempotency key. */
   clientMessageId?: string
   /** For `message_ack`: true when this key was seen before and no new turn was started. */
@@ -303,7 +305,11 @@ function saveUserMessage(
        VALUES (?, ?, 'user', ?, NULL, ?, ?)
        ON CONFLICT(user_id, client_message_id) WHERE client_message_id IS NOT NULL DO NOTHING`
     ).run(sessionId, userId, content, agentId, clientMessageId)
-    if (result.changes === 1) return { id: Number(result.lastInsertRowid), duplicate: false }
+    if (result.changes === 1) {
+      const id = Number(result.lastInsertRowid)
+      supersedeOpenOnUserMessage(db, sessionId, userId, id)
+      return { id, duplicate: false }
+    }
     const existing = db.prepare(
       'SELECT id, agent_id FROM chat_messages WHERE user_id = ? AND client_message_id = ?'
     ).get(userId, clientMessageId) as { id: number; agent_id: string } | undefined
@@ -314,7 +320,10 @@ function saveUserMessage(
   const result = db.prepare(
     'INSERT INTO chat_messages (session_id, user_id, role, content, metadata, agent_id) VALUES (?, ?, ?, ?, ?, ?)'
   ).run(sessionId, userId, 'user', content, null, agentId)
-  return { id: Number(result.lastInsertRowid), duplicate: false }
+  const id = Number(result.lastInsertRowid)
+  // Stale rule 1 at the persist point (review 1, finding 6).
+  supersedeOpenOnUserMessage(db, sessionId, userId, id)
+  return { id, duplicate: false }
 }
 
 /**
@@ -1085,6 +1094,17 @@ export function setupWebSocketChat(
             sessionId: event.sessionId,
             agentId: event.agentId ?? 'main',
             fork: event.fork,
+          })
+        } else if (event.type === 'interaction.open' || event.type === 'interaction.updated' || event.type === 'interaction.draft') {
+          // Stufe 1 (S1-A): a question card changed state in the
+          // `interactions` table. The row is persisted first, so a client
+          // that misses the frame finds it in
+          // `GET /api/strands/:id/interactions?status=open`.
+          sendMessage(client, {
+            type: event.type,
+            sessionId: event.sessionId,
+            agentId: event.agentId ?? 'main',
+            interaction: event.interaction,
           })
         } else if (event.type === 'canvas_view_updated') {
           // Global canvas: a view of this strand has a new revision. The

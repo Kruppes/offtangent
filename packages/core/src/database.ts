@@ -1,4 +1,5 @@
 import BetterSqlite3 from 'better-sqlite3'
+import { backfillInteractions, ensureInteractionsTable } from './interaction-store.js'
 import { randomUUID } from 'node:crypto'
 import path from 'node:path'
 import fs from 'node:fs'
@@ -975,6 +976,20 @@ export function initDatabase(dbPath?: string): Database {
   // is large and a rebuild is the one migration shape we refuse here.
   ensurePushDeviceTable(db)
   ensureClockDeviceTable(db)
+  // Stufe 1 (S1-A): the one source of truth for question cards.
+  ensureInteractionsTable(db)
+  // One-time (marker in `interaction_migrations`) carry-over of the legacy
+  // markdown cards from `chat_messages`, with the S0-B/B4 stale rule. A
+  // failure must not keep the backend from starting: the answer endpoint
+  // still creates a missing row lazily.
+  try {
+    const backfill = backfillInteractions(db)
+    if (backfill.ran && backfill.stats.inserted > 0) {
+      console.log(`[interactions] Backfilled ${backfill.stats.inserted} legacy cards`, backfill.stats)
+    }
+  } catch (err) {
+    console.error('[interactions] Backfill of legacy cards failed:', err)
+  }
 
   // Per-user preferences (voice replies, and whatever comes next). Own table,
   // created if missing; nothing existing is touched.

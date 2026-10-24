@@ -7,7 +7,7 @@
 import { describe, it, expect, beforeAll, afterAll, beforeEach } from 'vitest'
 import http from 'node:http'
 import express from 'express'
-import { initDatabase, readInteractionAnswers } from '@axiom/core'
+import { ingestInteractionMessage, initDatabase, readInteractionAnswers } from '@axiom/core'
 import type { Database } from '@axiom/core'
 import { createSharedInteractionsService } from '../interactions/route.js'
 import { CLOCK_DEFAULT_ALLOWED_CIDRS, FORWARDING_HEADERS, createClockDeviceRouter, isLanAddress, parseClockAllowedCidrs, parseClockAnswerBody } from './route.js'
@@ -55,7 +55,18 @@ function insertBlockMessage(input: { sessionId?: string; userId?: number; payloa
     input.agentId ?? 'main',
     input.at ?? new Date().toISOString().replace('T', ' ').slice(0, 19),
   )
-  return Number(result.lastInsertRowid)
+  const messageId = Number(result.lastInsertRowid)
+  // The live path (`TurnRunner.finalize`, S1-A) writes the interactions
+  // row; attention, which picks the card, reads only that table.
+  ingestInteractionMessage(db, {
+    messageId,
+    strandId: input.sessionId ?? 'strand-1',
+    userId: input.userId ?? 1,
+    agent: input.agentId ?? 'main',
+    content: `Kurze Frage.\n\n${fence(input.payload ?? CHOICE)}`,
+    ...(input.at ? { createdAt: `${input.at.replace(' ', 'T')}.000Z` } : {}),
+  })
+  return messageId
 }
 
 function insertTask(input: { id: string; name: string; status: string; sessionId: string; agentId?: string; resultStatus?: string | null; completedAgoSec?: number }): void {

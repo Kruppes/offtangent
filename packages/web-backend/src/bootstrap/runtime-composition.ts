@@ -94,6 +94,7 @@ import { randomUUID } from 'node:crypto'
 import { createTelegramBot, createTelegramBotPool } from '@axiom/telegram'
 import type { TelegramBot, TelegramBotPool, TelegramChatEvent } from '@axiom/telegram'
 import { ChatEventBus } from '../chat-event-bus.js'
+import { registerInteractionBroadcast } from '../interaction-broadcast.js'
 import { registerCanvasViewBroadcast } from '../canvas-view-broadcast.js'
 import { createVoiceReplyHook } from '../voice-reply-hook.js'
 import { deliverTaskFile } from '../task-file-delivery.js'
@@ -668,6 +669,10 @@ export async function createRuntimeComposition(options: RuntimeCompositionOption
   // task or cronjob writing outside a turn is exactly the case the clients
   // could not see before.
   registerCanvasViewBroadcast({ chatEventBus })
+  // Stufe 1 (S1-A): every write of the `interactions` table (new fence card,
+  // answer, dismiss, draft, newer-question supersede) becomes one
+  // `interaction.open|updated|draft` frame for the clients of the strand.
+  registerInteractionBroadcast({ chatEventBus })
 
   // Interactive chat messages are broadcast to every user, because approvals
   // (the current consumer) may be answered by any authenticated user.

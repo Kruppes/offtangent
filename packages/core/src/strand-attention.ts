@@ -25,6 +25,11 @@
  *
  *   attention = answerable AND not stale
  *
+ * Stufe 1 (S1-A): the open/closed state now lives in the `interactions`
+ * table (`interaction-store.ts`), and this module reads only that table.
+ * Rules 1 and 2 below are applied at write time there (trigger and
+ * `createInteraction`); rule 3 is still applied here.
+ *
  * The answerable half is NOT decided here. It is `resolveInteractionBlockState`
  * in `contracts/interaction-blocks.ts`, the same function
  * `POST /api/interactions` uses for its 409/410 — a badge over a card the
@@ -76,12 +81,8 @@
 import type { Database } from './database.js'
 import { loadConfig, warnConfigReadFailed } from './config.js'
 import { parseAttentionMaxAgeHours } from './contracts/settings.js'
-import {
-  extractAnswerableInteractionBlocks,
-  interactionSkipReason,
-  resolveInteractionBlockState,
-  type InteractionBlock,
-} from './contracts/interaction-blocks.js'
+import { listOpenInteractionsForStrands, type InteractionRecord } from './interaction-store.js'
+import { sealText } from './secret-boundary.js'
 import { timestampSortKey, toIsoUtcOrNull } from './timestamps.js'
 
 export type StrandAttentionKind = 'interaction' | 'task_question'
@@ -164,14 +165,6 @@ export function resolveAttentionMaxAgeMs(
   return Number.isFinite(raw) && raw > 0 ? raw : ATTENTION_MAX_AGE_MS
 }
 
-interface BlockMessageRow {
-  id: number
-  session_id: string
-  content: string
-  metadata: string | null
-  timestamp: string | null
-}
-
 interface PausedTaskRow {
   id: string
   session_id: string
@@ -213,7 +206,11 @@ export interface StrandAttentionOptions {
  * the truncation happens once here instead of once per client.
  */
 export function formatAttentionPrompt(raw: string | null | undefined): string {
-  const collapsed = (raw ?? '').replace(/\s+/g, ' ').trim()
+  // The question is model text that never passed the secret boundary; the
+  // strand list is an output, so it is sealed here, before the cut (a cut
+  // could otherwise split a credential past recognition). Review 1, finding 2.
+  const sealed = raw ? sealText(raw, { tier: 'user', source: 'interaction' }).text : ''
+  const collapsed = sealed.replace(/\s+/g, ' ').trim()
   if (collapsed.length <= ATTENTION_PROMPT_MAX) return collapsed
   return `${collapsed.slice(0, ATTENTION_PROMPT_MAX - 1).trimEnd()}…`
 }
@@ -258,64 +255,29 @@ export function getStrandAttentions(
     // the role either (it refuses a message by OWNER, not by role), and the
     // rule of this module is to mirror that endpoint rather than to invent a
     // narrower one.
-    const blockRows = db.prepare(
-      `SELECT m.id AS id, m.session_id AS session_id, m.content AS content,
-              m.metadata AS metadata, m.timestamp AS timestamp
-         FROM chat_messages m
-        WHERE m.session_id IN (${placeholders})
-          AND m.user_id = ?
-          AND m.content LIKE '%offtangent%'
-        ORDER BY m.timestamp ASC, m.id ASC`,
-    ).all(...chunk, options.userId) as BlockMessageRow[]
-
-    // Rule 1 of the staleness rules: the newest genuine user turn per strand.
-    // `role = 'user'` is the whole test — see the module header for the write
-    // paths that produce such a row and for why nothing the system injects
-    // ever does. `MAX(id)`, not `MAX(timestamp)`: the timestamps are
-    // second-resolution, so a card and the answer typed in the same second are
-    // only ordered by id.
-    const lastUserTurnRows = db.prepare(
-      `SELECT m.session_id AS session_id, MAX(m.id) AS last_user_message_id
-         FROM chat_messages m
-        WHERE m.session_id IN (${placeholders})
-          AND m.user_id = ?
-          AND m.role = 'user'
-        GROUP BY m.session_id`,
-    ).all(...chunk, options.userId) as Array<{ session_id: string; last_user_message_id: number }>
-    const lastUserTurn = new Map<string, number>()
-    for (const row of lastUserTurnRows) lastUserTurn.set(row.session_id, row.last_user_message_id)
-
-    // Rules 1 and 2 are THE shared stale rule (`interactionSkipReason`, S0-B/
-    // QW7), the same function web and app use to draw a card as "skipped".
-    // Rule 2 compares against the newest OPEN card of the strand: a newer card
-    // that is already answered was answered by a user turn, which rule 1
-    // covers. The rows arrive oldest first.
-    const openCards: Array<{ row: BlockMessageRow; block: InteractionBlock }> = []
-    const newestOpenAt = new Map<string, number>()
-    for (const row of blockRows) {
-      const open = firstOpenBlock(row, options.now)
-      if (!open) continue
-      openCards.push({ row, block: open })
-      newestOpenAt.set(row.session_id, Math.max(newestOpenAt.get(row.session_id) ?? row.id, row.id))
+    // Stufe 1 (S1-A): the `interactions` table is the only source. Rule 1
+    // (a later user turn) and rule 2 (a newer card) are applied when the
+    // state changes — by the `interactions_user_continued` trigger and by
+    // `createInteraction` — so an `open` row already means "not superseded".
+    // `expiresAt` is filtered by `listOpenInteractionsForStrands`; rule 3
+    // (age) stays attention-only and is applied here. The newest open row
+    // per strand is the one that represents it, as a guard for a row an
+    // older code path left open.
+    const newestOpen = new Map<string, InteractionRecord>()
+    for (const record of listOpenInteractionsForStrands(db, chunk, options.userId, now)) {
+      const current = newestOpen.get(record.strandId)
+      if (!current || record.messageId > current.messageId) newestOpen.set(record.strandId, record)
     }
-
-    for (const { row, block } of openCards) {
-      const strandId = row.session_id
-      const since = toIsoUtcOrNull(row.timestamp)
+    for (const [strandId, record] of newestOpen) {
+      const since = toIsoUtcOrNull(record.createdAt)
       if (!since) continue
-      const skipped = interactionSkipReason({
-        at: row.id,
-        lastUserTurnAt: lastUserTurn.get(strandId) ?? null,
-        newestCardAt: newestOpenAt.get(strandId) ?? null,
-      })
-      if (skipped) continue
       // Rule 3.
       if (!isFresh(since)) continue
       consider(attentions, strandId, {
         kind: 'interaction',
         since,
-        prompt: formatAttentionPrompt(block.question),
-        messageId: row.id,
+        prompt: formatAttentionPrompt(record.payload.question),
+        messageId: record.messageId,
         taskId: null,
       })
     }
@@ -456,16 +418,3 @@ function consider(
   }
 }
 
-/**
- * The first still-answerable block of a message, or null. Rendering keeps one
- * card per message, but answering accepts every well-formed block, so the
- * answering view is the one that decides here.
- */
-function firstOpenBlock(row: BlockMessageRow, now?: number): InteractionBlock | null {
-  if (!row.content) return null
-  for (const block of extractAnswerableInteractionBlocks(row.content)) {
-    const state = resolveInteractionBlockState(block, row.metadata, now === undefined ? {} : { now })
-    if (state.closedReason === null) return block
-  }
-  return null
-}
