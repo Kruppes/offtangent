@@ -170,9 +170,34 @@ Delivery of these context notes has two phases (`interaction_context_notes`). Wh
 
 `askUser.agents` in the settings lists the personas that get the tool. The value is read at every turn start, so a change applies to the next turn without a restart. Missing `askUser` key: default `["main", "bob"]`. Key present but malformed (not an object with a string array `agents`), or the settings file unreadable: the tool is off for every persona (fail-closed), with one warning in the log.
 
-Surface rule: `ask_user` is offered only when the persona is listed AND the turn comes from a surface that can draw and answer the card: `web` or `android` (the turn source from `StartTurnInput.source`, passed to the runtime as the channel; never anything the model says). A Telegram turn and any unknown or missing source gets neither the tool nor the hint and keeps the fence path. S1-C enables Telegram once it has inline buttons. A strand started by `fork_strand(run_agent: true)` inherits the source of its parent strand (child `sessions.source` and the seed turn), so a fork out of a Telegram strand stays Telegram and gets no `ask_user`. A task or cronjob result injected into an existing web strand runs as a turn of that strand with its `web` source and may therefore offer `ask_user`: the strand has a web surface where the card can be answered later; this is accepted.
+Surface rule: `ask_user` is offered only when the persona is listed AND the turn comes from a surface that can draw and answer the card: `web`, `android`, `telegram` or `telegram-group` (the turn source from `StartTurnInput.source`, passed to the runtime as the channel; never anything the model says). Any unknown or missing source (`task`, `cron`, empty) gets neither the tool nor the hint and keeps the fence path. A strand started by `fork_strand(run_agent: true)` inherits the source of its parent strand (child `sessions.source` and the seed turn), so a fork out of a Telegram strand stays Telegram and gets `ask_user` as well. A task or cronjob result injected into an existing web strand runs as a turn of that strand with its `web` source and may therefore offer `ask_user`: the strand has a web surface where the card can be answered later; this is accepted.
 
 Only when both hold is `ask_user` in the tool list and the prompt hint (`ASK_USER_SYSTEM_HINT`) in the system prompt; both are decided together per turn. Otherwise the fence path stays as it was: the agent writes an `offtangent` fence, the live path files a row. Telemetry counts the source of each card as `card_tool` or `card_fence`. Attention treats both the same: an open blocking `ask_user` card marks the strand as awaiting you until it is answered or dismissed.
+
+## Telegram (S1-C)
+
+The Telegram bot draws fence cards and `ask_user` cards as inline keyboards (`packages/telegram/src/interaction-cards.ts`). It listens to `interaction.open` / `interaction.updated` and sends a card only for a strand it serves (a strand it ran a turn for since start). A card opened during a turn is sent after that turn's reply.
+
+- **Buttons.** One button per option (label cut at 40 characters), multi questions as toggles (☑️/⬜) plus "✅ Fertig", "💬 Kommentar hinzufügen" when `allowComment` is set, and "✖️ Verwerfen". `callback_data` is `ia:<op>:<id>:<question>:<option>` with indexes, never labels; ids that would push it past Telegram's 64 bytes are replaced by a short id from an in-memory table.
+- **Several questions.** 2 to 4 questions are asked one after another in the same message; after each answer the intermediate state is saved as draft (`saveDraft`), so the wizard can be continued on another device.
+- **Comment.** "Kommentar hinzufügen" (or the "Other" row) makes the next text message of the same user in the same chat the comment of the open question, within 10 minutes; after that, or from another user, the text is a normal chat message.
+- **Answer and dismiss.** Both go through the interactions service, the same code as `POST /api/interactions/:id/answer` and `/dismiss`, reached in-process through the core `InteractionAnswerPort` (registered by the web backend; no HTTP call against itself). `clientRequestId` is `tg:<callback query id>`, `closed_surface` is `telegram`. The answer turn runs on the bot, so its reply lands in the chat of the card; dismiss starts no turn.
+- **Ownership.** Only the approved Telegram account linked to the card's owner, in the chat the card was sent to, can act on it; other taps get "Diese Frage gehört jemand anderem." and change nothing.
+- **Final state.** When the card closes, on this or any other surface, the bot edits the message to its final state (answered with the answer, dismissed, expired, passed over) and removes the keyboard. A tap on a card the service rejects as expired (410) or already closed (409) shows the real state and removes the keyboard.
+- **Late tap.** Two taps at once on the same card reach the service once (the card is `busy` while the first request runs). A tap the service rejects with 409 because the card was answered meanwhile is answered with "Diese Frage ist bereits beantwortet." and the message shows the final state.
+- **Retry (from the row).** If the answer is filed but its turn does not start (the service answers 502 `turn_failed`, the row keeps `answer.resumed = false`), the card shows "Antwort gespeichert, Agent nicht gestartet – erneut tippen." with one retry button. This state is not kept in the bot process: it is derived from the row, like on web and app — `status = answered` and `answer.resumed === false`, key = `answer.clientRequestId`. So it survives a bot restart: a rebuilt card with such a row is a retry card again. The retry calls the port with that key and without a value; the service's resume retry (key bound to the same card, `resumed = false`) only starts the turn and sets `resumed = true`, and the bot then edits the card to its final state. Once the row says `resumed = true` the retry button answers "Schon erledigt." without calling the port.
+- **Restart.** Pending comments are in memory. The card origin lives in the table `telegram_interaction_cards`; after a restart a tap on an old card rebuilds it from that row plus the interaction row.
+
+  | Column | Meaning |
+  |---|---|
+  | `interaction_id` | primary key, the interaction id |
+  | `chat_id` | the chat the card was sent to (only taps from this chat count) |
+  | `message_id` | the Telegram message of the card (null while delivery failed; redelivered at the next end of a turn) |
+  | `is_group` | 1 for a group chat (answer turn runs with source `telegram-group`) |
+  | `short_id` | short id used in `callback_data` when the long id would exceed 64 bytes (unique when set) |
+  | `created_at` | insert time |
+
+  The table is created with `CREATE TABLE IF NOT EXISTS` when the bot starts. That covers only a new table: any later schema change (new column, new index, changed constraint) needs an explicit migration, because existing databases keep the old table.
 
 ## See also
 

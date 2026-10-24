@@ -8,6 +8,7 @@ import fs from 'node:fs'
 import express from 'express'
 import type { Database } from '@axiom/core'
 import type { AgentCore } from '@axiom/core'
+import { registerInteractionAnswerPort } from '@axiom/core'
 import { createAuthRouter } from './routes/auth.js'
 import { createChatRouter } from './routes/chat.js'
 import { createThreadsRouter } from './routes/threads.js'
@@ -240,6 +241,9 @@ export function createApp(options?: AppOptions): express.Express {
       getCaptureConfirmer: () => captureRouters.service,
     })
     app.use('/api/interactions', createInteractionsRouter({ db: options.db, service: interactionsService }))
+    // S1-C: Telegram answers and dismisses cards through this very service
+    // (core port), not over HTTP against its own server.
+    registerInteractionAnswerPort(interactionsService)
     // The LED clock (TC002 Berry app): status, notices and knob answers. Own
     // device tokens, LAN only; answers go through the same service as a tap.
     app.use('/api/device/clock', createClockDeviceRouter({

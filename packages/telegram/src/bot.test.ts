@@ -1400,6 +1400,9 @@ describe('TelegramBot', () => {
           get: () => ({ id: 1, telegram_id: '12345', telegram_username: 'johndoe', telegram_display_name: 'John Doe', status: 'approved', user_id: 42, username: 'john', created_at: 'now', updated_at: 'now' }),
           all: () => [],
         }),
+        // supersedeOpenOnUserMessage runs in a transaction (pre-existing gap of this mock).
+        transaction: (fn: (...args: unknown[]) => unknown) => (...args: unknown[]) => fn(...args),
+        inTransaction: false,
       } as unknown as Database
 
       const bot = new TelegramBot({ agentCore, db: mockDb, config: defaultConfig })
@@ -2038,5 +2041,668 @@ describe('turn retry channel', () => {
       expect(texts.some((t: string) => t.includes('has not responded'))).toBe(false)
       expect(retryButton(api)).toBeDefined()
     })
+  })
+})
+
+describe('S1-C interaction cards (bot wiring)', () => {
+  const SESSION_ID = 'session-telegram-cards'
+  const USER_ID = 42
+  const CHAT_ID = 67890
+  const config: TelegramConfig = {
+    enabled: true, botToken: 'test-token-123', adminUserIds: [], pollingMode: true, webhookUrl: '', batchingDelayMs: 2500,
+  }
+  let db: Database
+  let agentCore: AgentCore
+  let portCalls: Array<{ kind: string; actor: unknown; id: string; input?: any }>
+  let unregisterPort: () => void
+
+  function seedDb(): Database {
+    const seeded = initDatabase(':memory:')
+    seeded.prepare('INSERT INTO users (id, username, password_hash) VALUES (?, ?, ?)').run(USER_ID, 'tester', 'x')
+    seeded.prepare(
+      "INSERT INTO telegram_users (telegram_id, telegram_username, telegram_display_name, status, user_id) VALUES (?, ?, ?, 'approved', ?)",
+    ).run('12345', 'johndoe', 'John Doe', USER_ID)
+    seeded.prepare("INSERT INTO sessions (id, user_id, source, type) VALUES (?, ?, 'telegram', 'interactive')").run(SESSION_ID, USER_ID)
+    return seeded
+  }
+
+  /** Stand-in for the interactions service: transitions the row, runs the surface's turn starter. */
+  function fakePort(core: typeof import('@axiom/core')) {
+    return {
+      answerById: (actor: unknown, id: string, input: any) => {
+        portCalls.push({ kind: 'answer', actor, id, input })
+        const interaction = core.transitionInteraction(db, id, 'answered', {
+          closeSource: 'answer', closedSurface: input.surface,
+          answer: { value: input.value ?? 'x', label: 'Variante A', answeredAt: new Date().toISOString(), clientRequestId: input.clientRequestId, resumed: true },
+        })
+        input.startTurn?.({
+          userId: USER_ID, sessionId: SESSION_ID, text: 'Antwort: Variante A', source: 'telegram', agentId: 'main',
+          explicitSessionId: SESSION_ID, inputMode: 'answer', replyToInteractionId: id,
+        })
+        return { resumed: true, label: 'Variante A', interaction }
+      },
+      dismiss: (actor: unknown, id: string, surface: string) => {
+        portCalls.push({ kind: 'dismiss', actor, id })
+        return { interaction: core.transitionInteraction(db, id, 'dismissed', { closeSource: 'dismiss', closedSurface: surface as any }), idempotent: false }
+      },
+      saveDraft: (actor: unknown, id: string) => {
+        portCalls.push({ kind: 'draft', actor, id })
+        return core.getInteraction(db, id)!
+      },
+    }
+  }
+
+  async function openAskUser(core: typeof import('@axiom/core'), questions: unknown[]) {
+    const parsed = core.parseAskUserArgs({ blocking: true, questions }, { id: `call_${Math.random()}` })
+    if (!parsed.ok) throw new Error(parsed.error)
+    const messageId = Number(db.prepare(
+      "INSERT INTO chat_messages (session_id, user_id, role, content) VALUES (?, ?, 'user', 'frag')",
+    ).run(SESSION_ID, USER_ID).lastInsertRowid)
+    const { record } = core.createInteraction(db, {
+      strandId: SESSION_ID, userId: USER_ID, messageId, agent: 'main', payload: parsed.value,
+      toolCallId: `call_${messageId}`, blockId: null, blocking: true,
+    })
+    await vi.advanceTimersByTimeAsync(0)
+    return record
+  }
+
+  function cardMarkup(api: any): { text: string; callback_data: string }[] {
+    const call = api.sendMessage.mock.calls.find((c: any[]) => c[2]?.reply_markup?.inline_keyboard?.flat?.().some((b: any) => b.callback_data?.startsWith('ia:')))
+    return call ? call[2].reply_markup.inline_keyboard.flat() : []
+  }
+
+  async function makeBotWithTurn(): Promise<{ bot: TelegramBot; api: any; handlers: MockBotInternals }> {
+    const bot = new TelegramBot({ agentCore, db, config })
+    const underlying = bot.getBot() as unknown as MockBotInternals & { api: any }
+    await bot.start()
+    // A first turn tells the bot which chat serves the strand.
+    await underlying._handlers.get('message:text')!(createMockContext({ message: { text: 'Hallo', message_id: 1 } }) as any)
+    await vi.advanceTimersByTimeAsync(2500)
+    return { bot, api: underlying.api, handlers: underlying }
+  }
+
+  beforeEach(async () => {
+    db = seedDb()
+    agentCore = createMockAgentCore()
+    vi.mocked(agentCore.getSessionManager).mockReturnValue({ getOrCreateSession: () => ({ id: SESSION_ID }) } as any)
+    vi.clearAllMocks()
+    vi.useFakeTimers()
+    vi.mocked(loadConfig).mockImplementation((filename: string) => {
+      if (filename === 'settings.json') return { batchingDelayMs: 2500 }
+      return { ...config }
+    })
+    portCalls = []
+    const core = await vi.importActual<typeof import('@axiom/core')>('@axiom/core')
+    unregisterPort = core.registerInteractionAnswerPort(fakePort(core) as any)
+  })
+
+  afterEach(() => {
+    unregisterPort()
+    vi.clearAllTimers()
+    vi.useRealTimers()
+  })
+
+  it('tap on a card answers via the port, the answer turn replies in the chat, the keyboard is removed', async () => {
+    const core = await vi.importActual<typeof import('@axiom/core')>('@axiom/core')
+    vi.mocked(agentCore.sendMessage).mockImplementation(() => textStream('Gemacht.'))
+    const { bot, api, handlers } = await makeBotWithTurn()
+    const record = await openAskUser(core, [
+      { id: 'q1', type: 'choice', question: 'Welche Variante?', options: [{ id: 'a', label: 'Variante A' }, { id: 'b', label: 'Variante B' }] },
+    ])
+    const buttons = cardMarkup(api)
+    expect(buttons.map(b => b.text)).toEqual(['Variante A', 'Variante B', '✖️ Verwerfen'])
+    vi.mocked(agentCore.sendMessage).mockClear()
+    api.sendMessage.mockClear()
+
+    const ctx = createMockContext({
+      callbackQuery: { id: 'cbq-77', data: buttons[0]!.callback_data, message: { message_id: 1, chat: { id: CHAT_ID } } },
+      answerCallbackQuery: vi.fn().mockResolvedValue(true),
+    })
+    await handlers._handlers.get('callback_query:data')!(ctx as any)
+    await vi.advanceTimersByTimeAsync(0)
+
+    expect(portCalls).toHaveLength(1)
+    expect(portCalls[0]).toMatchObject({ kind: 'answer', actor: USER_ID, id: record.id })
+    expect(portCalls[0]!.input).toMatchObject({ surface: 'telegram', clientRequestId: 'tg:cbq-77', answers: { q1: { selected: ['a'] } } })
+    expect(agentCore.sendMessage).toHaveBeenCalledTimes(1)
+    expect(api.sendMessage.mock.calls.some((c: any[]) => c[0] === CHAT_ID && String(c[1]).includes('Gemacht.'))).toBe(true)
+    const lastEdit = api.editMessageText.mock.calls.at(-1)
+    expect(lastEdit[2]).toContain('✅ Beantwortet')
+    expect(lastEdit[3].reply_markup.inline_keyboard).toEqual([])
+    await bot.stop()
+  })
+
+  it('text after "Kommentar hinzufügen" is the comment, not a turn; after the window it is a normal message', async () => {
+    const core = await vi.importActual<typeof import('@axiom/core')>('@axiom/core')
+    vi.mocked(agentCore.sendMessage).mockImplementation(() => textStream('ok'))
+    const { bot, api, handlers } = await makeBotWithTurn()
+    await openAskUser(core, [
+      { id: 'q1', type: 'choice', question: 'Token?', allowComment: true, options: [{ id: 'a', label: 'alt' }, { id: 'b', label: 'neu' }] },
+    ])
+    const comment = cardMarkup(api).find(b => b.text.includes('Kommentar'))!
+    await handlers._handlers.get('callback_query:data')!(createMockContext({
+      callbackQuery: { id: 'cbq-1', data: comment.callback_data, message: { message_id: 1, chat: { id: CHAT_ID } } },
+      answerCallbackQuery: vi.fn().mockResolvedValue(true),
+    }) as any)
+    vi.mocked(agentCore.sendMessage).mockClear()
+
+    await handlers._handlers.get('message:text')!(createMockContext({ message: { text: 'bitte rotieren', message_id: 3 } }) as any)
+    await vi.advanceTimersByTimeAsync(2500)
+    expect(agentCore.sendMessage).not.toHaveBeenCalled()
+    expect(api.editMessageText.mock.calls.at(-1)[2]).toContain('💬 bitte rotieren')
+
+    await handlers._handlers.get('callback_query:data')!(createMockContext({
+      callbackQuery: { id: 'cbq-2', data: comment.callback_data, message: { message_id: 1, chat: { id: CHAT_ID } } },
+      answerCallbackQuery: vi.fn().mockResolvedValue(true),
+    }) as any)
+    await vi.advanceTimersByTimeAsync(10 * 60 * 1000 + 1000)
+    await handlers._handlers.get('message:text')!(createMockContext({ message: { text: 'eine normale Nachricht', message_id: 4 } }) as any)
+    await vi.advanceTimersByTimeAsync(2500)
+    expect(agentCore.sendMessage).toHaveBeenCalledTimes(1)
+    await bot.stop()
+  })
+
+  it('a tap from a Telegram account that is not the linked owner has no effect', async () => {
+    const core = await vi.importActual<typeof import('@axiom/core')>('@axiom/core')
+    vi.mocked(agentCore.sendMessage).mockImplementation(() => textStream('ok'))
+    const { bot, api, handlers } = await makeBotWithTurn()
+    const record = await openAskUser(core, [
+      { id: 'q1', type: 'choice', question: 'Welche?', options: [{ id: 'a', label: 'A' }, { id: 'b', label: 'B' }] },
+    ])
+    const answerCallbackQuery = vi.fn().mockResolvedValue(true)
+    await handlers._handlers.get('callback_query:data')!(createMockContext({
+      from: { id: 55555, is_bot: false, first_name: 'Eve' },
+      callbackQuery: { id: 'cbq-x', data: cardMarkup(api)[0]!.callback_data, message: { message_id: 1, chat: { id: CHAT_ID } } },
+      answerCallbackQuery,
+    }) as any)
+    expect(portCalls).toHaveLength(0)
+    expect(core.getInteraction(db, record.id)!.status).toBe('open')
+    expect(answerCallbackQuery).toHaveBeenCalledWith({ text: 'Diese Frage gehört jemand anderem.' })
+    await bot.stop()
+  })
+
+  // ---- Review 1 Nachzug ---------------------------------------------------
+
+  const CANARY = ['ghp', '_', 'C4n4ry', 'Fake', 'Token', '0000', 'abcdefghij', 'klmnopqr'].join('')
+
+  async function tap(handlers: MockBotInternals, data: string, opts: { chatId?: number; messageId?: number; fromId?: number; id?: string } = {}) {
+    const answerCallbackQuery = vi.fn().mockResolvedValue(true)
+    await handlers._handlers.get('callback_query:data')!(createMockContext({
+      ...(opts.fromId !== undefined ? { from: { id: opts.fromId, is_bot: false, first_name: 'Eve' } } : {}),
+      callbackQuery: { id: opts.id ?? `cbq-${Math.random()}`, data, message: { message_id: opts.messageId ?? 1, chat: { id: opts.chatId ?? CHAT_ID } } },
+      answerCallbackQuery,
+    }) as any)
+    await vi.advanceTimersByTimeAsync(0)
+    return answerCallbackQuery
+  }
+
+  function telegramOutput(api: any): string {
+    return JSON.stringify([...api.sendMessage.mock.calls, ...api.editMessageText.mock.calls])
+  }
+
+  it('review1 sealing: a canary in question, option label, comment and answer label never reaches sendMessage/editMessageText', async () => {
+    const core = await vi.importActual<typeof import('@axiom/core')>('@axiom/core')
+    unregisterPort()
+    const base = fakePort(core)
+    unregisterPort = core.registerInteractionAnswerPort({
+      ...base,
+      answerById: (actor: unknown, id: string, input: any) => {
+        portCalls.push({ kind: 'answer', actor, id, input })
+        const interaction = core.transitionInteraction(db, id, 'answered', {
+          closeSource: 'answer', closedSurface: 'telegram',
+          answer: { value: 'a', label: `nimm ${CANARY}`, answeredAt: new Date().toISOString(), clientRequestId: input.clientRequestId, resumed: true },
+        })
+        return { resumed: true, label: 'x', interaction }
+      },
+    } as any)
+    vi.mocked(agentCore.sendMessage).mockImplementation(() => textStream('ok'))
+    const { bot, api, handlers } = await makeBotWithTurn()
+    await openAskUser(core, [
+      { id: 'q1', type: 'choice', question: `Ist ${CANARY} noch gültig?`, allowComment: true, options: [{ id: 'a', label: `rotiere ${CANARY}` }, { id: 'b', label: 'nein' }] },
+    ])
+    const buttons = cardMarkup(api)
+    expect(buttons.length).toBeGreaterThan(0)
+    await tap(handlers, buttons.find(b => b.text.includes('Kommentar'))!.callback_data)
+    await handlers._handlers.get('message:text')!(createMockContext({ message: { text: `siehe ${CANARY}`, message_id: 3 } }) as any)
+    await vi.advanceTimersByTimeAsync(0)
+    await tap(handlers, buttons[0]!.callback_data)
+    expect(portCalls.filter(c => c.kind === 'answer')).toHaveLength(1)
+    expect(api.editMessageText.mock.calls.some((c: any[]) => String(c[2]).includes('✅ Beantwortet'))).toBe(true)
+    expect(telegramOutput(api)).not.toContain(CANARY)
+    await bot.stop()
+  })
+
+  it('review1 origin: the owner tapping a real card id from a foreign chat (or foreign message) has no effect', async () => {
+    const core = await vi.importActual<typeof import('@axiom/core')>('@axiom/core')
+    vi.mocked(agentCore.sendMessage).mockImplementation(() => textStream('ok'))
+    const { bot, api, handlers } = await makeBotWithTurn()
+    const record = await openAskUser(core, [
+      { id: 'q1', type: 'choice', question: 'Welche?', options: [{ id: 'a', label: 'A' }, { id: 'b', label: 'B' }] },
+    ])
+    const data = cardMarkup(api)[0]!.callback_data
+    api.editMessageText.mockClear()
+    const foreignChat = await tap(handlers, data, { chatId: 99999 })
+    const foreignMessage = await tap(handlers, data, { messageId: 777 })
+    const unknownCard = await tap(handlers, `ia:o:${core.newInteractionId()}:0:0`)
+    expect(foreignChat).toHaveBeenCalledWith({ text: 'Diese Karte ist hier nicht gültig.' })
+    expect(foreignMessage).toHaveBeenCalledWith({ text: 'Diese Karte ist hier nicht gültig.' })
+    expect(unknownCard).toHaveBeenCalledWith({ text: 'Diese Karte ist hier nicht gültig.' })
+    expect(portCalls).toHaveLength(0)
+    expect(api.editMessageText).not.toHaveBeenCalled()
+    expect(core.getInteraction(db, record.id)!.status).toBe('open')
+    // The origin chat still works afterwards (no foreign chat was cached).
+    await tap(handlers, data)
+    expect(portCalls).toHaveLength(1)
+    await bot.stop()
+  })
+
+  it('review1 owner before edit: an unlinked user tapping a closed card causes no editMessageText', async () => {
+    const core = await vi.importActual<typeof import('@axiom/core')>('@axiom/core')
+    vi.mocked(agentCore.sendMessage).mockImplementation(() => textStream('ok'))
+    const { bot, api, handlers } = await makeBotWithTurn()
+    const record = await openAskUser(core, [
+      { id: 'q1', type: 'choice', question: 'Welche?', options: [{ id: 'a', label: 'A' }, { id: 'b', label: 'B' }] },
+    ])
+    const data = cardMarkup(api)[0]!.callback_data
+    await bot.stop()
+    core.transitionInteraction(db, record.id, 'dismissed', { closeSource: 'dismiss', closedSurface: 'web' })
+    // Restarted bot: the card is only known from telegram_interaction_cards.
+    const second = await makeBotWithTurn()
+    second.api.editMessageText.mockClear()
+    const answered = await tap(second.handlers, data, { fromId: 55555 })
+    expect(answered).toHaveBeenCalledWith({ text: 'Diese Frage gehört jemand anderem.' })
+    expect(second.api.editMessageText).not.toHaveBeenCalled()
+    expect(portCalls).toHaveLength(0)
+    await second.bot.stop()
+  })
+
+  it('review1 restart: after a restart the persisted card still accepts the owner tap in its own chat', async () => {
+    const core = await vi.importActual<typeof import('@axiom/core')>('@axiom/core')
+    vi.mocked(agentCore.sendMessage).mockImplementation(() => textStream('ok'))
+    const first = await makeBotWithTurn()
+    const record = await openAskUser(core, [
+      { id: 'q1', type: 'choice', question: 'Welche?', options: [{ id: 'a', label: 'A' }, { id: 'b', label: 'B' }] },
+    ])
+    const data = cardMarkup(first.api)[1]!.callback_data
+    await first.bot.stop()
+    // No new user message here: it would supersede the open card.
+    const secondBot = new TelegramBot({ agentCore, db, config })
+    const second = { bot: secondBot, handlers: secondBot.getBot() as unknown as MockBotInternals }
+    await secondBot.start()
+    const answered = await tap(second.handlers, data)
+    expect(answered).toHaveBeenCalledWith({ text: 'Gespeichert.' })
+    expect(portCalls).toHaveLength(1)
+    expect(portCalls[0]!.input.answers).toEqual({ q1: { selected: ['b'] } })
+    expect(core.getInteraction(db, record.id)!.status).toBe('answered')
+    await second.bot.stop()
+  })
+
+  it('review1 turn confirmation: a turn that does not start leaves resumed=false and offers a retry with the same clientRequestId', async () => {
+    const core = await vi.importActual<typeof import('@axiom/core')>('@axiom/core')
+    unregisterPort()
+    // Mirrors the service contract: answer filed, starter throws => 502 turn_failed, resumed stays false.
+    unregisterPort = core.registerInteractionAnswerPort({
+      ...fakePort(core),
+      answerById: (actor: unknown, id: string, input: any) => {
+        portCalls.push({ kind: 'answer', actor, id, input })
+        let rec = core.getInteraction(db, id)!
+        if (rec.status === 'open') {
+          rec = core.transitionInteraction(db, id, 'answered', {
+            closeSource: 'answer', closedSurface: 'telegram',
+            answer: { value: 'a', label: 'A', answeredAt: new Date().toISOString(), clientRequestId: input.clientRequestId, resumed: false },
+          })
+        }
+        try {
+          input.startTurn({ userId: USER_ID, sessionId: SESSION_ID, text: 'Antwort: A', source: 'telegram', agentId: 'main', explicitSessionId: SESSION_ID, inputMode: 'answer', replyToInteractionId: id })
+        } catch {
+          throw Object.assign(new Error('turn'), { status: 502, code: 'turn_failed' })
+        }
+        rec = core.markInteractionResumed(db, id, true)
+        return { resumed: true, label: 'A', interaction: rec }
+      },
+    } as any)
+    vi.mocked(agentCore.sendMessage).mockImplementation(() => textStream('Weiter.'))
+    const { bot, api, handlers } = await makeBotWithTurn()
+    const record = await openAskUser(core, [
+      { id: 'q1', type: 'choice', question: 'Welche?', options: [{ id: 'a', label: 'A' }, { id: 'b', label: 'B' }] },
+    ])
+    const runner = (bot as any).turnRunner
+    const startSpy = vi.spyOn(runner, 'startTurn').mockImplementationOnce(() => { throw new Error('runner busy') })
+    const first = await tap(handlers, cardMarkup(api)[0]!.callback_data, { id: 'cbq-turn' })
+    expect(first).toHaveBeenCalledWith({ text: 'Antwort gespeichert, Agent nicht gestartet – erneut tippen.' })
+    expect(core.getInteraction(db, record.id)!.answer!.resumed).toBe(false)
+    const retryEdit = api.editMessageText.mock.calls.at(-1)
+    expect(retryEdit[2]).toContain('Antwort gespeichert, Agent nicht gestartet')
+    const retryButtons = retryEdit[3].reply_markup.inline_keyboard.flat()
+    expect(retryButtons).toHaveLength(1)
+    expect(retryButtons[0].callback_data).toMatch(/^ia:r:/)
+
+    vi.mocked(agentCore.sendMessage).mockClear()
+    await tap(handlers, retryButtons[0].callback_data)
+    await vi.advanceTimersByTimeAsync(0)
+    const answers = portCalls.filter(c => c.kind === 'answer')
+    expect(answers).toHaveLength(2)
+    expect(answers[1]!.input.clientRequestId).toBe('tg:cbq-turn')
+    // Review 2: the retry is a resume retry — key from the row, no value.
+    expect(answers[1]!.input.answers).toBeUndefined()
+    expect(answers[1]!.input.value).toBeUndefined()
+    expect(startSpy).toHaveBeenCalledTimes(2)
+    expect(agentCore.sendMessage).toHaveBeenCalledTimes(1)
+    expect(core.getInteraction(db, record.id)!.answer!.resumed).toBe(true)
+    expect(api.editMessageText.mock.calls.at(-1)[2]).toContain('✅ Beantwortet')
+    await bot.stop()
+  })
+
+  it('review1 negative: optIdx out of range, qIdx jump and malformed callback_data have no effect', async () => {
+    const core = await vi.importActual<typeof import('@axiom/core')>('@axiom/core')
+    vi.mocked(agentCore.sendMessage).mockImplementation(() => textStream('ok'))
+    const { bot, api, handlers } = await makeBotWithTurn()
+    const record = await openAskUser(core, [
+      { id: 'q1', type: 'choice', question: 'Erste?', options: [{ id: 'a', label: 'A' }, { id: 'b', label: 'B' }] },
+      { id: 'q2', type: 'choice', question: 'Zweite?', options: [{ id: 'c', label: 'C' }, { id: 'd', label: 'D' }] },
+    ])
+    const data = cardMarkup(api)[0]!.callback_data
+    const [, op, id] = data.split(':')
+    expect(op).toBe('o')
+    api.editMessageText.mockClear()
+    const outOfRange = await tap(handlers, `ia:o:${id}:0:9`)
+    const qJump = await tap(handlers, `ia:o:${id}:1:0`)
+    const malformed = await tap(handlers, `ia:o:${id}:0`)
+    const junk = await tap(handlers, `ia:o:${id}:0:0:1`)
+    expect(outOfRange).toHaveBeenCalledWith({ text: 'Diese Karte ist nicht mehr gültig.' })
+    expect(qJump).toHaveBeenCalledWith({ text: 'Diese Frage ist schon beantwortet.' })
+    expect(malformed).toHaveBeenCalledWith({ text: 'Diese Karte ist nicht mehr gültig.' })
+    expect(junk).toHaveBeenCalledWith({ text: 'Diese Karte ist nicht mehr gültig.' })
+    expect(portCalls).toHaveLength(0)
+    expect(api.editMessageText).not.toHaveBeenCalled()
+    expect(core.getInteraction(db, record.id)!.status).toBe('open')
+    await bot.stop()
+  })
+
+  it('review1 draft conflict: a draft written on another surface stops the wizard here and edits the card', async () => {
+    const core = await vi.importActual<typeof import('@axiom/core')>('@axiom/core')
+    vi.mocked(agentCore.sendMessage).mockImplementation(() => textStream('ok'))
+    const { bot, api, handlers } = await makeBotWithTurn()
+    const record = await openAskUser(core, [
+      { id: 'q1', type: 'choice', question: 'Erste?', options: [{ id: 'a', label: 'A' }, { id: 'b', label: 'B' }] },
+      { id: 'q2', type: 'choice', question: 'Zweite?', options: [{ id: 'c', label: 'C' }, { id: 'd', label: 'D' }] },
+    ])
+    const data = cardMarkup(api)[0]!.callback_data
+    core.saveInteractionDraft(db, record.id, { answers: { q1: { selected: ['b'] } }, step: 1 })
+    await vi.advanceTimersByTimeAsync(0)
+    const moved = api.editMessageText.mock.calls.at(-1)
+    expect(moved[2]).toContain('Wird auf einer anderen Oberfläche beantwortet.')
+    expect(moved[3].reply_markup.inline_keyboard).toEqual([])
+    const late = await tap(handlers, data)
+    expect(late).toHaveBeenCalledWith({ text: 'Diese Frage wird gerade woanders beantwortet.' })
+    expect(portCalls).toHaveLength(0)
+    // The web answer closes the card here.
+    core.transitionInteraction(db, record.id, 'answered', {
+      closeSource: 'answer', closedSurface: 'web',
+      answer: { value: 'b', label: 'B', answeredAt: new Date().toISOString(), clientRequestId: 'web-1', resumed: true },
+    })
+    await vi.advanceTimersByTimeAsync(0)
+    expect(api.editMessageText.mock.calls.at(-1)[2]).toContain('✅ Beantwortet')
+    await bot.stop()
+  })
+
+  it('review1 comments: with two cards in one chat the comment goes to the latest prompt and the older prompt is visibly withdrawn', async () => {
+    const core = await vi.importActual<typeof import('@axiom/core')>('@axiom/core')
+    vi.mocked(agentCore.sendMessage).mockImplementation(() => textStream('ok'))
+    const { bot, api, handlers } = await makeBotWithTurn()
+    let next = 100
+    api.sendMessage.mockImplementation(async () => ({ message_id: next++ }))
+    const first = await openAskUser(core, [
+      { id: 'q1', type: 'choice', question: 'Karte A?', allowComment: true, options: [{ id: 'a', label: 'A' }, { id: 'b', label: 'B' }] },
+    ])
+    const second = await openAskUser(core, [
+      { id: 'q1', type: 'choice', question: 'Karte B?', allowComment: true, options: [{ id: 'c', label: 'C' }, { id: 'd', label: 'D' }] },
+    ])
+    const rows = db.prepare('SELECT interaction_id, message_id FROM telegram_interaction_cards').all() as Array<{ interaction_id: string; message_id: number }>
+    const msgOf = (id: string) => rows.find(r => r.interaction_id === id)!.message_id
+    const keyboards = api.sendMessage.mock.calls.filter((c: any[]) => c[2]?.reply_markup).map((c: any[]) => c[2].reply_markup.inline_keyboard.flat())
+    const commentA = keyboards[0].find((b: any) => b.text.includes('Kommentar')).callback_data
+    const commentB = keyboards[1].find((b: any) => b.text.includes('Kommentar')).callback_data
+    await tap(handlers, commentA, { messageId: msgOf(first.id) })
+    await tap(handlers, commentB, { messageId: msgOf(second.id) })
+    const withdrawn = api.editMessageText.mock.calls.filter((c: any[]) => c[1] === msgOf(first.id)).at(-1)
+    expect(withdrawn[2]).toContain('Karte A?')
+    expect(withdrawn[2]).not.toContain('Schreib deinen Kommentar')
+    await handlers._handlers.get('message:text')!(createMockContext({ message: { text: 'nur für B', message_id: 3 } }) as any)
+    await vi.advanceTimersByTimeAsync(0)
+    const lastB = api.editMessageText.mock.calls.filter((c: any[]) => c[1] === msgOf(second.id)).at(-1)
+    expect(lastB[2]).toContain('💬 nur für B')
+    expect(api.editMessageText.mock.calls.filter((c: any[]) => c[1] === msgOf(first.id)).some((c: any[]) => String(c[2]).includes('nur für B'))).toBe(false)
+    api.sendMessage.mockImplementation(async () => ({ message_id: 1 }))
+    await bot.stop()
+  })
+
+  it('review1 delivery: a card whose sendMessage failed accepts no tap and is sent again at the next end of a turn', async () => {
+    const core = await vi.importActual<typeof import('@axiom/core')>('@axiom/core')
+    vi.mocked(agentCore.sendMessage).mockImplementation(() => textStream('ok'))
+    const { bot, api, handlers } = await makeBotWithTurn()
+    api.sendMessage.mockRejectedValueOnce(new Error('429 Too Many Requests'))
+    const record = await openAskUser(core, [
+      { id: 'q1', type: 'choice', question: 'Welche?', options: [{ id: 'a', label: 'A' }, { id: 'b', label: 'B' }] },
+    ])
+    const failed = api.sendMessage.mock.calls.at(-1)
+    const data = failed[2].reply_markup.inline_keyboard.flat()[0].callback_data
+    expect(db.prepare('SELECT message_id FROM telegram_interaction_cards WHERE interaction_id = ?').get(record.id)).toEqual({ message_id: null })
+    const early = await tap(handlers, data)
+    expect(early).toHaveBeenCalledWith({ text: 'Diese Karte ist hier nicht gültig.' })
+    expect(portCalls).toHaveLength(0)
+    api.sendMessage.mockClear()
+    const cards = (bot as any).interactionCards
+    cards.beginTurn(SESSION_ID)
+    await cards.endTurn(SESSION_ID)
+    expect(cardMarkup(api).length).toBeGreaterThan(0)
+    const resent = db.prepare('SELECT message_id FROM telegram_interaction_cards WHERE interaction_id = ?').get(record.id) as { message_id: number }
+    expect(resent.message_id).not.toBeNull()
+    const late = await tap(handlers, cardMarkup(api)[0]!.callback_data, { messageId: resent.message_id })
+    expect(late.mock.calls).toEqual([[{ text: 'Gespeichert.' }]])
+    expect(portCalls).toHaveLength(1)
+    await bot.stop()
+  })
+
+  it('review1 double tap: tapping "Fertig" of a multi-select twice files one answer and starts one turn', async () => {
+    const core = await vi.importActual<typeof import('@axiom/core')>('@axiom/core')
+    vi.mocked(agentCore.sendMessage).mockImplementation(() => textStream('ok'))
+    const { bot, api, handlers } = await makeBotWithTurn()
+    const record = await openAskUser(core, [
+      { id: 'q1', type: 'multi', question: 'Welche?', options: [{ id: 'a', label: 'A' }, { id: 'b', label: 'B' }] },
+    ])
+    const buttons = cardMarkup(api)
+    const option = buttons.find((b: any) => b.callback_data.startsWith('ia:o:'))!.callback_data
+    const done = buttons.find((b: any) => b.callback_data.startsWith('ia:f:'))!.callback_data
+    await tap(handlers, option)
+    const [first, second] = await Promise.all([tap(handlers, done, { id: 'cbq-f1' }), tap(handlers, done, { id: 'cbq-f2' })])
+    const third = await tap(handlers, done, { id: 'cbq-f3' })
+    expect(portCalls).toHaveLength(1)
+    expect(core.getInteraction(db, record.id)!.status).toBe('answered')
+    expect([...first.mock.calls, ...second.mock.calls].flat()).toContainEqual({ text: 'Gespeichert.' })
+    expect(third.mock.calls.flat()).not.toContainEqual({ text: 'Gespeichert.' })
+    await bot.stop()
+  })
+
+  /** Mirrors the service (with the resume retry of feat/s1-c-web b94742f3): starter throws => 502, same bound key on resumed=false => only the turn, other key on a closed card => 409. */
+  function resumePort(core: typeof import('@axiom/core')) {
+    return {
+      ...fakePort(core),
+      answerById: (actor: unknown, id: string, input: any) => {
+        portCalls.push({ kind: 'answer', actor, id, input })
+        let rec = core.getInteraction(db, id)!
+        if (rec.status === 'open') {
+          rec = core.transitionInteraction(db, id, 'answered', {
+            closeSource: 'answer', closedSurface: 'telegram',
+            answer: { value: 'a', label: 'A', answeredAt: new Date().toISOString(), clientRequestId: input.clientRequestId, resumed: false },
+          })
+        } else if (rec.answer?.clientRequestId !== input.clientRequestId || rec.answer?.resumed) {
+          throw Object.assign(new Error('closed'), { status: 409, code: 'closed' })
+        }
+        try {
+          input.startTurn({ userId: USER_ID, sessionId: SESSION_ID, text: 'Antwort: A', source: 'telegram', agentId: 'main', explicitSessionId: SESSION_ID, inputMode: 'answer', replyToInteractionId: id })
+        } catch {
+          throw Object.assign(new Error('turn'), { status: 502, code: 'turn_failed' })
+        }
+        rec = core.markInteractionResumed(db, id, true)
+        return { resumed: true, label: 'A', interaction: rec }
+      },
+    }
+  }
+
+  it('review2 restart retry: after a bot restart the row (answered, resumed=false) still offers the retry; the tap starts the turn with the stored key, resumed=true, button gone', async () => {
+    const core = await vi.importActual<typeof import('@axiom/core')>('@axiom/core')
+    unregisterPort()
+    unregisterPort = core.registerInteractionAnswerPort(resumePort(core) as any)
+    vi.mocked(agentCore.sendMessage).mockImplementation(() => textStream('Weiter.'))
+    const first = await makeBotWithTurn()
+    const record = await openAskUser(core, [
+      { id: 'q1', type: 'choice', question: 'Welche?', options: [{ id: 'a', label: 'A' }, { id: 'b', label: 'B' }] },
+    ])
+    const optionData = cardMarkup(first.api)[0]!.callback_data
+    vi.spyOn((first.bot as any).turnRunner, 'startTurn').mockImplementationOnce(() => { throw new Error('runner busy') })
+    await tap(first.handlers, optionData, { id: 'cbq-rs' })
+    expect(core.getInteraction(db, record.id)!.answer).toMatchObject({ resumed: false, clientRequestId: 'tg:cbq-rs' })
+    const retryData = first.api.editMessageText.mock.calls.at(-1)[3].reply_markup.inline_keyboard.flat()[0].callback_data
+    expect(retryData).toMatch(/^ia:r:/)
+    await first.bot.stop()
+
+    // Fresh bot instance, same database: nothing of the first process survives but the rows.
+    vi.mocked(agentCore.sendMessage).mockClear()
+    const secondBot = new TelegramBot({ agentCore, db, config })
+    const second = secondBot.getBot() as unknown as MockBotInternals & { api: any }
+    await secondBot.start()
+    // An old option button of the card: the rebuilt card is a retry card (state from the row).
+    const stale = await tap(second, optionData, { id: 'cbq-old' })
+    expect(stale).toHaveBeenCalledWith({ text: 'Antwort gespeichert, Agent nicht gestartet – erneut tippen.' })
+    expect(portCalls.filter(c => c.kind === 'answer')).toHaveLength(1)
+
+    const retried = await tap(second, retryData, { id: 'cbq-retry' })
+    await vi.advanceTimersByTimeAsync(0)
+    expect(retried).toHaveBeenCalledWith({ text: 'Gespeichert.' })
+    const answers = portCalls.filter(c => c.kind === 'answer')
+    expect(answers).toHaveLength(2)
+    expect(answers[1]!.input.clientRequestId).toBe('tg:cbq-rs')
+    expect(answers[1]!.input.answers).toBeUndefined()
+    expect(agentCore.sendMessage).toHaveBeenCalledTimes(1)
+    expect(core.getInteraction(db, record.id)!.answer!.resumed).toBe(true)
+    const last = second.api.editMessageText.mock.calls.at(-1)
+    expect(last[2]).toContain('✅ Beantwortet')
+    expect(last[3].reply_markup.inline_keyboard).toEqual([])
+    // Idempotent: the retry once more starts nothing.
+    const again = await tap(second, retryData, { id: 'cbq-retry2' })
+    expect(again).toHaveBeenCalledWith({ text: 'Schon erledigt.' })
+    expect(portCalls.filter(c => c.kind === 'answer')).toHaveLength(2)
+    await secondBot.stop()
+  })
+
+  it('review2 busy guard: a second callback arriving while the first answer is inside the port does not reach the port', async () => {
+    const core = await vi.importActual<typeof import('@axiom/core')>('@axiom/core')
+    vi.mocked(agentCore.sendMessage).mockImplementation(() => textStream('ok'))
+    const { bot, api } = await makeBotWithTurn()
+    const record = await openAskUser(core, [
+      { id: 'q1', type: 'choice', question: 'Welche?', options: [{ id: 'a', label: 'A' }, { id: 'b', label: 'B' }] },
+    ])
+    const data = cardMarkup(api)[0]!.callback_data
+    const messageId = (db.prepare('SELECT message_id FROM telegram_interaction_cards WHERE interaction_id = ?').get(record.id) as { message_id: number }).message_id
+    const cards = (bot as any).interactionCards
+    const cb = (id: string, answer: ReturnType<typeof vi.fn>) => ({ data, callbackQueryId: id, chatId: CHAT_ID, messageId, fromUserId: USER_ID, answer })
+    const secondAnswer = vi.fn().mockResolvedValue(true)
+    let inner: Promise<unknown> | null = null
+    const base = fakePort(core)
+    unregisterPort()
+    unregisterPort = core.registerInteractionAnswerPort({
+      ...base,
+      answerById: (actor: unknown, id: string, input: any) => {
+        // The second tap is processed while the first one is still in flight (row still open).
+        if (!inner) inner = cards.handleCallback(cb('cbq-b2', secondAnswer))
+        return base.answerById(actor, id, input)
+      },
+    } as any)
+    await cards.handleCallback(cb('cbq-b1', vi.fn().mockResolvedValue(true)))
+    await inner
+    await vi.advanceTimersByTimeAsync(0)
+    expect(portCalls.filter(c => c.kind === 'answer')).toHaveLength(1)
+    expect(secondAnswer).toHaveBeenCalledWith('Wird gerade gespeichert …')
+    await bot.stop()
+  })
+
+  it('review2 double tap single choice: two simultaneous taps on the same option file one answer and start one turn', async () => {
+    const core = await vi.importActual<typeof import('@axiom/core')>('@axiom/core')
+    vi.mocked(agentCore.sendMessage).mockImplementation(() => textStream('ok'))
+    const { bot, api, handlers } = await makeBotWithTurn()
+    const record = await openAskUser(core, [
+      { id: 'q1', type: 'choice', question: 'Welche?', options: [{ id: 'a', label: 'A' }, { id: 'b', label: 'B' }] },
+    ])
+    const data = cardMarkup(api)[1]!.callback_data
+    vi.mocked(agentCore.sendMessage).mockClear()
+    const [one, two] = await Promise.all([tap(handlers, data, { id: 'cbq-s1' }), tap(handlers, data, { id: 'cbq-s2' })])
+    await vi.advanceTimersByTimeAsync(0)
+    expect(portCalls.filter(c => c.kind === 'answer')).toHaveLength(1)
+    expect(core.getInteraction(db, record.id)!.status).toBe('answered')
+    const texts = [...one.mock.calls, ...two.mock.calls].flat()
+    expect(texts.filter((t: any) => t?.text === 'Gespeichert.')).toHaveLength(1)
+    // The second tap is stopped by the busy guard (the first request still holds the card), not by a later layer.
+    expect(texts).toContainEqual({ text: 'Wird gerade gespeichert …' })
+    expect(agentCore.sendMessage).toHaveBeenCalledTimes(1)
+    await bot.stop()
+  })
+
+  it('review2 late tap: a 409 from the service (answered meanwhile) is shown as "bereits beantwortet", the card closes without an edit error', async () => {
+    const core = await vi.importActual<typeof import('@axiom/core')>('@axiom/core')
+    vi.mocked(agentCore.sendMessage).mockImplementation(() => textStream('ok'))
+    const { bot, api, handlers } = await makeBotWithTurn()
+    const record = await openAskUser(core, [
+      { id: 'q1', type: 'choice', question: 'Welche?', options: [{ id: 'a', label: 'A' }, { id: 'b', label: 'B' }] },
+    ])
+    const data = cardMarkup(api)[0]!.callback_data
+    unregisterPort()
+    unregisterPort = core.registerInteractionAnswerPort({
+      ...fakePort(core),
+      answerById: (actor: unknown, id: string, input: any) => {
+        portCalls.push({ kind: 'answer', actor, id, input })
+        // Another surface/instance committed its answer first: the service answers 409.
+        core.transitionInteraction(db, id, 'answered', {
+          closeSource: 'answer', closedSurface: 'web',
+          answer: { value: 'b', label: 'B', answeredAt: new Date().toISOString(), clientRequestId: 'web-first', resumed: true },
+        })
+        throw Object.assign(new Error('closed'), { status: 409, code: 'closed' })
+      },
+    } as any)
+    const warn = vi.spyOn(console, 'warn')
+    const late = await tap(handlers, data, { id: 'cbq-late' })
+    expect(late).toHaveBeenCalledWith({ text: 'Diese Frage ist bereits beantwortet.' })
+    expect(portCalls.filter(c => c.kind === 'answer')).toHaveLength(1)
+    expect(core.getInteraction(db, record.id)!.answer!.clientRequestId).toBe('web-first')
+    const last = api.editMessageText.mock.calls.at(-1)
+    expect(last[2]).toContain('✅ Beantwortet')
+    expect(last[3].reply_markup.inline_keyboard).toEqual([])
+    expect(warn.mock.calls.flat().join(' ')).not.toContain('edit failed')
+    const again = await tap(handlers, data, { id: 'cbq-late2' })
+    expect(again).toHaveBeenCalledWith({ text: 'Schon erledigt.' })
+    expect(portCalls.filter(c => c.kind === 'answer')).toHaveLength(1)
+    warn.mockRestore()
+    await bot.stop()
+  })
+
+  it('review1 group: the answer turn of a card in a group chat runs with source telegram-group', async () => {
+    const core = await vi.importActual<typeof import('@axiom/core')>('@axiom/core')
+    vi.mocked(agentCore.sendMessage).mockImplementation(() => textStream('ok'))
+    const bot = new TelegramBot({ agentCore, db, config })
+    const underlying = bot.getBot() as unknown as MockBotInternals & { api: any }
+    await bot.start()
+    await underlying._handlers.get('message:text')!(createMockContext({ chat: { id: CHAT_ID, type: 'group' }, message: { text: 'Hallo Gruppe', message_id: 1 } }) as any)
+    await vi.advanceTimersByTimeAsync(2500)
+    await openAskUser(core, [
+      { id: 'q1', type: 'choice', question: 'Welche?', options: [{ id: 'a', label: 'A' }, { id: 'b', label: 'B' }] },
+    ])
+    const data = cardMarkup(underlying.api)[0]!.callback_data
+    const row = db.prepare('SELECT is_group, message_id FROM telegram_interaction_cards').get() as { is_group: number; message_id: number }
+    expect(row.is_group).toBe(1)
+    vi.mocked(agentCore.sendMessage).mockClear()
+    await tap(underlying, data, { messageId: row.message_id })
+    expect(portCalls).toHaveLength(1)
+    expect(vi.mocked(agentCore.sendMessage).mock.calls[0]![2]).toBe('telegram-group')
+    await bot.stop()
   })
 })

@@ -42,8 +42,9 @@ import {
   ScheduledTaskStore,
   renderInteractionMessageAsText,
   supersedeOpenOnUserMessage,
+  getInteractionAnswerPort,
 } from '@axiom/core'
-import type { TurnErrorInfo, TurnPreambleToolCall, UploadDescriptor } from '@axiom/core'
+import type { InteractionAnswerTurnInput, TurnErrorInfo, TurnPreambleToolCall, UploadDescriptor } from '@axiom/core'
 import {
   EMAIL_APPROVAL_CALLBACK_PREFIX,
   buildEmailApprovalCallbackData,
@@ -58,6 +59,8 @@ import {
   formatTurnRetryResolution,
   parseTurnRetryCallbackData,
 } from './turn-retry.js'
+import { TelegramInteractionCards, INTERACTION_CALLBACK_PREFIX } from './interaction-cards.js'
+import type { CardChat } from './interaction-cards.js'
 
 /**
  * Inline-keyboard callbacks live under this prefix. Telegram limits
@@ -238,6 +241,9 @@ interface TurnRequest {
   source: string
   attachments?: UploadDescriptor[]
   preambleToolCalls?: TurnPreambleToolCall[]
+  /** S1-C: an answer turn started from a question card. */
+  inputMode?: 'typed' | 'voice' | 'answer' | null
+  replyToInteractionId?: string | null
 }
 
 /** What the runner produced, collected for delivery to Telegram. */
@@ -533,6 +539,9 @@ export class TelegramBot {
   private emailApproval: EmailApprovalService | null
   private turnRunner: TurnRunner
   private turnRetry: TurnRetryService | null
+  /** S1-C: question cards (fence and ask_user) as inline keyboards. */
+  private interactionCards!: TelegramInteractionCards
+  private unsubscribeInteractionCards: (() => void) | null = null
   private unregisterTurnRetryNotifier: () => void
   /**
    * Retry prompts we sent, per `turn_error` row id, so the keyboard can be
@@ -576,6 +585,18 @@ export class TelegramBot {
     }
 
     this.bot = new Bot(this.config.botToken)
+    this.interactionCards = new TelegramInteractionCards({
+      api: {
+        sendMessage: (chatId, text, other) => this.bot.api.sendMessage(chatId, text, other as never),
+        editMessageText: (chatId, messageId, text, other) => this.bot.api.editMessageText(chatId, messageId, text, other as never),
+      },
+      db: this.db,
+      getPort: () => getInteractionAnswerPort(),
+      // Synchronous on purpose (review 1, finding 4): it returns only after the
+      // turn runner accepted the turn; a throw reaches the service, which then
+      // answers 502 turn_failed and leaves `resumed` false.
+      startTurn: (chat, input) => { this.startInteractionAnswerTurn(chat, input) },
+    })
     this.setupHandlers()
     this.setupErrorHandler()
   }
@@ -719,6 +740,10 @@ export class TelegramBot {
     // picker step or the final text confirmation.
     this.bot.on('callback_query:data', async (ctx) => {
       const data = ctx.callbackQuery.data
+      if (data.startsWith(INTERACTION_CALLBACK_PREFIX)) {
+        await this.handleInteractionCallback(ctx, data)
+        return
+      }
       if (data.startsWith(TASK_CALLBACK_PREFIX)) {
         await this.handleTaskCallback(ctx, data.slice(TASK_CALLBACK_PREFIX.length))
         return
@@ -905,6 +930,10 @@ export class TelegramBot {
     }
 
     if (!await this.checkAuthorized(ctx)) return
+
+    // S1-C: the next text after "Kommentar hinzufügen" is that question's
+    // comment (10-minute window), not a chat message.
+    if (ctx.chat && await this.interactionCards.claimComment(ctx.chat.id, this.resolveNumericUserId(ctx), text)) return
 
     // Deterministic task routing: a reply to a bot message that belongs to a
     // background task goes straight to that task (resume / follow-up),
@@ -1464,6 +1493,9 @@ export class TelegramBot {
     }
 
     const chatId = ctx.chat!.id
+    // S1-C: cards this turn opens go to this chat, after its reply.
+    this.interactionCards.rememberChat(sessionId, { chatId, isGroup: !isDM })
+    this.interactionCards.beginTurn(sessionId)
 
     try {
       await ctx.replyWithChatAction('typing')
@@ -1535,6 +1567,80 @@ export class TelegramBot {
 
       console.error('Error processing Telegram message:', err)
       await this.safeSendMessage(ctx, '\u26A0\uFE0F Sorry, I encountered an error processing your message. Please try again.')
+    } finally {
+      await this.interactionCards.endTurn(sessionId)
+    }
+  }
+
+  /** S1-C: a tap on a question card button. */
+  private async handleInteractionCallback(ctx: Context, data: string): Promise<void> {
+    const authorized = this.isApprovedTelegramUser(ctx)
+    await this.interactionCards.handleCallback({
+      data,
+      callbackQueryId: ctx.callbackQuery?.id ?? `${Date.now()}`,
+      // The chat of the tapped message itself (review 1, finding 2).
+      chatId: ctx.callbackQuery?.message?.chat.id ?? null,
+      messageId: ctx.callbackQuery?.message?.message_id ?? null,
+      fromUserId: authorized ? this.resolveNumericUserId(ctx) : null,
+      answer: async (text?: string) => {
+        try {
+          await ctx.answerCallbackQuery(text ? { text } : undefined)
+        } catch {
+          // An expired callback query cannot be answered; the card state counts.
+        }
+      },
+    })
+  }
+
+  private isApprovedTelegramUser(ctx: Context): boolean {
+    return this.resolveNumericUserId(ctx) !== null
+  }
+
+  /**
+   * S1-C: the turn an answered card starts (the answer row is already filed
+   * by the interactions service). Its reply goes to the chat of the card; a
+   * follow-up card it opens is sent after that reply.
+   */
+  /**
+   * Start the answer turn of a question card in the chat it was answered in.
+   * Throws when the turn runner does not accept the turn; the delivery of
+   * the reply runs asynchronously afterwards.
+   */
+  private startInteractionAnswerTurn(chat: CardChat, input: InteractionAnswerTurnInput): void {
+    // Same id as resolveUserId() of the linked web user.
+    const agentUserId = String(input.userId)
+    this.interactionCards.beginTurn(input.sessionId)
+    let done: Promise<TurnOutcome>
+    try {
+      done = this.startConsumedTurn({
+        chatId: chat.chatId,
+        agentUserId,
+        userId: input.userId,
+        sessionId: input.sessionId,
+        agentId: input.agentId || this.agentId,
+        text: input.text,
+        source: chat.isGroup ? 'telegram-group' : 'telegram',
+        inputMode: input.inputMode ?? 'answer',
+        replyToInteractionId: input.replyToInteractionId ?? null,
+      })
+    } catch (err) {
+      void this.interactionCards.endTurn(input.sessionId)
+      throw err
+    }
+    void this.deliverInteractionAnswerTurn(chat, input.sessionId, done)
+  }
+
+  private async deliverInteractionAnswerTurn(chat: CardChat, sessionId: string, done: Promise<TurnOutcome>): Promise<void> {
+    try {
+      const outcome = await done
+      if (outcome.text.trim() || outcome.uploads.length > 0) {
+        await this.sendAssistantResponseToTelegram(chat.chatId, outcome.text, outcome.uploads)
+      }
+      if (outcome.error) await this.sendTurnErrorPrompt(chat.chatId, outcome.error)
+    } catch (err) {
+      console.error('[telegram] answer turn failed:', err)
+    } finally {
+      await this.interactionCards.endTurn(sessionId)
     }
   }
 
@@ -1549,8 +1655,18 @@ export class TelegramBot {
    * an older turn by turn id.
    */
   private consumeTurn(input: TurnRequest): Promise<TurnOutcome> {
-    return new Promise<TurnOutcome>((resolve) => {
+    try {
+      return this.startConsumedTurn(input)
+    } catch (err) {
+      return Promise.reject(err)
+    }
+  }
+
+  /** {@link consumeTurn} with a synchronous start: throws when the runner refuses the turn. */
+  private startConsumedTurn(input: TurnRequest): Promise<TurnOutcome> {
       const outcome: TurnOutcome = { text: '', uploads: [], error: null }
+      let resolve!: (value: TurnOutcome) => void
+      const done = new Promise<TurnOutcome>((r) => { resolve = r })
 
       const turn = this.turnRunner.startTurn({
         userId: input.userId,
@@ -1561,6 +1677,8 @@ export class TelegramBot {
         source: input.source,
         attachments: input.attachments,
         preambleToolCalls: input.preambleToolCalls,
+        ...(input.inputMode ? { inputMode: input.inputMode } : {}),
+        ...(input.replyToInteractionId ? { replyToInteractionId: input.replyToInteractionId } : {}),
       })
 
       const detach = this.turnRunner.subscribe(input.agentUserId, (event: TurnEvent) => {
@@ -1588,7 +1706,7 @@ export class TelegramBot {
           resolve(outcome)
         }
       })
-    })
+      return done
   }
 
   private handleTurnChunk(chatId: string | number, chunk: ResponseChunk, outcome: TurnOutcome): void {
@@ -2237,6 +2355,8 @@ export class TelegramBot {
       }
 
       this.running = true
+      this.unsubscribeInteractionCards?.()
+      this.unsubscribeInteractionCards = this.interactionCards.subscribe()
       this.startPolling()
     } catch (err) {
       this.running = false
@@ -2296,6 +2416,8 @@ export class TelegramBot {
     // failed never set `running`, and leaving it registered would let a dead
     // instance answer resolutions for the one that replaced it.
     this.unregisterTurnRetryNotifier()
+    this.unsubscribeInteractionCards?.()
+    this.unsubscribeInteractionCards = null
 
     if (!this.running) return
 

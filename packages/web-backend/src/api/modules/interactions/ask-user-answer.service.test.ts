@@ -129,6 +129,61 @@ describe('S1-B answerById with answers', () => {
     expect(JSON.parse(rows[0]!.metadata)).toMatchObject({ type: 'interaction_answer', replyToInteractionId: card.id })
   })
 
+  it('S1-C telegram review 1: a custom starter (Telegram) that throws leaves resumed=false (502 turn_failed); the same key retried with a working starter resumes once', () => {
+    const card = insertAskUser()
+    const service = makeService()
+    let caught: unknown = null
+    try {
+      service.answerById(1, card.id, {
+        clientRequestId: 'tg:cbq-1', answers: goodAnswers(), surface: 'telegram',
+        startTurn: () => { throw new Error('runner refused') },
+      })
+    } catch (err) { caught = err }
+    expect(caught).toBeInstanceOf(InteractionServiceError)
+    expect(caught).toMatchObject({ status: 502, code: 'turn_failed' })
+    expect(getInteraction(db, card.id)).toMatchObject({ status: 'answered' })
+    expect(getInteraction(db, card.id)!.answer!.resumed).toBe(false)
+    expect(turns).toHaveLength(0)
+    const started: Array<Record<string, unknown>> = []
+    const retry = service.answerById(1, card.id, {
+      clientRequestId: 'tg:cbq-1', answers: goodAnswers(), surface: 'telegram',
+      startTurn: (input) => { started.push(input as unknown as Record<string, unknown>) },
+    })
+    expect(retry).toMatchObject({ resumed: true })
+    expect(started).toHaveLength(1)
+    expect(getInteraction(db, card.id)!.answer!.resumed).toBe(true)
+    expect(turns).toHaveLength(0)
+  })
+
+  it('S1-C telegram review 2: resume retry from the row — the Telegram starter, no default runner, the key from answer.clientRequestId and no answers', () => {
+    const card = insertAskUser()
+    // No getTurnRunner: only the starter Telegram passes with the call.
+    const service = createInteractionsService({ db })
+    expect(() => service.answerById(1, card.id, {
+      clientRequestId: 'tg:cbq-r2', answers: goodAnswers(), surface: 'telegram',
+      startTurn: () => { throw new Error('runner refused') },
+    })).toThrow(expect.objectContaining({ status: 502, code: 'turn_failed' }))
+    const row = getInteraction(db, card.id)!
+    expect(row.answer).toMatchObject({ resumed: false, clientRequestId: 'tg:cbq-r2' })
+    const started: unknown[] = []
+    const retry = service.answerById(1, card.id, {
+      clientRequestId: row.answer!.clientRequestId!, surface: 'telegram',
+      startTurn: (input: unknown) => { started.push(input) },
+    } as never)
+    expect(retry).toMatchObject({ resumed: true, idempotent: true })
+    expect(started).toHaveLength(1)
+    expect(getInteraction(db, card.id)!.answer!.resumed).toBe(true)
+    // Done: the same key with its answers again is idempotent and starts nothing; another key is 409.
+    // (Telegram itself does not call the port once the row says resumed=true.)
+    expect(service.answerById(1, card.id, {
+      clientRequestId: 'tg:cbq-r2', answers: goodAnswers(), surface: 'telegram', startTurn: (input: unknown) => { started.push(input) },
+    })).toMatchObject({ resumed: true, idempotent: true })
+    expect(started).toHaveLength(1)
+    expect(() => service.answerById(1, card.id, {
+      clientRequestId: 'tg:cbq-r3', answers: goodAnswers(), surface: 'telegram', startTurn: (input: unknown) => { started.push(input) },
+    })).toThrow(expect.objectContaining({ status: 409 }))
+  })
+
   it('idempotency: same key and same answers (other key order) is one answer, one turn', () => {
     const card = insertAskUser()
     const service = makeService()

@@ -1856,6 +1856,7 @@ export {
   findInteractionRequest,
   bindInteractionRequest,
 } from './interaction-store.js'
+export { sealInteractionValue, sealedInteraction } from './interaction-seal.js'
 export type {
   InteractionStatus,
   InteractionCloseSource,
@@ -1887,3 +1888,15 @@ export {
   releaseInteractionContextNotes,
 } from './ask-user-tool.js'
 export type { AskUserSettings, AskUserToolDeps, InteractionContextNotesClaim } from './ask-user-tool.js'
+export {
+  registerInteractionAnswerPort,
+  getInteractionAnswerPort,
+  interactionPortErrorOf,
+} from './interaction-answer-port.js'
+export type {
+  InteractionAnswerPort,
+  InteractionAnswerTurnInput,
+  InteractionPortActor,
+  InteractionPortAnswerInput,
+  InteractionPortAnswerResult,
+} from './interaction-answer-port.js'

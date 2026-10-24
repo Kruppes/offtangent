@@ -113,7 +113,9 @@ describe('fork_strand tool', () => {
     expect(started[0]!.source).toBe('telegram')
     const child = db.prepare('SELECT source FROM sessions WHERE id = ?').get(newStrandId) as { source: string }
     expect(child.source).toBe('telegram')
-    expect(isAskUserOfferedFor('main', started[0]!.source, { agents: ['main'] })).toBe(false)
+    // S1-C: Telegram draws the cards as inline keyboards, so the kept source now offers ask_user.
+    expect(isAskUserOfferedFor('main', started[0]!.source, { agents: ['main'] })).toBe(true)
+    expect(isAskUserOfferedFor('main', child.source, { agents: ['main'] })).toBe(true)
   })
 
   it('an empty or unknown parent source is not upgraded to web: child gets unknown, no ask_user (review 3 Auflage 2)', async () => {

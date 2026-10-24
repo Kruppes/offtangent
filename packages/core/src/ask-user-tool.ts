@@ -49,12 +49,12 @@ export const ASK_USER_DEFAULT_AGENTS: readonly string[] = ['main', 'bob']
 
 /**
  * Surfaces that can draw and answer an ask_user card (review B1). Telegram
- * has no inline buttons for it yet (S1-C), so a Telegram turn (and every
- * unknown source) does not get the tool and keeps the fence path. The value
- * is the turn source (`StartTurnInput.source` → runtime channel), never
- * anything the model says.
+ * (DM and group) draws it as an inline keyboard since S1-C. Every unknown
+ * source (task, cron, empty) does not get the tool and keeps the fence path.
+ * The value is the turn source (`StartTurnInput.source` → runtime channel),
+ * never anything the model says.
  */
-export const ASK_USER_SURFACES: readonly string[] = ['web', 'android']
+export const ASK_USER_SURFACES: readonly string[] = ['web', 'android', 'telegram', 'telegram-group']
 
 export interface AskUserSettings {
   /** Persona ids that get the tool. */

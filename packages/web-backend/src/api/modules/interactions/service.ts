@@ -163,6 +163,12 @@ export interface AnswerByIdInput {
   answers?: Record<string, AskUserAnswerInput>
   clientRequestId: string
   surface: InteractionSurface
+  /**
+   * S1-C: run the answer turn on this starter instead of the server's runner.
+   * Telegram passes its own, so the reply lands in the chat the card was
+   * answered in. Same state machine and idempotency either way.
+   */
+  startTurn?: InteractionTurnStarter['startTurn']
 }
 
 interface BlockMessageRow {
@@ -191,6 +197,10 @@ export interface InteractionsService {
 
 export function createInteractionsService(options: InteractionsServiceOptions): InteractionsService {
   const { db } = options
+  // S1-C: the turn starter of the answer currently being applied (set only
+  // for the synchronous duration of one answerById call).
+  let callStarter: InteractionTurnStarter | null = null
+  const turnRunnerOf = (): InteractionTurnStarter | null => callStarter ?? options.getTurnRunner?.() ?? null
 
   function loadMessage(actor: InteractionActor, messageId: number, ownerCheck = true): BlockMessageRow {
     const row = db.prepare(
@@ -346,13 +356,13 @@ export function createInteractionsService(options: InteractionsServiceOptions): 
     surface: InteractionSurface,
     replyToInteractionId?: string,
   ): void {
-    const runner = options.getTurnRunner?.() ?? null
+    const runner = turnRunnerOf()
     if (!runner) throw new Error('No turn runner available')
     runner.startTurn({
       userId,
       sessionId: row.session_id,
       text: label,
-      source: surface === 'android' ? 'android' : 'web',
+      source: surface === 'android' || surface === 'telegram' ? surface : 'web',
       agentId: row.agent_id ?? 'main',
       explicitSessionId: row.session_id,
       inputMode: 'answer',
@@ -438,7 +448,7 @@ export function createInteractionsService(options: InteractionsServiceOptions): 
     }
     if (record.status === 'answered' && record.answer) {
       if (binding !== null) {
-        if (options.getTurnRunner?.() && owesTurn(row, record, userId, clientRequestId)) {
+        if (turnRunnerOf() && owesTurn(row, record, userId, clientRequestId)) {
           return resumeAskUser(userId, row, record, surface, true)
         }
         const view = interactionStateView(record)
@@ -503,7 +513,7 @@ export function createInteractionsService(options: InteractionsServiceOptions): 
       ({ applied: true, resumed, idempotent, value: checked.value, label, interaction: interactionStateView(answered) })
     if (!record.blocking) return result(false, false)
     if (!inserted) return result(false, true)
-    if (!options.getTurnRunner?.()) {
+    if (!turnRunnerOf()) {
       console.warn(`[interactions] No turn runner available; answer to ${record.id} was filed without a turn`)
       return result(false, false)
     }
@@ -551,7 +561,8 @@ export function createInteractionsService(options: InteractionsServiceOptions): 
    */
   function isResumeRetry(row: BlockMessageRow, record: InteractionRecord, userId: number, clientRequestId: string): boolean {
     if (record.status !== 'answered' || !record.answer || record.answer.resumed !== false) return false
-    if (!options.getTurnRunner?.()) return false
+    // The runner of this call counts too: Telegram passes its own starter (S1-C telegram review 2).
+    if (!turnRunnerOf()) return false
     const binding = findInteractionRequest(db, userId, clientRequestId)
     if (!binding || binding.interactionId !== record.id) return false
     return owesTurn(row, record, userId, clientRequestId)
@@ -602,7 +613,7 @@ export function createInteractionsService(options: InteractionsServiceOptions): 
       const sameRequest = binding !== null
         || (record.answer.clientRequestId === clientRequestId && sameValue(record.answer.value, value))
       if (sameRequest) {
-        if (options.getTurnRunner?.() && owesTurn(row, record, userId, clientRequestId)) {
+        if (turnRunnerOf() && owesTurn(row, record, userId, clientRequestId)) {
           return resumeAfterAnswer(userId, row, block, record, surface, true)
         }
         // Review 2, finding A: value and label come from the sealed view, like
@@ -705,7 +716,7 @@ export function createInteractionsService(options: InteractionsServiceOptions): 
     // A non-blocking card (blocking=0) stores and emits its answer, but starts
     // NO turn (review 1, finding 8); feeding it into the next turn's context
     // is S1-B.
-    const runner = options.getTurnRunner?.() ?? null
+    const runner = turnRunnerOf()
     if (!record.blocking) {
       return { applied: true, resumed: false, idempotent: false, value: validated.value, label: validated.label, interaction: interactionStateView(answered) }
     }
@@ -734,7 +745,7 @@ export function createInteractionsService(options: InteractionsServiceOptions): 
     })
   }
 
-  return {
+  const service: InteractionsService = {
     answer(actor, body, surface = 'web'): AnswerInteractionResult {
       const row = loadMessage(actor, body.messageId)
       // Every kind the contract declares is answerable (`multi`, `handover`
@@ -749,6 +760,15 @@ export function createInteractionsService(options: InteractionsServiceOptions): 
     },
 
     answerById(actor, id, input): AnswerInteractionResult {
+      if (input.startTurn) {
+        const previous = callStarter
+        callStarter = { startTurn: input.startTurn }
+        try {
+          return service.answerById(actor, id, { ...input, startTurn: undefined })
+        } finally {
+          callStarter = previous
+        }
+      }
       const record = loadOwnInteraction(actor, id)
       // The card's owner was checked above; the message row may carry no
       // user id (agent rows), so it is not checked a second time.
@@ -797,6 +817,7 @@ export function createInteractionsService(options: InteractionsServiceOptions): 
         .map(sealedInteraction)
     },
   }
+  return service
 }
 
 function sameValue(a: string | string[], b: string | string[]): boolean {

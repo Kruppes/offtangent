@@ -402,9 +402,19 @@ describe('S1-B B3 telemetry source and strand attention', () => {
 // Review 1 Nachzug: surface rule, escaping, two-phase context notes
 // ---------------------------------------------------------------------------
 
-describe('S1-B review: surface rule (Telegram has no card yet)', () => {
-  it('Telegram turn with main -> no ask_user tool and no prompt hint', async () => {
+describe('S1-B review: surface rule (S1-C: Telegram draws the card as inline keyboard)', () => {
+  it('Telegram turn with main -> ask_user tool and prompt hint (S1-C)', async () => {
     const { db, runtime } = setup('main', 'telegram')
+    script.push(res => sse(res, { text: 'nur text' }))
+    await collect(runtime.streamPrompt('hallo', 's-ask'))
+    expect(offeredTools(received[0]!)).toContain('shell')
+    expect(offeredTools(received[0]!)).toContain('ask_user')
+    expect(promptText(received[0]!)).toContain(HINT_HEADING)
+    db.close()
+  })
+
+  it('task turn with main -> no ask_user tool and no prompt hint', async () => {
+    const { db, runtime } = setup('main', 'task')
     script.push(res => sse(res, { text: 'nur text' }))
     await collect(runtime.streamPrompt('hallo', 's-ask'))
     expect(offeredTools(received[0]!)).toContain('shell')
@@ -419,7 +429,7 @@ describe('S1-B review: surface rule (Telegram has no card yet)', () => {
     await collect(runtime.streamPrompt('hallo', 's-ask'))
     expect(offeredTools(received[0]!)).toContain('ask_user')
     expect(promptText(received[0]!)).toContain(HINT_HEADING)
-    runtime.refreshSystemPrompt('telegram', undefined, 'main', 's-ask')
+    runtime.refreshSystemPrompt('task', undefined, 'main', 's-ask')
     script.push(res => sse(res, { text: 'tg' }))
     await collect(runtime.streamPrompt('hallo', 's-ask'))
     expect(offeredTools(received[1]!)).not.toContain('ask_user')
@@ -427,11 +437,13 @@ describe('S1-B review: surface rule (Telegram has no card yet)', () => {
     db.close()
   })
 
-  it('unknown or missing source -> no tool; android -> tool', () => {
+  it('unknown or missing source -> no tool; android and telegram -> tool', () => {
     const on = { agents: ['main'] }
     expect(isAskUserOfferedFor('main', 'web', on)).toBe(true)
     expect(isAskUserOfferedFor('main', 'android', on)).toBe(true)
-    for (const source of ['telegram', 'telegram-group', 'task', 'cron', '', undefined, null]) {
+    expect(isAskUserOfferedFor('main', 'telegram', on)).toBe(true)
+    expect(isAskUserOfferedFor('main', 'telegram-group', on)).toBe(true)
+    for (const source of ['task', 'cron', 'telegram-bot', '', undefined, null]) {
       expect(isAskUserOfferedFor('main', source, on)).toBe(false)
     }
   })
