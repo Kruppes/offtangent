@@ -446,9 +446,16 @@ export {
   KNOWN_ENV_SCAN_TTL_MS,
   REDACTED_HANDLE,
   SECRET_HANDLE_RE,
+  knownIndexStats,
 } from './secret-boundary.js'
 export { isTrivialSecretValue, skipTrivialAutomaticFinding, TRIVIAL_SECRET_WORDS, TRIVIALITY_CHECKED_KINDS } from './secret-triviality.js'
 export type { SealTextOptions, SealTextResult, SealedRef } from './secret-boundary.js'
+// S0-A (UX report 2026-10-23 § 6.3): index allowlist / entropy floor and
+// sealing telemetry.
+export { SECRET_INDEX_ALLOWLIST, indexSkipReason, isAllowlistedTerm, shannonEntropy } from './secret-index-filter.js'
+export type { IndexSkipReason } from './secret-index-filter.js'
+export { sealingStatsSnapshot, resetSealingStats, recordSealing, createSealingScope, runInSealingScope, finishSealingScope } from './secret-sealing-stats.js'
+export type { SealingStatsSnapshot, SealingEntryStat, SealingTurnStat, SealingScope } from './secret-sealing-stats.js'
 // Secret values that only exist in files (`<DATA_DIR>/secrets/*.env`) and the
 // sealing of password-manager CLI output (maintainer request, privacy plan 2026-09-26).
 export { secretFileDirs, secretFileEntries, secretFileValues, secretFilesSignature, invalidateSecretFilesSignature, SECRET_FILES_SIGNATURE_TTL_MS, SECRET_FILE_DIRS_ENV } from './secret-files.js'
@@ -464,6 +471,8 @@ export {
   VAULT_EXPORT_NOTICE,
   VAULT_UNPARSEABLE_NOTICE,
   VAULT_OPAQUE_HANDLE,
+  VAULT_SINGLE_PLAIN_MAX,
+  vaultWholeOutputNotice,
 } from './secret-vault-cli.js'
 export type { VaultCliMode, VaultCliPlan, SealVaultCliOptions } from './secret-vault-cli.js'
 export {

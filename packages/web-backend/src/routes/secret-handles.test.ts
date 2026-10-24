@@ -78,6 +78,31 @@ async function createHandle(body: Record<string, unknown>): Promise<{ status: nu
   return { status: res.status, body: (await res.json()) as Record<string, unknown> }
 }
 
+describe('GET /api/secrets/handles/stats (S0-A / A2)', () => {
+  it('requires admin', async () => {
+    const nonAdmin = await fetch(`${baseUrl}/api/secrets/handles/stats`, { headers: authHeaders(userToken) })
+    expect(nonAdmin.status).toBe(403)
+  })
+
+  it('returns counters keyed by handle, never a value', async () => {
+    const value = ['Stats', 'Probe', 'Value'].join('-') + '-77'
+    const created = await createHandle({ value, kind: 'password', slug: 'stats-probe' })
+    expect(created.status).toBe(201)
+    const core = await import('@axiom/core')
+    core.invalidateKnownValues()
+    core.resetSealingStats()
+    core.redactKnown(`x ${value} y`)
+    const res = await fetch(`${baseUrl}/api/secrets/handles/stats`, { headers: authHeaders(adminToken) })
+    expect(res.status).toBe(200)
+    const text = await res.text()
+    expect(text).not.toContain(value)
+    const body = JSON.parse(text) as { sealing: { total: number; entries: Array<{ entry: string; count: number }> }; index: { entries: number } }
+    expect(body.sealing.total).toBe(1)
+    expect(body.sealing.entries).toEqual([{ entry: secretHandle('stats-probe'), count: 1 }])
+    expect(body.index.entries).toBeGreaterThanOrEqual(1)
+  })
+})
+
 describe('GET /api/secrets/handles', () => {
   it('requires authentication and admin', async () => {
     const anon = await fetch(`${baseUrl}/api/secrets/handles`)

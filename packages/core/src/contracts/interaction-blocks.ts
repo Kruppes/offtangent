@@ -107,7 +107,9 @@ export type InteractionSegment =
   | { type: 'text'; text: string }
   | { type: 'block'; block: InteractionBlock; raw: string }
 
-const FENCE_LANGUAGE = 'offtangent'
+/** Info string of the fenced interactive block (```offtangent). */
+export const INTERACTION_FENCE_LANGUAGE = 'offtangent'
+const FENCE_LANGUAGE = INTERACTION_FENCE_LANGUAGE
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value)

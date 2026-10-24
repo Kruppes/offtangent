@@ -412,7 +412,7 @@ Every numeric heuristic in the backend is a configuration value (Offtangent SPEC
 | `heuristics.taskGuard.maxToolCalls`      | `number` | `300`   | hard cap on tool calls per background task run; the task fails with a guard message when it is hit; `0` disables |
 | `heuristics.taskGuard.repeatedToolCalls` | `number` | `5`     | consecutive identical tool calls (same name **and** byte-identical arguments) that count as stuck; `0` disables  |
 | `heuristics.taskGuard.maxInputTokens`    | `number` | `30000000` | ceiling on a task's summed input volume (`input + cache read + cache write`); `0` disables                    |
-| `heuristics.taskWrapUp.budgetFraction`   | `number` | `0.8`   | fraction of `max_duration_minutes` after which a running task gets one `<time_budget_warning>` steering message; `0` (or `>= 1`) disables the signal, the hard abort at 100 % stays |
+| `heuristics.taskWrapUp.budgetFraction`   | `number` | `0.8`   | fraction of the time budget, the tool-call cap and the input-token budget after which a running task gets one `<time_budget_warning>` steering message (the first budget to cross wins); `0` (or `>= 1`) disables the signal, the hard abort at 100 % stays |
 | `heuristics.taskWrapUp.minLeadSeconds`   | `number` | `60`    | minimum time the warning must leave before the hard deadline; below it the signal is skipped as useless |
 
 | `heuristics.taskDelivery.sweepIntervalSeconds` | `number` | `90`  | how often undelivered task injections are retried; `0` disables the sweep                       |

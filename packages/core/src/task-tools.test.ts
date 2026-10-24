@@ -743,6 +743,27 @@ describe('createTaskTool', () => {
       expect(JSON.stringify(deniedPersona.content)).toContain('not manageable')
     })
 
+    // S0-A / A4: the orchestrator turn reacting to a finished task inherited
+    // that task's context; continuation_of on a persona task it had started
+    // answered "not manageable from here" (24.10.). Same caller rule as get_task.
+    it('continues a delegated persona task when a finished task context leaked into the turn', async () => {
+      const { runWithTaskExecutionContext } = await import('./task-execution-context.js')
+      const store = runner.getStore()
+      const finished = store.create({ name: 'Finished run', prompt: 'p', triggerType: 'agent' })
+      store.update(finished.id, { sessionId: 'strand-1', status: 'completed', resultStatus: 'completed' })
+      const personaTask = store.create({ name: 'Persona run', prompt: 'p', triggerType: 'agent', agentId: 'builder', delegatedBy: 'main' })
+      store.update(personaTask.id, { sessionId: 'strand-1', status: 'failed', resultStatus: 'failed', handoff: 'Open: step four' })
+
+      const result = await runWithTaskExecutionContext(
+        { provider: null, taskId: finished.id, userId: 1, agentId: null },
+        () => tool().execute('call-cont-leak', { prompt: 'finish it', name: 'Successor', continuation_of: personaTask.id }),
+      )
+
+      expect(JSON.stringify(result.content)).not.toContain('not manageable')
+      expect((result.details as { continuationOf: string }).continuationOf).toBe(personaTask.id)
+      runner.abortTask((result.details as { taskId: string }).taskId, 'cleanup')
+    })
+
     it('fails fast on an unknown predecessor instead of starting a context-less task', async () => {
       const before = runner.getStore().list().length
       const result = await tool().execute('call-cont-3', { prompt: 'work', name: 'Orphan', continuation_of: 'does-not-exist' })

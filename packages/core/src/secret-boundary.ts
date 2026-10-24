@@ -17,15 +17,18 @@
  */
 
 import type { AgentTool } from '@earendil-works/pi-agent-core'
+import { createHmac, randomBytes } from 'node:crypto'
 import fs from 'node:fs'
 import path from 'node:path'
 import { SECRET_HANDLE_MIN_VALUE_LENGTH } from './contracts/secrets.js'
 import { getConfigDir } from './config.js'
 import { detectSecrets, type SecretTier } from './secret-detect.js'
 import { invalidateSecretFilesSignature, secretFileEntries, secretFilesSignature, type SecretFileEntry } from './secret-files.js'
-import { knownSecretValues, resolveSecret, sealSecret } from './secret-store.js'
+import { automaticSecretValues, knownSecretValues, resolveSecret, sealSecret } from './secret-store.js'
 import { skipTrivialAutomaticFinding } from './secret-triviality.js'
 import { commandInvokesVaultCli, sealVaultCliOutput } from './secret-vault-cli.js'
+import { indexSkipReason, type IndexSkipReason } from './secret-index-filter.js'
+import { recordSealing } from './secret-sealing-stats.js'
 import { loadSecretsDecrypted } from './secrets-config.js'
 import { loadProvidersDecrypted } from './provider-config.js'
 
@@ -88,6 +91,13 @@ interface KnownIndex {
   signature: string
   /** value → replacement text (handle or REDACTED_HANDLE) */
   replacements: Map<string, string>
+  /**
+   * value → telemetry key (A2): the handle text, or `redacted:<source>:<sha8>`
+   * for an opaque value. Never the value itself.
+   */
+  entryKeys: Map<string, string>
+  /** Values kept out of the global index, by reason (A1), for the stats view. */
+  skipped: Record<IndexSkipReason, number>
   /** Combined alternation over all known values, longest first. */
   regex: RegExp | null
 }
@@ -230,22 +240,57 @@ function nonSecretEnvKeys(): Set<string> {
   }
 }
 
+/**
+ * S0-A / A2 review fix: per-process random salt for the statistics keys of
+ * opaque values. An unsalted SHA-256 prefix of a weak value (a short PIN, a
+ * dictionary password) could be confirmed offline from a copied log line or
+ * admin snapshot; an HMAC under a key that never leaves this process cannot.
+ * The keys stay stable for the process lifetime (counts add up) and change on
+ * every restart, which is fine for counters that reset on restart anyway.
+ */
+const STATS_KEY_SALT = randomBytes(32)
+
+function opaqueEntryKey(source: string, value: string): string {
+  return `redacted:${source}:${createHmac('sha256', STATS_KEY_SALT).update(value).digest('hex').slice(0, 8)}`
+}
+
 function buildIndex(): KnownIndex {
   const replacements = new Map<string, string>()
+  const entryKeys = new Map<string, string>()
+  const skipped: Record<IndexSkipReason, number> = { 'too-short': 0, allowlisted: 0, 'low-entropy': 0 }
+
+  // A1 (S0-A): the minimum length alone let project words, protocol terms and
+  // low-entropy runs into the global index. `indexSkipReason` adds the
+  // allowlist and the entropy floor; resolving through a handle is unaffected.
+  // The entropy floor only applies to handle values of automatic origin (a
+  // tool output, the vault CLI path); an explicitly filed value and a
+  // configured secret stay redacted however weak they are.
+  const automatic = automaticSecretValues()
+  const admit = (value: string, minLength: number, entropyFloor = false): boolean => {
+    const reason = RESERVED_OUTPUT_VALUES.has(value) ? 'allowlisted' : indexSkipReason(value, minLength, { entropyFloor })
+    if (!reason) return true
+    skipped[reason]++
+    return false
+  }
 
   // 1. Sealed handles — these have a slug, so the text keeps its meaning.
   for (const [value, slug] of knownSecretValues()) {
-    if (value.length < MIN_HANDLE_VALUE_LENGTH || RESERVED_OUTPUT_VALUES.has(value)) continue
-    replacements.set(value, secretHandle(slug))
+    if (!admit(value, MIN_HANDLE_VALUE_LENGTH, automatic.has(value))) continue
+    const handle = secretHandle(slug)
+    replacements.set(value, handle)
+    entryKeys.set(value, handle)
   }
 
+  let opaqueSource = 'env'
   const addOpaque = (value: string | undefined): void => {
-    if (!value || value.length < MIN_ENV_VALUE_LENGTH || RESERVED_OUTPUT_VALUES.has(value)) return
-    if (replacements.has(value)) return
+    if (!value || replacements.has(value)) return
+    if (!admit(value, MIN_ENV_VALUE_LENGTH)) return
     replacements.set(value, REDACTED_HANDLE)
+    entryKeys.set(value, opaqueEntryKey(opaqueSource, value))
   }
 
   // 2. secrets.json › env (the values injected into process.env at startup).
+  opaqueSource = 'secrets-json'
   try {
     for (const value of Object.values(loadSecretsDecrypted())) addOpaque(value)
   } catch {
@@ -253,9 +298,11 @@ function buildIndex(): KnownIndex {
   }
 
   // 3. Provider API keys / OAuth tokens.
+  opaqueSource = 'provider'
   for (const value of providerSecretValues()) addOpaque(value)
 
   // 4. Process env vars whose NAME looks like a credential (D4).
+  opaqueSource = 'env'
   for (const [name, value] of Object.entries(process.env)) {
     if (!SECRET_ENV_NAME_RE.test(name)) continue
     addOpaque(value)
@@ -272,6 +319,7 @@ function buildIndex(): KnownIndex {
   // is known from any other source (handle, secrets.json env, provider key,
   // credential env var, a non-allowlisted line of any file). That is why the
   // allowlisted lines are judged LAST. No key-name heuristic.
+  opaqueSource = 'secret-file'
   try {
     const entries = secretFileEntries({ minLength: MIN_ENV_VALUE_LENGTH })
     const allowed = nonSecretEnvKeys()
@@ -293,7 +341,7 @@ function buildIndex(): KnownIndex {
     ? new RegExp(values.map(escapeRegExp).join('|'), 'g')
     : null
 
-  return { signature: sourceSignature(), replacements, regex }
+  return { signature: sourceSignature(), replacements, entryKeys, skipped, regex }
 }
 
 function getIndex(): KnownIndex {
@@ -425,7 +473,21 @@ export function redactKnown(text: string): string {
 function replaceKnown(text: string, index: KnownIndex): string {
   if (!text || !index.regex) return text
   index.regex.lastIndex = 0
-  return text.replace(index.regex, match => index.replacements.get(match) ?? REDACTED_HANDLE)
+  // Only the matched value is replaced, never the surrounding text (A1); each
+  // replacement is counted per index entry (A2).
+  return text.replace(index.regex, match => {
+    recordSealing(index.entryKeys.get(match) ?? 'redacted:unknown')
+    return index.replacements.get(match) ?? REDACTED_HANDLE
+  })
+}
+
+/**
+ * Size of the known-value index and how many values the A1 filters kept out
+ * (allowlist, entropy floor, minimum length). Counts only, no values.
+ */
+export function knownIndexStats(): { entries: number; skipped: Record<IndexSkipReason, number> } {
+  const index = getIndex()
+  return { entries: index.replacements.size, skipped: { ...index.skipped } }
 }
 
 /**
@@ -476,6 +538,7 @@ export function sealText(text: string, options: SealTextOptions): SealTextResult
       console.error(`[secret-boundary] Could not seal a ${span.kind} (${options.source}), redacting instead:`, err)
     }
     out += text.slice(cursor, span.start) + replacement
+    recordSealing(slug ? `detect:${span.kind}` : `detect:${span.kind}:failed`)
     cursor = span.end
     if (slug && !seen.has(slug)) {
       seen.add(slug)

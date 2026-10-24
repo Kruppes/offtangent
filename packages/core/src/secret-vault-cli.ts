@@ -35,6 +35,7 @@
  * plaintext like any other handle.
  */
 
+import { HARNESS_PLACEHOLDER_TEXTS } from './secret-index-filter.js'
 import { listSecrets, renameSecret, sealSecret } from './secret-store.js'
 
 /** `kind` every value sealed by this module is filed under. */
@@ -60,6 +61,25 @@ export const VAULT_UNPARSEABLE_NOTICE =
   '[secret boundary] This command invoked a password-manager CLI and its output was not machine-readable '
   + '(transformed or partially JSON). Every line that could carry a secret was redacted. '
   + 'Ask for one field directly (for example `get password <id>`) to receive a usable handle.'
+
+/**
+ * Longest single-line output that is sealed as one handle without a notice.
+ * Session keys and generated passwords stay well below; anything longer is
+ * explained to the agent.
+ */
+export const VAULT_SINGLE_PLAIN_MAX = 256
+
+/**
+ * Notice appended when a `single`-mode output was sealed as a whole although
+ * it does not look like one bare credential: reason and size, never content.
+ */
+export function vaultWholeOutputNotice(reason: string, sealed: string): string {
+  const lines = sealed.split(/\r?\n/).length
+  return '[secret boundary] The complete output of this command '
+    + `(${sealed.length} characters, ${lines} line${lines === 1 ? '' : 's'}) was sealed as one handle, `
+    + `because the command invokes a password-manager CLI (${reason}). `
+    + 'If you only meant to search or read files, run the search without that command in the same shell call.'
+}
 
 function handleText(slug: string): string {
   return `{{secret:${slug}}}`
@@ -204,9 +224,78 @@ function textScanInvocations(command: string): string[][] {
   return found
 }
 
+/**
+ * Pure search tools: a `bw <subcommand>` inside their arguments is a search
+ * PATTERN, never a command they could run (S0-A / A1, UX report 2026-10-23
+ * § 6.3). The text scan used to treat `grep -rn "bw unlock --raw" src/` as a
+ * vault invocation in `single` mode, and the boundary sealed the complete grep
+ * output as ONE `{{secret:…}}` handle: a single sealed placeholder
+ * replaced the entire search result, including the source lines the
+ * agent had asked to see. That happened
+ * three times in one run, so
+ * the agent could not read its own code. Tools that can execute another
+ * program from an argument (`find -exec`, `xargs`, `rg --pre`, `git grep -O`)
+ * are deliberately not on this list.
+ */
+const SEARCH_ONLY_COMMANDS = new Set(['grep', 'egrep', 'fgrep', 'zgrep', 'rg', 'ag', 'ack'])
+
+/** Flags that make an otherwise pure search tool run a program. */
+const SEARCH_EXEC_FLAG_RE = /(?:^|\s)(?:--pre(?:=|\s|$)|--pre-glob)/
+
+/**
+ * True when every segment of `command` that mentions `bw` is a pure search
+ * tool. A real invocation in another segment (`grep x f; bw unlock --raw`,
+ * `bw get password x | grep .`, `grep . <(bw get password x)`) is still found
+ * by the token walk, because those forms split into their own segment.
+ */
+function onlySearchPatternMentions(command: string): boolean {
+  const mentioning = commandSegmentsQuoted(command).filter(segment => /(?:^|[^A-Za-z0-9_./-])bw\s|@bitwarden\/cli/.test(segment))
+  if (mentioning.length === 0) return false
+  return mentioning.every(segment => {
+    const tokens = tokenize(segment)
+    let index = 0
+    while (index < tokens.length && /^[A-Za-z_][A-Za-z0-9_]*=/.test(stripQuotes(tokens[index]!))) index++
+    const name = basename(tokens[index] ?? '')
+    return SEARCH_ONLY_COMMANDS.has(name) && !SEARCH_EXEC_FLAG_RE.test(segment)
+  })
+}
+
+/**
+ * Segments split on shell terminators OUTSIDE quotes, so a quoted search
+ * pattern stays part of its grep. Unbalanced quotes fall back to the
+ * quote-blind split, which can only produce more segments (safe direction).
+ */
+function commandSegmentsQuoted(command: string): string[] {
+  const segments: string[] = []
+  let current = ''
+  let quote: '"' | "'" | null = null
+  for (let i = 0; i < command.length; i++) {
+    const char = command[i]!
+    if (quote) {
+      if (char === quote) quote = null
+      // `$(` and backticks inside double quotes still execute.
+      if (quote === '"' && (char === '`' || (char === '$' && command[i + 1] === '('))) return commandSegments(command)
+      current += char
+      continue
+    }
+    if (char === '"' || char === "'") { quote = char; current += char; continue }
+    if (/[;\n\r|&()`{}]/.test(char) || (char === '$' && command[i + 1] === '(')) {
+      if (current.trim()) segments.push(current.trim())
+      current = ''
+      continue
+    }
+    current += char
+  }
+  if (quote) return commandSegments(command)
+  if (current.trim()) segments.push(current.trim())
+  return segments
+}
+
 /** Every invocation, from the token walk AND from the text scan. */
 function allVaultInvocations(command: string): string[][] {
-  return [...vaultInvocations(command), ...textScanInvocations(command)]
+  const direct = vaultInvocations(command)
+  if (direct.length === 0 && onlySearchPatternMentions(command)) return []
+  return [...direct, ...textScanInvocations(command)]
 }
 
 /** True when the command runs the vault CLI somewhere. */
@@ -568,7 +657,14 @@ export function sealVaultCliOutput(text: string, command: string, options: SealV
   if (plan.mode === 'single') {
     const trimmed = text.trim()
     if (!trimmed) return text
-    return seal(trimmed, vaultSlug(plan.slugHint))
+    // The tool's own placeholder for an empty result is not CLI output.
+    if (HARNESS_PLACEHOLDER_TEXTS.includes(trimmed)) return text
+    const handle = seal(trimmed, vaultSlug(plan.slugHint))
+    // A bare credential is one short line. When a whole multi-line or long
+    // output goes behind one handle, the agent learns why and how much it
+    // lost instead of seeing an unexplained placeholder (S0-A / A1).
+    if (!/[\r\n]/.test(trimmed) && trimmed.length <= VAULT_SINGLE_PLAIN_MAX) return handle
+    return `${handle}\n${vaultWholeOutputNotice(plan.reason, trimmed)}`
   }
 
   const { chunks, jsonCount } = sealJsonChunks(text, seal)

@@ -36,15 +36,48 @@ const DEFAULT_EVENT_LIMIT = 15
 const MAX_EVENT_LIMIT = 50
 const INSPECT_OUTPUT_MAX_CHARS = 9000
 
-function resolveCaller(options: TaskControlToolsOptions): TaskControlCaller {
+/** Identity fields the caller resolution reads; shared with task-tools.ts. */
+export type TaskCallerOptions = Pick<TaskControlToolsOptions, 'taskRuntime' | 'getCurrentUserId' | 'getCurrentAgentId'>
+
+/**
+ * The caller identity for every task-management check (get/steer/cancel here,
+ * resume_task and create_task's continuation_of in task-tools.ts), so all of
+ * them apply the same stale-context rule (S0-A / A4).
+ */
+export function resolveTaskControlCaller(options: TaskCallerOptions): TaskControlCaller {
+  return resolveCaller(options)
+}
+
+function resolveCaller(options: TaskCallerOptions): TaskControlCaller {
   const ctx = getCurrentTaskExecutionContext()
-  if (ctx?.taskId) {
+  if (ctx?.taskId && !isStaleTaskContext(options, ctx.taskId)) {
     return { kind: 'task', taskId: ctx.taskId, userId: ctx.userId ?? null, agentId: ctx.agentId ?? null }
   }
   return {
     kind: 'strand',
     userId: options.getCurrentUserId?.() ?? null,
     agentId: options.getCurrentAgentId?.() ?? null,
+  }
+}
+
+/**
+ * S0-A / A4: a task context whose task has already ended, seen by the STRAND
+ * tool set (the only one wired with `getCurrentUserId`), is a leaked context:
+ * the turn reacting to the task's completion ran inside the task's async call
+ * tree. The task runner now fires its completion callbacks outside the
+ * context (`runOutsideTaskExecutionContext`); this is the second line, so the
+ * orchestrator is never mistaken for a finished task and keeps managing the
+ * tasks it started (UX report 2026-10-23 § 6.5). A running task's own context
+ * is never overridden, and the background tool set has no strand identity to
+ * fall back to.
+ */
+function isStaleTaskContext(options: TaskCallerOptions, taskId: string): boolean {
+  if (!options.getCurrentUserId || options.getCurrentUserId() == null) return false
+  try {
+    const own = options.taskRuntime.getById(taskId)
+    return !!own && !isActiveTaskStatus(own.status)
+  } catch {
+    return false
   }
 }
 

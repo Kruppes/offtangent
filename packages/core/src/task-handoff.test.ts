@@ -7,6 +7,7 @@ import {
   MAX_HANDOFF_CHARS,
 } from './task-handoff.js'
 import type { Task } from './task-store.js'
+import { ABORT_HANDOFF_HEAD } from './task-budget.js'
 
 function makeTask(overrides: Partial<Task> = {}): Task {
   return {
@@ -77,11 +78,13 @@ describe('buildTaskHandoff', () => {
   it('records the reason, the run stats and the agent\'s own handoff section', () => {
     const handoff = buildTaskHandoff({
       task: makeTask({ resultSummary: 'Did half of it.\n\nHANDOFF: finish the migration in task-store.ts' }),
-      reason: 'timeout',
+      reason: 'wrap_up',
       durationMinutes: 30,
     })
-    expect(handoff).toContain('Task: Port the runner (task-1)')
-    expect(handoff).toContain('hard max-duration abort')
+    // S0-A third review: only the task id, never the free-text name.
+    expect(handoff).toContain('Task: task-1')
+    expect(handoff).not.toContain('Port the runner')
+    expect(handoff).toContain('wrap-up signal was sent')
     expect(handoff).toContain('Ran: 30 min of 30 min budget, 17 tool calls')
     expect(handoff).toContain('HANDOFF: finish the migration in task-store.ts')
     // The prose before the section is not the handoff.
@@ -97,11 +100,32 @@ describe('buildTaskHandoff', () => {
     expect(handoff).toContain('Everything failed at the build step.')
   })
 
-  it('handles a run that produced nothing', () => {
+  it('handles a run that produced nothing, naming only the error class', () => {
     const handoff = buildTaskHandoff({ task: makeTask(), reason: 'progress_guard', errorMessage: 'tool call cap 300 reached' })
     expect(handoff).toContain('progress guard tripped')
-    expect(handoff).toContain('Error: tool call cap 300 reached')
-    expect(handoff).toContain('No result text was produced')
+    expect(handoff).toContain('Error class: tool_call_budget')
+    expect(handoff).not.toContain('cap 300 reached')
+    expect(handoff).toContain('no agent-written state was recorded')
+  })
+
+  it('takes no runner free text when the runner ended the run (S0-A third review)', () => {
+    const handoff = buildTaskHandoff({
+      task: makeTask({ resultSummary: 'Killed by Zq9 reason\nHANDOFF: Zq9 copied text' }),
+      reason: 'timeout',
+      errorMessage: 'network error on https://x.example/?token=Zq9',
+      durationMinutes: 30,
+    })
+    expect(handoff).toContain('hard max-duration abort')
+    expect(handoff).toContain('Error class: provider_error')
+    expect(handoff).not.toContain('Zq9')
+  })
+
+  it('keeps the runner-built abort HANDOFF of a runner-ended run', () => {
+    const handoff = buildTaskHandoff({
+      task: makeTask({ resultSummary: `${ABORT_HANDOFF_HEAD} timeout\n\nHANDOFF:\nFiles written in this run:\n- none recorded` }),
+      reason: 'timeout',
+    })
+    expect(handoff).toContain('HANDOFF:\nFiles written in this run:')
   })
 
   it('caps the stored record', () => {
@@ -118,7 +142,7 @@ describe('formatContinuationContext', () => {
   it('marks the predecessor state as foreign and includes the handoff', () => {
     const block = formatContinuationContext(makeTask({ handoff: 'Open: P3 test missing' }))
     expect(block).toContain('<continuation_of task_id="task-1"')
-    expect(block).toContain('name="Port the runner"')
+    expect(block).not.toContain('Port the runner')
     expect(block).toContain('status="failed"')
     expect(block).toContain('Open: P3 test missing')
     expect(block).toContain('</continuation_of>')
@@ -141,8 +165,10 @@ describe('formatContinuationContext', () => {
     expect(block).toContain('</continuation_of>')
   })
 
-  it('keeps the attribute safe when the name contains quotes or newlines', () => {
-    const block = formatContinuationContext(makeTask({ name: 'He said "hi"\nand left' }))
-    expect(block).toContain(`name="He said 'hi' and left"`)
+  it('never carries the free-text task name (S0-A third review)', () => {
+    const block = formatContinuationContext(makeTask({ name: 'He said "hi"\nand left Zq9' }))
+    expect(block).not.toContain('name=')
+    expect(block).not.toContain('Zq9')
+    expect(block).toContain('<continuation_of task_id="task-1" status="failed">')
   })
 })

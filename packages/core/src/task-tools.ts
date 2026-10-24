@@ -12,6 +12,7 @@ import type { DelegationContextSelection } from './delegation-context.js'
 import { getCurrentTaskExecutionContext } from './task-execution-context.js'
 import { getManageableTask } from './task-control.js'
 import type { TaskControlCaller } from './task-control.js'
+import { resolveTaskControlCaller } from './task-control-tools.js'
 import { checkAutomaticModelFor } from './data-policy.js'
 import {
   TASK_POLICY_DIFFICULTIES,
@@ -143,10 +144,7 @@ export function createResumeTaskTool(options: TaskToolsOptions): AgentTool {
       try {
         // The same owner/persona/descendant guard as steer_task and cancel_task.
         // Fail closed without a DB, and do not disclose whether a foreign id exists.
-        const ctx = getCurrentTaskExecutionContext()
-        const caller: TaskControlCaller = ctx?.taskId
-          ? { kind: 'task', taskId: ctx.taskId, userId: ctx.userId ?? null, agentId: ctx.agentId ?? null }
-          : { kind: 'strand', userId: options.getCurrentUserId?.() ?? null, agentId: options.getCurrentAgentId?.() ?? null }
+        const caller: TaskControlCaller = resolveTaskControlCaller(options)
         const task = options.db
           ? getManageableTask(options.db, options.taskRuntime, caller, task_id)
           : null
@@ -494,10 +492,8 @@ export function createTaskTool(options: TaskToolsOptions): AgentTool {
           // A continuation contains the predecessor's prompt and result. Apply
           // the same user/persona/descendant boundary as get_task, including
           // identical errors for unknown and inaccessible ids.
-          const ctx = getCurrentTaskExecutionContext()
-          const caller: TaskControlCaller = ctx?.taskId
-            ? { kind: 'task', taskId: ctx.taskId, userId: ctx.userId ?? null, agentId: ctx.agentId ?? null }
-            : { kind: 'strand', userId: options.getCurrentUserId?.() ?? null, agentId: options.getCurrentAgentId?.() ?? null }
+          // Same caller rule as get_task, incl. the stale-context fallback (S0-A / A4).
+          const caller: TaskControlCaller = resolveTaskControlCaller(options)
           const predecessor = options.db
             ? getManageableTask(options.db, options.taskRuntime, caller, predecessorId)
             : null

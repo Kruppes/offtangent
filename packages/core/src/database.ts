@@ -625,6 +625,12 @@ export function initDatabase(dbPath?: string): Database {
     db.exec('ALTER TABLE tasks ADD COLUMN worker_profile TEXT DEFAULT NULL')
   }
 
+  // Migration (S0-A / A3 review): the single budget warning of a run survives
+  // pause/resume. NULL = no warning sent. Also done in initTasksTable.
+  if (!taskColsForCache.find(c => c.name === 'budget_warned_at')) {
+    db.exec('ALTER TABLE tasks ADD COLUMN budget_warned_at TEXT DEFAULT NULL')
+  }
+
   // Migration (W5/P3): bookkeeping for outcomes that never reach a strand
   // (cronjob results). Existing rows are backfilled as "already announced",
   // so the deploy that adds the column does not replay a day of cronjobs

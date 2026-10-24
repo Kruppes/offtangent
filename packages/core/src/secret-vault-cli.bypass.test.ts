@@ -55,10 +55,12 @@ describe('F4: bypasses of the vault-CLI detection', () => {
     })
   }
 
-  // Accepted, documented false positive (triage F4): the text scan cannot tell
-  // a grep PATTERN from a command. Conservative direction — the output is
-  // sealed, nothing is lost but readability of that one command's output.
-  it('fires on a grep whose pattern quotes the CLI (accepted false positive)', () => {
-    expect(commandInvokesVaultCli('grep -r "bw get password" docs/')).toBe(true)
+  // Was an accepted false positive (triage F4): the text scan could not tell a
+  // grep PATTERN from a command, and "nothing is lost but readability" turned
+  // out wrong — whole grep outputs went behind one handle (UX report
+  // 2026-10-23 § 6.3). S0-A / A1: a mention that only appears in pure search
+  // tools is a pattern. The bypass forms above still fire.
+  it('does not fire on a grep whose pattern quotes the CLI (S0-A)', () => {
+    expect(commandInvokesVaultCli('grep -r "bw get password" docs/')).toBe(false)
   })
 })

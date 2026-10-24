@@ -117,10 +117,34 @@ each one has a concrete reason.
   It does not evaluate the shell: `B=bw; $B get password x`, a wrapper script
   `/data/bin/get-pw.sh` that calls `bw` internally, or a command assembled from
   variables are not recognised as vault invocations, and their output is only
-  covered by the ordinary structural detection. Conversely the text scan is
-  conservative: `grep -r "bw get password" docs/` fires, because a quoted
-  pattern is indistinguishable from a quoted command. The output of that one
-  command is then sealed — noise in the safe direction.
+  covered by the ordinary structural detection. A mention of the CLI that only
+  appears inside pure search tools (`grep`, `egrep`, `fgrep`, `zgrep`, `rg`,
+  `ag`, `ack`) is treated as a search pattern, not an invocation (S0-A, since
+  2026-10-24): `grep -r "bw get password" docs/` is no longer sealed. Before,
+  the whole grep output went behind one `vw-session` handle. The bypass forms
+  still fire: `sh -c`, a real call in another segment (`grep x f; bw unlock`),
+  a pipe from the CLI into grep, `$(…)` inside the pattern, process
+  substitution, `rg --pre`, `find -exec` and `xargs`.
+- **Whole-output sealing is explained.** When a `single`-mode command
+  (`get password`, `unlock --raw`, …) returns more than one line or more than
+  256 characters, the handle is followed by a notice with the reason and the
+  size of what was sealed, never the content. The tool's own empty-result
+  placeholders are never sealed.
+- **Project words and low-entropy values are not replaced globally.** The
+  known-value index skips the allowlist in `secret-index-filter.ts` (fence
+  language `offtangent`, interaction-block kinds, board kinds, package names,
+  host names from `PUBLIC_BASE_URL`/`APP_URL`) and values with fewer than three
+  distinct characters or below 1.5 bits of entropy per character. Such a value
+  stays stored and resolvable through its handle; it is only no longer scrubbed
+  from every text. Replacements are counted per index entry and per turn
+  (log line `[secret-boundary] sealing per turn …`, admin route
+  `GET /api/secrets/handles/stats`).
+  The statistics are held in memory only, and a value that has no handle slug
+  is listed under a key `redacted:<source>:<8 hex>` built from an HMAC-SHA-256
+  under a random salt drawn once per process; the salt is never written to
+  disk. After a restart the counters start at zero and the same value gets a
+  new key, so keys cannot be compared across restarts and must not be stored
+  as a reference.
 - **Values shorter than six characters are not replaced globally.** The form
   refuses to store them (`value_too_short`), and a shorter value that is
   already in the store is not searched for in tool output or messages: a

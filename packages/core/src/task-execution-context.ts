@@ -67,6 +67,23 @@ export function runWithTaskExecutionContext<T>(
   return storage.run(ctx, fn)
 }
 
+/**
+ * Run `fn` with NO task execution context, even when called from inside a
+ * task's async call tree (S0-A / A4).
+ *
+ * The task runner reports a finished task from wherever the end was decided —
+ * a guard trip or an abort fires inside the task's own tool-event handler,
+ * i.e. inside `runWithTaskExecutionContext`. Without this, the strand turn
+ * that the completion callback enqueues inherited the finished task as its
+ * "current task": `get_task` / `cancel_task` then treated the orchestrator as
+ * that task (only its sub-tasks manageable, itself never), answered "not
+ * manageable from here" for tasks the orchestrator had started, and a
+ * `create_task` from that turn recorded the dead task as its parent.
+ */
+export function runOutsideTaskExecutionContext<T>(fn: () => T): T {
+  return storage.exit(fn)
+}
+
 /** The full context of the task currently executing, or undefined at top level. */
 export function getCurrentTaskExecutionContext(): TaskExecutionContext | undefined {
   return storage.getStore()

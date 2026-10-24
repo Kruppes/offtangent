@@ -26,6 +26,7 @@ import {
   isSecretHandleKind,
   isSecretHandleSlug,
   isTrivialSecretValue,
+  knownIndexStats,
   listSecrets,
   removeSecret,
   renameSecret,
@@ -34,6 +35,7 @@ import {
   SECRET_HANDLE_KINDS,
   SECRET_HANDLE_MAX_VALUE_LENGTH,
   SECRET_HANDLE_MIN_VALUE_LENGTH,
+  sealingStatsSnapshot,
 } from '@axiom/core'
 import { jwtMiddleware } from '../auth.js'
 import type { AuthenticatedRequest } from '../auth.js'
@@ -121,6 +123,21 @@ export function createSecretHandlesRouter(options: SecretHandlesRouterOptions): 
       res.json({ handles: listSecrets(), kinds: SECRET_HANDLE_KINDS })
     } catch (err) {
       res.status(500).json({ error: `Failed to read secret handles: ${(err as Error).message}` })
+    }
+  })
+
+  /**
+   * GET /api/secrets/handles/stats
+   * Sealing telemetry (S0-A / A2): replacements per index entry and per turn
+   * since process start, plus the size of the known-value index and how many
+   * values the allowlist / entropy floor kept out. Counters and handle texts
+   * only — never a value, never message content.
+   */
+  router.get('/stats', (_req, res) => {
+    try {
+      res.json({ sealing: sealingStatsSnapshot(), index: knownIndexStats() })
+    } catch (err) {
+      res.status(500).json({ error: `Failed to read sealing stats: ${(err as Error).message}` })
     }
   })
 

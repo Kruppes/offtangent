@@ -105,6 +105,8 @@ function normalizeKind(kind: string): string {
 interface CacheEntry {
   stamp: string
   values: Map<string, string>
+  /** Values whose record only came from an automatic source (S0-A / A1). */
+  automatic: Set<string>
 }
 
 let _cache: CacheEntry | null = null
@@ -280,15 +282,32 @@ export function removeSecret(slug: string): boolean {
  * redaction pass without re-reading and re-decrypting the file.
  */
 export function knownSecretValues(): ReadonlyMap<string, string> {
+  return loadKnownCache().values
+}
+
+/**
+ * Plaintext values whose handle record only has an automatic origin (a tool
+ * output, the vault CLI path) and was never filed explicitly. S0-A / A1: the
+ * entropy floor of the global index applies to these only; a value the user
+ * stored on purpose stays redacted however weak it is.
+ */
+export function automaticSecretValues(): ReadonlySet<string> {
+  return loadKnownCache().automatic
+}
+
+function loadKnownCache(): CacheEntry {
   const stamp = fileStamp()
-  if (_cache && _cache.stamp === stamp) return _cache.values
+  if (_cache && _cache.stamp === stamp) return _cache
   const values = new Map<string, string>()
+  const automatic = new Set<string>()
   for (const [slug, record] of Object.entries(readHandles())) {
     const plain = decryptRecord(slug, record)
-    if (plain) values.set(plain, slug)
+    if (!plain) continue
+    values.set(plain, slug)
+    if (isAutomaticSecretSource(record.source) && !record.explicitlyStored) automatic.add(plain)
   }
-  _cache = { stamp, values }
-  return values
+  _cache = { stamp, values, automatic }
+  return _cache
 }
 
 /**

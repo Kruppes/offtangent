@@ -173,14 +173,34 @@ describe('vault CLI detection', () => {
     })
   }
 
-  // F4 (triage 2026-09-26 19:25): the detector now scans the whole command
-  // text, including quoted parts, because `sh -c "bw get password x"` was a
-  // trivial bypass. A grep whose PATTERN quotes a bw subcommand is
-  // indistinguishable from that, so it fires — accepted false positive, see
-  // docs/guide/secrets.md § Grenzen. The direction is the safe one.
-  it('fires on a grep whose pattern quotes the CLI (accepted false positive)', () => {
-    expect(commandInvokesVaultCli('grep -r "bw get password" docs/')).toBe(true)
+  // F4 (triage 2026-09-26 19:25): the detector scans the whole command text,
+  // including quoted parts, because `sh -c "bw get password x"` was a trivial
+  // bypass. Until S0-A that also made a grep whose PATTERN quotes a bw
+  // subcommand fire, and the complete grep output was sealed as one
+  // `vw-session` handle (UX report 2026-10-23 § 6.3: three grep outputs in one
+  // run). S0-A / A1: when every segment that mentions the CLI is a pure search
+  // tool, the mention is a pattern, not an invocation.
+  it('does not fire on a grep whose pattern quotes the CLI (S0-A)', () => {
+    expect(commandInvokesVaultCli('grep -r "bw get password" docs/')).toBe(false)
+    expect(commandInvokesVaultCli("grep -rn 'bw unlock --raw' packages/core/src | head -20")).toBe(false)
+    expect(commandInvokesVaultCli('cd /workspace/x && rg -n "bw (get|unlock)" src')).toBe(false)
   })
+
+  const stillDetected: Array<[string, string]> = [
+    ['sh -c wrapper', 'sh -c "bw get password x"'],
+    ['grep next to a real call', 'grep -r "bw get" docs/; bw unlock --raw'],
+    ['real call piped into grep', 'bw get password x | grep .'],
+    ['substitution inside the grep pattern', 'grep "$(bw get password x)" file'],
+    ['process substitution as grep input', 'grep . <(bw get password x)'],
+    ['rg with a preprocessor', 'rg --pre "bw get password" x .'],
+    ['find -exec', 'find . -name x -exec bw get password {} ;'],
+    ['xargs', 'echo 1 | xargs bw get password'],
+  ]
+  for (const [label, command] of stillDetected) {
+    it(`still detects the CLI next to a search tool: ${label}`, () => {
+      expect(commandInvokesVaultCli(command)).toBe(true)
+    })
+  }
 
   it('classifies modes', () => {
     expect(classifyVaultCliCommand('bw list items').mode).toBe('structured')
@@ -317,6 +337,22 @@ describe('single-secret output', () => {
     invalidateKnownValues()
     // the known-value index now covers it: a later echo is redacted
     expect(redactKnown(`echo ${session}`)).toBe(`echo ${secretHandle('vw-session')}`)
+  })
+
+  it('explains a multi-line output that was sealed as one handle (S0-A)', () => {
+    const output = sealVaultCliOutput(`${canary('LINEONE')}\n${canary('LINETWO')}\n`, 'bw get notes 2222')
+    const [handle, notice] = output.split('\n')
+    expect(handle).toBe(secretHandle('vw-notes'))
+    expect(notice).toContain('was sealed as one handle')
+    expect(notice).toContain('2 lines')
+    expect(notice).toContain('get:notes')
+    expect(output).not.toContain('LINEONE')
+  })
+
+  it('never seals the shell placeholder for an empty result (S0-A)', () => {
+    const placeholder = '(no ' + 'output)'
+    expect(sealVaultCliOutput(placeholder, 'bw unlock --raw')).toBe(placeholder)
+    expect(listSecrets()).toHaveLength(0)
   })
 
   it('keeps empty output empty', () => {

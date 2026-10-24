@@ -27,6 +27,8 @@
  * add cost to the very path we are trying to make cheap.
  */
 
+import { handoffToolName } from './task-budget.js'
+
 /** Which guard tripped. Stable identifiers — they end up in failure messages. */
 export type ProgressGuardKind = 'tool_call_cap' | 'repeated_tool_calls' | 'token_budget'
 
@@ -87,10 +89,6 @@ function serialize(value: unknown, depth: number): string {
   return `{${entries.map(([k, v]) => `${JSON.stringify(k)}:${serialize(v, depth + 1)}`).join(',')}}`
 }
 
-function preview(text: string, max = 200): string {
-  return text.length > max ? `${text.slice(0, max)}…` : text
-}
-
 /**
  * Per-task-run guard state. One instance per running task; it lives on the
  * `RunningTask` entry and therefore survives a pause/resume with its agent.
@@ -141,9 +139,9 @@ export class TaskProgressGuard {
       return this.setTrip({
         kind: 'repeated_tool_calls',
         message:
-          `Progress guard: the task called "${toolName}" ${this.repeatRun} times in a row with identical arguments ` +
-          `(${preview(signature ?? '')}) and is not making progress. Aborted after ${this.toolCalls} tool calls. ` +
-          'No result was produced. Raise or disable `heuristics.taskGuard.repeatedToolCalls` if this repetition was intended.',
+          `Progress guard: the task called "${handoffToolName(toolName)}" ${this.repeatRun} times in a row with identical arguments ` +
+          `and is not making progress. Aborted after ${this.toolCalls} tool calls. ` +
+          'The runner attaches a HANDOFF with value-free metadata of the run (tool names, counts, times, written paths). Raise or disable `heuristics.taskGuard.repeatedToolCalls` if this repetition was intended.',
         details: { toolName, repeats: this.repeatRun, limit: this.limits.repeatedToolCalls, toolCalls: this.toolCalls },
       })
     }
@@ -153,7 +151,7 @@ export class TaskProgressGuard {
         kind: 'tool_call_cap',
         message:
           `Progress guard: the task hit the tool call cap of ${this.limits.maxToolCalls} calls without finishing. ` +
-          'No result was produced. Raise `heuristics.taskGuard.maxToolCalls` (or split the task) if it legitimately needs more steps.',
+          'The runner attaches a HANDOFF with value-free metadata of the run (tool names, counts, times, written paths). Raise `heuristics.taskGuard.maxToolCalls` (or split the task) if it legitimately needs more steps.',
         details: { toolCalls: this.toolCalls, limit: this.limits.maxToolCalls, lastTool: toolName },
       })
     }
@@ -177,12 +175,17 @@ export class TaskProgressGuard {
         message:
           `Progress guard: the task consumed ${this.inputTokens.toLocaleString('en-US')} input tokens ` +
           `(budget ${this.limits.maxInputTokens.toLocaleString('en-US')}, counted as input + cache read + cache write) without finishing. ` +
-          'No result was produced. Raise `heuristics.taskGuard.maxInputTokens` if this task is genuinely that large.',
+          'The runner attaches a HANDOFF with value-free metadata of the run (tool names, counts, times, written paths). Raise `heuristics.taskGuard.maxInputTokens` if this task is genuinely that large.',
         details: { inputTokens: this.inputTokens, limit: this.limits.maxInputTokens, toolCalls: this.toolCalls },
       })
     }
 
     return null
+  }
+
+  /** Normalised limits (0 = disabled), for the budget warning (S0-A / A3). */
+  getLimits(): ProgressGuardLimits {
+    return { ...this.limits }
   }
 
   getState(): ProgressGuardState {

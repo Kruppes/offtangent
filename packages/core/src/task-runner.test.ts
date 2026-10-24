@@ -430,7 +430,10 @@ describe('TaskRunner', () => {
 
       expect(injection).toContain('status="failed"')
       expect(injection).toContain('trigger="user"')
-      expect(injection).toContain('API rate limit hit')
+      // S0-A third review: a failed injection names the error class, never the raw text or the task name.
+      expect(injection).toContain('error class: provider_error')
+      expect(injection).not.toContain('API rate limit hit')
+      expect(injection).not.toContain('Failed Task')
     })
   })
 
@@ -898,6 +901,8 @@ describe('TaskRunner', () => {
       const updated = store.getById(task.id)!
       expect(updated.status).toBe('failed')
       expect(updated.errorMessage).toBe('Max duration exceeded')
+      // S0-A / A3: the hard deadline hands over instead of a bare reason.
+      expect(updated.resultSummary).toContain('HANDOFF:')
     })
 
     it('aborts a hung task that has no maxDurationMinutes via the runner-wide watchdog default', async () => {
@@ -2138,10 +2143,12 @@ describe('TaskRunner', () => {
       // The real provider cause is surfaced, not an empty summary.
       expect(updated.errorMessage).toContain('claude_code_version_too_old')
 
-      // Injection reflects the failure and carries the real error.
+      // Injection reflects the failure; S0-A third review: it names only the
+      // error class, the raw provider text stays in error_message.
       expect(onTaskCompleteCalls).toHaveLength(1)
       expect(onTaskCompleteCalls[0].injection).toContain('status="failed"')
-      expect(onTaskCompleteCalls[0].injection).toContain('claude_code_version_too_old')
+      expect(onTaskCompleteCalls[0].injection).toMatch(/error class: [a-z_]+/)
+      expect(onTaskCompleteCalls[0].injection).not.toContain('claude_code_version_too_old')
     })
 
     it('marks task failed with a fallback message when output is empty, 0 tokens, and no errorMessage', async () => {

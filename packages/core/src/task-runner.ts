@@ -29,7 +29,7 @@ import type { SessionManager, SessionType } from './session-manager.js'
 import { logTokenUsage, logToolCall } from './token-logger.js'
 import { estimateCost, parseProviderModelId, buildStreamFn, getProviderDefaultModel } from './provider-config.js'
 import type { ProviderConfig } from './provider-config.js'
-import { runWithTaskExecutionContext, type TaskExecutionContext, type TaskOrigin } from './task-execution-context.js'
+import { runOutsideTaskExecutionContext, runWithTaskExecutionContext, type TaskExecutionContext, type TaskOrigin } from './task-execution-context.js'
 import {
   ToolCallTracker,
   buildSmartDetectionPrompt,
@@ -46,8 +46,10 @@ import { TaskProgressGuard } from './task-progress-guard.js'
 import type { ProgressGuardTrip } from './task-progress-guard.js'
 import { cacheReadRatio } from './cache-stats.js'
 import { isNestedCodemodeCallId, loadCodemodeSettings, withCodemodeTool } from './codemode-tool.js'
-import { withSecretBoundary, redactMessages, sealSystemText } from './secret-boundary.js'
+import { withSecretBoundary, redactMessages, sealSystemText, sealText, redactKnown } from './secret-boundary.js'
 import { buildWrapUpMessage, planWrapUp } from './task-wrap-up.js'
+import { ABORT_HANDOFF_HEAD, buildAbortHandoff, buildBudgetWarningMessage, classifyHandoffError, firstBudgetCrossing, guardTripErrorClass, hasTokenLikeRun, TaskActivityLog } from './task-budget.js'
+import type { HandoffErrorClass } from './task-budget.js'
 import { buildTaskHandoff, extractHandoffSection } from './task-handoff.js'
 import type { HandoffReason } from './task-handoff.js'
 import {
@@ -87,6 +89,48 @@ export function parseTaskTimestampMs(value: string | null | undefined): number |
 
 function taskStartedAtMs(value: string | null | undefined): number {
   return parseTaskTimestampMs(value) ?? Date.now()
+}
+
+/**
+ * S0-A third review: the result text of a run that died on an exception.
+ * Exception messages can carry arguments, paths or URLs with tokens, so the
+ * published result names only the error class; the raw text stays in the
+ * `error_message` column and the server log.
+ */
+function failedRunSummary(errorMessage: string): string {
+  return `Task failed with an exception, error class: ${classifyHandoffError(errorMessage)}. The raw error text is not published here.`
+}
+
+/** Closed codes for a task the restart recovery did not resume (REVIEW-S0-A-4). */
+type RestartRefusalCode = 'provider_unavailable' | 'model_unavailable' | 'lean_local_refused'
+
+/** Shape a configured provider id must have to be named in a published text. */
+const PUBLISHED_PROVIDER_ID_RE = /^[A-Za-z][A-Za-z0-9_.-]{0,47}$/
+
+/**
+ * REVIEW-S0-A-4 (blocking): the published result of a task the restart
+ * recovery refused to resume. It names the error class (`provider_error`),
+ * a closed refusal code and the provider only when it comes from the
+ * configured provider list (and has a plain id shape), else `other_provider`.
+ * A model id is never named: the refused model is by definition not in the
+ * provider's enabled catalog, so it shows as `other_model`. The raw
+ * diagnosis stays in `error_message` and the log.
+ */
+function restartRefusalSummary(code: RestartRefusalCode, configured: ProviderConfig | null, hint: string): string {
+  const id = configured?.id
+  const provider = typeof id === 'string' && PUBLISHED_PROVIDER_ID_RE.test(id) && !hasTokenLikeRun(id) ? id : 'other_provider'
+  const model = code === 'model_unavailable' ? ', model: other_model' : ''
+  return `server restart — not resumed, error class: provider_error (${code}, provider: ${provider}${model}). ${hint}`
+}
+
+/**
+ * S0-A third review: the published result of an abort names the reason only
+ * as a code of the closed vocabulary. The free-text reason (it can come from
+ * a cancel call, an orchestrator steer or a guard message) stays in the
+ * `error_message` column and the log.
+ */
+function abortResultText(reason: string): string {
+  return `${ABORT_HANDOFF_HEAD} ${classifyHandoffError(reason)}`
 }
 
 /** Map an abort reason string onto the handoff taxonomy (W5/P2). */
@@ -299,8 +343,17 @@ interface RunningTask {
    * fired.
    */
   wrapUpTimer: ReturnType<typeof setTimeout> | null
-  /** W5/P0: the wrap-up signal was delivered — send it at most once per task. */
+  /**
+   * W5/P0: the wrap-up signal was delivered — send it at most once per task.
+   * S0-A / A3: shared by all three budgets (time, tool calls, input tokens),
+   * so the first budget that reaches the warning point sends the one signal.
+   */
   wrapUpSent: boolean
+  /**
+   * S0-A / A3: last tool results and written file paths of this run. A hard
+   * abort turns them into a HANDOFF that becomes the task result.
+   */
+  activity: TaskActivityLog
   promptTokens: number
   completionTokens: number
   cacheRead: number
@@ -371,6 +424,12 @@ interface PausedTask {
   toolCallCount: number
   /** Carried across the pause with the agent it belongs to. */
   history: TranscriptCompactor | null
+  /**
+   * REVIEW-S0-A-4: registered tool names of the paused run, handed to the
+   * resumed run's activity log so a foreign tool name still shows as
+   * `other_tool` in the HANDOFF after the resume.
+   */
+  registeredTools: string[] | null
 }
 
 /**
@@ -440,6 +499,7 @@ Read/write MEMORY.md and wiki only in this data scope. Legacy/persona memory and
     : 'Time budget: limited. When a <time_budget_warning> arrives, stop starting new work and finish immediately.'
   sections.push(`<budget_and_honesty>
 ${budgetLine}
+The same warning also arrives when your tool call or input token budget is nearly used up; the run is aborted when one is exhausted.
 Never report a test, build, lint or check as green that you did not actually run, or that failed — quote the real command and its real result.
 Never weaken, skip, delete or narrow tests (or checks) to make them pass; fix the cause or report the failure.
 Partial success is reported as partial success. Do not present a smaller result as if it were the requested one.
@@ -570,6 +630,10 @@ function parseTaskOutput(text: string): { status: TaskResultStatus; summary: str
 function formatRoutingAttributes(task: Task): string {
   const routing = task.routing
   if (!routing) return ''
+  // REVIEW-S0-A-4: a failed run's injection carries no routing metadata;
+  // model id and routing reason are stored values, not closed vocabulary
+  // (e.g. a model that is no longer in the catalog after a restart).
+  if (task.status === 'failed') return ''
   const attr = (value: string) => value.replace(/[&"<>]/g, (ch) => `&#${ch.charCodeAt(0)};`)
   return ` model="${attr(task.model ?? routing.modelId)}" thinking="${attr(task.thinkingLevel ?? 'default')}" routing="${attr(formatTaskRouting(routing))}"`
 }
@@ -578,8 +642,16 @@ function formatRoutingAttributes(task: Task): string {
  * Format a task injection message for the main agent
  */
 export function formatTaskInjection(task: Task, durationMinutes: number): string {
-  return `<task_injection task_id="${task.id}" task_name="${task.name}" status="${task.resultStatus ?? task.status}" trigger="${task.triggerType}" duration_minutes="${durationMinutes}" tokens_used="${task.promptTokens + task.completionTokens}"${formatRoutingAttributes(task)}>
-${task.resultSummary ?? task.errorMessage ?? 'Task completed without summary.'}
+  // S0-A third review: a failed run's injection carries the abort HANDOFF;
+  // it repeats neither the free-text task name nor a raw error text (only
+  // the id and, without a result, the error class).
+  const failed = task.status === 'failed'
+  const nameAttr = failed ? '' : ` task_name="${task.name}"`
+  const body = task.resultSummary
+    ?? (task.errorMessage ? (failed ? failedRunSummary(task.errorMessage) : task.errorMessage) : null)
+    ?? 'Task completed without summary.'
+  return `<task_injection task_id="${task.id}"${nameAttr} status="${task.resultStatus ?? task.status}" trigger="${task.triggerType}" duration_minutes="${durationMinutes}" tokens_used="${task.promptTokens + task.completionTokens}"${formatRoutingAttributes(task)}>
+${body}
 </task_injection>`
 }
 
@@ -1077,6 +1149,7 @@ export class TaskRunner {
         timeoutTimer: null,
         wrapUpTimer: null,
         wrapUpSent: false,
+        activity: new TaskActivityLog(undefined, undefined, undefined, effectiveTools.map(t => t.name)),
         promptTokens: 0,
         completionTokens: 0,
         cacheRead: 0,
@@ -1424,7 +1497,7 @@ export class TaskRunner {
     const updatedTask = this.updateTaskRow(taskId, {
       status: 'failed',
       resultStatus: 'failed',
-      resultSummary: `Task failed: ${errorMessage}`,
+      resultSummary: failedRunSummary(errorMessage),
       errorMessage,
       completedAt: now,
       promptTokens: runningTask.promptTokens,
@@ -1538,6 +1611,7 @@ export class TaskRunner {
           estimatedCost: runningTask.estimatedCost,
           toolCallCount: runningTask.toolCallCount,
           history: runningTask.history,
+          registeredTools: runningTask.activity.registeredTools(),
         }
         this.pausedTasks.set(taskId, pausedTask)
 
@@ -1627,7 +1701,7 @@ export class TaskRunner {
       const updatedTask = this.updateTaskRow(taskId, {
         status: 'failed',
         resultStatus: 'failed',
-        resultSummary: `Task failed with error: ${errorMessage}`,
+        resultSummary: failedRunSummary(errorMessage),
         errorMessage,
         completedAt: now,
         promptTokens: runningTask.promptTokens,
@@ -1709,6 +1783,7 @@ export class TaskRunner {
           ))) {
             break
           }
+          this.maybeSendBudgetWarning(runningTask)
 
           // Log to token_usage table with task's session_id
           logTokenUsage(this.db, {
@@ -1846,7 +1921,14 @@ export class TaskRunner {
 
         // Progress guard last, so the call that trips it is fully logged
         // (tool_calls row + chat row) before the task is torn down.
-        this.checkProgressGuard(runningTask, (guard) => guard.recordToolCall(event.toolName, args))
+        try {
+          runningTask.activity.record(event.toolName, args, event.result, isError)
+        } catch {
+          // Best effort — the activity log only feeds the abort handoff.
+        }
+        if (!this.checkProgressGuard(runningTask, (guard) => guard.recordToolCall(event.toolName, args))) {
+          this.maybeSendBudgetWarning(runningTask)
+        }
         break
       }
     }
@@ -1998,7 +2080,7 @@ export class TaskRunner {
     this.updateTaskRow(taskId, {
       status: 'failed',
       resultStatus: 'failed',
-      resultSummary: reason,
+      resultSummary: this.abortSummary(runningTask, 'loop_detected'),
       errorMessage: reason,
       completedAt: now,
       promptTokens: runningTask.promptTokens,
@@ -2015,8 +2097,10 @@ export class TaskRunner {
     if (task) {
       const startedAt = taskStartedAtMs(task.startedAt)
       const durationMinutes = Math.round((Date.now() - startedAt) / 60000)
-      const injection = `<task_injection task_id="${task.id}" task_name="${task.name}" status="failed" trigger="${task.triggerType}" duration_minutes="${durationMinutes}" tokens_used="${task.promptTokens + task.completionTokens}">
-${reason}
+      // S0-A third review: id and the vocabulary-only abort HANDOFF, never
+      // the free-text task name or the guard message.
+      const injection = `<task_injection task_id="${task.id}" status="failed" trigger="${task.triggerType}" duration_minutes="${durationMinutes}" tokens_used="${task.promptTokens + task.completionTokens}">
+${task.resultSummary ?? abortResultText(reason)}
 Hint: Inspect it with get_task (task_id ${task.id}); use cancel_task if anything still needs to be cleaned up.
 </task_injection>`
       this.notifyTaskComplete(taskId, injection, "failed", reason, taskOwnerAgentId(task))
@@ -2093,7 +2177,9 @@ Hint: Inspect it with get_task (task_id ${task.id}); use cancel_task if anything
     this.updateTaskRow(taskId, {
       status: 'failed',
       resultStatus: 'failed',
-      resultSummary: trip.message,
+      // S0-A / A3: the result is a HANDOFF from the run's own activity, not
+      // an empty "No result was produced".
+      resultSummary: this.abortSummary(runningTask, guardTripErrorClass(trip.kind)),
       errorMessage: trip.message,
       completedAt: now,
       promptTokens: runningTask.promptTokens,
@@ -2270,7 +2356,10 @@ Hint: Inspect it with get_task (task_id ${task.id}); use cancel_task if anything
     // Delegation protocol: close the row of a task delegated to another
     // persona from the final task row (no-op for every other task).
     finishTaskDelegation(this.db, taskId)
-    this.options.onTaskComplete(taskId, injection, agentId ?? null)
+    // S0-A / A4: the strand turn this callback triggers belongs to the
+    // orchestrator, not to the task that just ended (see
+    // runOutsideTaskExecutionContext).
+    runOutsideTaskExecutionContext(() => this.options.onTaskComplete(taskId, injection, agentId ?? null))
   }
 
   /**
@@ -2296,7 +2385,7 @@ Hint: Inspect it with get_task (task_id ${task.id}); use cancel_task if anything
   private notifyTaskPaused(taskId: string, injection: string, message?: string, agentId?: string | null): void {
     this.emitStatusChange(taskId, 'paused', message)
     this.emitLifecycle('finished', taskId)
-    this.options.onTaskPaused?.(taskId, injection, agentId ?? null)
+    runOutsideTaskExecutionContext(() => this.options.onTaskPaused?.(taskId, injection, agentId ?? null))
   }
 
   /**
@@ -2308,7 +2397,7 @@ Hint: Inspect it with get_task (task_id ${task.id}); use cancel_task if anything
    * the process restarted without recovering the task). Without this, the
    * UI kill button would silently no-op on those rows.
    */
-  abortTask(taskId: string, reason: string = 'Aborted by user'): void {
+  abortTask(taskId: string, reason: string = 'Aborted by user', opts: { handoff?: boolean } = {}): void {
     const runningTask = this.runningTasks.get(taskId)
     const now = new Date().toISOString().replace('T', ' ').slice(0, 19)
 
@@ -2339,7 +2428,7 @@ Hint: Inspect it with get_task (task_id ${task.id}); use cancel_task if anything
       this.updateTaskRow(taskId, {
         status: 'failed',
         resultStatus: 'failed',
-        resultSummary: reason,
+        resultSummary: abortResultText(reason),
         errorMessage: reason,
         completedAt: now,
       })
@@ -2366,7 +2455,10 @@ Hint: Inspect it with get_task (task_id ${task.id}); use cancel_task if anything
     this.updateTaskRow(taskId, {
       status: 'failed',
       resultStatus: 'failed',
-      resultSummary: reason,
+      // S0-A / A3: a hard deadline hands over what the run reached. An
+      // explicit cancel (user, orchestrator) keeps its plain reason: whoever
+      // stopped the task decided it, nobody waits for a continuation.
+      resultSummary: opts.handoff ? this.abortSummary(runningTask, classifyHandoffError(reason)) : abortResultText(reason),
       errorMessage: reason,
       completedAt: now,
       promptTokens: runningTask.promptTokens,
@@ -2403,7 +2495,7 @@ Hint: Inspect it with get_task (task_id ${task.id}); use cancel_task if anything
     this.updateTaskRow(taskId, {
       status: 'failed',
       resultStatus: 'failed',
-      resultSummary: reason,
+      resultSummary: abortResultText(reason),
       errorMessage: reason,
       completedAt: now,
       ...(pausedTask
@@ -2565,12 +2657,12 @@ Hint: Inspect it with get_task (task_id ${task.id}); use cancel_task if anything
 
     if (remaining <= 0) {
       // Already past the deadline (e.g. resumed long after the limit).
-      this.abortTask(runningTask.taskId, 'Max duration exceeded')
+      this.abortTask(runningTask.taskId, 'Max duration exceeded', { handoff: true })
       return
     }
 
     runningTask.timeoutTimer = setTimeout(() => {
-      this.abortTask(runningTask.taskId, 'Max duration exceeded')
+      this.abortTask(runningTask.taskId, 'Max duration exceeded', { handoff: true })
     }, remaining)
 
     this.scheduleWrapUp(runningTask, maxMinutes, remaining)
@@ -2619,7 +2711,7 @@ Hint: Inspect it with get_task (task_id ${task.id}); use cancel_task if anything
       if (runningTask.wrapUpSent) return
       // Terminal paths (completion, guard, abort) drop the entry first.
       if (!this.runningTasks.has(runningTask.taskId)) return
-      runningTask.wrapUpSent = true
+      this.markBudgetWarned(runningTask)
       const text = buildWrapUpMessage(plan.remainingMinutesAtWrapUp, budgetMinutes)
       try {
         runningTask.agent.steer({ role: 'user', content: [{ type: 'text', text }], timestamp: Date.now() })
@@ -2628,6 +2720,85 @@ Hint: Inspect it with get_task (task_id ${task.id}); use cancel_task if anything
         console.warn(`[task-runner] Wrap-up steer failed for task ${runningTask.taskId} (hard deadline still applies):`, err)
       }
     }, plan.delayMs)
+  }
+
+  /**
+   * S0-A / A3 review fix: the warning is once per run INCLUDING resume. The
+   * in-memory flag guards this RunningTask, the persisted timestamp the next
+   * one (`resumeTask` restores `wrapUpSent` from it). A failed write is
+   * logged; the in-memory flag still holds for the current run.
+   */
+  private markBudgetWarned(runningTask: RunningTask): void {
+    runningTask.wrapUpSent = true
+    try {
+      this.store.update(runningTask.taskId, { budgetWarnedAt: new Date().toISOString().replace('T', ' ').slice(0, 19) })
+    } catch (err) {
+      console.warn(`[task-runner] Could not persist the budget warning of task ${runningTask.taskId}:`, err)
+    }
+  }
+
+  /**
+   * S0-A / A3: after every recorded tool call / response, warn once when the
+   * tool-call or input-token budget reaches the wrap-up fraction. Shares
+   * `wrapUpSent` with the time-based timer: the first budget to cross wins,
+   * the pending time signal is cancelled. Fail-open like the timer.
+   */
+  private maybeSendBudgetWarning(runningTask: RunningTask): void {
+    if (runningTask.wrapUpSent) return
+    if (!this.runningTasks.has(runningTask.taskId)) return
+    try {
+      const fraction = loadHeuristics().taskWrapUp.budgetFraction
+      const state = runningTask.progressGuard.getState()
+      const limits = runningTask.progressGuard.getLimits()
+      const crossing = firstBudgetCrossing({
+        tool_calls: { used: state.toolCalls, limit: limits.maxToolCalls },
+        input_tokens: { used: state.inputTokens, limit: limits.maxInputTokens },
+      }, fraction)
+      if (!crossing) return
+      this.markBudgetWarned(runningTask)
+      if (runningTask.wrapUpTimer) {
+        clearTimeout(runningTask.wrapUpTimer)
+        runningTask.wrapUpTimer = null
+      }
+      const text = buildBudgetWarningMessage(crossing)
+      runningTask.agent.steer({ role: 'user', content: [{ type: 'text', text }], timestamp: Date.now() })
+      console.log(`[task-runner] Budget warning (${crossing.kind} ${Math.round(crossing.ratio * 100)} %) sent to task ${runningTask.taskId}`)
+    } catch (err) {
+      console.warn(`[task-runner] Budget warning failed for task ${runningTask.taskId} (guard still applies):`, err)
+    }
+  }
+
+  /**
+   * S0-A / A3: reason plus a runner-built HANDOFF for a hard abort.
+   *
+   * The HANDOFF holds value-free metadata only (tool names, counts, times,
+   * ok/error, written paths under the shown roots; see `buildAbortHandoff`).
+   * As defence in depth, before it is stored as `resultSummary`
+   * (and from there copied into `tasks.handoff`, `get_task` and a
+   * `continuation_of` successor) it goes through the same secret boundary as
+   * a tool result: structural detection plus the known-value index. Fail
+   * closed: when sealing throws, only the redacted reason survives.
+   */
+  private abortSummary(runningTask: RunningTask, errorClass: HandoffErrorClass): string {
+    let text: string
+    try {
+      text = buildAbortHandoff({
+        errorClass,
+        taskId: runningTask.taskId,
+        toolCalls: runningTask.toolCallCount,
+        activity: runningTask.activity,
+        warned: runningTask.wrapUpSent,
+      })
+    } catch (err) {
+      console.warn(`[task-runner] Abort handoff failed for task ${runningTask.taskId}:`, err)
+      text = `${ABORT_HANDOFF_HEAD} ${errorClass}`
+    }
+    try {
+      return sealText(text, { tier: 'strong', source: 'task:handoff' }).text
+    } catch (err) {
+      console.error(`[task-runner] Sealing the abort handoff failed for task ${runningTask.taskId}, keeping the reason only:`, err)
+      return `${ABORT_HANDOFF_HEAD} ${errorClass}`
+    }
   }
 
   /**
@@ -2673,7 +2844,9 @@ Hint: Inspect it with get_task (task_id ${task.id}); use cancel_task if anything
         errorMessage: extra.errorMessage ?? null,
         summary: extra.summary ?? null,
       })
-      this.updateTaskRow(taskId, { handoff })
+      // S0-A review: the persisted handoff is a publication path of its own
+      // (get_task, continuation_of); known values never reach it in plaintext.
+      this.updateTaskRow(taskId, { handoff: redactKnown(handoff) })
     } catch (err) {
       console.warn(`[task-runner] Could not persist handoff for task ${taskId}:`, err)
     }
@@ -2807,7 +2980,13 @@ Hint: Inspect it with get_task (task_id ${task.id}); use cancel_task if anything
       abortController: new AbortController(),
       timeoutTimer: null,
       wrapUpTimer: null,
-      wrapUpSent: false,
+      // S0-A / A3: a warning sent before the pause counts for the resumed run.
+      wrapUpSent: task.budgetWarnedAt != null,
+      // REVIEW-S0-A-4 (blocking): the resumed run checks tool names against
+      // the same registered set as before the pause; without it any
+      // syntactically valid (e.g. MCP-like) name would reach the HANDOFF.
+      // A paused entry without a recorded set falls back to "no tools".
+      activity: new TaskActivityLog(undefined, undefined, undefined, pausedTask.registeredTools ?? []),
       promptTokens: pausedTask.promptTokens,
       completionTokens: pausedTask.completionTokens,
       cacheRead: pausedTask.cacheRead,
@@ -2964,6 +3143,7 @@ Hint: Inspect it with get_task (task_id ${task.id}); use cancel_task if anything
           estimatedCost: runningTask.estimatedCost,
           toolCallCount: runningTask.toolCallCount,
           history: runningTask.history,
+          registeredTools: runningTask.activity.registeredTools(),
         }
         this.pausedTasks.set(taskId, pausedTask)
 
@@ -3035,7 +3215,7 @@ Hint: Inspect it with get_task (task_id ${task.id}); use cancel_task if anything
       this.updateTaskRow(taskId, {
         status: 'failed',
         resultStatus: 'failed',
-        resultSummary: `Task failed with error: ${errorMessage}`,
+        resultSummary: failedRunSummary(errorMessage),
         errorMessage,
         completedAt: now,
         promptTokens: runningTask.promptTokens,
@@ -3176,10 +3356,17 @@ Hint: Inspect it with get_task (task_id ${task.id}); use cancel_task if anything
           ? `provider "${task.provider ?? '(none)'}" is no longer configured`
           : `model "${task.model}" is no longer enabled on provider "${task.provider}"`
         const now = new Date().toISOString().replace('T', ' ').slice(0, 19)
+        // REVIEW-S0-A-4 (blocking): the raw diagnosis (it interpolates the
+        // stored provider/model values) stays in `error_message`; the
+        // published summary uses closed codes only.
         this.updateTaskRow(task.id, {
           status: 'failed',
           resultStatus: 'failed',
-          resultSummary: `server restart — not resumed: ${missing}. Restart the task with an available model.`,
+          resultSummary: restartRefusalSummary(
+            baseProvider ? 'model_unavailable' : 'provider_unavailable',
+            baseProvider,
+            'Restart the task with an available model.',
+          ),
           errorMessage: `server restart; not resumed: ${missing}`,
           completedAt: now,
         })
@@ -3205,7 +3392,12 @@ Hint: Inspect it with get_task (task_id ${task.id}); use cancel_task if anything
           this.updateTaskRow(task.id, {
             status: 'failed',
             resultStatus: 'failed',
-            resultSummary: `server restart — not resumed: ${refusal}. Restart the task on a local provider.`,
+            // REVIEW-S0-A-4: `refusal` can carry provider/model values; closed code only.
+            resultSummary: restartRefusalSummary(
+              baseProvider ? 'lean_local_refused' : 'provider_unavailable',
+              baseProvider,
+              'Restart the task on a local provider.',
+            ),
             errorMessage: `server restart; not resumed: ${refusal}`,
             completedAt: now,
           })

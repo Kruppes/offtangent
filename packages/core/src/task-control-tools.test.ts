@@ -15,7 +15,7 @@ import type { TaskRuntimeBoundary } from './task-runtime.js'
 import type { TaskRunnerOptions } from './task-runner.js'
 import { SessionManager } from './session-manager.js'
 import type { ProviderConfig } from './provider-config.js'
-import { runWithTaskExecutionContext } from './task-execution-context.js'
+import { getCurrentTaskExecutionContext, runWithTaskExecutionContext } from './task-execution-context.js'
 import { logToolCall } from './token-logger.js'
 import { createCancelTaskTool, createGetTaskTool, createSteerTaskTool } from './task-control-tools.js'
 import { createResumeTaskTool } from './task-tools.js'
@@ -114,7 +114,9 @@ describe('task control tools (get_task / steer_task / cancel_task)', () => {
   let builderStrand: string
   let currentUser: number | undefined
   let currentAgent: string | undefined
-  const completed: Array<{ taskId: string; injection: string }> = []
+  const completed: Array<{ taskId: string; injection: string; contextTaskId: string | null }> = []
+  /** Optional chat turn the completion callback starts (review S0-A / A4 end-to-end). */
+  let completionTurn: ((taskId: string) => void) | null = null
 
   function toolOptions(): TaskControlToolsOptions {
     return {
@@ -157,6 +159,7 @@ describe('task control tools (get_task / steer_task / cancel_task)', () => {
   beforeEach(() => {
     hoisted.agents.length = 0
     completed.length = 0
+    completionTurn = null
     limit = 0
     const p = path.join(os.tmpdir(), `axiom-taskctl-test-${Date.now()}-${Math.random().toString(36).slice(2)}.db`)
     tmpFiles.push(p)
@@ -172,7 +175,10 @@ describe('task control tools (get_task / steer_task / cancel_task)', () => {
       buildModel: () => ({} as ReturnType<TaskRunnerOptions['buildModel']>),
       getApiKey: async () => 'test-key',
       tools: [],
-      onTaskComplete: (taskId, injection) => { completed.push({ taskId, injection }) },
+      onTaskComplete: (taskId, injection) => {
+        completed.push({ taskId, injection, contextTaskId: getCurrentTaskExecutionContext()?.taskId ?? null })
+        completionTurn?.(taskId)
+      },
       sessionManager,
       getMaxConcurrentTasks: () => limit,
       getProviderTaskLimits: () => ({ perProvider: 0 }),
@@ -206,7 +212,10 @@ describe('task control tools (get_task / steer_task / cancel_task)', () => {
       const row = runtime.tasks.getById(task.id)!
       expect(row.status).toBe('failed')
       expect(row.errorMessage).toBe('Cancelled by strand orchestrator: wrong direction')
-      expect(row.resultSummary).toBe('Cancelled by strand orchestrator: wrong direction')
+      // S0-A third review: the free-text reason stays in error_message; the
+      // published summary names only the error class.
+      expect(row.resultSummary).toBe('Task aborted by the runner, error class: cancelled')
+      expect(row.resultSummary).not.toContain('wrong direction')
       expect(agentFor('Alpha').aborted).toBe(true)
       expect(runtime.tasks.isRunning(task.id)).toBe(false)
     })
@@ -433,6 +442,120 @@ describe('task control tools (get_task / steer_task / cancel_task)', () => {
       expect(text(result)).toContain('cancelled')
       expect(runtime.tasks.getById(child.id)!.errorMessage).toBe(`Cancelled by parent task ${me.id.slice(0, 8)}: not needed`)
       expect(runtime.tasks.getById(grandchild.id)!.status).toBe('failed')
+    })
+    // S0-A / A4 (UX report 2026-10-23 § 6.5): the strand turn that reacts to
+    // a finished task ran inside that task's async context and was treated as
+    // the finished task — "not manageable from here" for its own tasks.
+    it('a completion callback fired from inside another task runs without that task context', async () => {
+      const parent = await startTask('CtxParent')
+      const child = await startTask('CtxChild', { strand: null, parentTaskId: parent.id })
+      await asTask(parent.id, () => createCancelTaskTool(toolOptions()).execute('c1', { task_id: child.id, reason: 'done' }))
+      await flush()
+      const done = completed.find((entry) => entry.taskId === child.id)
+      expect(done).toBeDefined()
+      expect(done!.contextTaskId).toBeNull()
+    })
+
+    it('the orchestrator keeps managing the tasks it started when a finished task context leaked into its turn', async () => {
+      const finished = await startTask('FinishedRun')
+      const personaTask = await startTask('PersonaRun', { agentId: 'builder', delegatedBy: 'main' })
+      const ownTask = await startTask('OwnRun')
+      agentFor('FinishedRun').complete()
+      await flush()
+      expect(runtime.tasks.getById(finished.id)!.status).toBe('completed')
+
+      const inLeakedTurn = <T>(fn: () => Promise<T>) => asTask(finished.id, fn)
+      expect(text(await inLeakedTurn(() => createGetTaskTool(toolOptions()).execute('c1', { task_id: personaTask.id })))).toContain('PersonaRun')
+      expect(text(await inLeakedTurn(() => createGetTaskTool(toolOptions()).execute('c1', { task_id: finished.id })))).toContain('FinishedRun')
+      expect(text(await inLeakedTurn(() => createSteerTaskTool(toolOptions()).execute('c1', { task_id: ownTask.id, message: 'focus' })))).toContain('Delivered')
+      const cancelled = await inLeakedTurn(() => createCancelTaskTool(toolOptions()).execute('c1', { task_id: personaTask.id, reason: 'superseded' }))
+      expect(text(cancelled)).toContain('cancelled')
+      expect(runtime.tasks.getById(personaTask.id)!.status).toBe('failed')
+    })
+
+    // Review S0-A / A4, the observed scenario end to end: a finished task's
+    // completion callback starts a new chat turn of the orchestrator (in
+    // production: handleTaskNotification queues a strand turn). That turn
+    // manages ANOTHER own task — no persona, same user, same strand — with
+    // get_task, steer_task, resume_task and cancel_task. The turn runs once
+    // synchronously inside the callback (worst case for context leaks) and
+    // once deferred like the turn queue does.
+    //
+    // Trigger 'ended from inside its parent task' is the leaking path: the
+    // parent (still running) cancels its sub-task, so the callback fires in
+    // the parent's async context. Without runOutsideTaskExecutionContext the
+    // chat turn inherits that context and is treated as the parent task,
+    // which may only manage its own descendants.
+    const triggers = ['normal completion', 'ended from inside its parent task'] as const
+    const modes = ['inside the callback', 'deferred like the turn queue'] as const
+    for (const trigger of triggers) for (const mode of modes) {
+      it(`a chat turn started by a completion callback manages another own task (${trigger}, ${mode})`, async () => {
+        const notifierParent = trigger === 'normal completion' ? null : await startTask('NotifierParent')
+        const finished = notifierParent
+          ? await startTask('NotifierRun', { strand: null, parentTaskId: notifierParent.id })
+          : await startTask('NotifierRun')
+        const running = await startTask('OwnRunning')
+        const paused = await startTask('OwnPaused')
+        agentFor('OwnPaused').ask('Which branch?')
+        await flush()
+        expect(runtime.tasks.isPaused(paused.id)).toBe(true)
+        for (const t of [running, paused]) {
+          const row = runtime.tasks.getById(t.id)!
+          expect(row.agentId ?? null).toBeNull()
+          expect(row.delegatedBy ?? null).toBeNull()
+        }
+
+        const results: Record<string, string> = {}
+        let turnContextTaskId: string | null | undefined
+        let turnDone!: () => void
+        const turnFinished = new Promise<void>((resolve) => { turnDone = resolve })
+        const chatTurn = async () => {
+          // The interactive turn of the strand owner: user alice, persona main.
+          currentUser = alice
+          currentAgent = 'main'
+          turnContextTaskId = getCurrentTaskExecutionContext()?.taskId ?? null
+          const resume = createResumeTaskTool({ ...toolOptions(), getDefaultProvider: () => provider, resolveProvider: () => provider, defaultMaxDurationMinutes: 30, maxDurationMinutesCap: 60 })
+          results.get = text(await createGetTaskTool(toolOptions()).execute('g1', { task_id: running.id }))
+          results.steer = text(await createSteerTaskTool(toolOptions()).execute('s1', { task_id: running.id, message: 'focus on the tests' }))
+          results.resume = text(await resume.execute('r1', { task_id: paused.id, message: 'main' }))
+          results.cancel = text(await createCancelTaskTool(toolOptions()).execute('c1', { task_id: running.id, reason: 'superseded by the notifier result' }))
+          turnDone()
+        }
+        completionTurn = (taskId) => {
+          if (taskId !== finished.id) return
+          completionTurn = null
+          if (mode === 'inside the callback') void chatTurn()
+          else setTimeout(() => { void chatTurn() }, 0)
+        }
+
+        if (notifierParent) {
+          await asTask(notifierParent.id, () => createCancelTaskTool(toolOptions()).execute('p1', { task_id: finished.id, reason: 'parent is done with it' }))
+        } else {
+          agentFor('NotifierRun').complete('notifier done')
+        }
+        await turnFinished
+        await flush()
+
+        expect(runtime.tasks.getById(finished.id)!.status).toBe(notifierParent ? 'failed' : 'completed')
+        expect(turnContextTaskId).toBeNull()
+        expect(results.get).toContain('OwnRunning')
+        expect(results.get).not.toMatch(/not found or not manageable/)
+        expect(results.steer).toContain('Delivered')
+        expect(agentFor('OwnRunning').steerCalls.at(-1)?.content[0]?.text).toContain('focus on the tests')
+        expect(results.resume).toContain('has been resumed')
+        expect(agentFor('OwnPaused').promptCalls.at(-1)).toContain('main')
+        expect(results.cancel).toContain('cancelled')
+        expect(runtime.tasks.getById(running.id)!.status).toBe('failed')
+      })
+    }
+
+    it('a stale task context never widens access: another user stays denied', async () => {
+      const finished = await startTask('FinishedOwn')
+      agentFor('FinishedOwn').complete()
+      await flush()
+      const foreign = await startTask('ForeignRun', { strand: builderStrand })
+      const result = await asTask(finished.id, () => createGetTaskTool(toolOptions()).execute('c1', { task_id: foreign.id }))
+      expect(text(result)).toMatch(/not found or not manageable/)
     })
   })
 

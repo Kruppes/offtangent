@@ -45,6 +45,8 @@ import { withSecretBoundary, redactMessages, sealSystemText, sealToolText } from
 import { commandInvokesVaultCli } from './secret-vault-cli.js'
 import { spillToolOutput } from './tool-output-spill.js'
 import { isNestedCodemodeCallId, loadCodemodeSettings, withCodemodeTool } from './codemode-tool.js'
+import { SHELL_EMPTY_OUTPUT_TEXT, SHELL_FAILED_OUTPUT_TEXT } from './secret-index-filter.js'
+import { createSealingScope, finishSealingScope, runInSealingScope } from './secret-sealing-stats.js'
 import type { QuotaServiceLike } from './quota-tool.js'
 import type { AbortScope, AgentRuntimeStateSnapshot, ResponseChunk } from './agent-runtime-types.js'
 import { loadHeuristics } from './heuristics.js'
@@ -340,7 +342,7 @@ function runShellCommand(command: string, timeout: number, cwd: string, signal?:
       // A killed command never reports success, even if the shell managed to
       // exit 0 in the race between the kill and the close event.
       const finalExitCode = killReason !== null && exitCode === 0 ? 1 : exitCode
-      const output = parts.join('\n') || (finalExitCode === 0 ? '(no output)' : 'Command failed')
+      const output = parts.join('\n') || (finalExitCode === 0 ? SHELL_EMPTY_OUTPUT_TEXT : SHELL_FAILED_OUTPUT_TEXT)
       resolve({ output, exitCode: finalExitCode, timedOut: killReason === 'timeout' })
     }
 
@@ -1365,10 +1367,13 @@ class PiAgentRuntime implements AgentRuntimeBoundary, AgentRuntimePiAgentAccess 
 
     // Start the prompt (non-blocking)
     this.currentSessionId = sessionId
+    // A2 (S0-A): every secret-boundary replacement made while this prompt
+    // runs (system prompt, context transform, tool results) is counted in this scope.
+    const sealingScope = createSealingScope(`agent=${this.agentId} session=${sessionId}`)
     // Scope must be resolved at every turn, including runtime reuse and global refresh.
-    this.refreshSystemPrompt(this.promptChannel, this.promptUser, this.agentId, sessionId)
+    runInSealingScope(sealingScope, () => this.refreshSystemPrompt(this.promptChannel, this.promptUser, this.agentId, sessionId))
     this.refreshCodemodeTool()
-    const started = continueTranscript ? this.agent.continue() : this.agent.prompt(text, images)
+    const started = runInSealingScope(sealingScope, () => (continueTranscript ? this.agent.continue() : this.agent.prompt(text, images)))
     const promptPromise = started.then(() => {
       done = true
       if (resolveWaiting) {
@@ -1493,6 +1498,8 @@ class PiAgentRuntime implements AgentRuntimeBoundary, AgentRuntimePiAgentAccess 
     // One line per turn — this is the primary forensic breadcrumb for
     // "bot went silent" reports: it shows exactly what the model returned.
     console.log(`[agent-runtime] Turn end (session ${sessionId}): text=${textChars} thinking=${thinkingChars} tools=${toolCalls} errors=${errorChunks}${midStreamError ? ' midStreamError' : ''}${preStreamError ? ' preStreamError' : ''}${corruptedContext ? ' corruptedContext' : ''}`)
+    const sealingLine = finishSealingScope(sealingScope)
+    if (sealingLine) (sealingLine.hot ? console.warn : console.log)(sealingLine.line)
     if (textChars === 0 && toolCalls === 0 && errorChunks === 0 && !midStreamError && !preStreamError && !corruptedContext) {
       console.warn(`[agent-runtime] EMPTY TURN (session ${sessionId}): model produced no text, no tool calls, no error — thinking=${thinkingChars} chars. Provider degradation?`)
     }

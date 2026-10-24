@@ -54,6 +54,12 @@ export interface Task {
    */
   handoff: string | null
   /**
+   * S0-A / A3: when the one budget warning (time, tool calls or tokens) of
+   * this run was sent. Persisted so a pause/resume cycle does not warn again;
+   * a `continuation_of` successor is a new row and gets its own warning.
+   */
+  budgetWarnedAt?: string | null
+  /**
    * W5/P3: when this task's outcome was announced to its persona. Only used
    * for outcomes that never reach a strand (cronjob-triggered runs, see
    * task-agent-notice.ts); NULL means "still owed to the agent".
@@ -145,6 +151,8 @@ export interface UpdateTaskInput {
   sessionId?: string
   /** W5/P2: handoff record for unfinished work (task-handoff.ts). */
   handoff?: string | null
+  /** S0-A / A3: time the run's single budget warning was sent. */
+  budgetWarnedAt?: string | null
 }
 
 export interface TaskListFilters {
@@ -237,6 +245,7 @@ interface TaskRow {
   output_schema?: string | null
   context_mode?: string | null
   handoff?: string | null
+  budget_warned_at?: string | null
   agent_notified_at?: string | null
   thinking_level?: string | null
   routing?: string | null
@@ -276,6 +285,7 @@ function rowToTask(row: TaskRow): Task {
     outputSchema: row.output_schema ?? null,
     contextMode: (row.context_mode as TaskContextMode | null | undefined) ?? null,
     handoff: row.handoff ?? null,
+    budgetWarnedAt: row.budget_warned_at ?? null,
     agentNotifiedAt: row.agent_notified_at ?? null,
     thinkingLevel: normalizeThinkingLevel(row.thinking_level) ?? null,
     routing: parseTaskRouting(row.routing),
@@ -350,6 +360,8 @@ export function initTasksTable(db: Database): void {
     'ALTER TABLE tasks ADD COLUMN delegated_by TEXT DEFAULT NULL',
     // Lean local worker profile (plan 2026-10-18-lokale-worker, B2).
     'ALTER TABLE tasks ADD COLUMN worker_profile TEXT DEFAULT NULL',
+    // S0-A / A3: the single budget warning survives pause/resume.
+    'ALTER TABLE tasks ADD COLUMN budget_warned_at TEXT DEFAULT NULL',
   ]) {
     try {
       db.exec(stmt)
@@ -524,6 +536,10 @@ export class TaskStore {
     if (input.handoff !== undefined) {
       setClauses.push('handoff = ?')
       params.push(input.handoff)
+    }
+    if (input.budgetWarnedAt !== undefined) {
+      setClauses.push('budget_warned_at = ?')
+      params.push(input.budgetWarnedAt)
     }
 
     if (setClauses.length === 0) return this.getById(id)
