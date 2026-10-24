@@ -12,6 +12,7 @@ const exported: { default?: Vue.Component } = {}
 new Function('require', 'exports', compiled)(() => Vue, exported)
 const ChatInteractionBlock = exported.default!
 import { parseInteractionBlockPayload } from '@axiom/core/contracts'
+import { answerChipOfRow, applyInteractionRow, rowOfBlock, type InteractionTableState } from '~/composables/useInteractionTable'
 
 type Node = { type: string; props: Record<string, unknown>; children: Node[]; parent?: Node }
 const node = (type: string): Node => ({ type, props: {}, children: [] })
@@ -94,6 +95,48 @@ describe('interaction taps', () => {
     expect(answerBlock).toHaveBeenCalledTimes(2)
     expect(answerBlock.mock.calls[0]![0].clientMessageId).toBe('stable')
     expect(answerBlock.mock.calls[1]![0].clientMessageId).toBe('stable')
+    expect(find(root, n => n.type === 'button')).toBeUndefined()
+    app.unmount()
+  })
+
+  it('M1: interaction.updated answered from another device shows the chip from the table row and locks the card', async () => {
+    stubRuntime(vi.fn())
+    const block = parseInteractionBlockPayload({ block: 'confirm', id: 'b', question: 'Proceed?' })!
+    let table: InteractionTableState = applyInteractionRow({}, { id: 'ia_9', strandId: 's1', messageId: 42, blockId: 'b', status: 'open' })
+    // Message metadata knows nothing (no reload since); the chip must come from the row.
+    const answered = ref(answerChipOfRow(rowOfBlock(table, 42, 'b'), undefined))
+    expect(answered.value).toBeNull()
+    const root = node('root')
+    const Host = defineComponent(() => () => h(ChatInteractionBlock, { block, messageId: 42, interactionId: 'ia_9', answered: answered.value }))
+    const app = renderer.createApp(Host)
+    app.component('AppIcon', defineComponent(() => () => h('i')))
+    app.config.globalProperties.$t = (s: string) => s
+    app.mount(root)
+    expect(find(root, n => n.type === 'button')).toBeDefined()
+    table = applyInteractionRow(table, { id: 'ia_9', strandId: 's1', messageId: 42, blockId: 'b', status: 'answered', answer: { value: 'yes', label: 'Yes' } })
+    answered.value = answerChipOfRow(rowOfBlock(table, 42, 'b'), undefined)
+    await nextTick()
+    expect(answered.value).toEqual({ label: 'Yes' })
+    expect(find(root, n => n.type === 'Yes')).toBeDefined()
+    expect(find(root, n => n.type === 'button')).toBeUndefined()
+    app.unmount()
+  })
+
+  it('fence card known to the table answers via the id endpoint with { clientRequestId, value } (S1-C)', async () => {
+    const answerBlock = vi.fn()
+    const answerById = vi.fn().mockResolvedValue({ status: 'applied', label: 'Yes', interaction: null })
+    stubRuntime(answerBlock)
+    vi.stubGlobal('useInteractions', () => ({ answerBlock, answerById, newClientMessageId: vi.fn(() => 'stable') }))
+    const block = parseInteractionBlockPayload({ block: 'confirm', id: 'b', question: 'Proceed?' })!
+    const root = node('root')
+    const app = renderer.createApp(ChatInteractionBlock, { block, messageId: 42, interactionId: 'ia_9' })
+    app.component('AppIcon', defineComponent(() => () => h('i')))
+    app.config.globalProperties.$t = (s: string) => s
+    app.mount(root)
+    await (find(root, n => n.type === 'button')!.props.onClick as () => Promise<void>)()
+    await nextTick()
+    expect(answerBlock).not.toHaveBeenCalled()
+    expect(answerById).toHaveBeenCalledWith({ interactionId: 'ia_9', clientRequestId: 'stable', value: 'yes' })
     expect(find(root, n => n.type === 'button')).toBeUndefined()
     app.unmount()
   })

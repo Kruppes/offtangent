@@ -172,9 +172,9 @@ describe('ChatView: the free text send path', () => {
     expect(script.match(/await sendMessage\(/g)?.length).toBe(2)
   })
 
-  it('closes a card through the shared core stale rule (later user turn or newer open card)', () => {
-    expect(script).toMatch(/function cardSkipped\(index: number\): boolean[\s\S]*?role === 'user'[\s\S]*?interactionSkipReason\(/)
-    expect(script).toMatch(/import \{[^}]*interactionSkipReason[^}]*\} from '@axiom\/core\/contracts'/)
+  it('closes a card only through the interactions table (S1-A), never through a text heuristic', () => {
+    expect(script).toMatch(/function cardSkipped\(index: number\): boolean[\s\S]*?interactionStatus\(row\.id, card\.id\)[\s\S]*?cardClosedByTable\(status\)/)
+    expect(script).not.toMatch(/interactionSkipReason/)
   })
 
   it('draws a placeholder instead of raw JSON while a card fence streams', () => {

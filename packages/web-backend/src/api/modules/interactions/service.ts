@@ -421,12 +421,16 @@ export function createInteractionsService(options: InteractionsServiceOptions): 
     actor: InteractionActor,
     payload: AskUserPayload,
     record: InteractionRecord,
-    answers: Record<string, AskUserAnswerInput>,
+    rawAnswers: Record<string, AskUserAnswerInput> | undefined,
     clientRequestId: string,
     surface: InteractionSurface,
   ): AnswerInteractionResult {
     const { userId } = actorOf(actor)
     const row = askUserRow(record)
+    // Resume retry (review 2 S1-C, B1): the value in the body is ignored.
+    if (isResumeRetry(row, record, userId, clientRequestId)) return resumeAskUser(userId, row, record, surface, true)
+    if (!rawAnswers) throw new InteractionServiceError(400, 'invalid_value', 'answers is required for this question')
+    const answers = rawAnswers
     const valueHash = interactionAnswersHash(answers)
     const binding = findInteractionRequest(db, userId, clientRequestId)
     if (binding && (binding.interactionId !== record.id || binding.valueHash !== valueHash)) {
@@ -538,6 +542,21 @@ export function createInteractionsService(options: InteractionsServiceOptions): 
     return { applied: true, resumed: true, idempotent, value: answer.value, label: answer.label, interaction: interactionStateView(resumed) }
   }
 
+  /**
+   * Resume retry (review 2 S1-C, B1): the key is bound to exactly this card,
+   * the card is answered with `resumed=false` and still owes its turn. Then
+   * the request only starts the turn again; the value of the body is not
+   * hashed or compared, because the client can only rebuild it from the
+   * sealed answer. Every other combination keeps the hash check (409).
+   */
+  function isResumeRetry(row: BlockMessageRow, record: InteractionRecord, userId: number, clientRequestId: string): boolean {
+    if (record.status !== 'answered' || !record.answer || record.answer.resumed !== false) return false
+    if (!options.getTurnRunner?.()) return false
+    const binding = findInteractionRequest(db, userId, clientRequestId)
+    if (!binding || binding.interactionId !== record.id) return false
+    return owesTurn(row, record, userId, clientRequestId)
+  }
+
   /** Whether a stored answer still owes its turn: generic path, blocking card, user row filed, turn not started. */
   function owesTurn(row: BlockMessageRow, record: InteractionRecord, userId: number, clientRequestId: string): boolean {
     if (!record.answer || record.answer.resumed || !record.blocking || row.capture_id) return false
@@ -562,11 +581,15 @@ export function createInteractionsService(options: InteractionsServiceOptions): 
     row: BlockMessageRow,
     block: InteractionBlock,
     record: InteractionRecord,
-    value: string | string[],
+    rawValue: string | string[] | undefined,
     clientRequestId: string,
     surface: InteractionSurface,
   ): AnswerInteractionResult {
     const { userId } = actorOf(actor)
+    // Resume retry (review 2 S1-C, B1): the value in the body is ignored.
+    if (isResumeRetry(row, record, userId, clientRequestId)) return resumeAfterAnswer(userId, row, block, record, surface, true)
+    if (rawValue === undefined) throw new InteractionServiceError(400, 'invalid_value', 'value is required for this question')
+    const value = rawValue
     const valueHash = interactionValueHash(value)
     const binding = findInteractionRequest(db, userId, clientRequestId)
     if (binding && (binding.interactionId !== record.id || binding.valueHash !== valueHash)) {
@@ -730,10 +753,8 @@ export function createInteractionsService(options: InteractionsServiceOptions): 
       // The card's owner was checked above; the message row may carry no
       // user id (agent rows), so it is not checked a second time.
       if (isAskUserPayload(record.payload)) {
-        if (!input.answers) throw new InteractionServiceError(400, 'invalid_value', 'answers is required for this question')
         return applyAskUserAnswer(actor, record.payload, record, input.answers, input.clientRequestId, input.surface)
       }
-      if (input.value === undefined) throw new InteractionServiceError(400, 'invalid_value', 'value is required for this question')
       const row = loadMessage(actor, record.messageId, false)
       return applyAnswer(actor, row, record.payload, record, input.value, input.clientRequestId, input.surface)
     },

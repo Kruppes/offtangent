@@ -64,6 +64,8 @@ Two edges are written without an endpoint:
 
 **Order of an answer.** Binding, transition (`answer.resumed = false`) and the user row are one transaction; the turn starts after the commit. If the turn does not start, the answer stays stored with `resumed = false` and the endpoint answers `502` with `retryable: true`. A retry with the same key and value only starts the turn again; it writes no second user row. After the turn started, `resumed` is set to `true`.
 
+**Resume retry (S1-C review 2).** A `POST …/answer` whose `clientRequestId` is bound to exactly this card, while the card is `answered` with `answer.resumed = false` and still owes its turn (blocking card, user row filed, turn runner present), is a resume retry: the value in the body (`value` or `answers`) is ignored, no hash is compared, only the turn is started again. Success is `200` with `resumed: true` and the row; another failure is `502` with `retryable: true` again. The reason: after a reload the client can only rebuild the answer from the sealed row, and a sealed comment no longer hashes like the raw one. Every other combination keeps the hash check: the key on another card is `409 idempotency_conflict`, and once `resumed = true` the same key with another value is `409` as before. At the HTTP layer the body still has to pass the shape check of `parseAnswerByIdBody` (one of `value`/`answers`); the service itself accepts a resume retry without either.
+
 **Non-blocking cards** (`blocking = 0`): the answer is stored and emitted, no user row is written and no turn starts. Feeding the answer into the context of the next turn is S1-B.
 
 **Dismiss** never starts a turn and writes no user message. Dismissing twice is harmless.
@@ -85,6 +87,8 @@ Every state change emits an event on `interactionEvents`; the WebSocket layer fo
 ## Attention
 
 "Awaiting you" for a strand (`strand-attention.ts`) reads only the table: the newest open row per strand, younger than the attention age limit and not past its `expires_at`. The message text is not parsed any more. A card that exists only as a fence without a row is not attention.
+
+The web chat draws a card closed ("skipped") only when the table says so: `superseded`, `expired` or `dismissed`. It loads `GET /api/strands/:id/interactions` when a strand is shown and applies the `interaction.*` frames afterwards (`useInteractionTable`). A card the table does not know yet stays open; the server rejects an answer to a closed card. The client no longer re-derives the stale rule from the message text.
 
 ## Backfill
 

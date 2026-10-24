@@ -607,7 +607,27 @@ describe('ChatView: interaction blocks and actions', () => {
     await flush()
     expect(sentFrames().some(f => f.type === 'message' && f.content === 'my own answer')).toBe(true)
     expect(textarea(root).value).toBe('draft stays')
-    // the free answer is a later user message: the card closes
+    // S1-A: the free answer is a later user message; the server's
+    // `user_continued` trigger supersedes the card and announces it. Until that
+    // frame arrives the table does not close the card on its own.
+    expect(attr(byTag(root, 'chat-interaction-block')[0]!, 'skipped')).toBe(false)
+    receive({ type: 'interaction.updated', interaction: { id: 'ia_1', strandId: 'strand-a', messageId: 2, blockId: 'b1', status: 'superseded', closeSource: 'user_continued' } })
+    await flush()
+    expect(attr(byTag(root, 'chat-interaction-block')[0]!, 'skipped')).toBe(true)
+  })
+
+  it('S1-A: reads the card state from GET /api/strands/:id/interactions, not from the transcript', async () => {
+    // The transcript alone would call this card open (no later user row, no
+    // newer card). The table says expired: the card is drawn closed.
+    history = [row(1, 'user', 'go'), row(2, 'assistant', `Before we start:\n\n${fence}`)]
+    apiResponder = path => {
+      if (path === '/api/personas/client') return { personas: [{ id: 'helper', displayName: 'Helper', color: '#336699' }] }
+      if (path === '/api/strands/strand-a/interactions') return { interactions: [{ id: 'ia_2', strandId: 'strand-a', messageId: 2, blockId: 'b1', status: 'expired', closeSource: 'timeout' }] }
+      return {}
+    }
+    const { root } = await mountChat()
+    await flush()
+    expect(apiCalls.some(c => c.path === '/api/strands/strand-a/interactions')).toBe(true)
     expect(attr(byTag(root, 'chat-interaction-block')[0]!, 'skipped')).toBe(true)
   })
 

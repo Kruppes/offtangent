@@ -1,6 +1,7 @@
 import { useFeed } from './useFeed'
 import { useBoardSignal } from './useBoards'
 import { useCanvasSignal, type CanvasViewUpdate } from './useStrandCanvas'
+import { useInteractionTable } from './useInteractionTable'
 import { advanceTurn, isTurnActive, type TurnProgress } from '../features/threads/turnProgress'
 import { resolveFrameSession } from '../features/threads/frameAssignment'
 import type { ArtifactRef } from '~/api/artifacts'
@@ -253,7 +254,11 @@ interface WsMessage {
   revision?: number
   /** Board `as_of` timestamp after a `publish_board` (for type='board_updated'). */
   asOf?: string
-  type: 'feed_item' | 'board_updated' | 'canvas_view_updated' | 'text' | 'thinking' | 'tool_call_start' | 'tool_call_end' | 'error' | 'done' | 'system' | 'external_user_message' | 'session_end' | 'session_summary' | 'reminder' | 'task_completed' | 'task_failed' | 'task_question' | 'task_status_update' | 'task_started' | 'task_progress' | 'task_finished' | 'pong' | 'attachment' | 'chat_action' | 'chat_action_resolved' | 'turn_replay_start' | 'turn_replay_end' | 'voice_note' | 'stall_warning' | 'stall_resolved' | 'retry_scheduled' | 'queued' | 'message_ack'
+  /** Row of the `interactions` table (for type='interaction.open|updated|draft', S1-A). */
+  interaction?: unknown
+  /** `interaction.pending` (S1-B): the announced question count of a running ask_user call. */
+  questionCount?: number
+  type: 'feed_item' | 'board_updated' | 'canvas_view_updated' | 'interaction.open' | 'interaction.updated' | 'interaction.draft' | 'interaction.pending' | 'text' | 'thinking' | 'tool_call_start' | 'tool_call_end' | 'error' | 'done' | 'system' | 'external_user_message' | 'session_end' | 'session_summary' | 'reminder' | 'task_completed' | 'task_failed' | 'task_question' | 'task_status_update' | 'task_started' | 'task_progress' | 'task_finished' | 'pong' | 'attachment' | 'chat_action' | 'chat_action_resolved' | 'turn_replay_start' | 'turn_replay_end' | 'voice_note' | 'stall_warning' | 'stall_resolved' | 'retry_scheduled' | 'queued' | 'message_ack'
   text?: string
   /** For `message_ack`: echo of the idempotency key we sent. */
   clientMessageId?: string
@@ -1006,6 +1011,7 @@ export function useChat() {
   // Global canvas: the chat socket is the only socket, so it feeds the canvas
   // state too (same pattern as boards).
   const canvasSignal = useCanvasSignal()
+  const interactionTable = useInteractionTable()
   const transcriptRevision = useState<number>('chat_transcript_revision', () => 0)
   const turnProgress = useState<Record<string, TurnProgress>>('chat_turn_progress', () => ({}))
   function updateProgress(sid: string | null, type: string) {
@@ -1157,6 +1163,20 @@ export function useChat() {
       // transcript: the one line in the chat comes from the persisted message,
       // this frame only moves the canvas.
       canvasSignal.receive(msg.canvasView)
+      return
+    }
+
+    if (msg.type === 'interaction.open' || msg.type === 'interaction.updated' || msg.type === 'interaction.draft') {
+      // S1-A: the server's `interactions` table moved. Never enters the
+      // transcript; it only updates the state the cards are drawn from.
+      interactionTable.receive(msg.interaction)
+      return
+    }
+
+    if (msg.type === 'interaction.pending') {
+      // S1-B/S1-C: an ask_user call is running; the card shows a skeleton
+      // ("Frage wird gestellt, n Fragen") until `interaction.open` arrives.
+      interactionTable.receivePending(msg.toolCallId, msg.questionCount)
       return
     }
 

@@ -11,6 +11,21 @@ import {
   type InteractionSegment,
 } from '@axiom/core/contracts'
 import { ApiError } from './useApi'
+import type { InteractionTableRow, InteractionTableStatus } from './useInteractionTable'
+
+export type InteractionByIdOutcome =
+  | { status: 'applied'; label: string; interaction: InteractionTableRow | null }
+  /** 409: the card is no longer open (answered elsewhere, dismissed, superseded, expired). */
+  | { status: 'conflict'; current: InteractionTableStatus | null; label: string | null; interaction: InteractionTableRow | null }
+  /** 502 retryable: the answer is saved, the turn did not start; send again with the same key. */
+  | { status: 'retryable'; message: string; interaction: InteractionTableRow | null }
+  | { status: 'stale'; reason: string }
+  | { status: 'error'; message: string }
+
+export type InteractionDismissOutcome =
+  | { status: 'dismissed'; interaction: InteractionTableRow | null }
+  | { status: 'conflict'; current: InteractionTableStatus | null; interaction: InteractionTableRow | null }
+  | { status: 'error'; message: string }
 
 export interface InteractionAnswerResponse {
   applied: boolean
@@ -94,5 +109,75 @@ export function useInteractions() {
     }).catch(() => {})
   }
 
-  return { segmentsOf, answerBlock, newClientMessageId, reportInteractionEvent }
+  /**
+   * S1-C: answer a card by its interaction id (`POST /api/interactions/:id/
+   * answer`). ask_user cards send `answers`, fence cards `value`. The
+   * `clientRequestId` stays the same for every retry of one submit.
+   */
+  async function answerById(input: {
+    interactionId: string
+    clientRequestId: string
+    answers?: Record<string, { selected: string[]; comment?: string }>
+    value?: string | string[]
+  }): Promise<InteractionByIdOutcome> {
+    const body: Record<string, unknown> = { clientRequestId: input.clientRequestId }
+    if (input.answers) body.answers = input.answers
+    else body.value = input.value
+    try {
+      const res = await apiFetch<InteractionAnswerResponse & { interaction?: InteractionTableRow }>(
+        `/api/interactions/${encodeURIComponent(input.interactionId)}/answer`,
+        { method: 'POST', body: JSON.stringify(body) },
+      )
+      return { status: 'applied', label: res.label, interaction: res.interaction ?? null }
+    } catch (err) {
+      if (err instanceof ApiError) {
+        const errBody = (err.body ?? {}) as Record<string, unknown>
+        const interaction = (errBody.interaction as InteractionTableRow | undefined) ?? null
+        if (err.status === 409) {
+          const current = typeof errBody.status === 'string' ? errBody.status as InteractionTableStatus : interaction?.status ?? null
+          return { status: 'conflict', current, label: typeof errBody.label === 'string' ? errBody.label : null, interaction }
+        }
+        if (err.status === 502 && errBody.retryable === true) {
+          return { status: 'retryable', message: err.message, interaction }
+        }
+        if (err.status === 410) return { status: 'stale', reason: err.message }
+        return { status: 'error', message: err.message }
+      }
+      return { status: 'error', message: (err as Error).message || 'Network error' }
+    }
+  }
+
+  /** S1-C: store partial answers so another device can continue (`PUT /api/interactions/:id/draft`). */
+  async function saveDraft(interactionId: string, answers: unknown): Promise<boolean> {
+    try {
+      await apiFetch(`/api/interactions/${encodeURIComponent(interactionId)}/draft`, {
+        method: 'PUT',
+        body: JSON.stringify({ answers }),
+      })
+      return true
+    } catch {
+      return false
+    }
+  }
+
+  /** S1-C: close a card without an answer (`POST /api/interactions/:id/dismiss`). */
+  async function dismissById(interactionId: string): Promise<InteractionDismissOutcome> {
+    try {
+      const res = await apiFetch<{ dismissed: boolean; interaction?: InteractionTableRow }>(
+        `/api/interactions/${encodeURIComponent(interactionId)}/dismiss`,
+        { method: 'POST', body: JSON.stringify({}) },
+      )
+      return { status: 'dismissed', interaction: res.interaction ?? null }
+    } catch (err) {
+      if (err instanceof ApiError && err.status === 409) {
+        const errBody = (err.body ?? {}) as Record<string, unknown>
+        const interaction = (errBody.interaction as InteractionTableRow | undefined) ?? null
+        const current = typeof errBody.status === 'string' ? errBody.status as InteractionTableStatus : interaction?.status ?? null
+        return { status: 'conflict', current, interaction }
+      }
+      return { status: 'error', message: (err as Error).message || 'Network error' }
+    }
+  }
+
+  return { segmentsOf, answerBlock, answerById, saveDraft, dismissById, newClientMessageId, reportInteractionEvent }
 }

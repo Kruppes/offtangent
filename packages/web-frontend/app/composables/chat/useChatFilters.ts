@@ -1,3 +1,4 @@
+import { isAskUserCard } from '~/components/content/transcript'
 import { ref, watch } from 'vue'
 import type { ChatMessage } from '~/composables/useChat'
 
@@ -41,7 +42,8 @@ export function useChatFilters() {
   })
 
   function isVisible(msg: ChatMessage): boolean {
-    if (!showToolCalls.value && msg.role === 'tool' && msg.toolData) return false
+    // An ask_user call is a question card, not a tool call: always shown.
+    if (!showToolCalls.value && msg.role === 'tool' && msg.toolData && !isAskUserCard(msg)) return false
     if (!showInjections.value && msg.role === 'system' && (msg.isTaskResult || msg.isTaskStatusUpdate)) return false
     if (!showThinking.value && msg.isThinking) return false
     return true

@@ -16,8 +16,17 @@ export interface TranscriptRow {
   turnEnd?: string
 }
 
+/**
+ * An `ask_user` call (S1-B/S1-C): not a step of the turn but a question card
+ * of its own row. A rejected call (tool error) stays an ordinary step.
+ */
+export function isAskUserCard(message: ChatMessage): boolean {
+  return message.role === 'tool' && message.toolData?.toolName === 'ask_user' && !message.toolData.toolIsError
+}
+
 /** A tool call or a reasoning block: the work of a turn, not its answer. */
 export function isTurnStep(message: ChatMessage): boolean {
+  if (isAskUserCard(message)) return false
   return (message.role === 'tool' && !!message.toolData) || (message.role === 'assistant' && !!message.isThinking)
 }
 

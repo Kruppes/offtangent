@@ -49,7 +49,7 @@ function makeService() {
   })
 }
 
-function insertAskUser(opts: { blocking?: boolean; secret?: boolean; toolCallId?: string } = {}): InteractionRecord {
+function insertAskUser(opts: { blocking?: boolean; secret?: boolean; toolCallId?: string; strand?: string } = {}): InteractionRecord {
   const secret = opts.secret ? ` ${STRONG_CANARY}` : ''
   const parsed = parseAskUserArgs({
     blocking: opts.blocking ?? true,
@@ -63,10 +63,10 @@ function insertAskUser(opts: { blocking?: boolean; secret?: boolean; toolCallId?
   }, { id: opts.toolCallId ?? 'call_1' })
   if (!parsed.ok) throw new Error(`fixture invalid: ${parsed.error}`)
   const messageId = Number(db.prepare(
-    `INSERT INTO chat_messages (session_id, user_id, role, content, agent_id) VALUES ('strand-a', 1, 'user', 'frag mich', 'main')`,
-  ).run().lastInsertRowid)
+    `INSERT INTO chat_messages (session_id, user_id, role, content, agent_id) VALUES (?, 1, 'user', 'frag mich', 'main')`,
+  ).run(opts.strand ?? 'strand-a').lastInsertRowid)
   return createInteraction(db, {
-    strandId: 'strand-a', userId: 1, messageId, agent: 'main', payload: parsed.value,
+    strandId: opts.strand ?? 'strand-a', userId: 1, messageId, agent: 'main', payload: parsed.value,
     toolCallId: opts.toolCallId ?? 'call_1', blockId: null, blocking: parsed.value.blocking,
   }).record
 }
@@ -244,5 +244,108 @@ describe('S1-B interaction.pending frame', () => {
     const frame = interactionPendingFrame({ type: 'tool_call_start', toolName: 'ask_user', toolCallId: 'call_p', toolArgs: redactAskUserArgs(args) }, 'strand-a', 'main')
     expect(frame).toEqual({ type: 'interaction.pending', sessionId: 'strand-a', agentId: 'main', toolCallId: 'call_p', questionCount: 1 })
     expect(JSON.stringify(frame)).not.toContain(STRONG_CANARY)
+  })
+})
+
+describe('review 2 S1-C, B1: resume retry without a value hash', () => {
+  let failTurns = 0
+  beforeEach(() => {
+    failTurns = 0
+    db.prepare("INSERT INTO sessions (id, user_id, agent_id, title, type) VALUES ('strand-b', 1, 'main', 'S2', 'interactive')").run()
+  })
+  const flakyService = () => createInteractionsService({
+    db,
+    getTurnRunner: () => ({
+      startTurn: (input: Record<string, unknown>) => {
+        if (failTurns > 0) { failTurns--; throw new Error('runner down') }
+        turns.push(input)
+        return {}
+      },
+    } as never),
+  })
+  const status = (fn: () => unknown): { status: number; code: string } => {
+    try { fn() } catch (err) {
+      const e = err as InteractionServiceError
+      return { status: e.status, code: e.code }
+    }
+    return { status: 200, code: 'ok' }
+  }
+  const sealedComment = { q1: { selected: ['old'], comment: `rotieren ${STRONG_CANARY}` }, q2: { selected: ['dev'] } }
+  /** What the client can rebuild after a reload: the sealed items of the row. */
+  const rebuiltFromRow = (card: InteractionRecord) => {
+    const items = (sealedInteraction(getInteraction(db, card.id)!).answer as unknown as { items: Array<{ questionId: string; selected: Array<{ id: string }>; comment?: string }> }).items
+    const out: Record<string, { selected: string[]; comment?: string }> = {}
+    for (const item of items) out[item.questionId] = { selected: item.selected.map(o => o.id), ...(item.comment ? { comment: item.comment } : {}) }
+    return out
+  }
+
+  it('a retry with a sealed (other) comment after a 502 starts the turn again and answers 200', () => {
+    const card = insertAskUser()
+    const service = flakyService()
+    failTurns = 1
+    expect(status(() => service.answerById(1, card.id, { clientRequestId: 'rr-1', answers: sealedComment, surface: 'web' }))).toMatchObject({ status: 502, code: 'turn_failed' })
+    expect(getInteraction(db, card.id)!.answer!.resumed).toBe(false)
+    const rebuilt = rebuiltFromRow(card)
+    // The sealing really changed the comment, so the old hash cannot match.
+    expect(rebuilt.q1!.comment).not.toBe(sealedComment.q1.comment)
+    expect(rebuilt.q1!.comment).not.toContain(STRONG_CANARY)
+    // A second failure stays 502 retryable.
+    failTurns = 1
+    expect(status(() => service.answerById(1, card.id, { clientRequestId: 'rr-1', answers: rebuilt, surface: 'web' }))).toMatchObject({ status: 502 })
+    const retry = service.answerById(1, card.id, { clientRequestId: 'rr-1', answers: rebuilt, surface: 'web' })
+    expect(retry).toMatchObject({ applied: true, resumed: true, idempotent: true })
+    expect(retry.interaction?.answer?.resumed).toBe(true)
+    expect(turns).toHaveLength(1)
+    const n = db.prepare("SELECT COUNT(*) AS n FROM chat_messages WHERE role = 'user' AND client_message_id = 'rr-1'").get() as { n: number }
+    expect(n.n).toBe(1)
+  })
+
+  it('the body value may be missing or arbitrary on a resume retry; control: the unchanged value works too', () => {
+    const a = insertAskUser({ toolCallId: 'call_a' })
+    const b = insertAskUser({ toolCallId: 'call_b', strand: 'strand-b' })
+    const service = flakyService()
+    failTurns = 2
+    expect(status(() => service.answerById(1, a.id, { clientRequestId: 'rr-a', answers: goodAnswers(), surface: 'web' })).status).toBe(502)
+    expect(status(() => service.answerById(1, b.id, { clientRequestId: 'rr-b', answers: goodAnswers(), surface: 'web' })).status).toBe(502)
+    expect(service.answerById(1, a.id, { clientRequestId: 'rr-a', surface: 'web' } as never)).toMatchObject({ resumed: true })
+    expect(service.answerById(1, b.id, { clientRequestId: 'rr-b', answers: goodAnswers(), surface: 'web' })).toMatchObject({ resumed: true })
+    expect(turns).toHaveLength(2)
+  })
+
+  it('the key of a resumed=false card sent to another card is still 409 idempotency_conflict', () => {
+    const card = insertAskUser({ toolCallId: 'call_a' })
+    const other = insertAskUser({ toolCallId: 'call_b', strand: 'strand-b' })
+    const service = flakyService()
+    failTurns = 1
+    expect(status(() => service.answerById(1, card.id, { clientRequestId: 'rr-x', answers: goodAnswers(), surface: 'web' })).status).toBe(502)
+    expect(status(() => service.answerById(1, other.id, { clientRequestId: 'rr-x', answers: goodAnswers(), surface: 'web' }))).toEqual({ status: 409, code: 'idempotency_conflict' })
+    expect(getInteraction(db, other.id)!.status).toBe('open')
+    expect(turns).toHaveLength(0)
+  })
+
+  it('on a resumed=true card the same key with another value stays 409', () => {
+    const card = insertAskUser()
+    const service = flakyService()
+    service.answerById(1, card.id, { clientRequestId: 'rr-2', answers: goodAnswers(), surface: 'web' })
+    expect(getInteraction(db, card.id)!.answer!.resumed).toBe(true)
+    const other = { q1: { selected: ['new'] }, q2: { selected: ['dev'] } }
+    expect(status(() => service.answerById(1, card.id, { clientRequestId: 'rr-2', answers: other, surface: 'web' }))).toEqual({ status: 409, code: 'idempotency_conflict' })
+    expect(turns).toHaveLength(1)
+  })
+
+  it('review 3: a foreign owner retrying with the known key on an answered resumed=false card gets 404, no turn, no extra user row', () => {
+    const card = insertAskUser()
+    const service = flakyService()
+    failTurns = 1
+    expect(status(() => service.answerById(1, card.id, { clientRequestId: 'rr-own', answers: goodAnswers(), surface: 'web' })).status).toBe(502)
+    expect(getInteraction(db, card.id)!.status).toBe('answered')
+    expect(getInteraction(db, card.id)!.answer!.resumed).toBe(false)
+    const userRows = () => (db.prepare("SELECT COUNT(*) AS n FROM chat_messages WHERE role = 'user'").get() as { n: number }).n
+    const before = userRows()
+    expect(status(() => service.answerById(2, card.id, { clientRequestId: 'rr-own', answers: goodAnswers(), surface: 'web' }))).toEqual({ status: 404, code: 'unknown_interaction' })
+    expect(status(() => service.answerById(2, card.id, { clientRequestId: 'rr-own', surface: 'web' } as never))).toEqual({ status: 404, code: 'unknown_interaction' })
+    expect(turns).toHaveLength(0)
+    expect(userRows()).toBe(before)
+    expect(getInteraction(db, card.id)!.answer!.resumed).toBe(false)
   })
 })

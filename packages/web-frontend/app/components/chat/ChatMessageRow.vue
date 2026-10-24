@@ -30,6 +30,7 @@
         <ChatToolCall :tool-data="toolMsg.toolData!" />
       </template>
     </TurnLine>
+    <AskUserCard v-else-if="isAskUserCard(msg)" :row="askUserRow(msg)" :pending-count="interactionTable.pendingCount(msg.toolData?.toolCallId)" />
     <ChatStatusRow v-else-if="msg.role === 'system' && (msg.isTaskStatusUpdate || msg.stallInfo)" :msg="msg" />
     <ChatTurnError v-else-if="msg.role === 'system' && msg.errorInfo" :msg="msg" />
     <ChatTaskResult v-else-if="msg.role === 'system' && msg.isTaskResult" :msg="msg" :index="index" />
@@ -51,6 +52,9 @@ import ChatTurnError from './ChatTurnError.vue'
 import ChatTaskResult from './ChatTaskResult.vue'
 import ChatActionCard from './ChatActionCard.vue'
 import ChatBubble from './ChatBubble.vue'
+import AskUserCard from './AskUserCard.vue'
+import { isAskUserCard } from '../content/transcript'
+import { interactionIdOfToolResult, useInteractionTable, type InteractionTableRow } from '~/composables/useInteractionTable'
 
 /**
  * One transcript row. The row element carries the width and alignment of
@@ -60,6 +64,15 @@ import ChatBubble from './ChatBubble.vue'
 defineProps<{ msg: ChatMessage; index: number; steps?: TranscriptRow['steps']; turnEnd?: string }>()
 
 const { interactionCard, turnActive } = useChatView()
+// S1-C: an ask_user card is drawn from its `interactions` row, found by the
+// tool call id (or the interaction id in the tool result).
+const interactionTable = useInteractionTable()
+function askUserRow(msg: ChatMessage): InteractionTableRow | null {
+  const byCall = interactionTable.toolCallRow(msg.toolData?.toolCallId)
+  if (byCall) return byCall
+  const id = interactionIdOfToolResult(msg.toolData?.toolResult)
+  return id ? interactionTable.state.value[id] ?? null : null
+}
 const { toolDisplayName } = useToolPresentation()
 const stepLabel = (step: ChatMessage) => (step.toolData ? toolDisplayName(step.toolData) : '')
 </script>

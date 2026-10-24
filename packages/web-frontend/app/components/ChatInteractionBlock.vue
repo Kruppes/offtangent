@@ -155,6 +155,7 @@
 
 <script setup lang="ts">
 import type { InteractionBlock, InteractionBlockOption } from '@axiom/core/contracts'
+import type { InteractionAnswerOutcome, InteractionByIdOutcome } from '~/composables/useInteractions'
 
 const props = defineProps<{
   block: InteractionBlock
@@ -163,12 +164,18 @@ const props = defineProps<{
   /** Answer restored from `chat_messages.metadata` after a reload. */
   answered?: { label: string } | null
   /**
-   * The shared stale rule (`interactionSkipReason`, S0-B/QW7) says the card
-   * was passed by: a later user turn or a newer open card. It renders closed
-   * as "skipped" — not "answered", since nobody knows whether the prose was
-   * an answer.
+   * The server's `interactions` table (S1-A) closed the card without an answer
+   * (superseded by a later user turn or a newer card, expired, dismissed).
+   * It renders closed as "skipped" — not "answered", since nobody knows
+   * whether the prose was an answer.
    */
   skipped?: boolean
+  /**
+   * S1-C: the id of the card's `interactions` row. When the table knows the
+   * card, the answer goes to `POST /api/interactions/:id/answer` with
+   * `{ clientRequestId, value }`; otherwise the legacy message/block path.
+   */
+  interactionId?: string | null
 }>()
 
 const emit = defineEmits<{
@@ -177,7 +184,7 @@ const emit = defineEmits<{
   ownAnswer: [text: string]
 }>()
 
-const { answerBlock, newClientMessageId, reportInteractionEvent } = useInteractions()
+const { answerBlock, answerById, newClientMessageId, reportInteractionEvent } = useInteractions()
 const { t } = useI18n()
 
 const localAnswer = ref<string | null>(null)
@@ -338,12 +345,14 @@ async function submit(value: string | string[]) {
   attemptedValue.value = value
   clientMessageId.value = clientMessageId.value ?? newClientMessageId()
 
-  const outcome = await answerBlock({
-    messageId: props.messageId,
-    block: props.block,
-    value,
-    clientMessageId: clientMessageId.value,
-  })
+  const outcome = props.interactionId
+    ? fenceOutcome(await answerById({ interactionId: props.interactionId, clientRequestId: clientMessageId.value, value }))
+    : await answerBlock({
+      messageId: props.messageId,
+      block: props.block,
+      value,
+      clientMessageId: clientMessageId.value,
+    })
 
   pending.value = false
   pendingOption.value = null
@@ -370,6 +379,20 @@ async function submit(value: string | string[]) {
   }
   // A failed answer keeps the card open: the question is still open.
   errorMessage.value = outcome.message || t('chat.interaction.failed')
+}
+
+/** Maps the id-endpoint outcome onto the outcome shape the fence card knows. */
+function fenceOutcome(outcome: InteractionByIdOutcome): InteractionAnswerOutcome {
+  switch (outcome.status) {
+    case 'applied': return { status: 'applied', label: outcome.label, resumed: true }
+    case 'conflict':
+      return outcome.current === 'answered'
+        ? { status: 'already_answered', label: outcome.label ?? '' }
+        : { status: 'stale', reason: t('chat.interaction.stale') }
+    case 'retryable': return { status: 'error', message: outcome.message }
+    case 'stale': return outcome
+    default: return outcome
+  }
 }
 
 function retry() {

@@ -122,8 +122,9 @@
       class="mt-2 w-full max-w-xl"
       :block="interactionCard(msg)!"
       :message-id="typeof msg.id === 'number' ? msg.id : undefined"
-      :answered="msg.interactionAnswers?.[interactionCard(msg)!.id] ?? null"
+      :answered="answeredOf(msg)"
       :skipped="cardSkipped(index)"
+      :interaction-id="interactionTable.blockRow(msg.id, interactionCard(msg)!.id)?.id"
       @own-answer="handleOwnAnswer"
     />
     </div>
@@ -132,6 +133,7 @@
 <script setup lang="ts">
 import type { ChatMessage } from '~/composables/useChat'
 import { useChatView } from '~/composables/chat/chatViewContext'
+import { answerChipOfRow, useInteractionTable } from '~/composables/useInteractionTable'
 import SecretHandleText from '../SecretHandleText.vue'
 import ChatArtifactLinks from './ChatArtifactLinks.vue'
 import ChatMessageActions from './ChatMessageActions.vue'
@@ -163,6 +165,19 @@ function forkable(msg: ChatMessage): boolean {
 const { userAvatarUrl, avatarFailed, userInitial, onAvatarError } = avatar
 const { label: personaLabel, initials: personaInitials, color: personaColor } = persona
 const speech = useMessageSpeech()
+const interactionTable = useInteractionTable()
+
+/**
+ * M1 (review 1): the answer chip of a fence card comes from its table row
+ * (kept live by `interaction.updated`, also for an answer given on another
+ * device); the message metadata is only the fallback for an old card the
+ * table does not know.
+ */
+function answeredOf(msg: ChatMessage): { label: string } | null {
+  const card = interactionCard(msg)
+  if (!card) return null
+  return answerChipOfRow(interactionTable.blockRow(msg.id, card.id), msg.interactionAnswers?.[card.id])
+}
 
 /** Stored note of the message, or one created in this tab since the load. */
 function voiceNoteOf(msg: ChatMessage) {

@@ -392,4 +392,17 @@ describe('review 1, finding 9: resumed only after the turn really started', () =
     expect((await call('POST', `/api/interactions/${interaction.id}/answer`, { value: 'yes', clientRequestId: 'r9' })).status).toBe(200)
     expect(turnCount()).toBe(1)
   })
+
+  it('review 2 S1-C, B1: a resume retry ignores the body value (no hash check); after resumed=true another value is 409', async () => {
+    const { interaction } = insertCard()
+    failTurns = 1
+    expect((await call('POST', `/api/interactions/${interaction.id}/answer`, { value: 'yes', clientRequestId: 'r10' })).status).toBe(502)
+    const retry = await call('POST', `/api/interactions/${interaction.id}/answer`, { value: 'stay', clientRequestId: 'r10' })
+    expect(retry.status).toBe(200)
+    expect(retry.json.resumed).toBe(true)
+    expect(turnCount()).toBe(1)
+    expect(getInteraction(db, interaction.id)!.answer).toMatchObject({ value: 'yes', resumed: true })
+    expect((await call('POST', `/api/interactions/${interaction.id}/answer`, { value: 'stay', clientRequestId: 'r10' })).status).toBe(409)
+    expect(turnCount()).toBe(1)
+  })
 })

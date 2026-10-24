@@ -87,6 +87,7 @@ import { useChatScroll } from '~/composables/chat/useChatScroll'
 import { useComposerDraft } from '~/composables/chat/useComposerDraft'
 import { useFileDrop } from '~/composables/chat/useFileDrop'
 import { useMessageSegments } from '~/composables/chat/useMessageSegments'
+import { useInteractionTable } from '~/composables/useInteractionTable'
 import { useSpeakerPersona } from '~/composables/chat/useSpeakerPersona'
 import { useTaskReports } from '~/composables/chat/useTaskReports'
 import { useThinkingLevel } from '~/composables/chat/useThinkingLevel'
@@ -171,7 +172,14 @@ const sessionErrorText = computed(() => {
   }
 })
 
-const { interactionCard, messageTextSegments, hasBubbleBody, hasPendingCard, cardSkipped, artifactFences } = useMessageSegments(filteredMessages)
+// S1-A: open/closed state of the cards comes from the `interactions` table,
+// read once per strand and history load and kept current by the socket frames.
+const interactionTable = useInteractionTable()
+watch(() => [boundSessionId.value, loadingHistory.value, connectionStatus.value] as const, ([strandId, loading, status]) => {
+  interactionTable.clearPendingVerify(strandId)
+  if (strandId && !loading && status === 'connected') void interactionTable.loadStrand(strandId)
+}, { immediate: true })
+const { interactionCard, messageTextSegments, hasBubbleBody, hasPendingCard, cardSkipped, artifactFences } = useMessageSegments(filteredMessages, interactionTable.statusOf)
 
 /**
  * Free text from a card. It goes out through the ordinary composer send path
@@ -241,6 +249,7 @@ onMounted(async () => {
   await Promise.all([tts.fetchTtsSettings(), stt.fetchSttSettings(), thinking.load()])
 })
 onUnmounted(() => {
+  interactionTable.clearPendingVerify()
   disconnect()
   if (boundToThread.value) leaveThread(props.threadSessionId)
   stt.cleanup()

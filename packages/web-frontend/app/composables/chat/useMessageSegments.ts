@@ -1,7 +1,7 @@
 import type { ComputedRef } from 'vue'
 import type { ChatMessage } from '~/composables/useChat'
-import { interactionSkipReason } from '@axiom/core/contracts'
 import { useInteractions } from '~/composables/useInteractions'
+import { cardClosedByTable, type InteractionTableStatus } from '~/composables/useInteractionTable'
 import { inlineArtifactCount, splitArtifactFences } from '~/utils/inlineArtifacts'
 
 /**
@@ -10,7 +10,11 @@ import { inlineArtifactCount, splitArtifactFences } from '~/utils/inlineArtifact
  * Parsing is defensive: a broken block degrades to text, it never breaks the
  * renderer.
  */
-export function useMessageSegments(visibleMessages: ComputedRef<ChatMessage[]>) {
+export function useMessageSegments(
+  visibleMessages: ComputedRef<ChatMessage[]>,
+  /** S1-A: the state of a card in the `interactions` table (`useInteractionTable().statusOf`). */
+  interactionStatus: (messageId: number | string | undefined, blockId: string) => InteractionTableStatus | null = () => null,
+) {
   const { segmentsOf, reportInteractionEvent } = useInteractions()
   const segmentCache = new Map<string, ReturnType<typeof segmentsOf>>()
 
@@ -88,32 +92,25 @@ export function useMessageSegments(visibleMessages: ComputedRef<ChatMessage[]>) 
   }
 
   /**
-   * The shared stale rule (`interactionSkipReason`, S0-B/QW7 — the same one the
-   * app and `strand-attention.ts` use): an unanswered card is drawn closed as
-   * "skipped" once the user wrote after it or a newer open card replaced it.
-   * Positions are list indexes, which keep the row order.
+   * S1-A: whether a card is drawn closed as "skipped" comes from the server's
+   * `interactions` table ONLY (superseded, expired, dismissed). The stale rule
+   * B4 is applied there, at write time — the `user_continued` trigger, the
+   * newer-question supersede and the one-time backfill — so the web client no
+   * longer re-derives it from the message text. A card the table does not
+   * know yet stays open; the server answers 409/410 if it is closed.
    */
   function cardSkipped(index: number): boolean {
-    const rows = visibleMessages.value
-    let lastUserTurnAt: number | null = null
-    let newestCardAt: number | null = null
-    for (let i = index + 1; i < rows.length; i++) {
-      const row = rows[i]
-      if (!row) continue
-      if (row.role === 'user') lastUserTurnAt = i
-      const card = interactionCard(row)
-      if (card && !row.interactionAnswers?.[card.id]) newestCardAt = i
-    }
-    const skipped = interactionSkipReason({ at: index, lastUserTurnAt, newestCardAt }) !== null
+    const row = visibleMessages.value[index]
+    if (!row) return false
+    const card = interactionCard(row)
+    if (!card) return false
+    const status = interactionStatus(row.id, card.id)
+    const skipped = cardClosedByTable(status)
     // Counted once per persisted card and page life: history reloads replace
     // the row objects, so the key is the row id, not the object.
-    const row = rows[index]
-    if (skipped && row && typeof row.id === 'number' && !skippedCardsSeen.has(row.id)) {
-      const card = interactionCard(row)
-      if (card && !row.interactionAnswers?.[card.id]) {
-        skippedCardsSeen.add(row.id)
-        reportInteractionEvent('superseded')
-      }
+    if (status === 'superseded' && typeof row.id === 'number' && !skippedCardsSeen.has(row.id)) {
+      skippedCardsSeen.add(row.id)
+      reportInteractionEvent('superseded')
     }
     return skipped
   }
