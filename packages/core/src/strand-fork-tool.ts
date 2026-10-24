@@ -53,7 +53,7 @@ export interface ForkStrandToolOptions {
    * Start the first turn in the new strand (`run_agent: true`). Absent means
    * no run is possible; the tool then creates the fork dormant and says so.
    */
-  startTurn?: (input: { userId: number; strandId: string; agentId: string; text: string }) => void
+  startTurn?: (input: { userId: number; strandId: string; agentId: string; text: string; source: string }) => void
   /**
    * Tell the clients a strand appeared (WebSocket frame). Optional so the
    * core side is testable alone.
@@ -189,7 +189,7 @@ export function createForkStrandTool(options: ForkStrandToolOptions): AgentTool 
 
       if (wantsRun && options.startTurn) {
         try {
-          options.startTurn({ userId, strandId: fork.strandId, agentId: fork.agentId, text: fork.seedText })
+          options.startTurn({ userId, strandId: fork.strandId, agentId: fork.agentId, text: fork.seedText, source: fork.source })
         } catch (err) {
           notes.push(`the first turn could not be started (${(err as Error).message}), the strand exists`)
         }

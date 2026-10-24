@@ -288,3 +288,31 @@ export type {
   NewsStoryContextSource,
   NewsStoryRef,
 } from './news-story-context.js'
+export {
+  ASK_USER_TOOL_NAME,
+  ASK_USER_PAYLOAD_KIND,
+  ASK_USER_MAX_QUESTIONS,
+  ASK_USER_OTHER_OPTION_ID,
+  ASK_USER_QUESTION_TYPES,
+  parseAskUserArgs,
+  isAskUserPayload,
+  redactAskUserArgs,
+  validateAskUserAnswer,
+  formatAskUserAnswerBlock,
+  formatInteractionDismissNote,
+  formatInteractionAnswerNote,
+  escapeInteractionText,
+  escapeInteractionLine,
+  escapeInteractionMultiline,
+  ASK_USER_DATA_HEADER,
+} from './ask-user.js'
+export type {
+  AskUserQuestionType,
+  AskUserOption,
+  AskUserQuestion,
+  AskUserPayload,
+  AskUserParseResult,
+  AskUserAnswerInput,
+  AskUserAnswerItem,
+  AskUserAnswerResult,
+} from './ask-user.js'

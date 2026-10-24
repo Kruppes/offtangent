@@ -35,6 +35,10 @@ export const INTERACTION_TELEMETRY_EVENTS = [
   'dismissed',
   /** Client: a card was shown closed as "skipped" by the shared stale rule. */
   'superseded',
+  /** Server (S1-B): a card was opened through the `ask_user` tool (source tool). */
+  'card_tool',
+  /** Server (S1-B): a card was opened from a markdown fence (source fence). */
+  'card_fence',
 ] as const
 export type InteractionTelemetryEvent = typeof INTERACTION_TELEMETRY_EVENTS[number]
 

@@ -30,6 +30,7 @@
 import { createHash, randomBytes } from 'node:crypto'
 import { EventEmitter } from 'node:events'
 import type { Database } from './database.js'
+import { isAskUserPayload, type AskUserAnswerItem, type AskUserPayload } from './contracts/ask-user.js'
 import {
   extractAnswerableInteractionBlocks,
   interactionSkipReason,
@@ -55,6 +56,8 @@ export interface InteractionAnswer {
   clientRequestId: string | null
   /** True when the answer started a turn. */
   resumed: boolean
+  /** ask_user (S1-B): one entry per question with the chosen options and the comment. */
+  items?: AskUserAnswerItem[]
 }
 
 export interface InteractionRecord {
@@ -65,7 +68,8 @@ export interface InteractionRecord {
   toolCallId: string | null
   blockId: string | null
   agent: string
-  payload: InteractionBlock
+  /** A fence block (S1-A) or a normalized ask_user payload (S1-B, `kind: 'ask_user'`). */
+  payload: InteractionBlock | AskUserPayload
   blocking: boolean
   status: InteractionStatus
   answer: InteractionAnswer | null
@@ -284,6 +288,28 @@ export function interactionValueHash(value: string | string[]): string {
   return createHash('sha256').update(JSON.stringify(typeof value === 'string' ? { s: value } : { a: value })).digest('hex')
 }
 
+/** Canonical JSON: object keys sorted at every level, arrays kept in order. */
+function canonicalJson(value: unknown): string {
+  if (Array.isArray(value)) return `[${value.map(canonicalJson).join(',')}]`
+  if (value !== null && typeof value === 'object') {
+    const entries = Object.keys(value as Record<string, unknown>)
+      .filter(key => (value as Record<string, unknown>)[key] !== undefined)
+      .sort()
+      .map(key => `${JSON.stringify(key)}:${canonicalJson((value as Record<string, unknown>)[key])}`)
+    return `{${entries.join(',')}}`
+  }
+  return JSON.stringify(value ?? null)
+}
+
+/**
+ * Value hash of an ask_user answer (S1-B): canonical JSON of the `answers`
+ * object, keys sorted, so the key order of a retry does not matter. Same
+ * idempotency rules as {@link interactionValueHash}.
+ */
+export function interactionAnswersHash(answers: unknown): string {
+  return createHash('sha256').update(`ask_user:${canonicalJson(answers)}`).digest('hex')
+}
+
 export interface InteractionRequestBinding {
   interactionId: string
   valueHash: string
@@ -358,7 +384,10 @@ function parseJson(text: string | null): unknown {
   try { return JSON.parse(text) } catch { return null }
 }
 
-function validatePayload(payload: unknown): InteractionBlock {
+function validatePayload(payload: unknown): InteractionBlock | AskUserPayload {
+  // ask_user payloads are normalized by `parseAskUserArgs` before they are
+  // written (S1-B); the stored shape is trusted, the fence contract does not apply.
+  if (isAskUserPayload(payload)) return payload
   const block = parseInteractionBlockPayload(payload)
   if (!block) throw new InteractionPayloadError('Interaction payload does not satisfy the interaction block contract')
   if (block.kind === 'draft') throw new InteractionPayloadError('A draft block is not a question')

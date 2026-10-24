@@ -1473,12 +1473,14 @@ export async function createRuntimeComposition(options: RuntimeCompositionOption
       budget: forkBudget,
       ...(scope === 'interactive'
         ? {
-          startTurn: (input: { userId: number; strandId: string; agentId: string; text: string }) => {
+          startTurn: (input: { userId: number; strandId: string; agentId: string; text: string; source: string }) => {
             turnRunner.startTurn({
               userId: input.userId,
               sessionId: input.strandId,
               text: input.text,
-              source: 'web',
+              // The parent strand's surface (S1-B review 2, B1): a fork
+              // started from Telegram must not get web-only tools (ask_user).
+              source: input.source as Parameters<typeof turnRunner.startTurn>[0]['source'],
               agentId: input.agentId,
               explicitSessionId: input.strandId,
               // A fork seed: the strand starts working without a user prompt.

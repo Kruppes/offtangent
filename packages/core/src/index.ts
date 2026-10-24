@@ -1852,6 +1852,7 @@ export {
   supersedeOpenOnUserMessage,
   markInteractionResumed,
   interactionValueHash,
+  interactionAnswersHash,
   findInteractionRequest,
   bindInteractionRequest,
 } from './interaction-store.js'
@@ -1868,3 +1869,21 @@ export type {
   InteractionBackfillStats,
   InteractionRequestBinding,
 } from './interaction-store.js'
+export {
+  ASK_USER_DEFAULT_AGENTS,
+  ASK_USER_SURFACES,
+  INTERACTION_NOTE_LEASE_MS,
+  ASK_USER_SYSTEM_HINT,
+  ASK_USER_WAITING_RESULT,
+  createAskUserTool,
+  isAskUserEnabledFor,
+  isAskUserOfferedFor,
+  isAskUserSurface,
+  loadAskUserSettings,
+  resetAskUserSettingsWarning,
+  resolveAskUserSettings,
+  claimInteractionContextNotes,
+  markInteractionContextNotesDelivered,
+  releaseInteractionContextNotes,
+} from './ask-user-tool.js'
+export type { AskUserSettings, AskUserToolDeps, InteractionContextNotesClaim } from './ask-user-tool.js'

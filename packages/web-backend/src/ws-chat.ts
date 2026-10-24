@@ -8,7 +8,7 @@ import type {
   SlashCommandPicker,
   VoiceNote,
 } from '@axiom/core'
-import { isSlashCommandPicker, isSlashCommandAgentTurn, isSessionAccessError, sealText, supersedeOpenOnUserMessage } from '@axiom/core'
+import { isSlashCommandPicker, isSlashCommandAgentTurn, isSessionAccessError, sealText, supersedeOpenOnUserMessage, ASK_USER_TOOL_NAME } from '@axiom/core'
 import type { InteractionRecord, SealedRef } from '@axiom/core'
 import { parseTurnModelSelection } from './model-selection.js'
 import { normalizeClientMessageId, normalizeSessionId, resolveAgentId } from './persona-request.js'
@@ -64,7 +64,7 @@ interface ChatMessage {
 }
 
 interface ChatResponse {
-  type: 'text' | 'thinking' | 'tool_call_start' | 'tool_call_end' | 'error' | 'done' | 'system' | 'external_user_message' | 'session_end' | 'session_summary' | 'task_completed' | 'task_failed' | 'task_question' | 'task_status_update' | 'task_started' | 'task_progress' | 'task_finished' | 'reminder' | 'pong' | 'attachment' | 'chat_action' | 'chat_action_resolved' | 'turn_replay_start' | 'turn_replay_end' | 'stall_warning' | 'stall_resolved' | 'retry_scheduled' | 'message_ack' | 'queued' | 'turn_queued' | 'capture_routed' | 'capture_needs_review' | 'now_set_changed' | 'feed_item' | 'board_updated' | 'strand_project_changed' | 'strand_forked' | 'voice_note' | 'canvas_view_updated' | 'interaction.open' | 'interaction.updated' | 'interaction.draft'
+  type: 'text' | 'thinking' | 'tool_call_start' | 'tool_call_end' | 'error' | 'done' | 'system' | 'external_user_message' | 'session_end' | 'session_summary' | 'task_completed' | 'task_failed' | 'task_question' | 'task_status_update' | 'task_started' | 'task_progress' | 'task_finished' | 'reminder' | 'pong' | 'attachment' | 'chat_action' | 'chat_action_resolved' | 'turn_replay_start' | 'turn_replay_end' | 'stall_warning' | 'stall_resolved' | 'retry_scheduled' | 'message_ack' | 'queued' | 'turn_queued' | 'capture_routed' | 'capture_needs_review' | 'now_set_changed' | 'feed_item' | 'board_updated' | 'strand_project_changed' | 'strand_forked' | 'voice_note' | 'canvas_view_updated' | 'interaction.pending' | 'interaction.open' | 'interaction.updated' | 'interaction.draft'
   text?: string
   /**
    * Machine-readable reason of an `error` frame that refused an explicit
@@ -185,6 +185,8 @@ interface ChatResponse {
   toolName?: string
   toolCallId?: string
   toolArgs?: unknown
+  /** `interaction.pending` (S1-B): number of questions of the skeleton card. */
+  questionCount?: number
   toolResult?: unknown
   toolIsError?: boolean
   error?: string
@@ -1219,6 +1221,12 @@ function forwardTurnEvent(ws: WebSocket, event: TurnEvent): void {
       break
     case 'chunk':
       sendMessage(ws, { ...chunkToResponse(event.chunk), sessionId, agentId })
+      // Stufe 1 (S1-B): an `ask_user` call announces a skeleton card. Its
+      // arguments are already redacted to the question count in the runtime;
+      // the payload follows after validation as `interaction.open`.
+      if (event.chunk.type === 'tool_call_start' && event.chunk.toolName === ASK_USER_TOOL_NAME) {
+        sendMessage(ws, interactionPendingFrame(event.chunk, sessionId, agentId))
+      }
       break
     case 'attachment':
       sendMessage(ws, { type: 'attachment', attachment: event.attachment, sessionId, agentId })
@@ -1248,6 +1256,13 @@ function sendMessage(ws: WebSocket, msg: ChatResponse): void {
   if (ws.readyState === WebSocket.OPEN) {
     ws.send(JSON.stringify(msg))
   }
+}
+
+/** Skeleton card for a running `ask_user` call: count only, never the arguments. */
+export function interactionPendingFrame(chunk: ResponseChunk, sessionId: string | undefined, agentId: string | undefined): ChatResponse {
+  const args = chunk.toolArgs as { questionCount?: unknown } | undefined
+  const questionCount = typeof args?.questionCount === 'number' ? args.questionCount : 0
+  return { type: 'interaction.pending', sessionId, agentId, toolCallId: chunk.toolCallId, questionCount }
 }
 
 function chunkToResponse(chunk: ResponseChunk): ChatResponse {

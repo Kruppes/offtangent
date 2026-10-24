@@ -5,6 +5,8 @@ import { readStrandWorkingMode, strandWorkingModePrompt } from './strand-working
 import { spawn } from 'node:child_process'
 import { readStrandContextWindow, readStrandEcoMode } from './eco-mode-store.js'
 import { resolveTurnEcoOwner, freezeEcoToolResult } from './eco-tool-freeze.js'
+import { ASK_USER_TOOL_NAME, redactAskUserArgs } from './contracts/ask-user.js'
+import { ASK_USER_SYSTEM_HINT, batchHasBlockingAskUser, claimInteractionContextNotes, createAskUserTool, isAskUserOfferedFor, markInteractionContextNotesDelivered, releaseInteractionContextNotes } from './ask-user-tool.js'
 import type { AfterToolCallContext, AfterToolCallResult } from '@earendil-works/pi-agent-core'
 import fs from 'node:fs'
 import nodePath from 'node:path'
@@ -781,6 +783,15 @@ class PiAgentRuntime implements AgentRuntimeBoundary, AgentRuntimePiAgentAccess 
   private providerManager?: ProviderManager
   private getCurrentToolUserId: () => number | undefined
   private agentId: string
+  /** S1-B: whether this runtime offers `ask_user` (and the prompt says so). */
+  /**
+   * Whether THIS turn offers ask_user (tool + prompt hint). Decided at every
+   * turn start from the settings and the turn surface (`promptChannel`, set
+   * by the turn source — never by the model). See {@link refreshAskUserOffer}.
+   */
+  private askUserOffered = false
+  /** S1-B: a blocking ask_user was filed in the current tool batch (one per turn). */
+  private askUserBlockingClaimed = false
   /**
    * Session whose turn currently occupies this runtime's pi-agent run.
    * Only this identity makes a scoped abort routable — without it every
@@ -831,6 +842,22 @@ class PiAgentRuntime implements AgentRuntimeBoundary, AgentRuntimePiAgentAccess 
         })]
       : []
 
+    // Stufe 1 (S1-B): structured questions through a tool instead of the
+    // markdown fence. The tool is always built; whether a turn offers it
+    // (settings.json `askUser.agents` + card-capable surface) is decided per
+    // turn start in refreshAskUserOffer(), so tool list and prompt hint agree.
+    const askUserTools: AgentTool[] = [createAskUserTool({
+          db: this.db,
+          getSessionId: () => this.currentSessionId ?? undefined,
+          getUserId: () => this.getCurrentToolUserId(),
+          getAgentId: () => runtimeAgentId,
+          claimBlockingSlot: () => {
+            if (this.askUserBlockingClaimed) return false
+            this.askUserBlockingClaimed = true
+            return true
+          },
+        })]
+
     // Privacy (plan 2026-09-26, step 3): the secret boundary wraps the WHOLE
     // tool list, including the caller's exclusive tools (`options.tools`) and
     // ask_agent. Everything a tool returns is sealed before the model or the
@@ -852,6 +879,7 @@ class PiAgentRuntime implements AgentRuntimeBoundary, AgentRuntimePiAgentAccess 
         quotaService: options.quotaService,
       }),
       ...askAgentTools,
+      ...askUserTools,
     ])
     this.baseTools = tools
 
@@ -925,7 +953,20 @@ class PiAgentRuntime implements AgentRuntimeBoundary, AgentRuntimePiAgentAccess 
       // on/off, restart, resume). Already-sent context is never touched; off
       // (the default) this returns undefined and the result stays as is.
       afterToolCall: async (ctx) => this.freezeEcoToolResult(ctx),
+      // S1-B turn-end rule: pi-agent-core only stops on its own when EVERY
+      // call of a batch sets `terminate`. A batch with a blocking ask_user
+      // ran its other calls normally; the turn ends here, without a further
+      // model request, and waits for the answer.
+      finishTurn: (turn) => this.finishAskUserTurn(turn.toolResults),
     })
+  }
+
+  /** `end` after a tool batch with a blocking ask_user call (S1-B); resets the one-blocking slot per batch. */
+  private finishAskUserTurn(
+    toolResults: ReadonlyArray<{ toolName: string; isError: boolean; details?: unknown }>,
+  ): { action: 'end' } | undefined {
+    this.askUserBlockingClaimed = false
+    return batchHasBlockingAskUser(toolResults) ? { action: 'end' } : undefined
   }
 
   private recordManifest(messages: readonly unknown[]): void {
@@ -936,12 +977,23 @@ class PiAgentRuntime implements AgentRuntimeBoundary, AgentRuntimePiAgentAccess 
 
   /** `baseTools` plus `codemode` when the setting and the current model allow it. Fails closed to `baseTools`. */
   private toolsWithCodemode(): AgentTool[] {
+    const base = this.askUserOffered ? this.baseTools : this.baseTools.filter(t => t.name !== ASK_USER_TOOL_NAME)
     try {
-      return withCodemodeTool(this.baseTools, loadCodemodeSettings(), this.model.id, () => this.agent)
+      return withCodemodeTool(base, loadCodemodeSettings(), this.model.id, () => this.agent)
     } catch (err) {
       console.error('[agent-runtime] codemode tool assembly failed, continuing without it:', err)
-      return this.baseTools
+      return base
     }
+  }
+
+  /**
+   * Per turn start (review B1/B4): settings are read now (no restart after a
+   * change), and ask_user is offered only when the persona is released AND
+   * the turn comes from a surface that can serve the card (web, android).
+   * Telegram and unknown sources: no tool, no hint; the fence path stays.
+   */
+  private refreshAskUserOffer(): void {
+    this.askUserOffered = isAskUserOfferedFor(this.agentId, this.promptChannel)
   }
 
   /**
@@ -1014,7 +1066,34 @@ class PiAgentRuntime implements AgentRuntimeBoundary, AgentRuntimePiAgentAccess 
   }
 
   streamPrompt(text: string, sessionId: string, images?: ImageContent[]): AsyncIterable<ResponseChunk> {
-    return this.executePromptWithRetry(text, sessionId, false, images)
+    // S1-B: answers of non-blocking questions and dismissed questions reach
+    // the model once, ahead of the next user text (consumed on read).
+    // Two phases (review B3): reserved now with a 10-minute lease, marked
+    // delivered only when the turn ends without error.
+    const claim = claimInteractionContextNotes(this.db, sessionId)
+    if (!claim) return this.executePromptWithRetry(text, sessionId, false, images)
+    return this.confirmNotesOnTurnEnd(claim.turnId, this.executePromptWithRetry(`${claim.text}\n\n${text}`, sessionId, false, images))
+  }
+
+  /**
+   * Phase 2 of the context notes: a turn that ran to its end without an
+   * error chunk marks them delivered; an error, an abort or a consumer that
+   * stops early releases the lease, so the next turn carries them again
+   * (a crash leaves the lease to run out — duplicate yes, loss no).
+   */
+  private async *confirmNotesOnTurnEnd(turnId: string, stream: AsyncIterable<ResponseChunk>): AsyncIterable<ResponseChunk> {
+    let ok = false
+    let errored = false
+    try {
+      for await (const chunk of stream) {
+        if (chunk.type === 'error') errored = true
+        yield chunk
+      }
+      ok = !errored
+    } finally {
+      if (ok) markInteractionContextNotesDelivered(this.db, turnId)
+      else releaseInteractionContextNotes(this.db, turnId)
+    }
   }
 
   retryLastTurn(text: string, sessionId: string, images?: ImageContent[]): AsyncIterable<ResponseChunk> {
@@ -1331,6 +1410,8 @@ class PiAgentRuntime implements AgentRuntimeBoundary, AgentRuntimePiAgentAccess 
 
     if (sessionId) prompt += strandWorkingModePrompt(agentId ?? this.agentId, readStrandWorkingMode(this.db, sessionId))
 
+    if (this.askUserOffered) prompt += `\n\n${ASK_USER_SYSTEM_HINT}\n`
+
     // Append cross-persona hint when ask_agent is available.
     if (loadMultiPersonaSettings().enabled) {
       const hint = buildAskAgentPromptHint(agentId ?? 'main', undefined, this.db)
@@ -1367,6 +1448,8 @@ class PiAgentRuntime implements AgentRuntimeBoundary, AgentRuntimePiAgentAccess 
 
     // Start the prompt (non-blocking)
     this.currentSessionId = sessionId
+    this.askUserBlockingClaimed = false
+    this.refreshAskUserOffer()
     // A2 (S0-A): every secret-boundary replacement made while this prompt
     // runs (system prompt, context transform, tool results) is counted in this scope.
     const sealingScope = createSealingScope(`agent=${this.agentId} session=${sessionId}`)
@@ -1703,13 +1786,17 @@ class PiAgentRuntime implements AgentRuntimeBoundary, AgentRuntimePiAgentAccess 
       }
 
       case 'tool_execution_start': {
+        // S1-B: ask_user arguments never leave the server as stream text, tool
+        // row metadata or log input — only the question count does. The
+        // payload reaches the client after validation as `interaction.open`.
+        const toolArgs = event.toolName === ASK_USER_TOOL_NAME ? redactAskUserArgs(event.args) : event.args
         this.toolCallTimers.set(event.toolCallId, Date.now())
-        this.toolCallArgs.set(event.toolCallId, event.args)
+        this.toolCallArgs.set(event.toolCallId, toolArgs)
         chunks.push({
           type: 'tool_call_start',
           toolName: event.toolName,
           toolCallId: event.toolCallId,
-          toolArgs: event.args,
+          toolArgs,
         })
         break
       }

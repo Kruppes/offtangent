@@ -391,5 +391,353 @@
       "now": "2099-01-01T00:00:00Z",
       "expect": "open"
     }
+  ],
+  "askUser": [
+    {
+      "name": "valid: one choice question",
+      "args": {
+        "questions": [
+          {
+            "type": "choice",
+            "question": "Which variant?",
+            "options": [
+              {
+                "id": "a",
+                "label": "Variante A"
+              },
+              {
+                "id": "b",
+                "label": "Variante B"
+              }
+            ]
+          }
+        ]
+      },
+      "expect": {
+        "ok": true,
+        "blocking": true,
+        "questions": [
+          {
+            "id": "q1",
+            "type": "choice",
+            "optionIds": [
+              "a",
+              "b"
+            ],
+            "allowComment": false
+          }
+        ]
+      }
+    },
+    {
+      "name": "valid: four questions with allowComment get the automatic Other row",
+      "args": {
+        "blocking": false,
+        "questions": [
+          {
+            "type": "choice",
+            "question": "Which variant?",
+            "options": [
+              {
+                "id": "a",
+                "label": "Variante A"
+              },
+              {
+                "id": "b",
+                "label": "Variante B"
+              }
+            ],
+            "allowComment": true,
+            "recommended": "a"
+          },
+          {
+            "type": "multi",
+            "question": "Which parts?",
+            "options": [
+              {
+                "id": "x",
+                "label": "Part X"
+              },
+              {
+                "id": "y",
+                "label": "Part Y"
+              },
+              {
+                "id": "z",
+                "label": "Part Z"
+              }
+            ],
+            "allowComment": true
+          },
+          {
+            "type": "confirm",
+            "question": "Proceed?",
+            "allowComment": true
+          },
+          {
+            "type": "choice",
+            "question": "Which day?",
+            "options": [
+              {
+                "id": "mon",
+                "label": "Monday"
+              },
+              {
+                "id": "tue",
+                "label": "Tuesday"
+              }
+            ],
+            "id": "day",
+            "allowComment": true
+          }
+        ]
+      },
+      "expect": {
+        "ok": true,
+        "blocking": false,
+        "questions": [
+          {
+            "id": "q1",
+            "type": "choice",
+            "optionIds": [
+              "a",
+              "b",
+              "other"
+            ],
+            "allowComment": true,
+            "recommended": "a"
+          },
+          {
+            "id": "q2",
+            "type": "multi",
+            "optionIds": [
+              "x",
+              "y",
+              "z",
+              "other"
+            ],
+            "allowComment": true
+          },
+          {
+            "id": "q3",
+            "type": "confirm",
+            "optionIds": [
+              "yes",
+              "no",
+              "other"
+            ],
+            "allowComment": true
+          },
+          {
+            "id": "day",
+            "type": "choice",
+            "optionIds": [
+              "mon",
+              "tue",
+              "other"
+            ],
+            "allowComment": true
+          }
+        ]
+      }
+    },
+    {
+      "name": "invalid: five questions",
+      "args": {
+        "questions": [
+          {
+            "type": "confirm",
+            "question": "Question 1?"
+          },
+          {
+            "type": "confirm",
+            "question": "Question 2?"
+          },
+          {
+            "type": "confirm",
+            "question": "Question 3?"
+          },
+          {
+            "type": "confirm",
+            "question": "Question 4?"
+          },
+          {
+            "type": "confirm",
+            "question": "Question 5?"
+          }
+        ]
+      },
+      "expect": {
+        "ok": false,
+        "code": "questions_count"
+      }
+    },
+    {
+      "name": "invalid: empty options on a choice question",
+      "args": {
+        "questions": [
+          {
+            "type": "choice",
+            "question": "Which variant?",
+            "options": []
+          }
+        ]
+      },
+      "expect": {
+        "ok": false,
+        "code": "options_empty"
+      }
+    },
+    {
+      "name": "valid: allowComment without Other in the input appends Other",
+      "args": {
+        "questions": [
+          {
+            "type": "multi",
+            "question": "Which parts?",
+            "options": [
+              {
+                "id": "x",
+                "label": "Part X"
+              },
+              {
+                "id": "y",
+                "label": "Part Y"
+              }
+            ],
+            "allowComment": true
+          }
+        ]
+      },
+      "expect": {
+        "ok": true,
+        "blocking": true,
+        "questions": [
+          {
+            "id": "q1",
+            "type": "multi",
+            "optionIds": [
+              "x",
+              "y",
+              "other"
+            ],
+            "allowComment": true
+          }
+        ]
+      }
+    },
+    {
+      "name": "invalid: recommended names an unknown option",
+      "args": {
+        "questions": [
+          {
+            "type": "choice",
+            "question": "Which variant?",
+            "options": [
+              {
+                "id": "a",
+                "label": "Variante A"
+              },
+              {
+                "id": "b",
+                "label": "Variante B"
+              }
+            ],
+            "recommended": "c"
+          }
+        ]
+      },
+      "expect": {
+        "ok": false,
+        "code": "recommended_unknown"
+      }
+    },
+    {
+      "name": "invalid: option id other is reserved",
+      "args": {
+        "questions": [
+          {
+            "type": "choice",
+            "question": "Which variant?",
+            "options": [
+              {
+                "id": "a",
+                "label": "Variante A"
+              },
+              {
+                "id": "other",
+                "label": "Something else"
+              }
+            ]
+          }
+        ]
+      },
+      "expect": {
+        "ok": false,
+        "code": "option_reserved"
+      }
+    },
+    {
+      "name": "valid: confirm with its own options keeps them",
+      "args": {
+        "questions": [
+          {
+            "type": "confirm",
+            "question": "Deploy now?",
+            "options": [
+              {
+                "id": "now",
+                "label": "Now"
+              },
+              {
+                "id": "later",
+                "label": "Later"
+              }
+            ]
+          }
+        ]
+      },
+      "expect": {
+        "ok": true,
+        "blocking": true,
+        "questions": [
+          {
+            "id": "q1",
+            "type": "confirm",
+            "optionIds": [
+              "now",
+              "later"
+            ],
+            "allowComment": false
+          }
+        ]
+      }
+    },
+    {
+      "name": "valid: confirm without options gets yes/no",
+      "args": {
+        "questions": [
+          {
+            "type": "confirm",
+            "question": "Deploy now?"
+          }
+        ]
+      },
+      "expect": {
+        "ok": true,
+        "blocking": true,
+        "questions": [
+          {
+            "id": "q1",
+            "type": "confirm",
+            "optionIds": [
+              "yes",
+              "no"
+            ],
+            "allowComment": false
+          }
+        ]
+      }
+    }
   ]
 }

@@ -1528,3 +1528,31 @@ describe('TurnRunner strand-scoped abort', () => {
     expect(sessionChunks(events, SESSION_B)).toEqual(['text', 'done'])
   })
 })
+
+describe('TurnRunner — S1-B ask_user answer turn', () => {
+  it('turn_start carries replyToInteractionId of the answered ask_user card', async () => {
+    const db = freshDb()
+    const { agent, finish } = controllableAgent()
+    const runner = startRunner(db, agent)
+    const events: TurnEvent[] = []
+    runner.subscribe(USER_ID, collect(events))
+    runner.startTurn({ userId: USER_ID, sessionId: SESSION_ID, text: '<interaction_answer id="ia_x" source="ask_user">\n</interaction_answer>', replyToInteractionId: 'ia_x', inputMode: 'answer' })
+    await waitFor(() => events.some(e => e.type === 'turn_start'))
+    expect(events.find(e => e.type === 'turn_start')).toMatchObject({ replyToInteractionId: 'ia_x' })
+    finish()
+    await waitFor(() => events.some(e => e.type === 'turn_end'))
+  })
+
+  it('an ordinary turn_start has no replyToInteractionId', async () => {
+    const db = freshDb()
+    const { agent, finish } = controllableAgent()
+    const runner = startRunner(db, agent)
+    const events: TurnEvent[] = []
+    runner.subscribe(USER_ID, collect(events))
+    runner.startTurn({ userId: USER_ID, sessionId: SESSION_ID, text: 'hi' })
+    await waitFor(() => events.some(e => e.type === 'turn_start'))
+    expect(events.find(e => e.type === 'turn_start')).not.toHaveProperty('replyToInteractionId')
+    finish()
+    await waitFor(() => events.some(e => e.type === 'turn_end'))
+  })
+})

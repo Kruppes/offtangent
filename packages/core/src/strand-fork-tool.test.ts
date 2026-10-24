@@ -15,6 +15,7 @@ import { initDatabase } from './database.js'
 import type { Database } from './database.js'
 import { SessionManager } from './session-manager.js'
 import { createForkStrandTool } from './strand-fork-tool.js'
+import { isAskUserOfferedFor } from './ask-user-tool.js'
 import { getStrandForkLineage, listChildStrandIds, type StrandFork } from './strand-fork.js'
 
 type ToolResult = {
@@ -28,7 +29,7 @@ describe('fork_strand tool', () => {
   let tmpDir: string
   let sessions: SessionManager
   let strandId: string
-  let started: { userId: number; strandId: string; agentId: string; text: string }[]
+  let started: { userId: number; strandId: string; agentId: string; text: string; source: string }[]
   let announced: (StrandFork & { userId: number })[]
 
   beforeEach(() => {
@@ -102,6 +103,36 @@ describe('fork_strand tool', () => {
     expect(started).toHaveLength(1)
     expect(started[0]).toMatchObject({ userId: 1, strandId: newStrandId, agentId: 'main' })
     expect(started[0]!.text).toContain('Nebenpfad Datenschutz.')
+  })
+
+  it('a Telegram auto-fork keeps the telegram source for the seed turn and the child strand (review 2 B1)', async () => {
+    db.prepare("UPDATE sessions SET source = 'telegram' WHERE id = ?").run(strandId)
+    const result = await run(tool(), { title: 'Nebenpfad', seed: 'Weiter.', run_agent: true })
+    const newStrandId = result.details!.strandId as string
+    expect(started).toHaveLength(1)
+    expect(started[0]!.source).toBe('telegram')
+    const child = db.prepare('SELECT source FROM sessions WHERE id = ?').get(newStrandId) as { source: string }
+    expect(child.source).toBe('telegram')
+    expect(isAskUserOfferedFor('main', started[0]!.source, { agents: ['main'] })).toBe(false)
+  })
+
+  it('an empty or unknown parent source is not upgraded to web: child gets unknown, no ask_user (review 3 Auflage 2)', async () => {
+    for (const bad of ['', 'bogus-surface']) {
+      started.length = 0
+      db.prepare('UPDATE sessions SET source = ? WHERE id = ?').run(bad, strandId)
+      const result = await run(tool(), { title: 'Anomal', seed: 'Weiter.', run_agent: true })
+      const newStrandId = result.details!.strandId as string
+      const child = db.prepare('SELECT source FROM sessions WHERE id = ?').get(newStrandId) as { source: string }
+      expect(child.source).toBe('unknown')
+      expect(started[0]!.source).toBe('unknown')
+      expect(isAskUserOfferedFor('main', child.source, { agents: ['main'] })).toBe(false)
+      expect(isAskUserOfferedFor('main', started[0]!.source, { agents: ['main'] })).toBe(false)
+    }
+  })
+
+  it('a web fork seed turn stays web', async () => {
+    await run(tool(), { title: 'Web', seed: 'Weiter.', run_agent: true })
+    expect(started[0]!.source).toBe('web')
   })
 
   it('downgrades run_agent to a dormant fork when no turn starter is wired (background task)', async () => {

@@ -43,6 +43,19 @@ import { createStrandLink } from './strand-store.js'
 import type { SessionSummary } from './session-summary-schema.js'
 
 /** Longest lineage chain a fork may create (root strand = depth 0). */
+
+/**
+ * Session sources a fork may copy from its parent. Everything else (empty
+ * string, typo, unknown future surface) is downgraded fail-closed to
+ * `unknown`, which is no ask_user surface — never upgraded to `web`.
+ */
+export const KNOWN_FORK_SOURCES: readonly string[] = ['web', 'android', 'rest', 'telegram', 'telegram-group', 'task', 'system']
+export const UNKNOWN_FORK_SOURCE = 'unknown'
+
+export function inheritableForkSource(parentSource: string | null | undefined): string {
+  return typeof parentSource === 'string' && KNOWN_FORK_SOURCES.includes(parentSource) ? parentSource : UNKNOWN_FORK_SOURCE
+}
+
 export const MAX_FORK_DEPTH = 5
 /** Forks one turn (or one background task run) may create. */
 export const MAX_FORKS_PER_TURN = 3
@@ -130,6 +143,11 @@ export interface StrandFork {
   /** The seed text as it was stored / as it is handed to the turn. */
   seedText: string
   autoRun: boolean
+  /**
+   * Surface of the parent strand (`sessions.source`), inherited by the child
+   * and by its seed turn: a Telegram fork stays Telegram (S1-B review 2, B1).
+   */
+  source: string
 }
 
 export interface StrandForkLineage {
@@ -354,10 +372,13 @@ export function forkStrand(input: ForkStrandInput): StrandFork {
   const numericUser = Number(userId)
   const messageUserId = Number.isFinite(numericUser) ? numericUser : null
 
+  const parentSourceRow = db.prepare('SELECT source FROM sessions WHERE id = ?').get(parent.id) as { source?: string | null } | undefined
+  const source = inheritableForkSource(parentSourceRow?.source)
+
   const write = db.transaction(() => {
     db.prepare(
-      'UPDATE sessions SET parent_strand_id = ?, forked_at = ?, forked_from_message_id = ? WHERE id = ?',
-    ).run(parent.id, forkedAt, forkedFromMessageId, child.id)
+      'UPDATE sessions SET parent_strand_id = ?, forked_at = ?, forked_from_message_id = ?, source = ? WHERE id = ?',
+    ).run(parent.id, forkedAt, forkedFromMessageId, source, child.id)
 
     // A pinned model is a decision the user made about this line of thought,
     // so the branch inherits it. Nothing is chosen automatically here, which
@@ -426,6 +447,7 @@ export function forkStrand(input: ForkStrandInput): StrandFork {
     linkId: written.linkId,
     seedText,
     autoRun,
+    source,
   }
 }
 

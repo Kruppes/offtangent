@@ -142,7 +142,7 @@ interface TurnEventBase {
 }
 
 export type TurnEvent =
-  | ({ type: 'turn_start'; sessionId: string } & TurnEventBase)
+  | ({ type: 'turn_start'; sessionId: string; replyToInteractionId?: string } & TurnEventBase)
   | ({ type: 'chunk'; chunk: ResponseChunk } & TurnEventBase)
   | ({ type: 'attachment'; attachment: UploadDescriptor } & TurnEventBase)
   | ({ type: 'system'; text: string } & TurnEventBase)
@@ -221,6 +221,12 @@ export interface StartTurnInput {
   trigger?: StrandTurnTrigger
   /** Strand statistics: how the prompt was entered (typed, dictated, block answer). */
   inputMode?: StrandTurnInputMode | null
+  /**
+   * S1-B: the interaction (`ia_…`) this turn answers. The answer row in
+   * `chat_messages` carries the same id in its metadata; the runner stamps it
+   * on `turn_start` so a client links the turn to the closed card.
+   */
+  replyToInteractionId?: string | null
 }
 
 export interface TurnRunnerOptions {
@@ -898,7 +904,11 @@ export class TurnRunner {
       return
     }
 
-    this.emit(turn, { type: 'turn_start', turnId: turn.id })
+    this.emit(turn, {
+      type: 'turn_start',
+      turnId: turn.id,
+      ...(input.replyToInteractionId ? { replyToInteractionId: input.replyToInteractionId } : {}),
+    })
 
     // Strand statistics: one `strand_turns` row per persisted turn (a retry
     // of a failed turn is a turn of its own). Channels without a web user
@@ -1695,13 +1705,15 @@ class TurnTranscript {
   private recordInteractions(messageId: number): void {
     if (!this.db) return
     try {
-      ingestInteractionMessage(this.db, {
+      const cards = ingestInteractionMessage(this.db, {
         messageId,
         strandId: this.sessionId,
         userId: this.userId,
         agent: this.agentId ?? 'main',
         content: this.fullResponse,
       })
+      // S1-B telemetry: cards by source (fence here, `card_tool` in ask_user).
+      if (cards.length > 0) recordInteractionEvent('other', 'card_fence', cards.length)
     } catch (err) {
       console.error('[turn-runner] Failed to record interaction cards:', err)
     }

@@ -98,17 +98,70 @@ function parseValue(rawValue: unknown): ParseResult<string | string[]> {
   return { ok: false, error: 'value must be an option id or a list of option ids', code: 'invalid_value' }
 }
 
+export interface AskUserAnswerBody {
+  selected: string[]
+  comment?: string
+}
+
+/** Exactly one of `value` (fence card) and `answers` (ask_user card, S1-B). */
 export interface AnswerByIdBody {
-  value: string | string[]
+  value?: string | string[]
+  answers?: Record<string, AskUserAnswerBody>
   clientRequestId: string
 }
 
-/** `POST /api/interactions/:id/answer` `{ value, clientRequestId }`. */
+const ASK_USER_QUESTIONS_MAX = 4
+const ASK_USER_SELECTED_MAX = 9
+const ASK_USER_COMMENT_MAX = 2000
+const ASK_USER_KEY = /^[A-Za-z0-9_-]{1,64}$/
+
+/**
+ * Shape check of `answers` (S1-B). The rules against the card itself (known
+ * option ids, comment allowed) are `validateAskUserAnswer` in the service.
+ * Error texts never echo a value of the request.
+ */
+function parseAnswers(raw: unknown): ParseResult<Record<string, AskUserAnswerBody>> {
+  const bad = (error: string): ParseResult<Record<string, AskUserAnswerBody>> => ({ ok: false, error, code: 'invalid_value' })
+  if (!isRecord(raw)) return bad('answers must be an object keyed by question id')
+  const keys = Object.keys(raw)
+  if (keys.length === 0 || keys.length > ASK_USER_QUESTIONS_MAX) return bad('answers must hold between one and four questions')
+  const out: Record<string, AskUserAnswerBody> = {}
+  for (const key of keys) {
+    if (!ASK_USER_KEY.test(key)) return bad('answers must be keyed by question ids')
+    const entry = raw[key]
+    if (!isRecord(entry)) return bad('every answer must be an object with selected')
+    const selected = entry.selected
+    if (!Array.isArray(selected) || selected.length === 0 || selected.length > ASK_USER_SELECTED_MAX
+      || !selected.every(id => typeof id === 'string' && ASK_USER_KEY.test(id))) {
+      return bad('selected must hold between one and nine option ids')
+    }
+    const item: AskUserAnswerBody = { selected: selected as string[] }
+    if (entry.comment !== undefined && entry.comment !== null) {
+      if (typeof entry.comment !== 'string') return bad('comment must be a string')
+      if (entry.comment.length > ASK_USER_COMMENT_MAX) return { ok: false, error: 'The comment is too long', code: 'comment_too_long' }
+      item.comment = entry.comment
+    }
+    out[key] = item
+  }
+  return { ok: true, value: out }
+}
+
+/** `POST /api/interactions/:id/answer` `{ value | answers, clientRequestId }`. */
 export function parseAnswerByIdBody(body: unknown): ParseResult<AnswerByIdBody> {
   if (!isRecord(body)) return { ok: false, error: 'A JSON body is required', code: 'invalid_body' }
   const clientRequestId = body.clientRequestId
   if (typeof clientRequestId !== 'string' || !clientRequestId.trim() || clientRequestId.length > ID_MAX) {
     return { ok: false, error: 'clientRequestId is required for idempotency', code: 'invalid_client_request_id' }
+  }
+  const hasValue = body.value !== undefined
+  const hasAnswers = body.answers !== undefined
+  if (hasValue === hasAnswers) {
+    return { ok: false, error: 'Send either value or answers', code: 'invalid_value' }
+  }
+  if (hasAnswers) {
+    const answers = parseAnswers(body.answers)
+    if (!answers.ok) return answers
+    return { ok: true, value: { answers: answers.value, clientRequestId: clientRequestId.trim() } }
   }
   const value = parseValue(body.value)
   if (!value.ok) return value

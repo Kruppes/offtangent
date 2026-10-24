@@ -33,6 +33,13 @@ import {
   supersedeOpenOnUserMessage,
   markInteractionResumed,
   interactionValueHash,
+  interactionAnswersHash,
+  isAskUserPayload,
+  validateAskUserAnswer,
+  formatAskUserAnswerBlock,
+  type AskUserAnswerInput,
+  type AskUserAnswerItem,
+  type AskUserPayload,
   findInteractionRequest,
   bindInteractionRequest,
   sealText,
@@ -72,6 +79,8 @@ export interface InteractionTurnStarter {
     explicitSessionId: string
     /** Recorded on the strand turn (statistics). */
     inputMode?: 'typed' | 'voice' | 'answer' | null
+    /** S1-B: the ask_user interaction this turn answers. */
+    replyToInteractionId?: string | null
   }) => unknown
 }
 
@@ -148,7 +157,10 @@ export function canSeeOwner(actor: InteractionActor, ownerId: number | null | un
 
 /** Body of `POST /api/interactions/:id/answer` (S1-A). */
 export interface AnswerByIdInput {
-  value: string | string[]
+  /** Fence card: an option id or a list of them. */
+  value?: string | string[]
+  /** ask_user card (S1-B): one entry per question id. */
+  answers?: Record<string, AskUserAnswerInput>
   clientRequestId: string
   surface: InteractionSurface
 }
@@ -201,8 +213,17 @@ export function createInteractionsService(options: InteractionsServiceOptions): 
     return row
   }
 
-  function fileAnswerMessage(row: BlockMessageRow, userId: number, label: string, clientMessageId: string): boolean {
+  function fileAnswerMessage(
+    row: BlockMessageRow,
+    userId: number,
+    label: string,
+    clientMessageId: string,
+    replyToInteractionId?: string,
+  ): boolean {
     const agentId = row.agent_id ?? 'main'
+    const metadata = replyToInteractionId
+      ? { type: 'interaction_answer', interactionId: replyToInteractionId, replyToInteractionId }
+      : { type: 'interaction_answer', messageId: row.id }
     const result = db.prepare(
       `INSERT INTO chat_messages (session_id, user_id, role, content, metadata, agent_id, client_message_id)
        VALUES (?, ?, 'user', ?, ?, ?, ?)
@@ -211,7 +232,7 @@ export function createInteractionsService(options: InteractionsServiceOptions): 
       row.session_id,
       row.user_id ?? userId,
       label,
-      JSON.stringify({ type: 'interaction_answer', messageId: row.id }),
+      JSON.stringify(metadata),
       agentId,
       clientMessageId,
     )
@@ -318,7 +339,13 @@ export function createInteractionsService(options: InteractionsServiceOptions): 
     })
   }
 
-  function startAnswerTurn(userId: number, row: BlockMessageRow, label: string, surface: InteractionSurface): void {
+  function startAnswerTurn(
+    userId: number,
+    row: BlockMessageRow,
+    label: string,
+    surface: InteractionSurface,
+    replyToInteractionId?: string,
+  ): void {
     const runner = options.getTurnRunner?.() ?? null
     if (!runner) throw new Error('No turn runner available')
     runner.startTurn({
@@ -329,7 +356,154 @@ export function createInteractionsService(options: InteractionsServiceOptions): 
       agentId: row.agent_id ?? 'main',
       explicitSessionId: row.session_id,
       inputMode: 'answer',
+      ...(replyToInteractionId ? { replyToInteractionId } : {}),
     })
+  }
+
+  /* ---------------------------------------------------------------- *
+   * ask_user answers (S1-B)
+   * ---------------------------------------------------------------- */
+
+  /**
+   * The strand side of an ask_user card. Its anchor message is only where
+   * the card hangs (the message that triggered the asking turn, or none in an
+   * empty strand); strand, owner and persona come from the row itself.
+   */
+  function askUserRow(record: InteractionRecord): BlockMessageRow {
+    const strand = db.prepare('SELECT 1 AS ok FROM sessions WHERE id = ?').get(record.strandId) as { ok: number } | undefined
+    if (!strand) throw new InteractionServiceError(410, 'stale', 'The strand this question belonged to is gone')
+    return {
+      id: record.messageId,
+      session_id: record.strandId,
+      user_id: record.userId,
+      content: '',
+      metadata: null,
+      agent_id: record.agent,
+      capture_id: null,
+      session_exists: 1,
+    }
+  }
+
+  /** Turn text of an answered ask_user card: the structured block, from the sealed view. */
+  function askUserTurnText(record: InteractionRecord): string {
+    const items = (interactionStateView(record).answer?.items ?? []) as AskUserAnswerItem[]
+    return formatAskUserAnswerBlock(record.id, items)
+  }
+
+  function resumeAskUser(
+    userId: number,
+    row: BlockMessageRow,
+    answered: InteractionRecord,
+    surface: InteractionSurface,
+    idempotent: boolean,
+  ): AnswerInteractionResult {
+    try {
+      startAnswerTurn(userId, row, askUserTurnText(answered), surface, answered.id)
+    } catch (err) {
+      console.warn(`[interactions] Turn for the answer to ${answered.id} did not start:`, (err as Error).message)
+      throw new InteractionServiceError(502, 'turn_failed', 'The answer was saved, but the turn did not start', {
+        retryable: true,
+        status: answered.status,
+        interaction: interactionStateView(answered),
+      })
+    }
+    const view = interactionStateView(markInteractionResumed(db, answered.id, true))
+    return { applied: true, resumed: true, idempotent, value: view.answer!.value, label: view.answer!.label, interaction: view }
+  }
+
+  /**
+   * The ask_user answer path. Same idempotency and state machine as the
+   * fence path (S1-A): key check first, only an `open` card is answered, one
+   * transaction for key, transition and user row, the turn after the commit.
+   * The value hash is taken over the canonical JSON of `answers`.
+   */
+  function applyAskUserAnswer(
+    actor: InteractionActor,
+    payload: AskUserPayload,
+    record: InteractionRecord,
+    answers: Record<string, AskUserAnswerInput>,
+    clientRequestId: string,
+    surface: InteractionSurface,
+  ): AnswerInteractionResult {
+    const { userId } = actorOf(actor)
+    const row = askUserRow(record)
+    const valueHash = interactionAnswersHash(answers)
+    const binding = findInteractionRequest(db, userId, clientRequestId)
+    if (binding && (binding.interactionId !== record.id || binding.valueHash !== valueHash)) {
+      throw keyConflict(userId, binding.interactionId)
+    }
+    if (record.status === 'answered' && record.answer) {
+      if (binding !== null) {
+        if (options.getTurnRunner?.() && owesTurn(row, record, userId, clientRequestId)) {
+          return resumeAskUser(userId, row, record, surface, true)
+        }
+        const view = interactionStateView(record)
+        return { applied: true, resumed: record.answer.resumed, idempotent: true, value: view.answer!.value, label: view.answer!.label, interaction: view }
+      }
+      throw conflict(record)
+    }
+    const expired = record.status === 'expired'
+      || (record.status === 'open' && record.expiresAt !== null && Date.parse(record.expiresAt) <= Date.now())
+    if (expired) {
+      if (record.status === 'open') transitionInteraction(db, record.id, 'expired', { closeSource: 'timeout', closedSurface: 'system' })
+      throw new InteractionServiceError(410, 'stale', 'This question has expired', { status: 'expired' })
+    }
+    if (record.status !== 'open') throw conflict(record)
+
+    // The error names the rule only, never a value from the request.
+    const checked = validateAskUserAnswer(payload, answers)
+    if (!checked.ok) throw new InteractionServiceError(400, checked.code, checked.error)
+    // Privacy: every string of the items (question, option labels, typed
+    // comment) passes the same boundary as a chat message before it becomes a
+    // stored answer, a user row and turn text. The question and labels are
+    // model text that was never sealed (privacy V3); ids stay byte-identical.
+    const seal = (text: string) => sealText(text, { tier: 'user', source: 'interaction' }).text
+    const items: AskUserAnswerItem[] = sealInteractionValue(checked.items)
+    const label = seal(checked.label)
+    const turnText = formatAskUserAnswerBlock(record.id, items)
+
+    let answered: InteractionRecord
+    let inserted: boolean
+    try {
+      ;({ answered, inserted } = runInteractionTransaction(db, () => {
+        const bind = bindInteractionRequest(db, { userId, clientRequestId, interactionId: record.id, valueHash })
+        if (!bind.bound && (bind.binding.interactionId !== record.id || bind.binding.valueHash !== valueHash)) {
+          throw keyConflict(userId, bind.binding.interactionId)
+        }
+        const closed = transitionInteraction(db, record.id, 'answered', {
+          closeSource: 'answer',
+          closedSurface: surface,
+          answer: { value: checked.value, label, answeredAt: new Date().toISOString(), clientRequestId, resumed: false, items },
+        })
+        // Non-blocking: no user row, no turn; the answer reaches the model at
+        // the start of the next turn (claimInteractionContextNotes).
+        if (!record.blocking) return { answered: closed, inserted: true }
+        const filed = fileAnswerMessage(row, userId, turnText, clientRequestId, record.id)
+        if (filed) supersedeOpenOnUserMessage(db, row.session_id, row.user_id ?? userId)
+        return { answered: closed, inserted: filed }
+      }))
+    } catch (err) {
+      if (err instanceof InteractionTransitionError) throw conflict(getInteraction(db, record.id) ?? record)
+      throw err
+    }
+
+    options.broadcast?.({
+      userId,
+      sessionId: row.session_id,
+      agentId: row.agent_id ?? 'main',
+      messageId: row.id,
+      blockId: record.id,
+      label,
+    })
+    const result = (resumed: boolean, idempotent: boolean): AnswerInteractionResult =>
+      ({ applied: true, resumed, idempotent, value: checked.value, label, interaction: interactionStateView(answered) })
+    if (!record.blocking) return result(false, false)
+    if (!inserted) return result(false, true)
+    if (!options.getTurnRunner?.()) {
+      console.warn(`[interactions] No turn runner available; answer to ${record.id} was filed without a turn`)
+      return result(false, false)
+    }
+    return resumeAskUser(userId, row, answered, surface, false)
   }
 
   /**
@@ -555,6 +729,11 @@ export function createInteractionsService(options: InteractionsServiceOptions): 
       const record = loadOwnInteraction(actor, id)
       // The card's owner was checked above; the message row may carry no
       // user id (agent rows), so it is not checked a second time.
+      if (isAskUserPayload(record.payload)) {
+        if (!input.answers) throw new InteractionServiceError(400, 'invalid_value', 'answers is required for this question')
+        return applyAskUserAnswer(actor, record.payload, record, input.answers, input.clientRequestId, input.surface)
+      }
+      if (input.value === undefined) throw new InteractionServiceError(400, 'invalid_value', 'value is required for this question')
       const row = loadMessage(actor, record.messageId, false)
       return applyAnswer(actor, row, record.payload, record, input.value, input.clientRequestId, input.surface)
     },
