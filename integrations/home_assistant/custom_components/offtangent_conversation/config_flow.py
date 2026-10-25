@@ -21,6 +21,10 @@ def _schema(defaults):
         vol.Required("allowed_tools", default=defaults.get("allowed_tools", "[]")): str,
         vol.Optional("fallback_agent", default=defaults.get("fallback_agent", "")):
             selector.EntitySelector({"domain": "conversation"}),
+        # Optional native Ollama primary path (empty = relay only) and JSONL turn log directory.
+        vol.Optional("local_url", default=defaults.get("local_url", "")): str,
+        vol.Optional("local_model", default=defaults.get("local_model", "gemma4:12b-mlx")): str,
+        vol.Optional("turn_log_dir", default=defaults.get("turn_log_dir", "")): str,
     })
 
 
@@ -34,6 +38,16 @@ def _validate(data):
         raise ValueError()
     fallback = data.get("fallback_agent")
     if fallback not in (None, "") and (not isinstance(fallback, str) or not re.fullmatch(r"conversation\.[a-z0-9_]+", fallback)):
+        raise ValueError()
+    if data.get("local_url"):
+        from .ollama import MODEL_NAME, validate_ollama_url
+        validate_ollama_url(data["local_url"])
+        model = data.get("local_model") or "gemma4:12b-mlx"
+        if not MODEL_NAME.fullmatch(model) or model.endswith((":cloud", "-cloud")):
+            raise ValueError()
+    log_dir = data.get("turn_log_dir")
+    if log_dir not in (None, "") and (not isinstance(log_dir, str)
+                                      or not re.fullmatch(r"/[A-Za-z0-9._/-]{1,200}", log_dir) or ".." in log_dir):
         raise ValueError()
     names = json.loads(data["allowed_tools"])
     if (not isinstance(names, list) or len(names) > 32

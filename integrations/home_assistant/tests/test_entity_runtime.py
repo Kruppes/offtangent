@@ -10,6 +10,7 @@ from pathlib import Path
 import sys
 import tempfile
 import unittest
+import unittest.mock
 from unittest.mock import AsyncMock, patch
 from types import SimpleNamespace
 
@@ -17,11 +18,11 @@ from homeassistant.components import conversation
 from homeassistant.components.conversation.chat_log import ChatLog, UserContent
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import Context, HomeAssistant
-from homeassistant.helpers import llm
+from homeassistant.helpers import intent, llm
 import voluptuous as vol
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
-from custom_components.offtangent_conversation import config_flow, diagnostics
+from custom_components.offtangent_conversation import client, config_flow, diagnostics
 from custom_components.offtangent_conversation.client import AdapterError, validate_reply
 from custom_components.offtangent_conversation.const import DEFAULT_PROMPT, DOMAIN
 from custom_components.offtangent_conversation.conversation import OfftangentConversationEntity
@@ -41,7 +42,17 @@ class SyntheticTool(llm.Tool):
 
     async def async_call(self, hass, tool_input, llm_context):
         self.calls.append((tool_input, llm_context))
-        return self.result
+        return as_tool_result(self.result)
+
+
+def as_tool_result(data):
+    """HA >= 2026.10 tools return llm.ToolResult (a bare dict is a frame-reported deprecation there)."""
+    return llm.ToolResult(data=data) if hasattr(llm, "ToolResult") else data
+
+
+def stored_result(content):
+    """ToolResultContent payload: .result.data (HA >= 2026.10) or .tool_result (HA 2026.9)."""
+    return content.result.data if "result" in content.__dataclass_fields__ else content.tool_result
 
 
 class MockAdapter:
@@ -125,7 +136,7 @@ class ActualHAEntityTests(unittest.IsolatedAsyncioTestCase):
         self.assertNotIn("Dangerous prompt", adapter.requests[0]["messages"][0]["content"])
         self.assertIsNone(log.content[2].content)
         self.assertTrue(log.content[2].tool_calls[0].external)
-        self.assertEqual(log.content[3].tool_result, SUCCESS)
+        self.assertEqual(stored_result(log.content[3]), SUCCESS)
         # F7: second model round sees HA's native result; its answer is the turn answer (like HA agents).
         self.assertEqual(len(adapter.requests), 2)
         self.assertEqual(adapter.requests[1]["messages"][-1]["role"], "tool")
@@ -165,7 +176,7 @@ class ActualHAEntityTests(unittest.IsolatedAsyncioTestCase):
             async def async_call(self, hass, tool_input, llm_context):
                 self.calls.append((tool_input, llm_context))
                 if len(self.calls) == 1:
-                    return {**SUCCESS, "speech": {"plain": {"speech": "Simulierte Küche an."}}}
+                    return as_tool_result({**SUCCESS, "speech": {"plain": {"speech": "Simulierte Küche an."}}})
                 raise TimeoutError()
         self.tool.__class__ = Flaky
         adapter = MockAdapter([reply(calls=[call("one", {"name": "Küche"}), call("two", {"name": "Flur"})])])
@@ -305,6 +316,54 @@ class ActualHAEntityTests(unittest.IsolatedAsyncioTestCase):
         self.assertNotIn("Aktion bestätigt", result.response.speech["plain"]["speech"])
 
 
+    async def test_ha_error_flag_locks_action_and_marks_chatlog(self):
+        # P0 review probe: ToolResult(data={"success": True}, error=True) is never a confirmation.
+        if not hasattr(llm, "ToolResult"):
+            self.skipTest("HA < 2026.10 has no ToolResult error flag")
+        class Contradicting(SyntheticTool):
+            async def async_call(self, hass, tool_input, llm_context):
+                self.calls.append((tool_input, llm_context))
+                return llm.ToolResult(data={**SUCCESS, "success": True}, error=True)
+        self.tool.__class__ = Contradicting
+        adapter = MockAdapter([reply(calls=[call()])])
+        log = self.log()
+        result = await self.agent(adapter)._async_handle_message(self.input, log)
+        self.assertIn("nicht eindeutig bestätigt", result.response.speech["plain"]["speech"])
+        stored = [c for c in log.content if isinstance(c, conversation.ToolResultContent)]
+        self.assertEqual(len(stored), 1)
+        self.assertIs(stored[0].result.error, True)
+        self.assertIs(stored[0].result.data["success"], False)
+
+    async def test_match_failed_read_only_says_not_found_action_stays_unconfirmed(self):
+        await self._match_failed(intent.MatchTargetsConstraints(name="Keller"),
+                                 "Dieses Gerät habe ich in Home Assistant nicht gefunden.")
+
+    async def test_match_failed_area_or_domain_is_neutral(self):
+        await self._match_failed(intent.MatchTargetsConstraints(area_name="Keller"),
+                                 "Dazu habe ich in Home Assistant nichts gefunden.")
+        await self._match_failed(intent.MatchTargetsConstraints(name="Lampe", domains=["light"]),
+                                 "Dazu habe ich in Home Assistant nichts gefunden.")
+
+    async def _match_failed(self, constraints, expected):
+        def no_match(*_):
+            raise intent.MatchFailedError(
+                intent.MatchTargetsResult(False, intent.MatchFailedReason.NAME), constraints)
+        class Missing(SyntheticTool):
+            async def async_call(self, hass, tool_input, llm_context):
+                self.calls.append((tool_input, llm_context))
+                no_match()
+        read = Missing("homeassistant__HassGetState")
+        self.api.tools = [read, Missing(NAME)]
+        # The single lookup retry round repeats the identical lookup: blocked, never re-dispatched.
+        adapter = MockAdapter([reply(calls=[call(name="homeassistant__HassGetState")]),
+                               reply(calls=[call(cid="retry-id", name="homeassistant__HassGetState")])])
+        result = await self.agent(adapter, allowed=["homeassistant__HassGetState"])._async_handle_message(self.input, self.log())
+        self.assertEqual(len(read.calls), 1); self.assertEqual(len(adapter.requests), 2)
+        self.assertEqual(result.response.speech["plain"]["speech"], expected)
+        adapter = MockAdapter([reply(calls=[call()])])
+        result = await self.agent(adapter)._async_handle_message(self.input, self.log())
+        self.assertIn("nicht eindeutig bestätigt", result.response.speech["plain"]["speech"])
+
     async def test_auth_poll_outage_invalid_status_and_recovery_never_keep_cached_ready(self):
         from datetime import datetime
         adapter = MockAdapter([])
@@ -432,3 +491,125 @@ class ActualHAConfigFlowTests(unittest.TestCase):
                 config_flow._validate({**data, key: value})
         form = config_flow._schema(data)
         self.assertIn("adapter_token", {str(k) for k in form.schema})
+
+
+LIVE = "homeassistant__GetLiveContext"
+
+
+class LiveContextTool(llm.Tool):
+    """Synthetic stand-in with HA's GetLiveContext parameter shape; scripted results, no states."""
+
+    def __init__(self, results):
+        self.name = LIVE  # real HA tool id (see live-questions.jsonl)
+        self.description = "Synthetic live context; no services or real states"
+        self.parameters = vol.Schema({vol.Optional("name"): str, vol.Optional("area"): str})
+        self.results, self.calls = results, []
+
+    async def async_call(self, hass, tool_input, llm_context):
+        self.calls.append(tool_input.tool_args)
+        return as_tool_result(self.results.pop(0))
+
+
+class ActualHALookupRetryTests(unittest.IsolatedAsyncioTestCase):
+    """Real HA area/floor/entity/device registries + exposure store; lookup retry end to end."""
+
+    agent, log, asyncTearDown = ActualHAEntityTests.agent, ActualHAEntityTests.log, ActualHAEntityTests.asyncTearDown
+
+    async def asyncSetUp(self):
+        await ActualHAEntityTests.asyncSetUp(self)
+        from homeassistant.components.homeassistant import exposed_entities
+        from homeassistant.components.homeassistant.const import DATA_EXPOSED_ENTITIES
+        from homeassistant.helpers import area_registry as ar, device_registry as dr
+        from homeassistant.helpers import entity_registry as er, floor_registry as fr
+        dr.async_setup(self.hass)
+        for registry in (fr, ar, dr, er):
+            await registry.async_load(self.hass, load_empty=True)
+        floors = fr.async_get(self.hass)
+        eg = floors.async_create("Erdgeschoss", aliases={"EG", "unten"})
+        og = floors.async_create("Obergeschoss", aliases={"OG", "oben"})
+        areas = ar.async_get(self.hass)
+        self.flur_eg = areas.async_create("Flur EG", aliases={"Flur unten", "unterer Flur", "Flur Erdgeschoss"},
+                                          floor_id=eg.floor_id)
+        self.flur_og = areas.async_create("Flur OG", aliases={"Flur oben", "oberer Flur", "Flur Obergeschoss"},
+                                          floor_id=og.floor_id)
+        areas.async_create("Flur Keller")  # no exposed entity -> never offered
+        store = exposed_entities.ExposedEntities(self.hass)
+        await store.async_initialize()
+        self.hass.data[DATA_EXPOSED_ENTITIES] = store
+        ents = er.async_get(self.hass)
+        for uid, area in (("eg", self.flur_eg), ("og", self.flur_og)):
+            entry = ents.async_get_or_create("light", "synthetic", uid, suggested_object_id=f"flur_{uid}")
+            ents.async_update_entity(entry.entity_id, area_id=area.id)
+            self.hass.states.async_set(entry.entity_id, "on")
+            exposed_entities.async_expose_entity(self.hass, conversation.DOMAIN, entry.entity_id, True)
+        hidden = ents.async_get_or_create("light", "synthetic", "keller", suggested_object_id="flur_keller")
+        self.hass.states.async_set(hidden.entity_id, "off")
+
+    def live_agent(self, adapter, results):
+        tool = LiveContextTool(results)
+        self.api.tools[:] = [tool]
+        return self.agent(adapter, allowed=[LIVE]), tool
+
+    async def test_name_no_match_hint_lists_exposed_areas_then_area_hit_answers(self):
+        no_match = {"success": False, "error": "No exposed entities matched name 'Flur'"}
+        hit = {"success": True, "result": "- names: Flur Licht\n  domain: light\n  state: 'on'\n  areas: Flur EG"}
+        adapter = MockAdapter([reply(calls=[call("r1", {"name": "Flur"}, LIVE)]),
+                               reply(calls=[call("r2", {"area": "Flur EG"}, LIVE), call("r3", {"area": "Flur OG"}, LIVE)]),
+                               reply({"role": "assistant", "content": "Ja, im Flur EG und OG ist das Licht an."})])
+        agent, tool = self.live_agent(adapter, [no_match, hit, hit])
+        result = await agent._async_handle_message(self.input, self.log())
+        self.assertEqual(result.response.speech["plain"]["speech"], "Ja, im Flur EG und OG ist das Licht an.")
+        self.assertEqual(tool.calls, [{"name": "Flur"}, {"area": "Flur EG"}, {"area": "Flur OG"}])
+        sent = json.loads(adapter.requests[1]["messages"][-1]["content"])
+        self.assertEqual(sent["error"], no_match["error"])
+        self.assertEqual(sent["candidates"], ["Flur EG", "Flur OG"])  # data field, fixed hint text
+        self.assertEqual(sent["hint"], client.HINT_WITH_CANDIDATES)
+        self.assertNotIn("Flur Keller", json.dumps(sent))
+
+    async def test_alias_and_floor_lookup_candidates_from_real_registries(self):
+        from custom_components.offtangent_conversation.conversation import lookup_hint_for
+        hint = lambda term: lookup_hint_for(self.hass, LIVE, {"name": term}, {})
+        self.assertEqual(hint("Flur unten")["candidates"], ["Flur EG"])
+        self.assertEqual(hint("oberer Flur")["candidates"], ["Flur OG"])
+        self.assertEqual(hint("Erdgeschoss")["candidates"], ["Flur EG"])
+        self.assertEqual(hint("Garage"), {"hint": client.HINT_GENERIC})
+        self.assertEqual(hint("Keller"), {"hint": client.HINT_GENERIC})  # hidden area never offered
+
+    async def test_exposure_check_failure_is_fail_closed(self):
+        from homeassistant.components.homeassistant import exposed_entities
+        from homeassistant.components.homeassistant.const import DATA_EXPOSED_ENTITIES
+        from custom_components.offtangent_conversation import conversation as conv
+        self.assertEqual(conv._exposed_area_ids(self.hass), {self.flur_eg.id, self.flur_og.id})
+        failures = {
+            "store missing": unittest.mock.patch.dict(self.hass.data, {DATA_EXPOSED_ENTITIES: None}),
+            "api raises": unittest.mock.patch.object(exposed_entities, "async_should_expose",
+                                                     side_effect=AttributeError("changed api")),
+            "api changed result": unittest.mock.patch.object(exposed_entities, "async_should_expose",
+                                                             return_value="yes"),
+            "api removed": unittest.mock.patch.object(exposed_entities, "async_should_expose", new=None),
+        }
+        for label, patch in failures.items():
+            with self.subTest(label), patch:
+                self.assertEqual(conv._exposed_area_ids(self.hass), set())
+                for term in ("Flur", "Keller", "Flur Keller"):
+                    self.assertEqual(conv.lookup_candidates_for(self.hass, LIVE, {"name": term}, {}), [])
+                    self.assertEqual(conv.lookup_hint_for(self.hass, LIVE, {"name": term}, {}),
+                                     {"hint": client.HINT_GENERIC})
+        # End to end: the hidden area never reaches the model when the exposure check fails.
+        adapter = MockAdapter([reply(calls=[call("r1", {"name": "Flur Keller"}, LIVE)]),
+                               reply({"role": "assistant", "content": "nie"})])
+        agent, tool = self.live_agent(adapter, [{"success": False, "error": "No exposed entities matched name 'Flur Keller'"}])
+        with failures["api raises"]:
+            await agent._async_handle_message(self.input, self.log())
+        sent = json.loads(adapter.requests[1]["messages"][-1]["content"])
+        self.assertEqual(sent["hint"], client.HINT_GENERIC); self.assertNotIn("candidates", sent)
+
+    async def test_second_no_match_gives_fixed_text_and_no_third_round(self):
+        missing = {"success": False, "error": "No exposed entities matched name 'Flur'"}
+        area_missing = {"success": False, "error": "Area 'Flur' does not exist"}
+        adapter = MockAdapter([reply(calls=[call("r1", {"name": "Flur"}, LIVE)]),
+                               reply(calls=[call("r2", {"area": "Flur"}, LIVE)])])
+        agent, tool = self.live_agent(adapter, [missing, area_missing])
+        result = await agent._async_handle_message(self.input, self.log())
+        self.assertEqual(result.response.speech["plain"]["speech"], "Dazu habe ich in Home Assistant nichts gefunden.")
+        self.assertEqual(len(tool.calls), 2); self.assertEqual(len(adapter.requests), 2)

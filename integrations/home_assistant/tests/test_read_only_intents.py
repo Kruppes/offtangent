@@ -39,7 +39,7 @@ class ReadOnlyIntentTests(unittest.IsolatedAsyncioTestCase):
                 obj = intent.Intent(hass, "conversation", name,
                                     {"name": {"value": "Synthetic"}} if target else {},
                                     "Synthetic query", Context(), "de")
-                with patch("homeassistant.helpers.intent.async_match_targets", return_value=SimpleNamespace(is_match=True, states=[target], areas=[], floors=[])), patch("homeassistant.components.intent.timers._find_timers", return_value=[timer]):
+                with patch("homeassistant.helpers.intent.async_match_targets", return_value=SimpleNamespace(is_match=True, no_match_reason=None, states=[target], areas=[], floors=[])), patch("homeassistant.components.intent.timers._find_timers", return_value=[timer]):
                     result = (await handler.async_handle(obj)).as_dict()
                 self.assertEqual(result["response_type"], response_type)
                 self.assertEqual(result["data"]["failed"], [])

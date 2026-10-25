@@ -11,7 +11,10 @@
           "model": "Exakte Modell-ID",
           "control": "Assist-Steuerung ausdrücklich freigeben",
           "allowed_tools": "Freigegebene Toolnamen als JSON-Liste (muss Adapter-Allowlist entsprechen)",
-          "fallback_agent": "Vorhandener lokaler Ollama-Agent (nur als Ersatz, Konfiguration bleibt unverändert)"
+          "fallback_agent": "Vorhandener lokaler Ollama-Agent (nur als Ersatz, Konfiguration bleibt unverändert)",
+          "local_url": "Ollama-URL für den lokalen Primärpfad (leer = nur Relay), z. B. http://ollama.local:11434",
+          "local_model": "Lokales Modell für den Primärpfad",
+          "turn_log_dir": "Verzeichnis für das JSONL-Turn-Log (leer = aus)"
         }
       }
     },
@@ -29,7 +32,10 @@
           "model": "Exakte Modell-ID",
           "control": "Assist-Steuerung ausdrücklich freigeben",
           "allowed_tools": "Freigegebene Toolnamen als JSON-Liste (muss Adapter-Allowlist entsprechen)",
-          "fallback_agent": "Vorhandener lokaler Ollama-Agent (nur als Ersatz, Konfiguration bleibt unverändert)"
+          "fallback_agent": "Vorhandener lokaler Ollama-Agent (nur als Ersatz, Konfiguration bleibt unverändert)",
+          "local_url": "Ollama-URL für den lokalen Primärpfad (leer = nur Relay), z. B. http://ollama.local:11434",
+          "local_model": "Lokales Modell für den Primärpfad",
+          "turn_log_dir": "Verzeichnis für das JSONL-Turn-Log (leer = aus)"
         }
       }
     },

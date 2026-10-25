@@ -3,6 +3,7 @@ import asyncio
 import json
 import logging
 import time
+from collections.abc import Mapping
 from dataclasses import replace
 from uuid import uuid4
 from datetime import UTC, datetime, timedelta
@@ -14,11 +15,144 @@ from homeassistant.core import HomeAssistantError
 from homeassistant.helpers import intent, llm
 from homeassistant.helpers.event import async_track_time_interval
 
+from . import client
 from .client import AdapterError, TurnProgress, decode_json, run_turn, select_tools
-from .const import DEFAULT_PROMPT, DOMAIN
+from .const import DEFAULT_PROMPT, DOMAIN, WARM_INTERVAL_S
 from .fallback import local_fallback_entry
+from .guard import CONFIRM_TTL_S, Guard, is_confirmation
+from .guard_ha import build_world, make_resolver, make_weather
+from .ollama import MeteredTurn, compact_prompt, compact_tools, stable_prompt
+from .turnlog import PipelineScanner, log_async, summarize_ollama, tool_trace
 
 _LOGGER = logging.getLogger(__name__)
+
+
+# Placed into a tool result by this component only; client.confirmed_result never confirms it.
+INVALID_TOOL_RESULT = "invalid_tool_result"
+NOT_FOUND = "not_found"
+
+
+def _negative(value):
+    """Explicit failure indicators inside tool data (checked before any positive mapping)."""
+    return isinstance(value, Mapping) and (bool(value.get("error")) or value.get("success") is False)
+
+
+def _verified_envelope(name, data):
+    """Legacy {"success": True, "result": ...} ONLY for HA 2026.10.2 contracts verified in core source.
+
+    GetLiveContext (components/homeassistant/llm.py): {"result": str}; errors use error=True.
+    llm__GetDateTime (components/llm/llm.py): {"date", "time", "timezone", "weekday"}.
+    todo__get_items / calendar__get_events: {"items": [...]} / {"events": [...]}; errors use error=True.
+    script__* (helpers/llm.py ActionTool, domain "script"): {"result": response} returned only after
+    hass.services.async_call(..., blocking=True) finished without exception -> same contract as 2026.9.
+    Everything else (custom tools, unknown or new core tools) gets no synthetic success.
+    """
+    keys = set(data)
+    if name in client.LIVE_CONTEXT_TOOLS and keys == {"result"} and isinstance(data["result"], str):
+        return {"success": True, "result": data["result"]}
+    if name == "llm__GetDateTime" and keys == {"date", "time", "timezone", "weekday"}:
+        return {"success": True, "result": data}
+    if name == "todo__get_items" and keys == {"items"} and isinstance(data["items"], list):
+        return {"success": True, "result": data["items"]}
+    if name == "calendar__get_events" and keys == {"events"} and isinstance(data["events"], list):
+        return {"success": True, "result": data["events"]}
+    if name.startswith("script__") and keys == {"result"} and not _negative(data["result"]):
+        return {"success": True, "result": data["result"]}
+    return None
+
+
+def normalize_tool_result(name, result):
+    """Map an Assist tool result onto the legacy dict shape judged by client.confirmed_result.
+
+    HA <= 2026.9 returns the dict itself (passed through unchanged). HA >= 2026.10 returns
+    llm.ToolResult(data, error): error=True is a lock nothing in data can override; bare data
+    is only turned into a confirmation for verified core contracts (_verified_envelope).
+    """
+    if not hasattr(result, "data") or isinstance(result, Mapping):
+        return result if isinstance(result, dict) else {"error": INVALID_TOOL_RESULT}
+    data = result.data
+    failed = bool(getattr(result, "error", False))
+    if not isinstance(data, Mapping):
+        return {"error": INVALID_TOOL_RESULT}
+    data = dict(data)
+    if failed:
+        data["error"] = data.get("error") or True
+        if "success" in data:
+            data["success"] = False
+        return data
+    if "success" in data or client.intent_response(data) or _negative(data):
+        return data  # explicit typed result or explicit failure: client.confirmed_result decides
+    envelope = _verified_envelope(name, data)
+    if envelope is not None:
+        return envelope
+    return {"result": data, client.UNCONFIRMED: True}
+
+
+def tool_result_content_kwargs(payload, failed=False):
+    """HA >= 2026.10: ToolResultContent(result=llm.ToolResult); older cores: tool_result=dict.
+
+    failed is HA's own ToolResult.error of this call; it can only add, never remove an error mark.
+    """
+    if not isinstance(payload, Mapping):
+        payload, failed = {"error": INVALID_TOOL_RESULT}, True
+    if "result" in getattr(conversation.ToolResultContent, "__dataclass_fields__", {}):
+        failed = bool(failed or payload.get("error") or payload.get("success") is False)
+        return {"result": llm.ToolResult(data=dict(payload), error=failed)}
+    return {"tool_result": payload}
+
+
+def _exposed_area_ids(hass) -> set[str]:
+    """Area ids holding at least one entity exposed to Assist (entity area, else device area).
+
+    Same exposure/area resolution as HA's GetLiveContext. Fail-closed: if the exposure data is
+    missing or its API changed, the result is EMPTY (no area is ever offered as a candidate).
+    """
+    try:
+        from homeassistant.components.homeassistant import exposed_entities
+        from homeassistant.helpers import device_registry as dr, entity_registry as er
+        ent_reg, dev_reg = er.async_get(hass), dr.async_get(hass)
+        ids = set()
+        for state in hass.states.async_all():
+            if exposed_entities.async_should_expose(hass, conversation.DOMAIN, state.entity_id) is not True:
+                continue
+            entry = ent_reg.async_get(state.entity_id)
+            if entry is None:
+                continue
+            area_id = entry.area_id
+            if area_id is None and entry.device_id and (device := dev_reg.async_get(entry.device_id)):
+                effective = getattr(dr, "async_get_effective_area_id", None)
+                area_id = effective(hass, device) if effective else device.area_id
+            if isinstance(area_id, str) and area_id:
+                ids.add(area_id)
+        return ids
+    except Exception:  # noqa: BLE001 - exposure store missing/changed: fail closed, no candidates
+        return set()
+
+
+def lookup_candidates_for(hass, name, args, result) -> list[str]:
+    """Area-name candidates for a read-only no-match, only areas with an entity exposed to Assist.
+
+    Data only (the fixed hint text is built in client.lookup_hint); empty on any registry error.
+    """
+    term = client.lookup_term(args)
+    if not term:
+        return []
+    try:
+        from homeassistant.helpers import area_registry as ar, floor_registry as fr
+        exposed = _exposed_area_ids(hass)
+        if not exposed:
+            return []
+        areas = [(a.name, a.aliases, a.floor_id) for a in ar.async_get(hass).async_list_areas()
+                 if a.id in exposed]
+        floors = [(f.floor_id, f.name, f.aliases) for f in fr.async_get(hass).async_list_floors()]
+        return client.lookup_candidates(term, areas, floors)
+    except Exception:  # noqa: BLE001 - registries unavailable: generic hint only
+        return []
+
+
+def lookup_hint_for(hass, name, args, result) -> dict:
+    """Model-facing hint fields (fixed text + separate candidates data) for a read-only no-match."""
+    return client.lookup_hint(lookup_candidates_for(hass, name, args, result))
 
 
 def _error_result(user_input, conversation_id, text):
@@ -40,9 +174,18 @@ class OfftangentConversationEntity(conversation.ConversationEntity, conversation
         self.entry = entry
         self._settings = {**entry.data, **entry.options}
         self._client = entry.runtime_data
+        # Variant B: native Ollama primary path; the relay (Haiku) takes over before any dispatch.
+        self._local = getattr(entry.runtime_data, "local", None)
+        self._turn_log_dir = getattr(entry.runtime_data, "turn_log_dir", None)
+        self._turn = None
+        self._turn_path = None
+        self._local_failures = 0
         self._lock = asyncio.Lock()
         self._history = {}
         self._fallback_ids = {}
+        self._pending = {}  # history key -> (monotonic, batch) awaiting the user's "ja" (local guard)
+        self._key = None
+        self._warm_payload = None  # (prompt, tools) of the last local turn for the keep-warm ping
         self._degradation_count = 0
         self._last_path = "relay"
         self._auth_state = "unknown"
@@ -69,14 +212,39 @@ class OfftangentConversationEntity(conversation.ConversationEntity, conversation
                 "relogin_required": self._auth_state == "relogin_required",
                 "auth_status_last_success_at": self._auth_status_last_success_at,
                 "auth_status_last_error_at": self._auth_status_last_error_at,
-                "fallback_agent": self._settings.get("fallback_agent") or None}
+                "fallback_agent": self._settings.get("fallback_agent") or None,
+                "primary_path": "ollama" if self._local is not None else "relay",
+                "local_failures": self._local_failures}
 
     async def async_added_to_hass(self):
         await super().async_added_to_hass()
         conversation.async_set_agent(self.hass, self.entry, self)
         self._state_ready = True
         self.async_on_remove(async_track_time_interval(self.hass, self._poll_auth, timedelta(minutes=1)))
+        if self._turn_log_dir:
+            # Pipeline-level record per voice turn (STT text, stage latencies, local intent path).
+            scanner = PipelineScanner(self.hass, self._turn_log_dir)
+            scanner.prime()
+            self.async_on_remove(async_track_time_interval(self.hass, scanner.scan, timedelta(seconds=5)))
+        if self._local is not None:
+            self.async_on_remove(async_track_time_interval(self.hass, self._keep_warm, timedelta(seconds=WARM_INTERVAL_S)))
         await self._poll_auth()
+
+    async def _keep_warm(self, _now=None):
+        """Every WARM_INTERVAL_S: refresh the Ollama prompt cache with the last local prompt start.
+
+        Skipped while a turn runs or before the first local turn (nothing to warm yet).
+        Failures are only counted in the turn log; they never change the primary path.
+        """
+        if self._local is None or self._warm_payload is None or self._lock.locked():
+            return
+        try:
+            timing = await self._local.warm(*self._warm_payload)
+            entry = {"kind": "warm", "ts": datetime.now(UTC).isoformat(), "model": self._local.model, **timing}
+        except AdapterError as err:
+            entry = {"kind": "warm", "ts": datetime.now(UTC).isoformat(), "error": str(err)}
+        if self._turn_log_dir:
+            await log_async(self.hass, self._turn_log_dir, entry)
 
     async def _poll_auth(self, _now=None):
         if not hasattr(self._client, "auth_status"):
@@ -169,10 +337,35 @@ class OfftangentConversationEntity(conversation.ConversationEntity, conversation
         async with self._lock:
             progress = TurnProgress()
             key = self._history_key(user_input, chat_log)
+            self._key = key
+            self._turn = record = {"kind": "agent", "ts": datetime.now(UTC).isoformat(),  # UTC like the pipeline records
+                                   "conversation_id": chat_log.conversation_id, "device_id": user_input.device_id,
+                                   "satellite_id": user_input.satellite_id, "text": user_input.text,
+                                   "path": None, "local_error": None}
+            started = time.monotonic()
+            result = None
+            try:
+                result = await self._handle_locked(user_input, chat_log, key, progress)
+                return result
+            finally:
+                record["path"] = record["path"] or self._last_path
+                record["total_s"] = round(time.monotonic() - started, 3)
+                if result is not None:
+                    response = result.response
+                    record["response_type"] = getattr(getattr(response, "response_type", None), "value", None)
+                    record["answer"] = response.speech.get("plain", {}).get("speech")
+                self._turn = None
+                if self._turn_log_dir:
+                    self.hass.async_create_task(log_async(self.hass, self._turn_log_dir, record))
+
+    async def _handle_locked(self, user_input, chat_log, key, progress):
+            self._turn_path = None
             try:
                 async with asyncio.timeout(105):
                     result = await self._async_run(user_input, chat_log, key, progress)
-                if progress.provider_completed:
+                if self._turn_path == "ollama":
+                    self._last_path = "ollama"
+                elif progress.provider_completed:
                     self._auth_state = "ready"
                     self._last_path = "relay"
                 else:
@@ -182,7 +375,10 @@ class OfftangentConversationEntity(conversation.ConversationEntity, conversation
                 return result
             except (AdapterError, TimeoutError) as err:
                 code = str(err)
-                self._last_path = "relay_failed_after_tool" if progress.dispatched else "relay_unavailable"
+                if self._turn_path == "ollama_dispatched":
+                    self._last_path = "ollama_failed_after_tool"
+                else:
+                    self._last_path = "relay_failed_after_tool" if progress.dispatched else "relay_unavailable"
                 self._auth_state = {"provider_relogin_required": "relogin_required",
                     "provider_refresh_unavailable": "refresh_unavailable",
                     "provider_access_rejected": "access_rejected"}.get(code, self._auth_state)
@@ -198,6 +394,49 @@ class OfftangentConversationEntity(conversation.ConversationEntity, conversation
                         self._publish_state()
                 return _error_result(user_input, chat_log.conversation_id,
                     "Der Assistent ist derzeit nicht verfügbar. Ein Aktionserfolg ist nicht bestätigt; ich habe keine weiteren Aktionen versucht.")
+
+    async def _run_local(self, prompt, text, tools, validate_args, dispatch, progress, common):
+        """Ollama primary path through the same run_turn. None = not dispatched, use the relay."""
+        metered = MeteredTurn(self._local)
+        stable, time_line = stable_prompt(prompt)  # per-second clock must not break the prompt cache
+        # Local only: one line per device, short tool descriptions (same tools, same order).
+        stable, tools = compact_prompt(stable), compact_tools(tools)
+        self._warm_payload = (stable, tools)
+        local_text = text + ("\n\n(" + time_line + ")" if time_line else "")
+        record = self._turn if self._turn is not None else {}
+        pending = self._pending.pop(self._key, None)
+        if pending is not None and time.monotonic() - pending[0] <= CONFIRM_TTL_S and is_confirmation(text):
+            # The user confirmed the batch the guard held back: run exactly that, no model round.
+            record["guard"] = [{"guard_confirmed": True, "calls": [[n, a] for n, a in pending[1]][:10]}]
+            self._turn_path = "ollama_confirmed"
+            return await client.run_confirmed(pending[1], validate_args, dispatch, progress)
+        try:
+            guard = Guard(text, build_world(self.hass), make_resolver(self.hass), make_weather(self.hass))
+        except Exception:  # noqa: BLE001 - registries unavailable: guard without world blocks every action
+            guard = Guard(text, None, None)
+        try:
+            outcome = await run_turn(metered, stable, local_text, tools, validate_args, dispatch,
+                                     guard=guard, **common)
+        except (AdapterError, TimeoutError, vol.Invalid, ValueError, TypeError) as err:
+            record["local_error"] = str(err) or type(err).__name__
+            if progress.dispatched:
+                self._turn_path = "ollama_dispatched"
+                raise  # a tool already ran: never repeat the turn on the relay
+            self._local_failures += 1
+            _LOGGER.warning("Ollama primary path failed before any tool ran (%s); relay takes over",
+                            record["local_error"])
+            progress.provider_completed = False
+            return None
+        finally:
+            record["ollama"] = summarize_ollama(metered.calls)
+            record["model"] = self._local.model
+            if guard.events:
+                record["guard"] = guard.events
+        if guard.pending:
+            self._pending[self._key] = (time.monotonic(), guard.pending)
+        self._turn_path = "ollama"
+        self._local_failures = 0
+        return outcome
 
     async def _async_run(self, user_input, chat_log, key, progress):
         try:
@@ -230,15 +469,41 @@ class OfftangentConversationEntity(conversation.ConversationEntity, conversation
             async def dispatch(call_id, name, args):
                 if api is None or name not in selected:
                     raise AdapterError("unsupported_tool")
-                return await api.async_call_tool(llm.ToolInput(
-                    id=call_id, tool_name=name, tool_args=args,
-                ))
+                try:
+                    result = await api.async_call_tool(llm.ToolInput(
+                        id=call_id, tool_name=name, tool_args=args,
+                    ))
+                except intent.MatchFailedError as err:
+                    if client.is_mutating(name):
+                        raise  # actions stay "not confirmed"; never reinterpreted
+                    missing = {"error": NOT_FOUND}  # read-only lookup matched nothing
+                    c = getattr(err, "constraints", None)
+                    # Single device only when HA matched by name alone; area/floor/domain/etc. stays neutral.
+                    if getattr(c, "name", None) and not any(
+                            getattr(c, f, None) for f in ("area_name", "floor_name", "domains", "device_classes")):
+                        missing["target"] = "device"
+                    return missing
+                ha_errors[call_id] = bool(getattr(result, "error", False))
+                return normalize_tool_result(name, result)
 
+            ha_errors = {}  # call_id -> HA's own ToolResult.error (2026.10), kept apart from the payload
             history = self._history.get(key, (0, []))[1]
-            outcome = await run_turn(self._client, prompt, user_input.text, tools, validate_args, dispatch,
-                                     history=history, progress=progress,
-                                     # Stay inside the 105 s turn guard of _async_handle_message.
-                                     deadline=asyncio.get_running_loop().time() + 100)
+            # Stay inside the 105 s turn guard of _async_handle_message.
+            deadline = asyncio.get_running_loop().time() + 100
+            common = {"history": history, "progress": progress, "deadline": deadline,
+                      "candidates_for": lambda name, args, result: lookup_candidates_for(
+                          self.hass, name, args, result)}
+            outcome = None
+            if self._local is not None:
+                outcome = await self._run_local(prompt, user_input.text, tools, validate_args, dispatch,
+                                                progress, common)
+            if outcome is None:
+                outcome = await run_turn(self._client, prompt, user_input.text, tools, validate_args, dispatch,
+                                         **common)
+            if self._turn is not None:
+                self._turn["tools"] = tool_trace(outcome.messages[outcome.start_index:])
+                self._turn["prompt_chars"] = len(prompt)
+                self._turn["tool_count"] = len(tools)
             self._history[key] = (time.monotonic(), (history + [
                 {"role": "user", "content": user_input.text[:8192]},
                 {"role": "assistant", "content": outcome.text[:8192]},
@@ -260,7 +525,8 @@ class OfftangentConversationEntity(conversation.ConversationEntity, conversation
                     chat_log.async_add_assistant_content_without_tools(conversation.ToolResultContent(
                         agent_id=self.entity_id, tool_call_id=message["tool_call_id"],
                         tool_name=tool_names[message["tool_call_id"]],
-                        tool_result=decode_json(message["content"]),
+                        **tool_result_content_kwargs(decode_json(message["content"]),
+                                                     ha_errors.get(message["tool_call_id"], False)),
                     ))
             return conversation.async_get_result_from_chat_log(user_input, chat_log)
         except conversation.ConverseError as err:
