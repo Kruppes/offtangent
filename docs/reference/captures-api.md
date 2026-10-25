@@ -216,7 +216,7 @@ and comes from the devices that send it: the puck firmware writes `work` or
 
 | Value | Router | Model of the answer turn | Thinking level | Style instruction |
 |---|---|---|---|---|
-| `work` (default) | runs | persona / strand / global | persona's own | source hint only (`captureSources.puck.styleHint`) |
+| `work` (default) | runs | persona / strand / global | persona's own | source hint only (`captureSources.puck.styleHint`, `captureSources.clock.styleHint`) |
 | `quick` | **skipped** when no `strandId` is given | `captureModes.quick.providerId` + `modelId`, else the persona's | `captureModes.quick.thinkingLevel` (default `off`) | `captureModes.quick.styleHint` plus the source hint |
 | `assist` | runs, like `work` | persona's own | persona's own | `captureModes.assist.styleHint` plus the source hint |
 
@@ -252,6 +252,35 @@ The mode is remembered on the capture (`captures.metadata`, only when it is not
 `work`), so a later turn started from the same capture is still answered in that
 mode. It is **not** part of the `capture` object in any response — `mode` is an
 input field only.
+
+## Source `clock`
+
+The TC002 LED clock does not call this endpoint. Its push-to-talk route
+`POST /api/device/clock/voice` (device token, scope `clock:voice`, LAN only)
+transcribes the audio and calls the same captures service with:
+
+| Field | Value |
+|---|---|
+| `text` | the transcript (a phantom transcript such as `Untertitel …` is `422 no_speech`, no capture) |
+| `source` | `clock` |
+| `kind` | `voice` |
+| `mode` | `work` — the router runs, the turn has all tools of the persona |
+| `clientMessageId` | `clock:<device hash>:<X-Clock-Exchange>`; a retry with the same exchange id returns the first capture (`idempotent: true`), no second router call or turn |
+| `agentId`, `strandId`, `intent` | `null` — the router decides, like for the app |
+
+The only source-specific behaviour is the turn-local style hint
+`captureSources.clock.styleHint` (settings, default "core answer first":
+one or two short spoken sentences first, then the normal answer). The route
+answers `404` until `captureSources.clock.enabled` (default `false`) **and**
+the environment switch `CLOCK_VOICE_ENABLED` (default off) are on. One
+recording per device at a time (`429 rate_limited` otherwise).
+
+```json
+"captureSources": {
+  "puck":  { "styleHint": "..." },
+  "clock": { "enabled": false, "styleHint": "Die Frage kam ueber die Uhr, ..." }
+}
+```
 
 ## `GET /api/captures`
 

@@ -1544,6 +1544,10 @@ export type {
   Stage1Outcome,
   ParseStage1Result,
 } from './capture-split.js'
+export { errorClass, errorTextClass, publicProviderError, withRawError } from './log-safe-error.js'
+export type { LogSafeErrorClass } from './log-safe-error.js'
+export { shortenForVoice, VOICE_SHORTEN_SYSTEM_PROMPT } from './voice-shorten.js'
+export type { VoiceShortenOptions, VoiceShortenCompletion } from './voice-shorten.js'
 export { deriveStrandTitle, DERIVED_TITLE_MAX } from './strand-title.js'
 export { backfillStrandModelPins, resolveBackfillStrandModel } from './strand-model-pin.js'
 export {

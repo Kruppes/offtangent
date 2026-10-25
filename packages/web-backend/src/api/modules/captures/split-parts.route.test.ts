@@ -4,7 +4,7 @@
  * middleware, so the wiring (route -> controller -> service) is covered and
  * not only the service.
  */
-import { describe, it, expect, beforeAll, afterAll, beforeEach } from 'vitest'
+import { describe, it, expect, beforeAll, afterAll, beforeEach, vi } from 'vitest'
 import http from 'node:http'
 import fs from 'node:fs'
 import os from 'node:os'
@@ -22,8 +22,9 @@ let baseUrl: string
 let token: string
 let tempDataDir: string
 let previousDataDir: string | undefined
-let routerAnswers: string[] = []
-let splitAnswers: string[] = []
+// An Error entry is thrown by the stub, as a failing provider call would.
+let routerAnswers: Array<string | Error> = []
+let splitAnswers: Array<string | Error> = []
 
 const chain: ResolvedRouterModel[] = [
   { spec: 'stub', threshold: null, providerId: 'p', providerName: 'P', modelId: 'stub', composite: 'p:stub' },
@@ -81,11 +82,13 @@ beforeAll(async () => {
     routerComplete: async () => {
       const next = routerAnswers.shift()
       if (next === undefined) throw new Error('router stub has no answer')
+      if (next instanceof Error) throw next
       return next
     },
     splitComplete: async () => {
       const next = splitAnswers.shift()
       if (next === undefined) throw new Error('split stub has no answer')
+      if (next instanceof Error) throw next
       return next
     },
   })
@@ -123,6 +126,100 @@ async function postSplitCapture(): Promise<string> {
 }
 
 describe('split-on-intake over HTTP', () => {
+  // Review K0-K2, MAJOR-5: the split log carried the transcript-derived part
+  // titles, for every source (clock, puck, app), privacy mode or not.
+  it('the split writes no dictation content into the server log, only ids and sizes', async () => {
+    const lines: string[] = []
+    const keep = (...args: unknown[]) => { lines.push(args.map(String).join(' ')) }
+    const spies = (['log', 'info', 'warn', 'error', 'debug'] as const).map(level => vi.spyOn(console, level).mockImplementation(keep))
+    let id: string
+    try {
+      id = await postSplitCapture()
+    } finally {
+      for (const spy of spies) spy.mockRestore()
+    }
+    const split = lines.filter(line => line.startsWith('[split]'))
+    expect(split).toEqual([`[split] capture ${id}: 2 parts (0.93) sizes ${DACH_PART.length}c/${AUTO_PART.length}c`])
+    for (const word of ['Dach', 'Auto', 'Sturm', 'Service', 'Montag', 'Termin']) {
+      expect(lines.join('\n')).not.toContain(word)
+    }
+  })
+
+  // Review K0-K2-2, MAJOR-5 (rest): the split and router notes carried
+  // Error.message of a failed provider call, and a provider error can quote
+  // the request (= the dictation) or a key. The marker stands for both.
+  describe('provider error text never reaches the server log', () => {
+    const MARKER = 'PRIVATE_SPOKEN_PHRASE_SAMPLE'
+    const echo = () => new Error(`provider echo: "${MARKER}" sk-${MARKER}-token`)
+
+    async function captureLog(run: () => Promise<void>): Promise<string[]> {
+      const lines: string[] = []
+      const keep = (...args: unknown[]) => { lines.push(args.map(a => (a instanceof Error ? `${a.message}\n${a.stack}` : String(a))).join(' ')) }
+      const spies = (['log', 'info', 'warn', 'error', 'debug', 'trace'] as const).map(level => vi.spyOn(console, level).mockImplementation(keep))
+      try {
+        await run()
+      } finally {
+        for (const spy of spies) spy.mockRestore()
+      }
+      return lines
+    }
+
+    it('a split that succeeds after a failed attempt 1 logs the error class, not the message', async () => {
+      splitAnswers = [echo(), TWO_TOPICS, DACH_PART, AUTO_PART]
+      routerAnswers = [newStrand('Dach'), newStrand('Auto')]
+      let id = ''
+      const lines = await captureLog(async () => {
+        const created = await call('POST', '/api/captures', { text: TEXT, kind: 'voice', source: 'clock' })
+        expect(created.status).toBe(201)
+        id = created.json.capture.id as string
+      })
+      expect(lines.join('\n')).not.toContain(MARKER)
+      expect(lines).toContain(`[split] capture ${id}: split stage 1 attempt 1 failed: error`)
+      const res = await call('GET', `/api/captures/${id}`)
+      expect(res.json.partCount).toBe(2)
+    })
+
+    it('a split whose consolidation fails logs the class only and keeps the sentences', async () => {
+      splitAnswers = [TWO_TOPICS, echo(), echo()]
+      routerAnswers = [newStrand('Dach'), newStrand('Auto')]
+      let id = ''
+      const lines = await captureLog(async () => {
+        const created = await call('POST', '/api/captures', { text: TEXT, kind: 'voice', source: 'puck' })
+        expect(created.status).toBe(201)
+        id = created.json.capture.id as string
+      })
+      expect(lines.join('\n')).not.toContain(MARKER)
+      expect(lines.filter(l => l.includes('consolidation failed (error)'))).toHaveLength(2)
+      const res = await call('GET', `/api/captures/${id}`)
+      expect(res.json.partCount).toBe(2)
+    })
+
+    it('a split that fails on every attempt files as one and logs no message', async () => {
+      splitAnswers = [echo(), echo(), echo(), echo()]
+      routerAnswers = [newStrand('Dach')]
+      const lines = await captureLog(async () => {
+        const created = await call('POST', '/api/captures', { text: TEXT, kind: 'voice', source: 'app' })
+        expect(created.status).toBe(201)
+      })
+      expect(lines.join('\n')).not.toContain(MARKER)
+      expect(lines.some(l => /\[split\] capture \S+: split stage 1 failed after \d+ attempts: error$/.test(l))).toBe(true)
+    })
+
+    it('a router outage logs the error class, not the message, and the capture is still stored', async () => {
+      routerAnswers = [echo()]
+      let id = ''
+      const lines = await captureLog(async () => {
+        const created = await call('POST', '/api/captures', { text: 'Kurze Notiz zum Dach.', kind: 'voice', source: 'clock' })
+        expect(created.status).toBe(201)
+        id = created.json.capture.id as string
+      })
+      expect(lines.join('\n')).not.toContain(MARKER)
+      expect(lines).toContain(`[router] capture ${id} part 0: p:stub: call failed (error)`)
+      const res = await call('GET', `/api/captures/${id}`)
+      expect(res.status).toBe(200)
+    })
+  })
+
   it('GET /api/captures/:id returns the parts and the split verdict', async () => {
     const id = await postSplitCapture()
     const res = await call('GET', `/api/captures/${id}`)

@@ -12,6 +12,7 @@ import type {
   TurnStreamChunk,
 } from './agent-runtime-types.js'
 import { buildTurnErrorMetadata, formatTurnErrorContent } from './turn-error.js'
+import { errorClass, errorTextClass, publicProviderError } from './log-safe-error.js'
 import { newTurnRetryActionId } from './turn-retry-action.js'
 import { sealText } from './secret-boundary.js'
 import { classifyInteractionFences, extractAnswerableInteractionBlocks } from './contracts/interaction-blocks.js'
@@ -336,6 +337,12 @@ export interface PersistedAssistantMessage {
   agentId: string
   /** The full answer text; empty when the turn only produced attachments. */
   content: string
+  /**
+   * Channel of the turn (`web`, `telegram`, `clock`, ...). Lets a consumer
+   * skip channels that already speak the answer themselves (the clock plays
+   * its own TTS, review K0-K2-5 #1).
+   */
+  source?: string
 }
 
 /**
@@ -413,7 +420,13 @@ type AttemptResult =
   | { status: 'aborted' }
   | {
     status: 'failed'
+    /** Raw error text, in-process only: retry and auth classifiers. */
     error: string
+    /**
+     * What may leave the process: the fixed text of a runner/runtime notice,
+     * or `publicProviderError(error)` for provider text (review K0-K2-4 #2/#3).
+     */
+    publicError: string
     retryable: boolean
     willRetry: boolean
     /** The retry is the one-shot credential recovery, not a policy retry. */
@@ -557,7 +570,7 @@ export class TurnRunner {
         try {
           subscriber({ ...event, replay: true })
         } catch (err) {
-          console.error('[turn-runner] replay subscriber failed:', err)
+          console.error(`[turn-runner] replay subscriber failed: ${errorClass(err)}`)
         }
       }
     }
@@ -733,7 +746,7 @@ export class TurnRunner {
         turnOverride,
       }) ?? null
     } catch (err) {
-      console.warn('[turn-runner] Could not resolve the start model:', err)
+      console.warn(`[turn-runner] Could not resolve the start model: ${errorClass(err)}`)
       startModel = turnOverride
     }
     const turn: TurnState = {
@@ -779,7 +792,7 @@ export class TurnRunner {
         return this.runTurn(turn, input)
       })
       .catch((err) => {
-        console.error('[turn-runner] turn failed unexpectedly:', err)
+        console.error(`[turn-runner] turn failed unexpectedly: ${errorClass(err)}`)
       })
     this.queues.set(queueKey, run)
     // Drop the drained chain so the map does not keep one entry per user that
@@ -862,7 +875,7 @@ export class TurnRunner {
           ORDER BY m.timestamp, m.id`,
       ).all() as typeof rows
     } catch (err) {
-      console.warn('[turn-runner] Could not read undelivered steers:', (err as Error).message)
+      console.warn(`[turn-runner] Could not read undelivered steers: ${errorClass(err)}`)
       return 0
     }
     let count = 0
@@ -1023,7 +1036,7 @@ export class TurnRunner {
       try {
         subscriber(stamped)
       } catch (err) {
-        console.error('[turn-runner] subscriber failed:', err)
+        console.error(`[turn-runner] subscriber failed: ${errorClass(err)}`)
       }
     }
   }
@@ -1139,10 +1152,10 @@ export class TurnRunner {
       if (result.authRetry) {
         authRecoveryUsed = true
         attempt++
-        const retry: RetryInfo = { attempt, maxRetries: policy.maxRetries, delayMs: 0, error: result.error }
+        const retry: RetryInfo = { attempt, maxRetries: policy.maxRetries, delayMs: 0, error: result.publicError }
         console.warn(
           `[turn-runner] Provider rejected the credentials (user=${turn.userId}, session=${turn.sessionId}): `
-          + `${result.error} \u2014 credentials re-resolved, retrying once.`,
+          + `${errorTextClass(result.error)} \u2014 credentials re-resolved, retrying once.`,
         )
         turn.buffer = turn.buffer.filter(event => event.type === 'turn_start')
         this.emitChunk(turn, { type: 'retry_scheduled', text: formatAuthRetryContent(), retry })
@@ -1153,10 +1166,10 @@ export class TurnRunner {
       if (!result.willRetry) {
         this.failTurn(turn, {
           cause: result.retryable ? 'retry_exhausted' : 'non_retryable',
-          error: result.error,
+          error: result.publicError,
           attempts: attempt,
           retryable: result.retryable,
-        })
+        }, errorTextClass(result.error))
         break
       }
 
@@ -1174,11 +1187,11 @@ export class TurnRunner {
         delayMs: statedDelayMs !== null
           ? Math.min(Math.max(statedDelayMs, retryDelayMs(policy, attempt)), RATE_LIMIT_RETRY_CAP_MS)
           : retryDelayMs(policy, attempt),
-        error: result.error,
+        error: result.publicError,
       }
       console.warn(
         `[turn-runner] Retryable provider error (user=${turn.userId}, session=${turn.sessionId}): `
-        + `${result.error} — retry ${attempt}/${policy.maxRetries} in ${retry.delayMs}ms.`,
+        + `${errorTextClass(result.error)} — retry ${attempt}/${policy.maxRetries} in ${retry.delayMs}ms.`,
       )
 
       // The failed attempt is discarded, so drop its events from the replay
@@ -1219,7 +1232,7 @@ export class TurnRunner {
   ): Promise<AttemptResult> {
     turn.attemptController = new AbortController()
     const transcript = new TurnTranscript(
-      this.db, turn.sessionId, turn.userId, turn.agentId, this.onAssistantMessage,
+      this.db, turn.sessionId, turn.userId, turn.agentId, this.onAssistantMessage, turn.source,
     )
     const agentUserId = turn.key
     const stall: { error: string | null; retryable: boolean } = { error: null, retryable: true }
@@ -1227,7 +1240,7 @@ export class TurnRunner {
       stall.error = error
       stall.retryable = retryable
     })
-    let failure: { error: string; retryable: boolean } | null = null
+    let failure: { error: string; publicError: string; retryable: boolean } | null = null
 
     try {
       const continueTurn = attempt > 0 || input.continueFromTranscript === true
@@ -1274,8 +1287,16 @@ export class TurnRunner {
         if (chunk.type === 'done') continue
 
         if (chunk.type === 'error') {
-          const error = chunk.error ?? 'Unknown provider error'
-          failure = { error, retryable: this.isRetryableFailure(turn, error) }
+          // `rawError` (provider text) feeds the classifiers only; `error` is
+          // the public form. A chunk without `rawError` is a fixed notice of
+          // the runtime, or comes from an older producer: then the public
+          // form is derived here so raw text can never pass through.
+          const error = chunk.rawError ?? chunk.error ?? 'Unknown provider error'
+          failure = {
+            error,
+            publicError: chunk.rawError !== undefined ? (chunk.error ?? publicProviderError(chunk.rawError)) : publicProviderError(chunk.error),
+            retryable: this.isRetryableFailure(turn, error),
+          }
           break
         }
 
@@ -1291,7 +1312,11 @@ export class TurnRunner {
     } catch (err) {
       if (!this.isAttemptAborted(turn)) {
         const message = (err as Error).message
-        failure = { error: `Agent error: ${message}`, retryable: this.isRetryableFailure(turn, message) }
+        failure = {
+          error: `Agent error: ${message}`,
+          publicError: `Agent error: ${errorClass(err)}`,
+          retryable: this.isRetryableFailure(turn, message),
+        }
       }
     } finally {
       watchdog.stop()
@@ -1301,7 +1326,8 @@ export class TurnRunner {
     // is the reason the attempt died. A mid-stream stall is retryable; an
     // exceeded native first-token budget is not (an automatic retry would put
     // the same long prefill straight back into the same local runner queue).
-    if (stall.error) failure = { error: stall.error, retryable: stall.retryable }
+    // The watchdog texts are the runner's own, so they are public as they are.
+    if (stall.error) failure = { error: stall.error, publicError: stall.error, retryable: stall.retryable }
 
     // A user abort ends the turn even if the watchdog fired first: only the
     // watchdog's own kill counts as a retryable failure.
@@ -1331,7 +1357,7 @@ export class TurnRunner {
     if (willRetry) transcript.discard()
     else this.commitTranscript(turn, transcript)
 
-    return { status: 'failed', error: failure.error, retryable: failure.retryable, willRetry, authRetry }
+    return { status: 'failed', error: failure.error, publicError: failure.publicError, retryable: failure.retryable, willRetry, authRetry }
   }
 
   /**
@@ -1341,7 +1367,16 @@ export class TurnRunner {
    * there after a reload; the chunk carries the same text and the row id so
    * live rendering and history agree.
    */
-  private failTurn(turn: TurnState, failure: Omit<TurnErrorInfo, 'messageId' | 'occurredAt' | 'retryActionId'>): void {
+  /**
+   * `failure.error` must already be public (fixed text or
+   * `publicProviderError`); `logClass` is the class of the raw text, so the
+   * log keeps the diagnosis without the text (review K0-K2-4 #3).
+   */
+  private failTurn(
+    turn: TurnState,
+    failure: Omit<TurnErrorInfo, 'messageId' | 'occurredAt' | 'retryActionId'>,
+    logClass: string = errorTextClass(failure.error),
+  ): void {
     turn.statsFailed = true
     const info: TurnErrorInfo = {
       ...failure,
@@ -1362,13 +1397,13 @@ export class TurnRunner {
         turn.agentId,
       )
     } catch (err) {
-      console.error('[turn-runner] Failed to persist terminal error:', err)
+      console.error(`[turn-runner] Failed to persist terminal error: ${errorClass(err)}`)
       messageId = null
     }
 
     console.error(
       `[turn-runner] Turn failed (user=${turn.userId}, session=${turn.sessionId}, `
-      + `cause=${info.cause}, attempts=${info.attempts}): ${info.error}`,
+      + `cause=${info.cause}, attempts=${info.attempts}): ${logClass}`,
     )
 
     const errorInfo: TurnErrorInfo = { ...info, messageId: messageId ?? undefined }
@@ -1426,7 +1461,7 @@ export class TurnRunner {
         error,
       })
     } catch (err) {
-      console.error('[turn-runner] Credential recovery failed:', err)
+      console.error(`[turn-runner] Credential recovery failed: ${errorClass(err)}`)
       return false
     }
   }
@@ -1568,7 +1603,7 @@ export class TurnRunner {
           JSON.stringify(buildProviderStallMetadata(stall)),
         )
       } catch (err) {
-        console.error('[turn-runner] Failed to persist stall warning:', err)
+        console.error(`[turn-runner] Failed to persist stall warning: ${errorClass(err)}`)
         return null
       }
     }
@@ -1623,7 +1658,7 @@ export class TurnRunner {
             JSON.stringify(buildProviderStallMetadata(stall)),
           )
         } catch (err) {
-          console.error('[turn-runner] Failed to resolve stall warning:', err)
+          console.error(`[turn-runner] Failed to resolve stall warning: ${errorClass(err)}`)
         }
       }
 
@@ -1763,6 +1798,8 @@ class TurnTranscript {
     // Fork multi-persona: persona attribution for every persisted row.
     private readonly agentId: string = 'main',
     private readonly onAssistantMessage?: (message: PersistedAssistantMessage) => void,
+    /** Channel of the turn, handed to {@link onAssistantMessage}. */
+    private readonly source?: string,
   ) {}
 
   private get persists(): boolean {
@@ -1836,7 +1873,7 @@ class TurnTranscript {
         saveChatMessage(this.db, this.sessionId, this.userId, 'assistant', text, JSON.stringify({ kind: 'thinking' }), this.agentId),
       )
     } catch (err) {
-      console.error('[turn-runner] Failed to persist thinking block:', err)
+      console.error(`[turn-runner] Failed to persist thinking block: ${errorClass(err)}`)
     }
   }
 
@@ -1865,7 +1902,7 @@ class TurnTranscript {
       const statement = this.db.prepare('DELETE FROM chat_messages WHERE id = ?')
       for (const id of this.writtenRowIds) statement.run(id)
     } catch (err) {
-      console.error('[turn-runner] Failed to discard the failed attempt:', err)
+      console.error(`[turn-runner] Failed to discard the failed attempt: ${errorClass(err)}`)
     }
     this.writtenRowIds.length = 0
   }
@@ -1915,7 +1952,7 @@ class TurnTranscript {
       // S1-B telemetry: cards by source (fence here, `card_tool` in ask_user).
       if (cards.length > 0) recordInteractionEvent('other', 'card_fence', cards.length)
     } catch (err) {
-      console.error('[turn-runner] Failed to record interaction cards:', err)
+      console.error(`[turn-runner] Failed to record interaction cards: ${errorClass(err)}`)
     }
   }
 
@@ -1933,9 +1970,10 @@ class TurnTranscript {
         agentId: this.agentId,
         content: this.fullResponse,
         voiceNote: this.voiceNote,
+        ...(this.source ? { source: this.source } : {}),
       })
     } catch (err) {
-      console.error('[turn-runner] onAssistantMessage hook failed:', err)
+      console.error(`[turn-runner] onAssistantMessage hook failed: ${errorClass(err)}`)
     }
   }
 
@@ -1960,10 +1998,10 @@ class TurnTranscript {
       })
       for (const skip of result.skipped) {
         if (skip.reason === 'duplicate') continue
-        console.warn(`[turn-runner] Skipped artifact "${skip.title}": ${skip.reason}`)
+        console.warn(`[turn-runner] Skipped artifact (title length ${skip.title.length}): ${skip.reason}`)
       }
     } catch (err) {
-      console.error('[turn-runner] Failed to record artifacts:', err)
+      console.error(`[turn-runner] Failed to record artifacts: ${errorClass(err)}`)
     }
   }
 }

@@ -4,7 +4,7 @@
  * eligibility filter, ownership) and answering through the shared
  * interactions service.
  */
-import { describe, it, expect, beforeAll, afterAll, beforeEach } from 'vitest'
+import { describe, it, expect, beforeAll, afterAll, beforeEach, vi } from 'vitest'
 import http from 'node:http'
 import express from 'express'
 import { ingestInteractionMessage, initDatabase, readInteractionAnswers } from '@axiom/core'
@@ -22,6 +22,8 @@ let otherJwt: string
 let clockToken: string
 let clockId: string
 let turns: Array<{ sessionId: string; text: string }> = []
+/** Review K0-K2-4 #4: when set, `answer` throws an unexpected error with this text. */
+let answerThrows: string | null = null
 
 function fence(payload: Record<string, unknown>): string {
   return ['```offtangent', JSON.stringify(payload), '```'].join('\n')
@@ -111,7 +113,11 @@ beforeAll(async () => {
   // Loopback is NOT allowed by default (a same-host tunnel connects from
   // there); the test server allows it explicitly, like CLOCK_ALLOWED_CIDRS
   // would. The default gate is tested on its own server below.
-  app.use('/api/device/clock', createClockDeviceRouter({ db, getInteractions: () => service, allowedCidrs: '127.0.0.1/32' }))
+  app.use('/api/device/clock', createClockDeviceRouter({
+    db,
+    getInteractions: () => answerThrows === null ? service : { ...service, answer: () => { throw new Error(answerThrows!) } },
+    allowedCidrs: '127.0.0.1/32',
+  }))
   server = http.createServer(app)
   await new Promise<void>(resolve => server.listen(0, '127.0.0.1', resolve))
   baseUrl = `http://127.0.0.1:${(server.address() as { port: number }).port}`
@@ -418,6 +424,25 @@ describe('GET /state', () => {
 })
 
 describe('POST /answer', () => {
+  it('review K0-K2-4 #4: an unexpected apply error logs its class, not its text', async () => {
+    const MARKER = 'PRIVATE_CLOCK_DICTATION_MARKER_CLOCK_ANSWER'
+    const spies = (['log', 'info', 'warn', 'error', 'debug'] as const).map(level => vi.spyOn(console, level).mockImplementation(() => {}))
+    answerThrows = `apply failed for "${MARKER}"`
+    try {
+      const messageId = insertBlockMessage()
+      const res = await call('POST', '/answer', { body: { message_id: messageId, block_id: 'b1', value: 'lang', client_id: 'echo-1' } })
+      expect(res.status).toBe(500)
+      expect(JSON.stringify(res.json)).not.toContain(MARKER)
+      const logged = spies.flatMap(spy => spy.mock.calls.flat())
+        .map(arg => arg instanceof Error ? `${arg.message}\n${arg.stack ?? ''}` : String(arg)).join('\n')
+      expect(logged).toContain('Failed to apply the answer: error')
+      expect(logged).not.toContain(MARKER)
+    } finally {
+      answerThrows = null
+      spies.forEach(spy => spy.mockRestore())
+    }
+  })
+
   it('answers through the shared service and starts the turn once', async () => {
     const messageId = insertBlockMessage()
     const body = { message_id: messageId, block_id: 'b1', value: 'lang', client_id: 'k1' }

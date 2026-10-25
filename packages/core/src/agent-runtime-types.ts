@@ -100,6 +100,13 @@ export interface ResponseChunk {
   toolResult?: unknown
   toolIsError?: boolean
   error?: string
+  /**
+   * Raw provider text behind an `error` chunk, for the in-process retry, auth
+   * and corruption classifiers only. Never forwarded, logged or persisted:
+   * it can echo the prompt (= a dictation). `error` is the public form
+   * (review K0-K2-4 #2).
+   */
+  rawError?: string
   /** Session ID associated with this chunk (used by task-injection streaming). */
   sessionId?: string
   /**

@@ -10,6 +10,7 @@
  * job of the capture service.
  */
 import type { Database } from './database.js'
+import { errorClass } from './log-safe-error.js'
 import { completeSimple } from './pi-models.js'
 import { resolveBackgroundReasoning } from './thinking-level.js'
 import { getLatestSessionSummary } from './session-summary-store.js'
@@ -941,7 +942,10 @@ export async function runRouter(input: RouterInput, options: RunRouterOptions = 
       try {
         text = await complete(entry, prompt)
       } catch (err) {
-        notes.push(`${entry.composite}: ${(err as Error).message}`)
+        // Class only, never the message: a provider error can quote the
+        // prompt (= the dictation) or a key, and the notes are logged
+        // (review K0-K2-2, MAJOR-5).
+        notes.push(`${entry.composite}: call failed (${errorClass(err)})`)
         break
       }
       const parsed = parseRouterOutput(text, input)

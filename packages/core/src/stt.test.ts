@@ -1,3 +1,4 @@
+import { inspect } from 'node:util'
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 
 // Mock config module before importing stt
@@ -970,6 +971,37 @@ describe('transcribeAudio', () => {
     const result = await transcribeAudio(Buffer.from('audio'))
     expect(result.transcript).toBe('raw transcript')
     expect(result.rewritten).toBeUndefined()
+  })
+
+  it('logs a failed rewrite by class only, never the provider echo of the transcript (review K0-K2-3 #3)', async () => {
+    const MARKER = 'PRIVATE_CLOCK_DICTATION_MARKER_007'
+    globalThis.fetch = vi.fn().mockResolvedValue({ ok: true, text: () => Promise.resolve(`diktat ${MARKER}`) })
+    mockLoadConfig.mockReturnValue({
+      stt: {
+        enabled: true,
+        provider: 'whisper-url',
+        whisperUrl: 'http://localhost:8000/v1/audio/transcriptions',
+        rewrite: { enabled: true, providerId: 'oai-1' },
+      },
+    })
+    mockLoadProvidersDecrypted.mockReturnValue({
+      providers: [{ id: 'oai-1', baseUrl: 'https://api.openai.com/v1', providerType: 'openai', enabledModels: ['gpt-4o'] }],
+    } as ReturnType<typeof loadProvidersDecrypted>)
+    mockGetApiKeyForProvider.mockResolvedValue('sk-test')
+    mockBuildModel.mockReturnValue({ id: 'gpt-4o' } as ReturnType<typeof buildModel>)
+    mockCompleteSimple.mockRejectedValue(Object.assign(new Error(`422 cannot rewrite: "diktat ${MARKER}"`), { status: 422 }))
+    const seen: unknown[] = []
+    const spies = (['log', 'info', 'warn', 'error', 'debug'] as const).map(level =>
+      vi.spyOn(console, level).mockImplementation((...args: unknown[]) => { seen.push(...args) }))
+    try {
+      const result = await transcribeAudio(Buffer.from('audio'))
+      expect(result).toEqual({ transcript: `diktat ${MARKER}` })
+      const text = seen.map(arg => (typeof arg === 'string' ? arg : inspect(arg, { depth: 5 }))).join('\n')
+      expect(text).not.toContain(MARKER)
+      expect(text).toContain('[stt] Rewrite failed, returning raw transcript: http_422')
+    } finally {
+      for (const spy of spies) spy.mockRestore()
+    }
   })
 
   it('does not call rewrite when rewrite enabled but providerId is empty', async () => {

@@ -4,6 +4,7 @@ import { loadProvidersDecrypted, getApiKeyForProvider, buildModel, parseProvider
 import type { ProviderConfig } from './provider-config.js'
 import type { SttProvider } from './contracts/settings.js'
 import { completeSimple } from './pi-models.js'
+import { errorClass } from './log-safe-error.js'
 import { transcribeDeepgram, decryptDeepgramApiKey, DEEPGRAM_DEFAULT_STT_MODEL } from './deepgram.js'
 
 // ── Types ─────────────────────────────────────────────────────────────
@@ -371,7 +372,9 @@ export async function transcribeAudio(
       return { transcript, rewritten }
     } catch (err) {
       // Rewrite failure is non-fatal — return raw transcript
-      console.warn(`[stt] Rewrite failed, returning raw transcript: ${(err as Error).message}`)
+      // Class only: the rewrite model gets the transcript as its prompt, a
+      // provider error body can quote it (review K0-K2-3 #3).
+      console.warn(`[stt] Rewrite failed, returning raw transcript: ${errorClass(err)}`)
       return { transcript }
     }
   }

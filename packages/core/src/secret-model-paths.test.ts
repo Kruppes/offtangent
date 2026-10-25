@@ -107,6 +107,10 @@ const MODEL_CALL_SITES: Record<string, { class: CallClass; why: string }> = {
     class: 'sealed-text',
     why: 'Split stage over the same sealed capture text.',
   },
+  'core/src/voice-shorten.ts#defaultCompletion': {
+    class: 'sealed-text',
+    why: 'H3 of the clock companion (K2): short spoken version of a persona answer that streamed out of a sealed turn (handles, not values). The input additionally passes redactKnown before the call, and the chain is the router chain (resolveRouterChain), so the data-policy gate applies.',
+  },
   'core/src/speech-summary.ts#defaultCompletion': {
     class: 'sealed-text',
     why: 'Voice summary of a strand; the prompt is assembled from stored, sealed rows. The shortening round for an over-long answer (main 8da8332e) is a SECOND call through this same function, so it passes the same data-policy gate and sees the same sealed source plus the model\'s own draft.',

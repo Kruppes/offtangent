@@ -1,3 +1,4 @@
+import { publicProviderError } from './log-safe-error.js'
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import { createAgentRuntime } from './agent-runtime.js'
 import type { AgentRuntimePiAgentAccess } from './agent-runtime.js'
@@ -381,7 +382,9 @@ describe('AgentRuntime boundary', () => {
     }
 
     expect(chunks.map(c => c.type)).toEqual(['error', 'done'])
-    expect(chunks[0]!.error).toBe('401 Unauthorized: token refresh failed')
+    // Review K0-K2-4 #2: the chunk carries the public form (fixed text + class).
+    expect(chunks[0]!.error).toBe(publicProviderError('401 Unauthorized: token refresh failed'))
+    expect(chunks[0]!.error).toBe('The model provider reported an error (auth).')
   })
 
   it('does not report a user abort as an error', async () => {

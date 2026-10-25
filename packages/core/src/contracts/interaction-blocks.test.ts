@@ -26,6 +26,8 @@ import {
   validateInteractionAnswer,
   withInteractionAnswer,
   type InteractionAnswerRecord,
+  stripInteractionFencesForVoice,
+  VOICE_CARD_HINT,
 } from './interaction-blocks.js'
 
 function fence(body: string): string {
@@ -591,5 +593,107 @@ describe('draft blocks', () => {
   it('round-trips through formatDraftFence', () => {
     const text = 'Zeile eins\nZeile zwei'
     expect(extractDraftText(formatDraftFence(text))).toBe(text)
+  })
+})
+
+describe('stripInteractionFencesForVoice (B2 fix MAJOR-2)', () => {
+  const card = formatInteractionBlockFence({
+    kind: 'confirm', id: 'c1', question: 'Mail an a@b.c senden?', options: [{ id: 'yes', label: 'Ja' }, { id: 'no', label: 'Nein' }],
+  })
+
+  it('leaves text without fence as it is', () => {
+    expect(stripInteractionFencesForVoice('Es ist 12 Uhr.')).toEqual({ text: 'Es ist 12 Uhr.', hadCard: false })
+    expect(stripInteractionFencesForVoice('')).toEqual({ text: '', hadCard: false })
+  })
+
+  it('removes a card and appends the fixed sentence once', () => {
+    const out = stripInteractionFencesForVoice(`Vorher.\n\n${card}\n\nNachher.\n\n${card}`)
+    expect(out.hadCard).toBe(true)
+    expect(out.text).toBe(`Vorher.\n\nNachher.\n\n${VOICE_CARD_HINT}`)
+    expect(out.text).not.toContain('a@b.c')
+  })
+
+  it('a message that is only a card becomes only the sentence', () => {
+    expect(stripInteractionFencesForVoice(card).text).toBe(VOICE_CARD_HINT)
+  })
+
+  it('removes broken, unclosed and unknown fences without the sentence', () => {
+    const out = stripInteractionFencesForVoice('A\n```offtangent\n{nope\n```\nB\n```offtangent\n{"block":"x"}\n```\nC\n```offtangent\n{"block":"confirm"')
+    expect(out).toEqual({ text: 'A\n\nB\n\nC', hadCard: false })
+  })
+
+  it('removes a draft without the sentence', () => {
+    expect(stripInteractionFencesForVoice(`Text\n${formatDraftFence('Lieber Max')}`)).toEqual({ text: 'Text', hadCard: false })
+  })
+})
+
+describe('stripInteractionFencesForVoice (review B2FIX2 m-7)', () => {
+  it('removes a fence in the middle of a line (inline triple)', () => {
+    const out = stripInteractionFencesForVoice('Hallo ```offtangent {"a":1}``` Ende')
+    expect(out.text).not.toMatch(/offtangent|"a"|`/)
+    expect(out.text).toMatch(/^Hallo\s+Ende$/)
+  })
+
+  it('removes a multi-line fence that opens mid-line and closes mid-line', () => {
+    const out = stripInteractionFencesForVoice('Text ```json offtangent\n{"block":"confirm","question":"Senden?"}\n``` Ende')
+    expect(out.text).not.toMatch(/offtangent|Senden|block|`/)
+    expect(out.text).toMatch(/^Text\s+Ende$/)
+  })
+
+  it('removes bidi and other format characters, also in front of a fence', () => {
+    const out = stripInteractionFencesForVoice('Vorher\n\u202e```offtangent\n{"block":"confirm","question":"Geheim?"}\n```\nNach\u200Bher\u2066')
+    expect(out.text).not.toMatch(/offtangent|Geheim|`/)
+    expect(out.text).not.toMatch(/\p{Cf}/u)
+    expect(out.text).toBe('Vorher\n\nNachher')
+    expect(stripInteractionFencesForVoice('Es ist \u202e12 Uhr\u200D.').text).toBe('Es ist 12 Uhr.')
+  })
+
+  it('a format character inside the word offtangent does not hide the fence', () => {
+    const out = stripInteractionFencesForVoice('A ```offtan\u200Bgent {"a":1}``` B')
+    expect(out.text).not.toMatch(/off|"a"/)
+  })
+
+  it('normal code fences without offtangent stay, also next to an offtangent fence', () => {
+    const code = '```bash\necho hallo\n```'
+    expect(stripInteractionFencesForVoice(`Siehe:\n${code}\nfertig`).text).toBe(`Siehe:\n${code}\nfertig`)
+    const mixed = stripInteractionFencesForVoice(`Siehe:\n${code}\nund ~~~offtangent {"x":1}~~~ dann\n\`\`\`ts\nconst a = 1\n\`\`\``)
+    expect(mixed.text).toContain(code)
+    expect(mixed.text).toContain('```ts\nconst a = 1\n```')
+    expect(mixed.text).not.toMatch(/offtangent|"x"/)
+    expect(stripInteractionFencesForVoice('Das Wort offtangent bleibt.').text).toBe('Das Wort offtangent bleibt.')
+  })
+})
+
+// Moved from review-b2fix-card.test.ts (B2, retired): only the stripper cases.
+describe('m-2: fence variants the voice stripper removes as well', () => {
+  const json = '{"kind":"confirm","id":"x","question":"SPOKEN-JSON?","options":[{"id":"y","label":"Ja"}]}'
+  const variants: Record<string, string> = {
+    tilde: `Vorher\n~~~offtangent\n${json}\n~~~\nNachher`,
+    'header with json': `Vorher\n\`\`\`json offtangent\n${json}\n\`\`\`\nNachher`,
+    'header with extra': `Vorher\n\`\`\`offtangent {x}\n${json}\n\`\`\`\nNachher`,
+    'zwsp prefix': `Vorher\n\u200B\`\`\`offtangent\n${json}\n\`\`\`\nNachher`,
+    'inline triple': `Vorher\n\`\`\`offtangent ${json} \`\`\`\nNachher`,
+    'unclosed tilde': `Vorher\nNachher\n~~~ offtangent\n${json}`,
+  }
+  for (const [name, content] of Object.entries(variants)) {
+    it(`${name}: no JSON for the ear, text around kept`, () => {
+      const { text } = stripInteractionFencesForVoice(content)
+      expect(text).not.toContain('SPOKEN-JSON')
+      expect(text).not.toContain('offtangent')
+      expect(text).toContain('Vorher')
+      expect(text).toContain('Nachher')
+    })
+  }
+
+  it('a normal code fence without offtangent stays', () => {
+    const content = 'Code:\n~~~js\nconst a = 1\n~~~\nEnde offtangent'
+    expect(stripInteractionFencesForVoice(content).text).toContain('const a = 1')
+  })
+
+  it('the real card still gives the hint', () => {
+    const content = `Text\n\`\`\`offtangent\n${json}\n\`\`\``
+    const r = stripInteractionFencesForVoice(content)
+    expect(r.hadCard).toBe(true)
+    expect(r.text).toBe(`Text\n\n${VOICE_CARD_HINT}`)
   })
 })

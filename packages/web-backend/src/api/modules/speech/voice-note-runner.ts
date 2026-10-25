@@ -12,6 +12,7 @@
  * entry. It never grows: an entry is removed when its generation settles.
  */
 import {
+  errorClass,
   estimateVoiceNoteUsage,
   voiceNoteCostUsd,
   logTokenUsage,
@@ -118,7 +119,7 @@ export async function ensureVoiceNote(
         kind: 'voice_note',
       })
     } catch (err) {
-      console.warn('[voice-note] Failed to record the usage row:', err)
+      console.warn(`[voice-note] Failed to record the usage row: ${errorClass(err)}`)
     }
     console.log(
       `[voice-note] message ${target.messageId}: ${created.voiceNote.sourceChars} -> `
@@ -136,7 +137,7 @@ export async function ensureVoiceNote(
       })
     } catch (err) {
       // A broken broadcast must not lose the note that is already stored.
-      console.error('[voice-note] Failed to announce the voice note:', err)
+      console.error(`[voice-note] Failed to announce the voice note: ${errorClass(err)}`)
     }
     return created.voiceNote
   })()

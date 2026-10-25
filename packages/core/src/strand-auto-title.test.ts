@@ -1,7 +1,8 @@
 import { mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { afterEach, beforeEach, describe, expect, it } from 'vitest'
+import { inspect } from 'node:util'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { initDatabase } from './database.js'
 import type { Database } from './database.js'
 import { insertSessionSummary } from './session-summary-store.js'
@@ -284,7 +285,8 @@ describe('runAutoTitleModel', () => {
     expect(calls).toEqual([LOCAL.composite, CLOUD.composite])
     expect(result.answer).toEqual({ keep: false, title: 'Gießkanne Bootshaus' })
     expect(result.model).toBe(CLOUD.composite)
-    expect(result.notes[0]).toContain('ECONNREFUSED')
+    // Class only (review K0-K2-3 #1): the raw message never reaches a note.
+    expect(result.notes[0]).toBe(`${LOCAL.composite}: network`)
   })
 
   it('falls back on a malformed local answer and on a timeout', async () => {
@@ -421,5 +423,47 @@ describe('evaluateStrandAutoTitle', () => {
     const { complete, calls } = answering('{"title": "X"}')
     expect(await evaluateStrandAutoTitle(db, S, 'message', { chain: [LOCAL], complete })).toEqual({ outcome: 'skipped', reason: 'manual_title' })
     expect(calls).toEqual([])
+  })
+})
+
+describe('log safety (review K0-K2-3 #1)', () => {
+  const MARKER = 'PRIVATE_CLOCK_DICTATION_MARKER_007'
+  const echo = (): Error => Object.assign(new Error(`upstream echoed ${MARKER}`), { status: 502 })
+
+  function captureConsole(): { text: () => string; restore: () => void } {
+    const seen: unknown[] = []
+    const spies = (['log', 'info', 'warn', 'error', 'debug'] as const).map(level =>
+      vi.spyOn(console, level).mockImplementation((...args: unknown[]) => { seen.push(...args) }))
+    return {
+      text: () => seen.map(arg => (typeof arg === 'string' ? arg : inspect(arg, { depth: 5 }))).join('\n'),
+      restore: () => { for (const spy of spies) spy.mockRestore() },
+    }
+  }
+
+  it('a provider error echoing the prompt leaves only a class in the notes', async () => {
+    addStrand()
+    addTurns(4)
+    const out = captureConsole()
+    try {
+      const result = await evaluateStrandAutoTitle(db, S, 'message', { chain: [LOCAL, CLOUD], complete: answering(echo()).complete })
+      expect(result.outcome).toBe('error')
+      expect(result.notes).toEqual([`${LOCAL.composite}: http_502`, `${CLOUD.composite}: http_502`])
+      expect(JSON.stringify(result)).not.toContain(MARKER)
+      expect(out.text()).not.toContain(MARKER)
+    } finally {
+      out.restore()
+    }
+  })
+
+  it('an internal failure (gate or input) leaves only a class in the notes', async () => {
+    const throwing = { prepare: () => { throw new TypeError(`sql near ${MARKER}`) } } as unknown as Database
+    const out = captureConsole()
+    try {
+      const result = await evaluateStrandAutoTitle(throwing, S, 'message', { chain: [LOCAL], complete: answering('{"keep": true}').complete })
+      expect(result).toEqual({ outcome: 'error', notes: ['internal: type_error'] })
+      expect(out.text()).not.toContain(MARKER)
+    } finally {
+      out.restore()
+    }
   })
 })

@@ -46,6 +46,7 @@ Two fields steer the routing before the model is asked:
 | Web UI | `POST /api/captures` with `source: 'web'` (the default when the client sends none) | yes |
 | Android app | `POST /api/captures` with `source: 'android'` — the app is a separate client, not part of this repo, and it speaks the same endpoint with the same JWT | yes |
 | Voice | transcript posted as capture text; see below | yes |
+| LED clock (TC002) | `POST /api/device/clock/voice` with the clock's device token; the server transcribes the push-to-talk audio and creates the capture through the same captures service with `source: 'clock'`, `kind: 'voice'`, `mode: 'work'` — see [the clock source](#the-clock-source) | yes |
 | Script / integration | anything that can hold a JWT and post JSON | yes |
 | Telegram | not a capture; see below | no |
 
@@ -59,6 +60,12 @@ There is no audio routing path: voice always becomes text before it becomes a ca
 - The Android client transcribes **on the device** and posts the result as `kind: 'text'`. The code notes this explicitly — in the reference database all 51 captures from that client are `kind: 'text'` (`packages/core/src/silence-guard.ts`).
 
 Because of that, server-side handling of dictation must never key on `kind: 'voice'`. The silence guard is the example: it runs on every capture regardless of kind.
+
+### The clock source
+
+The TC002 LED clock has no JWT and no keyboard. Its push-to-talk upload (16 kHz PCM) goes to `POST /api/device/clock/voice` (device token with scope `clock:voice`, LAN only); the server runs the speech-to-text and then calls the **same** `createCapture` that `POST /api/captures` uses, with `source: 'clock'`, `kind: 'voice'`, `mode: 'work'` and a `clientMessageId` derived from the clock's exchange id (`X-Clock-Exchange`), so a retry returns the first capture instead of a second one.
+
+From there the clock behaves like the app: the router picks strand and persona (there is no fixed "clock" strand), the turn runs with every tool of that persona, and a busy strand queues the turn. The only clock-specific part is the turn-local style hint `captureSources.clock.styleHint` (default: "core answer first" — one or two short spoken sentences, then the normal answer), which is added like the puck's and never stored. The route answers `404` until both switches are on: `captureSources.clock.enabled` (settings, default `false`) and `CLOCK_VOICE_ENABLED` (environment, default off). One recording per device at a time; a second upload while one runs gets `429 rate_limited`.
 
 ### The silence guard
 

@@ -11,6 +11,7 @@
  */
 import crypto from 'node:crypto'
 import {
+  errorClass,
   extractAnswerableInteractionBlocks,
   type Database,
   type InteractionBlock,
@@ -145,7 +146,9 @@ export function applyDeviceAnswer(input: {
       // needs "already answered", and the label may be private.
       return { status: err.status, body: { error: err.message, code: err.code } }
     }
-    console.error(`[${input.logTag}] Failed to apply the answer:`, err)
+    // Review K0-K2-4 #4 (clock-companion): log the class, never the text; an
+    // error message may quote a private card or a dictation.
+    console.error(`[${input.logTag}] Failed to apply the answer: ${errorClass(err)}`)
     return { status: 500, body: { error: 'Failed to apply the answer', code: 'internal' } }
   }
 }

@@ -106,7 +106,7 @@ describe('parseStage1Answer', () => {
 
   it('rejects a missing sentence', () => {
     const parsed = parseStage1Answer(stage1([{ id: 'A', title: 'x', sentenceIds: [1] }]), 3)
-    expect(parsed).toEqual({ ok: false, error: 'sentences not assigned: 2, 3' })
+    expect(parsed).toEqual({ ok: false, error: 'sentences not assigned: 2, 3', code: 'sentences_not_assigned' })
   })
 
   it('rejects a duplicated sentence', () => {
@@ -118,8 +118,8 @@ describe('parseStage1Answer', () => {
 
   it('rejects an id out of range and a non object', () => {
     expect(parseStage1Answer(stage1([{ id: 'A', title: 'x', sentenceIds: [1, 9] }]), 2).ok).toBe(false)
-    expect(parseStage1Answer('nonsense', 2)).toEqual({ ok: false, error: 'not JSON' })
-    expect(parseStage1Answer('[1,2]', 2)).toEqual({ ok: false, error: 'not an object' })
+    expect(parseStage1Answer('nonsense', 2)).toEqual({ ok: false, error: 'not JSON', code: 'not_json' })
+    expect(parseStage1Answer('[1,2]', 2)).toEqual({ ok: false, error: 'not an object', code: 'not_object' })
   })
 
   it('forces splitConfidence 1 for a single topic and 0 for a missing value', () => {
@@ -264,6 +264,44 @@ describe('runCaptureSplit', () => {
     expect(split.parts[0].text).toBe('Das Dach tropft. Ich brauche einen Dachdecker.')
     expect(split.parts[1].text).toBe('Das Auto muss zum Service. Der Termin ist Montag.')
     expect(split.notes.some(n => n.includes('consolidation failed'))).toBe(true)
+  })
+
+  // Review K0-K2-2, MAJOR-5: notes are logged, so they carry classes and
+  // counts only, never a provider message or a model-controlled field.
+  describe('notes carry no provider or model text', () => {
+    const MARKER = 'PRIVATE_SPOKEN_PHRASE_SAMPLE'
+    const twoTopics = () => stage1([{ id: 'A', title: 'Dach', sentenceIds: [1, 2] }, { id: 'B', title: 'Auto', sentenceIds: [3, 4] }], 0.92)
+
+    it('a failed attempt 1 before a valid two part split', async () => {
+      const s = stub([`THROW:provider echo ${MARKER}`, twoTopics(), 'Dach.', 'Auto.'])
+      const split = await runCaptureSplit(text, { complete: s.complete })
+      expect(split.parts).toHaveLength(2)
+      expect(split.notes[0]).toBe('split stage 1 attempt 1 failed: error')
+      expect(split.notes.join('\n')).not.toContain(MARKER)
+    })
+
+    it('a consolidation failure and a total stage 1 failure', async () => {
+      const s = stub([twoTopics(), `THROW:provider echo ${MARKER}`, `THROW:timeout ${MARKER}`])
+      const split = await runCaptureSplit(text, { complete: s.complete })
+      expect(split.notes.join('\n')).not.toContain(MARKER)
+      expect(split.notes).toEqual(expect.arrayContaining([
+        'part 0 consolidation failed (error), kept the sentences verbatim',
+        'part 1 consolidation failed (timeout), kept the sentences verbatim',
+      ]))
+      const down = stub([`THROW:${MARKER}`, `THROW:${MARKER}`, `THROW:${MARKER}`])
+      const one = await runCaptureSplit(text, { complete: down.complete })
+      expect(one.parts).toHaveLength(1)
+      expect(one.notes.join('\n')).not.toContain(MARKER)
+    })
+
+    it('a rejected answer whose topic id quotes the dictation: code in the note, detail only in the repair prompt', async () => {
+      const bad = stage1([{ id: MARKER, title: 'x', sentenceIds: [1, 2] }, { id: 'B', title: 'y', sentenceIds: [2, 3, 4] }])
+      const s = stub([bad, twoTopics(), 'Dach.', 'Auto.'])
+      const split = await runCaptureSplit(text, { complete: s.complete })
+      expect(split.notes[0]).toBe('split stage 1 attempt 1 rejected: sentence_in_two_topics')
+      expect(split.notes.join('\n')).not.toContain(MARKER)
+      expect(s.calls[1].user).toContain(`in topics ${MARKER} and B`)
+    })
   })
 
   it('does not call the model for a text with too few sentences', async () => {

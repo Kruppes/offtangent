@@ -54,6 +54,7 @@ import {
   updateCapture,
   updateDecision,
   supersedeOpenOnUserMessage,
+  errorClass,
 } from '@axiom/core'
 import { parseTurnModelSelection } from '../../../model-selection.js'
 import type { ChatEvent, ChatEventBus } from '../../../chat-event-bus.js'
@@ -222,6 +223,11 @@ export interface CaptureTurnStarter {
     turnOverrides?: TurnRuntimeOverrides
     /** How the prompt was entered, recorded on the strand turn (statistics). */
     inputMode?: 'typed' | 'voice' | 'answer' | null
+    /**
+     * The real TurnRunner returns its `TurnInfo`; only `turnId` is read
+     * (companion K1). A starter that returns nothing still works, the result
+     * then simply carries no turn id.
+     */
   }) => unknown
 }
 
@@ -316,6 +322,15 @@ export interface CaptureResult {
    * instead of a card that sits there doing nothing for 20 minutes.
    */
   turn?: QueuedTurnInfo | null
+  /**
+   * Runner ids of the answer turns this call started, one per part that got a
+   * turn, in start order (companion K1). Internal: the HTTP response does not
+   * carry it (`resultBody` whitelists), the clock route hands it to its
+   * exchange tracker so it follows exactly this turn on the event bus instead
+   * of guessing "first assistant row after the baseline". Absent when no turn
+   * was started or the runner did not report an id.
+   */
+  turnIds?: Array<{ partIndex: number; turnId: string }>
   /**
    * The capture is stored, but its filing could not run because the agent
    * core is not up yet (W7 D1). The controller answers `202` with
@@ -541,7 +556,9 @@ export function createCapturesService(options: CapturesServiceOptions) {
    * routed frame at the end of {@link routeParts} tells the clients.
    */
   function parkUnfiledPart(userId: number, capture: Capture, decision: Decision, count: number, err: unknown): Capture {
-    const reason = err instanceof CaptureServiceError ? err.code : (err as Error)?.message ?? String(err)
+    // A fixed code or class only: a filing error can carry the dictated text
+    // (a provider echo, a quoted title) — review K0-K2-3 #4.
+    const reason = err instanceof CaptureServiceError ? err.code : errorClass(err)
     // A throw after the decision was applied (the turn start, a broadcast) means
     // the capture IS filed; resetting it would orphan the message it wrote.
     if (getDecision(db, decision.id)?.state !== 'proposed') {
@@ -693,12 +710,41 @@ export function createCapturesService(options: CapturesServiceOptions) {
     return info
   }
 
-  function startTurn(userId: number, capture: Capture, strand: Thread, text: string): void {
+  /**
+   * Runner turn ids per capture (companion K1), read and dropped by
+   * {@link withParts} on every public result. Same trimming as
+   * {@link startedTurns}: a path that never reads its entry cannot grow it.
+   */
+  const startedTurnIds = new Map<string, Array<{ partIndex: number; turnId: string }>>()
+
+  function rememberTurnId(captureId: string, partIndex: number, turnId: string): void {
+    const list = startedTurnIds.get(captureId) ?? []
+    list.push({ partIndex, turnId })
+    startedTurnIds.set(captureId, list)
+    while (startedTurnIds.size > 50) {
+      const oldest = startedTurnIds.keys().next()
+      if (oldest.done) break
+      startedTurnIds.delete(oldest.value)
+    }
+  }
+
+  function takeTurnIds(captureId: string): Array<{ partIndex: number; turnId: string }> | null {
+    const list = startedTurnIds.get(captureId) ?? null
+    startedTurnIds.delete(captureId)
+    return list && list.length > 0 ? list : null
+  }
+
+  /**
+   * Starts the answer turn of one filed part and returns the runner's turn id
+   * (null without runner, or when the runner reports none). The id is also
+   * remembered for the result of the public call that got here.
+   */
+  function startTurn(userId: number, capture: Capture, strand: Thread, text: string, partIndex = 0): string | null {
     const overrides = turnOverridesFor(capture)
     const runner = options.getTurnRunner?.()
     if (!runner) {
       console.warn(`[captures] No turn runner available, capture ${capture.id} was filed without an answer`)
-      return
+      return null
     }
     // Sampled BEFORE the runner enqueues, so the snapshot never counts this
     // turn itself (TurnRunner.startTurn enqueues asynchronously).
@@ -713,7 +759,7 @@ export function createCapturesService(options: CapturesServiceOptions) {
       info: queuedTurn,
       source: 'web',
     })
-    runner.startTurn({
+    const started = runner.startTurn({
       userId,
       sessionId: strand.id,
       text,
@@ -725,6 +771,10 @@ export function createCapturesService(options: CapturesServiceOptions) {
       ...(overrides ? { turnOverrides: overrides } : {}),
       inputMode: capture.kind === 'voice' ? 'voice' : 'typed',
     })
+    const reported = typeof started === 'object' && started !== null ? (started as { turnId?: unknown }).turnId : undefined
+    const turnId = typeof reported === 'string' && reported !== '' ? reported : null
+    if (turnId) rememberTurnId(capture.id, partIndex, turnId)
+    return turnId
   }
 
   /**
@@ -823,6 +873,9 @@ export function createCapturesService(options: CapturesServiceOptions) {
       updateDecision(db, current.id, { state: 'confirmed', resolvedAt: 'now' })
     }
     const resumed = input.choice === CAPTURE_CONFIRM_ANSWER ? answerLater(userId, capture) : false
+    // This path returns no CaptureResult, so nobody reads the turn id; drop
+    // it so a later apply/undo of the same capture never reports it as its own.
+    takeTurnIds(capture.id)
     if (capture.status === 'needs_review') updateCapture(db, capture.id, { status: 'filed' })
     // Filed now: no confirmation can reach this capture again, so the
     // in-flight mark has nothing left to protect.
@@ -887,7 +940,7 @@ export function createCapturesService(options: CapturesServiceOptions) {
       // Only a filing that is still open for review can be confirmed into a
       // second turn, so that is the only one worth remembering.
       if (status === 'needs_review') answering.add(capture.id)
-      startTurn(userId, capture, strand, withCapturePartPrefix(text, { ...part, captureId: capture.id }))
+      startTurn(userId, capture, strand, withCapturePartPrefix(text, { ...part, captureId: capture.id }), part.index)
     } else {
       bumpStrandActivity(userId, strand, 1)
     }
@@ -1167,9 +1220,16 @@ export function createCapturesService(options: CapturesServiceOptions) {
       ...(chain ? { chain } : {}),
       ...(options.splitComplete ? { complete: options.splitComplete } : {}),
     })
+    // Notes are structural (attempt counts, sentence ids, fixed error
+    // classes from core `errorClass` / `Stage1RejectCode`), never a provider
+    // message (review K0-K2-2, MAJOR-5); the router notes below likewise.
     for (const note of split.notes) console.warn(`[split] capture ${capture.id}: ${note}`)
     if (split.parts.length > 1) {
-      console.log(`[split] capture ${capture.id}: ${split.parts.length} parts (${split.splitConfidence.toFixed(2)}) ${split.parts.map(part => part.title).join(' | ')}`)
+      // No user content in the server log, for every source (review K0-K2,
+      // MAJOR-5): the titles are derived from the dictation, so the line
+      // carries the opaque capture id and character counts only.
+      const sizes = split.parts.map(part => `${part.text.length}c`).join('/')
+      console.log(`[split] capture ${capture.id}: ${split.parts.length} parts (${split.splitConfidence.toFixed(2)}) sizes ${sizes}`)
     }
     return split
   }
@@ -1488,7 +1548,8 @@ export function createCapturesService(options: CapturesServiceOptions) {
   /** The result as it leaves the service: with the parts the write left behind. */
   function withParts(result: CaptureResult): CaptureResult {
     const parts = currentParts(result.capture, result.decision)
-    return { ...result, parts, partCount: parts.length }
+    const turnIds = takeTurnIds(result.capture.id)
+    return { ...result, parts, partCount: parts.length, ...(turnIds ? { turnIds } : {}) }
   }
 
   /**

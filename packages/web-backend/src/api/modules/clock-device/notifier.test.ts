@@ -259,3 +259,36 @@ describe('PushSender observer', () => {
     expect(client.sent).toHaveLength(0)
   })
 })
+
+describe('ClockNotifier log safety (review K0-K2-3 #4)', () => {
+  const MARKER = 'PRIVATE_CLOCK_DICTATION_MARKER_007'
+  let db: Database
+
+  beforeEach(() => {
+    db = initDatabase(':memory:')
+    db.prepare('INSERT INTO users (id, username, password_hash, role) VALUES (?, ?, ?, ?)').run(1, 'admin', 'x', 'admin')
+    new ClockDeviceRegistry(db).create(1, { name: 'TC002' })
+  })
+  afterEach(() => db.close())
+
+  const logged = (logger: ReturnType<typeof quietLogger>): string =>
+    [...logger.info.mock.calls, ...logger.warn.mock.calls].flat().map(String).join('\n')
+
+  it('a failing wake call logs the class, not the error text', async () => {
+    const logger = quietLogger()
+    const fetch = vi.fn(async () => { throw Object.assign(new TypeError(`fetch failed ${MARKER}`), { cause: { code: 'ECONNREFUSED' } }) })
+    const notifier = new ClockNotifier({ db, config: { url: URL_OK }, fetch, logger })
+    await expect(notifier.wake(1)).resolves.toBe(false)
+    expect(logged(logger)).not.toContain(MARKER)
+    expect(logged(logger)).toBe('[clock] wake call failed: network (further failures muted until the next success)')
+  })
+
+  it('a failing wake scheduling logs the class, not the error text', () => {
+    const logger = quietLogger()
+    const notifier = new ClockNotifier({ db, config: { url: URL_OK }, fetch: recordingFetch().fetch, logger })
+    const doorbell = { kind: 'task_done', strandId: 's', agentId: 'main', get userId(): number { throw new RangeError(`bad ${MARKER}`) } }
+    expect(() => notifier.observe(doorbell as never)).not.toThrow()
+    expect(logged(logger)).not.toContain(MARKER)
+    expect(logged(logger)).toBe('[clock] wake scheduling failed: range_error')
+  })
+})

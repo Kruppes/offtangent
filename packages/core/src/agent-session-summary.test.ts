@@ -234,6 +234,56 @@ describe('generateSessionSummary (schema delta, SPEC 11.2)', () => {
     expect(mockAppendToDailyFile).not.toHaveBeenCalled()
   })
 
+  describe('log safety (review K0-K2-4 #4)', () => {
+    const MARKER = 'PRIVATE_CLOCK_DICTATION_MARKER_SUMMARY'
+    function spyConsole() {
+      const spies = (['log', 'info', 'warn', 'error', 'debug'] as const).map(level => vi.spyOn(console, level).mockImplementation(() => {}))
+      return {
+        text: () => spies.flatMap(spy => spy.mock.calls.flat()).map(arg =>
+          arg instanceof Error ? `${arg.message}\n${arg.stack ?? ''}` : typeof arg === 'string' ? arg : JSON.stringify(arg)).join('\n'),
+        restore: () => spies.forEach(spy => spy.mockRestore()),
+      }
+    }
+
+    it('a rejected delta logs its length, not the model text', async () => {
+      const con = spyConsole()
+      try {
+        mockCompleteSimple.mockResolvedValueOnce(makeCompleteSimpleResponse(`not json ${MARKER}`))
+        expect(await makeAgent().generateSessionSummary('user1', 'User: a\nAssistant: b', 'sess-echo-1')).toBe('')
+        expect(con.text()).toContain('Rejected delta')
+        expect(con.text()).not.toContain(MARKER)
+      } finally { con.restore() }
+    })
+
+    it('an answer without text logs the block types, not their content', async () => {
+      const con = spyConsole()
+      try {
+        mockCompleteSimple.mockResolvedValueOnce({
+          ...makeCompleteSimpleResponse(''),
+          content: [{ type: 'thinking', thinking: MARKER }],
+        })
+        await makeAgent().generateSessionSummary('user1', 'User: a\nAssistant: b', 'sess-echo-2')
+        expect(con.text()).toContain('block types: thinking')
+        expect(con.text()).not.toContain(MARKER)
+      } finally { con.restore() }
+    })
+
+    it('a provider rejection logs the class, not the provider text or its stack', async () => {
+      const con = spyConsole()
+      try {
+        mockCompleteSimple.mockResolvedValueOnce({
+          ...makeCompleteSimpleResponse(''),
+          content: [],
+          stopReason: 'error' as const,
+          errorMessage: `400 invalid request: echo ${MARKER}`,
+        })
+        expect(await makeAgent().generateSessionSummary('user1', `User: ${MARKER}`, 'sess-echo-3')).toBe('')
+        expect(con.text()).toContain('Failed to generate session summary')
+        expect(con.text()).not.toContain(MARKER)
+      } finally { con.restore() }
+    })
+  })
+
   it('prompt demands a JSON delta and explains open items', async () => {
     mockCompleteSimple.mockResolvedValueOnce(makeCompleteSimpleResponse('{"empty":true}'))
     await makeAgent().generateSessionSummary('user1', 'User: hi\nAssistant: hello')

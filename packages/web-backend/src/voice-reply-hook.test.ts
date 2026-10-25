@@ -9,6 +9,7 @@ import { describe, it, expect, beforeEach, afterAll } from 'vitest'
 import {
   initDatabase,
   setVoiceRepliesEnabled,
+  TurnRunner,
   VoiceNoteUpstreamError,
   type CreatedVoiceNote,
   type Database,
@@ -131,7 +132,7 @@ describe('createVoiceReplyHook', () => {
     expect(runs).toBe(0)
   })
 
-  it('swallows a failing voice and logs the real error', async () => {
+  it('swallows a failing voice and logs its class, not the provider text (review K0-K2-5 #1)', async () => {
     setVoiceRepliesEnabled(db, 1, true)
     fail = true
     const errors: string[] = []
@@ -143,8 +144,85 @@ describe('createVoiceReplyHook', () => {
     })).resolves.toBeUndefined()
 
     expect(errors).toHaveLength(1)
-    expect(errors[0]).toContain('the voice said no')
+    expect(errors[0]).toContain(`Voice note for message ${id} failed: error`)
+    expect(errors[0]).not.toContain('the voice said no')
     expect(db.prepare('SELECT metadata FROM chat_messages WHERE id = ?').get(id)).toEqual({ metadata: null })
+  })
+
+  it('a provider error echoing the answer never reaches the log (review K0-K2-5 #1)', async () => {
+    setVoiceRepliesEnabled(db, 1, true)
+    const marker = 'PRIVATE_CLOCK_DICTATION_MARKER_007'
+    const errors: string[] = []
+    const hook = createVoiceReplyHook({
+      db,
+      generate: async () => { throw new Error(`401 provider echoed answer: ${marker}`) },
+      logger: { warn: msg => errors.push(msg), error: msg => errors.push(msg) },
+    })
+    const id = insertMessage(`Antwort ${marker}`)
+    await hook.handle({ messageId: id, userId: 1, sessionId: 'strand-1', agentId: 'main', content: `Antwort ${marker}` })
+    expect(errors).toHaveLength(1)
+    expect(errors[0]).toContain('failed: auth')
+    expect(errors.join('\n')).not.toContain(marker)
+  })
+
+  it('skips a clock turn: the clock speaks its answer itself (review K0-K2-5 #1)', async () => {
+    setVoiceRepliesEnabled(db, 1, true)
+    const bus = new ChatEventBus()
+    const frames: ChatEvent[] = []
+    bus.subscribe(event => frames.push(event))
+    const id = insertMessage('Die Uhr hat es schon gesagt.')
+    await makeHook(bus).handle({
+      messageId: id, userId: 1, sessionId: 'strand-1', agentId: 'main', content: 'Die Uhr hat es schon gesagt.', source: 'clock',
+    })
+    expect(runs).toBe(0)
+    expect(frames).toHaveLength(0)
+    expect(db.prepare('SELECT metadata FROM chat_messages WHERE id = ?').get(id)).toEqual({ metadata: null })
+    // Any other channel still gets its voice.
+    await makeHook(bus).handle({
+      messageId: id, userId: 1, sessionId: 'strand-1', agentId: 'main', content: 'Die Uhr hat es schon gesagt.', source: 'telegram',
+    })
+    expect(runs).toBe(1)
+  })
+
+  it('TurnRunner -> hook: a clock turn never reaches the voice, a web turn logs only the class (review K0-K2-5 #1)', async () => {
+    setVoiceRepliesEnabled(db, 1, true)
+    const marker = 'PRIVATE_CLOCK_DICTATION_MARKER_007'
+    const errors: string[] = []
+    let generateCalls = 0
+    const pending: Promise<void>[] = []
+    const hook = createVoiceReplyHook({
+      db,
+      generate: async () => { generateCalls += 1; throw new Error(`provider echoed answer: ${marker}`) },
+      logger: { warn: msg => errors.push(msg), error: msg => errors.push(msg) },
+    })
+    const agent = {
+      sendMessage: async function* () { yield { type: 'text', text: `Antwort ${marker}` }; yield { type: 'done' } },
+      abort() {},
+    }
+    const runner = new TurnRunner({
+      db,
+      getAgent: () => agent as never,
+      onAssistantMessage: message => { pending.push(hook.handle(message)) },
+    })
+    const settle = async () => {
+      const deadline = Date.now() + 3000
+      while (runner.hasActiveTurn(1)) {
+        if (Date.now() > deadline) throw new Error('turn not settled')
+        await new Promise(r => setTimeout(r, 10))
+      }
+      await Promise.all(pending.splice(0))
+    }
+
+    runner.startTurn({ userId: 1, sessionId: 'strand-1', text: `diktat ${marker}`, source: 'clock' })
+    await settle()
+    expect(generateCalls).toBe(0)
+    expect(errors).toHaveLength(0)
+
+    runner.startTurn({ userId: 1, sessionId: 'strand-1', text: 'web frage', source: 'web' })
+    await settle()
+    expect(generateCalls).toBe(1)
+    expect(errors).toHaveLength(1)
+    expect(errors.join('\n')).not.toContain(marker)
   })
 
   it('does not speak the same answer twice', async () => {

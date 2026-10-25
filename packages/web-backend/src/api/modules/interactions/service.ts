@@ -20,6 +20,7 @@
  *     (`resumed: true`). Without one the answer is filed and nothing runs,
  *     which is the same degradation the captures path takes.
  */
+import { errorClass } from '@axiom/core'
 import {
   createInteraction,
   findAnswerableInteractionBlock,
@@ -425,7 +426,7 @@ export function createInteractionsService(options: InteractionsServiceOptions): 
     try {
       startAnswerTurn(userId, row, askUserTurnText(answered), surface, answered.id)
     } catch (err) {
-      console.warn(`[interactions] Turn for the answer to ${answered.id} did not start:`, (err as Error).message)
+      console.warn(`[interactions] Turn for the answer to ${answered.id} did not start: ${errorClass(err)}`)
       throw new InteractionServiceError(502, 'turn_failed', 'The answer was saved, but the turn did not start', {
         retryable: true,
         status: answered.status,
@@ -571,7 +572,7 @@ export function createInteractionsService(options: InteractionsServiceOptions): 
       }).catch(() => undefined)
       return { turnId: offer.turnId }
     } catch (err) {
-      console.warn(`[interactions] Steer of the answer to ${answered.id} failed:`, (err as Error).message)
+      console.warn(`[interactions] Steer of the answer to ${answered.id} failed: ${errorClass(err)}`)
       return null
     }
   }
@@ -595,7 +596,7 @@ export function createInteractionsService(options: InteractionsServiceOptions): 
     try {
       startAnswerTurn(userId, row, answer.label, surface)
     } catch (err) {
-      console.warn(`[interactions] Turn for the answer to block ${block.id} did not start:`, (err as Error).message)
+      console.warn(`[interactions] Turn for the answer to block ${block.id} did not start: ${errorClass(err)}`)
       recordAnswer(row, block.id, answer.value, answer.label, answer.clientRequestId ?? '', false)
       throw new InteractionServiceError(502, 'turn_failed', 'The answer was saved, but the turn did not start', {
         retryable: true,

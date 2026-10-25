@@ -680,6 +680,98 @@ export function renderInteractionMessageAsText(content: string): string {
     .trim()
 }
 
+/**
+ * The fixed sentence a voice surface says instead of a card (TC002 stage 3,
+ * B2 fix MAJOR-2). A device without a card renderer must never read out the
+ * question or the options of a card — that is where a confirmation lives.
+ */
+export const VOICE_CARD_HINT = 'Bestätigung in der App.'
+
+/**
+ * Format characters (Unicode category Cf: bidi embeddings/overrides/isolates,
+ * zero-width characters, BOM, soft hyphen) are invisible and carry nothing
+ * for the ear. The voice stripper removes all of them first, so none can hide
+ * a fence or the word `offtangent` (review B2FIX2 m-7: `\u202e```offtangent`).
+ */
+const FORMAT_CHARS = /\p{Cf}/gu
+
+/**
+ * Second pass of the voice stripper (review B2FIX m-2, B2FIX2 m-7): fence
+ * variants the card parser does not treat as cards but that still are no
+ * text for the ear — `~~~` fences, a header with more words
+ * (```` ```json offtangent ````, ```` ```offtangent {…} ````), an inline
+ * triple, and a fence that starts in the MIDDLE of a line
+ * (`Hallo ```offtangent {…}``` Ende`). A run of at least three backticks or
+ * tildes anywhere in the text whose header (the rest of its line, up to a
+ * closing run on the same line) names `offtangent` opens such a fence; it is
+ * removed up to the next run of the same character that is at least as long
+ * (same line or later, also mid-line) or to the end of the text. Fences
+ * without `offtangent` in the header stay as they are. These are no cards in
+ * the app either, so no card hint is added for them.
+ */
+function stripLenientOfftangentFences(text: string): string {
+  if (!/offtangent/i.test(text)) return text
+  const runs = /`{3,}|~{3,}/g
+  let out = ''
+  let cursor = 0
+  let m: RegExpExecArray | null
+  while ((m = runs.exec(text)) !== null) {
+    const marker = m[0]
+    const ch = marker[0]!
+    const afterMarker = m.index + marker.length
+    const lineEnd = text.indexOf('\n', afterMarker)
+    const restOfLine = text.slice(afterMarker, lineEnd === -1 ? text.length : lineEnd)
+    const closer = new RegExp(`\\${ch}{${marker.length},}`, 'g')
+    const sameLine = closer.exec(restOfLine)
+    const header = sameLine ? restOfLine.slice(0, sameLine.index) : restOfLine
+    if (!/offtangent/i.test(header)) continue
+    out += text.slice(cursor, m.index)
+    let end: number
+    if (sameLine) {
+      end = afterMarker + sameLine.index + sameLine[0].length
+    } else {
+      const from = lineEnd === -1 ? text.length : lineEnd
+      closer.lastIndex = from
+      const later = closer.exec(text)
+      end = later ? later.index + later[0].length : text.length
+    }
+    cursor = end
+    runs.lastIndex = end
+  }
+  return out + text.slice(cursor)
+}
+
+/**
+ * Text for a voice surface (clock caption, later TTS): EVERY `offtangent`
+ * fence is removed — valid or broken, closed or not, card or draft — and
+ * nothing of it is turned into text. When at least one fence was a card
+ * (an answerable block), {@link VOICE_CARD_HINT} is appended once.
+ * Never throws.
+ */
+export function stripInteractionFencesForVoice(content: string): { text: string; hadCard: boolean } {
+  if (!content) return { text: '', hadCard: false }
+  content = content.replace(FORMAT_CHARS, '')
+  if (!/offtangent/i.test(content)) return { text: content.trim(), hadCard: false }
+  let text = ''
+  let cursor = 0
+  let hadCard = false
+  for (const fence of findFences(content)) {
+    text += content.slice(cursor, fence.start)
+    cursor = fence.end
+    try {
+      const block = parseInteractionBlockPayload(JSON.parse(fence.body) as unknown)
+      if (block && ANSWERABLE_INTERACTION_BLOCK_KINDS.includes(block.kind)) hadCard = true
+    } catch {
+      // Broken JSON: removed all the same, it is no text for the ear.
+    }
+  }
+  text += content.slice(cursor)
+  text = stripLenientOfftangentFences(text)
+  text = text.replace(/[ \t]+\n/g, '\n').replace(/\n{3,}/g, '\n\n').trim()
+  if (hadCard) text = text ? `${text}\n\n${VOICE_CARD_HINT}` : VOICE_CARD_HINT
+  return { text, hadCard }
+}
+
 /** True when the message carries at least one renderable card. */
 export function hasInteractionBlock(content: string): boolean {
   return extractInteractionBlocks(content).length > 0

@@ -34,6 +34,7 @@ import { loadConfig, warnConfigReadFailed } from './config.js'
 import { loadProvidersDecrypted } from './provider-config.js'
 import type { ProviderConfig } from './provider-config.js'
 import { withTimeout } from './promise-utils.js'
+import { errorClass } from './log-safe-error.js'
 
 /** First run once the strand has this many user turns. */
 export const AUTO_TITLE_FIRST_TURN = 4
@@ -490,7 +491,9 @@ export async function runAutoTitleModel(
     try {
       text = await withTimeout(complete(entry, AUTO_TITLE_SYSTEM_PROMPT, prompt), timeoutMs, `title ${entry.composite}`)
     } catch (err) {
-      notes.push(`${entry.composite}: ${(err as Error).message}`)
+      // Notes reach the server log (trigger) — a provider error body can quote
+      // the prompt, i.e. the user turns (review K0-K2-3 #1). Class only.
+      notes.push(`${entry.composite}: ${errorClass(err)}`)
       continue
     }
     const parsed = parseAutoTitleOutput(text)
@@ -546,7 +549,7 @@ export async function evaluateStrandAutoTitle(
   try {
     plan = planStrandAutoTitle(db, strandId, trigger, options.now)
   } catch (err) {
-    return { outcome: 'error', notes: [(err as Error).message] }
+    return { outcome: 'error', notes: [`internal: ${errorClass(err)}`] }
   }
   if (!plan.run) return { outcome: 'skipped', reason: plan.reason }
 
@@ -579,6 +582,6 @@ export async function evaluateStrandAutoTitle(
     } catch {
       // bookkeeping is best effort
     }
-    return { outcome: 'error', notes: [(err as Error).message] }
+    return { outcome: 'error', notes: [`internal: ${errorClass(err)}`] }
   }
 }

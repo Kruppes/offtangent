@@ -1,3 +1,4 @@
+import { errorClass } from '@axiom/core'
 import type { Response } from 'express'
 import { isSessionAccessError } from '@axiom/core'
 import type { AuthenticatedRequest } from '../../../auth.js'
@@ -43,8 +44,11 @@ function sendError(res: Response, err: unknown, context: string): void {
     res.status(400).json({ error: err.message, code: 'invalid_strand' })
     return
   }
-  console.error(`[captures] ${context}:`, err)
-  res.status(500).json({ error: `${context}: ${(err as Error).message}` })
+  // Class only, in log and answer: a capture carries a dictation, and an
+  // unexpected error message can echo it (review K0-K2-4 #4).
+  const cls = errorClass(err)
+  console.error(`[captures] ${context}: ${cls}`)
+  res.status(500).json({ error: `${context}: ${cls}` })
 }
 
 export function createCapturesController(service: CapturesService): CapturesController {

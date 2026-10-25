@@ -19,6 +19,7 @@
  *    a `.local`/`.lan` host name; anything else is refused at startup.
  */
 import type { Database } from '@axiom/core'
+import { errorClass } from '@axiom/core'
 import type { PushDoorbell, PushKind } from '../../../push/sender.js'
 import { ClockDeviceRegistry } from './registry.js'
 import { buildClockState } from './state.js'
@@ -120,7 +121,7 @@ export class ClockNotifier {
       timer.unref?.()
       this.pending.set(userId, timer)
     } catch (err) {
-      this.logger.warn(`[clock] wake scheduling failed: ${(err as Error).message}`)
+      this.logger.warn(`[clock] wake scheduling failed: ${errorClass(err)}`)
     }
   }
 
@@ -151,7 +152,9 @@ export class ClockNotifier {
       this.failureLogged = false
       return true
     } catch (err) {
-      this.logOnce(`[clock] wake call failed: ${(err as Error).name}: ${(err as Error).message}`)
+      // Class only (review K0-K2-3 #4): timeout / network / http_* keep the
+      // diagnosis, no error text reaches the log.
+      this.logOnce(`[clock] wake call failed: ${errorClass(err)}`)
       return false
     }
   }

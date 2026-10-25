@@ -35,7 +35,7 @@ const COUNT_MAX = 99
 /** Upper bound of task rows looked at per poll; a clock never needs more. */
 const TASK_SCAN_LIMIT = 200
 
-export type ClockEventType = 'task_done' | 'task_failed' | 'question'
+export type ClockEventType = 'task_done' | 'task_failed' | 'question' | 'answer_ready'
 
 export interface ClockEvent {
   id: string
@@ -44,6 +44,21 @@ export interface ClockEvent {
   title: string
   sound: 'chime' | 'alert' | 'none'
   at: string
+  /**
+   * Companion K2 (E4): the task was started by the answer to a spoken
+   * question of this user (signet violet instead of neutral). Only on task
+   * events, only when true.
+   */
+  from_question?: true
+  /** `answer_ready` only: the exchange whose answer `GET /voice/:id` reads. */
+  exchange_id?: string
+}
+
+/** What the clock state reads from the exchange tracker (exchange.ts). */
+export interface ClockExchangeStateView {
+  questionTaskIds: (userId: number) => Set<string>
+  answersReady: (userId: number) => Array<{ exchangeId: string; persona: string | null; strandTitle: string | null; at: number }>
+  busy: (userId: number) => boolean
 }
 
 export interface ClockQuestionOption {
@@ -219,10 +234,11 @@ function revisionOf(state: Omit<ClockState, 'rev'>): number {
 
 export function buildClockState(
   db: Database,
-  input: { userId: number; privacy: boolean; now?: number },
+  input: { userId: number; privacy: boolean; now?: number; exchanges?: ClockExchangeStateView | null },
 ): ClockState {
   const now = input.now ?? Date.now()
   const { userId, privacy } = input
+  const fromQuestion = input.exchanges?.questionTaskIds(userId) ?? new Set<string>()
 
   const running = db.prepare(
     `SELECT id, name, status, trigger_type, trigger_source_id, session_id, agent_id, result_status, completed_at
@@ -262,6 +278,20 @@ export function buildClockState(
       title: privacy ? '' : panelText(row.name, CLOCK_TITLE_MAX),
       sound: failed ? 'alert' : 'chime',
       at,
+      ...(fromQuestion.has(row.id) ? { from_question: true as const } : {}),
+    })
+  }
+
+  // Companion K2 (§2.5): a backgrounded or split-off answer is ready.
+  for (const ready of input.exchanges?.answersReady(userId) ?? []) {
+    events.push({
+      id: shortId('a', ready.exchangeId),
+      type: 'answer_ready',
+      persona: personaId(ready.persona),
+      title: privacy ? '' : panelText(ready.strandTitle ?? '', CLOCK_TITLE_MAX),
+      sound: 'chime',
+      at: new Date(ready.at).toISOString(),
+      exchange_id: ready.exchangeId,
     })
   }
 
@@ -288,7 +318,7 @@ export function buildClockState(
     status: {
       running: runningList,
       questions_waiting: Math.min(questions.length, COUNT_MAX),
-      thinking: false,
+      thinking: input.exchanges?.busy(userId) ?? false,
     },
     events: recentEvents,
     question: questions[0]?.question ?? null,

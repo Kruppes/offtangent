@@ -9,7 +9,7 @@
  *  - sealing: ask_user payload (question, labels, descriptions) and comment
  *  - interaction.pending frame: toolCallId and count only
  */
-import { describe, it, expect, beforeEach, afterEach } from 'vitest'
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
 import fs from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
@@ -155,6 +155,22 @@ describe('S1-B answerById with answers', () => {
     expect(turns).toHaveLength(0)
   })
 
+  it('review K0-K2-4 #4: a starter that throws with private text logs the class only', () => {
+    const MARKER = 'PRIVATE_CLOCK_DICTATION_MARKER_INTERACTION'
+    const spies = (['log', 'info', 'warn', 'error', 'debug'] as const).map(level => vi.spyOn(console, level).mockImplementation(() => {}))
+    try {
+      const card = insertAskUser()
+      expect(() => makeService().answerById(1, card.id, {
+        clientRequestId: 'tg:cbq-echo', answers: goodAnswers(), surface: 'telegram',
+        startTurn: () => { throw new Error(`runner refused: ${MARKER}`) },
+      })).toThrow(expect.objectContaining({ status: 502, code: 'turn_failed' }))
+      const logged = spies.flatMap(spy => spy.mock.calls.flat())
+        .map(arg => arg instanceof Error ? `${arg.message}\n${arg.stack ?? ''}` : String(arg)).join('\n')
+      expect(logged).toContain('did not start: error')
+      expect(logged).not.toContain(MARKER)
+    } finally { spies.forEach(spy => spy.mockRestore()) }
+  })
+
   it('S1-C telegram review 2: resume retry from the row — the Telegram starter, no default runner, the key from answer.clientRequestId and no answers', () => {
     const card = insertAskUser()
     // No getTurnRunner: only the starter Telegram passes with the call.
@@ -276,6 +292,27 @@ describe('S1-B answerById with answers', () => {
     await new Promise(r => setTimeout(r, 0))
     // Delivered: marked resumed, so the next turn's context notes skip it.
     expect(getInteraction(db, card.id)?.answer?.resumed).toBe(true)
+  })
+
+  it('S1-D: a throwing steer offer is logged as class only, never with the error text (review K0-K2-5 merge sweep)', async () => {
+    const card = insertAskUser({ blocking: false })
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined)
+    const service = createInteractionsService({
+      db,
+      getTurnRunner: () => ({
+        startTurn: (input: Record<string, unknown>) => { turns.push(input); return {} },
+        offerSteerToLiveTurn: () => { throw new Error('steer refused: PRIVATE_CLOCK_DICTATION_MARKER_007') },
+      } as never),
+    })
+    try {
+      const result = service.answerById(1, card.id, { clientRequestId: 'cr-nb-throw', answers: goodAnswers(), surface: 'web' })
+      expect(result).not.toHaveProperty('steered')
+      const logged = warn.mock.calls.map(c => c.map(String).join(' ')).join('\n')
+      expect(logged).toContain('Steer of the answer to')
+      expect(logged).not.toContain('PRIVATE_CLOCK_DICTATION_MARKER_007')
+    } finally {
+      warn.mockRestore()
+    }
   })
 
   it('S1-D: blocking=false with no tool batch running (steer refused) stays a context note for the next turn', async () => {

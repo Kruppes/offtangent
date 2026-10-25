@@ -156,9 +156,15 @@ describe('M4 e2e: interactive runtime tool loop, Normal and Eco', () => {
     script.push(res => openaiSse(res, { tool: { id: 'tc-1', name: 'shell' } }))
     for (let i = 0; i < 6; i++) script.push(overflow400)
     const chunks = await collect(runtime.streamPrompt('synthetic turn', 's-ff'))
-    const errText = JSON.stringify(chunks.filter(c => c.type === 'error'))
+    // The guard text (it quotes the provider error) travels in the in-process,
+    // non-enumerable `rawError` that TurnRunner's overflow classifier reads;
+    // the serialized chunk carries only the public class (review K0-K2-5).
+    const errors = chunks.filter(c => c.type === 'error') as Array<{ rawError?: string }>
+    const errText = errors.map(c => c.rawError ?? '').join('\n')
     expect(errText).toContain(CONTEXT_GUARD_MARKER)
     expect(errText).toContain('new strand')
+    expect(JSON.stringify(errors)).not.toContain(CONTEXT_GUARD_MARKER)
+    expect(JSON.stringify(errors)).toContain('context_overflow')
     expect(received).toHaveLength(3)
     expect(toolRuns).toBe(1)
     db.close()

@@ -8,7 +8,7 @@ import fs from 'node:fs'
 import express from 'express'
 import type { Database } from '@axiom/core'
 import type { AgentCore } from '@axiom/core'
-import { registerInteractionAnswerPort } from '@axiom/core'
+import { registerInteractionAnswerPort, shortenForVoice } from '@axiom/core'
 import { createAuthRouter } from './routes/auth.js'
 import { createChatRouter } from './routes/chat.js'
 import { createThreadsRouter } from './routes/threads.js'
@@ -42,6 +42,7 @@ import { createCapturesRouters } from './api/modules/captures/route.js'
 import { createFeedRouter } from './api/modules/feed/route.js'
 import { createBoardsRouter } from './api/modules/boards/route.js'
 import { createInteractionsRouter, createSharedInteractionsService, createStrandInteractionsRouter } from './api/modules/interactions/route.js'
+import type { ClockTurnSource } from './api/modules/clock-device/exchange.js'
 import { createClockDeviceRouter } from './api/modules/clock-device/route.js'
 import { createDevicesRouter, createStatusRouter } from './api/modules/devices/route.js'
 import type { CaptureTurnStarter } from './api/modules/captures/service.js'
@@ -125,12 +126,26 @@ export interface AppOptions {
   chatEventBus?: ChatEventBus | null
   getTurnRunner?: () => (CaptureTurnStarter & StrandTurnGuard & PersonaTurnGuard) | null
   /**
+   * Companion K2, H3 fallback: a short spoken version of an answer whose
+   * first paragraph ignored the clock style (small model). Null = word cut.
+   */
+  clockVoiceShorten?: ((text: string, maxChars: number) => Promise<string | null>) | null
+  /**
    * The process wide push sender (PROTOCOL chapter 7). Used by the captures
    * path: when the router files a capture as a note but the text might be
    * addressed at the persona, the service writes one question into the strand
    * and rings for it. No turn runs there, so no other doorbell would.
    */
   getPushSender?: () => PushSender | null
+}
+
+/** Mount path of the LED clock router (`createClockDeviceRouter`). */
+export const CLOCK_DEVICE_MOUNT = '/api/device/clock'
+
+/** True for every path the clock router would see (case-insensitive like express). */
+export function isClockDevicePath(path: string): boolean {
+  const lower = path.toLowerCase()
+  return lower === CLOCK_DEVICE_MOUNT || lower.startsWith(`${CLOCK_DEVICE_MOUNT}/`)
 }
 
 export function createApp(options?: AppOptions): express.Express {
@@ -156,7 +171,15 @@ export function createApp(options?: AppOptions): express.Express {
   //    nothing but the provider layer.
   app.use(ISOLATED_INFER_MOUNT, createIsolatedInferenceRouter())
 
-  app.use(express.json())
+  // The clock routes parse their own bodies AFTER their gates (review K0-K2,
+  // MAJOR-3): `/voice` reads raw PCM with its own 512 kB bound, `/answer`
+  // and the owner routes run `express.json()` behind the LAN gate and the
+  // device token / JWT. The generic parser would otherwise read (and answer
+  // 400/413 for) a JSON body of an unauthenticated peer outside the LAN
+  // before any gate ran. Express matches mount paths case-insensitively, so
+  // the skip does too.
+  const genericJson = express.json()
+  app.use((req, res, next) => (isClockDevicePath(req.path) ? next() : genericJson(req, res, next)))
 
   // CORS: allow frontend dev server (different port) to access API
   app.use((_req, res, next) => {
@@ -247,9 +270,27 @@ export function createApp(options?: AppOptions): express.Express {
     registerInteractionAnswerPort(interactionsService)
     // The LED clock (TC002 Berry app): status, notices and knob answers. Own
     // device tokens, LAN only; answers go through the same service as a tap.
-    app.use('/api/device/clock', createClockDeviceRouter({
+    app.use(CLOCK_DEVICE_MOUNT, createClockDeviceRouter({
       db: options.db,
       getInteractions: () => interactionsService,
+      // Stage 3 (push-to-talk, companion K1): a spoken question is a capture
+      // with source 'clock' through the very service `POST /api/captures`
+      // uses, so the router files it. Answers 404 until BOTH switches are on:
+      // `captureSources.clock.enabled` and CLOCK_VOICE_ENABLED (default off).
+      voice: {
+        getCaptures: () => captureRouters.service,
+        // K2: the exchange tracker follows the answer turns on the runner's
+        // own subscription (TurnRunner.subscribe), filtered on the turn ids.
+        getTurnRunner: () => {
+          const runner = options.getTurnRunner?.() as Partial<ClockTurnSource> | null | undefined
+          return runner && typeof runner.subscribe === 'function' ? runner as ClockTurnSource : null
+        },
+        // H3 fallback (§2.3): a small router-chain model shortens a first
+        // paragraph that ignored H2; null in an option turns it off.
+        shorten: options.clockVoiceShorten === undefined
+          ? (text: string, max: number) => shortenForVoice(text, max)
+          : options.clockVoiceShorten,
+      },
     }))
     // General status for polling screens (Pi dashboard, ...): device token
     // (LAN only) or user JWT; answers through the same service as a tap.

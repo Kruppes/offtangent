@@ -6,6 +6,7 @@
  * later. An OAuth provider gets exactly one credential recovery plus retry; a
  * second authentication error is terminal, and a static API key never retries.
  */
+import { publicProviderError } from './log-safe-error.js'
 import { describe, it, expect, vi } from 'vitest'
 import { initDatabase } from './database.js'
 import { TurnRunner } from './turn-runner.js'
@@ -128,7 +129,7 @@ describe('TurnRunner credential recovery on authentication errors', () => {
     expect(calls).toEqual(['sendMessage', 'retryTurn'])
     const persisted = errorMetadata(db)
     expect(persisted).toHaveLength(1)
-    expect(persisted[0]).toMatchObject({ cause: 'non_retryable', retryable: false, attempts: 1, error: ANTHROPIC_401 })
+    expect(persisted[0]).toMatchObject({ cause: 'non_retryable', retryable: false, attempts: 1, error: publicProviderError(ANTHROPIC_401) })
   })
 
   it('keeps failing fast when the provider has no recoverable credentials (static API key)', async () => {

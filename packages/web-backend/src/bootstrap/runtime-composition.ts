@@ -74,7 +74,7 @@ import type {
   TaskRuntimeTaskBoundary,
 } from '@axiom/core'
 import type { AgentTool } from '@earendil-works/pi-agent-core'
-import { completeSimple } from '@axiom/core'
+import { completeSimple, errorClass, publicProviderError } from '@axiom/core'
 // W5/P3: close out feed-only outcomes that are too old to still announce.
 import { archivePendingTaskNotices } from '@axiom/core'
 import { getCurrentTaskAgentId, getCurrentTaskExecutionContext, resolveTaskDefaultProvider as resolveTaskDefaultProviderChain } from '@axiom/core'
@@ -2194,7 +2194,11 @@ export async function createRuntimeComposition(options: RuntimeCompositionOption
             toolArgs: chunk.toolArgs,
             toolResult: chunk.toolResult,
             toolIsError: chunk.toolIsError,
-            error: chunk.error,
+            // Never the raw provider text (review K0-K2-4 #2): a fixed notice
+            // of the runtime as it is, a provider error as fixed text + class.
+            error: chunk.type === 'error' && chunk.rawError === undefined && chunk.error !== undefined
+              ? publicProviderError(chunk.error)
+              : chunk.error,
             telegramDelivered: chunk.type === 'done' ? streamState.telegramDelivered : undefined,
             isTaskInjection: true,
             ...(chunk.type === 'done' && injectionDoneMessageId !== null ? { messageId: injectionDoneMessageId } : {}),
@@ -2634,7 +2638,7 @@ export async function createRuntimeComposition(options: RuntimeCompositionOption
         const recovered = turnRunner.recoverUndeliveredSteers()
         if (recovered > 0) logger.log(`[axiom] Requeued ${recovered} undelivered steer message(s)`)
       } catch (err) {
-        logger.error('[axiom] Steer recovery failed:', err)
+        logger.error(`[axiom] Steer recovery failed: ${errorClass(err)}`)
       }
 
       agentCore.init().catch(err => {

@@ -27,6 +27,7 @@
 import crypto from 'node:crypto'
 import { pipeline, Transform, type Readable } from 'node:stream'
 import {
+  errorClass,
   loadTtsSettings,
   ttsCacheScope,
   resolveSpeechSummaryModel,
@@ -235,7 +236,8 @@ export function toVoiceNoteServiceError(err: unknown): unknown {
     return new SpeechServiceError(503, 'tts_unconfigured', 'No TTS provider or API key configured')
   }
   if (err instanceof SpeechSummaryUpstreamError || err instanceof VoiceNoteUpstreamError) {
-    console.warn(`[voice-note] upstream failure: ${err.message}`)
+    // Class only: the upstream text may echo the answer being spoken (review K0-K2-5 #1).
+    console.warn(`[voice-note] upstream failure: ${errorClass(err)}`)
     return new SpeechServiceError(502, 'upstream', 'The voice is not available')
   }
   return err

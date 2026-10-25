@@ -4,7 +4,7 @@ import os from 'node:os'
 import path from 'node:path'
 import http from 'node:http'
 import { WebSocket } from 'ws'
-import { initDatabase, insertFeedItem } from '@axiom/core'
+import { initDatabase, insertFeedItem, publicProviderError } from '@axiom/core'
 import type { AgentCore, ResponseChunk } from '@axiom/core'
 import { createApp } from './app.js'
 import { generateAccessToken } from './auth.js'
@@ -1042,23 +1042,28 @@ describe('setupWebSocketChat kill switch', () => {
 
       const error = await first.waitForMessage()
       expect(error.type).toBe('error')
-      expect(error.error).toBe(providerError)
-      expect(error.text).toContain(providerError)
+      // Review K0-K2-4 #2: the client gets the fixed public form with the
+      // error class, never the raw provider text (which can echo the prompt).
+      expect(error.error).toBe(publicProviderError(providerError))
+      expect(error.error).toBe('The model provider reported an error (auth).')
+      expect(error.text).toContain(publicProviderError(providerError))
+      expect(JSON.stringify(error)).not.toContain('OAuth token refresh failed')
       const errorInfo = error.errorInfo as { messageId: number; cause: string; retryable: boolean }
       expect(errorInfo).toMatchObject({ cause: 'non_retryable', retryable: false })
       expect((await first.waitForMessage()).type).toBe('done')
 
-      // The failure is a durable row (full provider text included), so a reload
+      // The failure is a durable row (public text + class, review K0-K2-4 #2), so a reload
       // still shows it instead of the turn dying silently.
       const row = db.prepare(
         'SELECT role, content, metadata FROM chat_messages WHERE id = ?'
       ).get(errorInfo.messageId) as { role: string; content: string; metadata: string }
       expect(row.role).toBe('system')
       expect(row.content).toBe(error.text)
+      expect(row.metadata).not.toContain('OAuth token refresh failed')
       expect(JSON.parse(row.metadata)).toMatchObject({
         kind: 'turn_error',
         cause: 'non_retryable',
-        error: providerError,
+        error: publicProviderError(providerError),
         attempts: 0,
         retryable: false,
       })

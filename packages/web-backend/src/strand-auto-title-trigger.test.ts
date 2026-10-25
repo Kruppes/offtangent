@@ -3,6 +3,7 @@
  * model call does not, the kill switch holds, and nothing ever throws into a
  * chat turn — also not when the local model is down.
  */
+import { inspect } from 'node:util'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import { evaluateStrandAutoTitle, initDatabase } from '@axiom/core'
 import type { AutoTitleResult, Database, ResolvedRouterModel } from '@axiom/core'
@@ -148,5 +149,95 @@ describe('triggerStrandAutoTitle', () => {
     expect(db.prepare('SELECT title, title_source, previous_title FROM sessions WHERE id = ?').get('s1')).toEqual({
       title: 'Gießkanne Bootshaus', title_source: 'ai', previous_title: 'Hallo, kannst du mir',
     })
+  })
+})
+
+describe('log safety (review K0-K2-3 #1)', () => {
+  const MARKER = 'PRIVATE_CLOCK_DICTATION_MARKER_007'
+
+  /** Every console level the trigger may use; Error objects are inspected with their stack. */
+  function recordingConsole(): { console: Pick<typeof console, 'log' | 'warn' | 'error'>; text: () => string; lines: () => number } {
+    const seen: unknown[][] = []
+    const push = (...args: unknown[]) => { seen.push(args) }
+    return {
+      console: { log: push, warn: push, error: push },
+      text: () => seen.flat().map(arg => (typeof arg === 'string' ? arg : inspect(arg, { depth: 5 }))).join('\n'),
+      lines: () => seen.length,
+    }
+  }
+
+  function addClockStrand(id: string): void {
+    db.prepare(
+      `INSERT INTO sessions (id, user_id, session_user, source, type, started_at, last_activity, message_count, summary_written, agent_id, title, title_source, archived)
+       VALUES (?, 1, '1', 'clock', 'interactive', datetime('now'), datetime('now'), 0, 0, 'main', 'Hallo, kannst du mir', 'derived', 0)`,
+    ).run(id)
+  }
+
+  it('a provider echo of the dictation never reaches the log (the reviewer probe)', async () => {
+    addClockStrand('s1')
+    addTurns('s1', 4)
+    const out = recordingConsole()
+    const done = settled()
+    expect(triggerStrandAutoTitle({
+      db, sessionId: 's1', trigger: 'message', onSettled: done.resolve,
+      deps: {
+        console: out.console,
+        loadSettings: () => ({}),
+        evaluate: (d, id, t) => evaluateStrandAutoTitle(d, id, t, {
+          chain: [LOCAL],
+          complete: async () => { throw new Error(`review:stub: upstream echoed ${MARKER}`) },
+        }),
+      },
+    })).toBe(true)
+    const result = await done.promise
+    expect(result.outcome).toBe('error')
+    expect(out.lines()).toBe(1)
+    expect(out.text()).toContain('[auto-title] Strand s1: no title (ollama:qwen3.8:27b-mlx: error)')
+    expect(out.text()).not.toContain(MARKER)
+  })
+
+  it('a successful title is logged as length and source, never verbatim (review K0-K2-4 #1)', async () => {
+    addClockStrand('s1')
+    addTurns('s1', 4)
+    const out = recordingConsole()
+    const done = settled()
+    expect(triggerStrandAutoTitle({
+      db, sessionId: 's1', trigger: 'message', onSettled: done.resolve,
+      deps: {
+        console: out.console,
+        loadSettings: () => ({}),
+        evaluate: (d, id, t) => evaluateStrandAutoTitle(d, id, t, {
+          chain: [LOCAL],
+          complete: async () => `{"title":"${MARKER}"}`,
+        }),
+      },
+    })).toBe(true)
+    const result = await done.promise
+    expect(result.outcome).toBe('changed')
+    expect(result.title).toBe(MARKER)
+    expect(out.text()).toBe(`[auto-title] Strand s1: renamed (title length ${MARKER.length}, ollama:qwen3.8:27b-mlx, trigger message)`)
+    expect(out.text()).not.toContain(MARKER)
+  })
+
+  it('a failing gate logs a class, not the message', () => {
+    const out = recordingConsole()
+    const throwing = { prepare: () => { throw new Error(`gate ${MARKER}`) } } as unknown as Database
+    expect(triggerStrandAutoTitle({
+      db: throwing, sessionId: 's1', trigger: 'message',
+      deps: { console: out.console, loadSettings: () => ({}), evaluate: async () => ({ outcome: 'none' }) },
+    })).toBe(false)
+    expect(out.text()).toBe('[auto-title] Gate failed for strand s1: error')
+  })
+
+  it('a throwing evaluation logs a class, neither message nor stack', async () => {
+    addClockStrand('s1')
+    addTurns('s1', 4)
+    const out = recordingConsole()
+    expect(triggerStrandAutoTitle({
+      db, sessionId: 's1', trigger: 'message',
+      deps: { console: out.console, loadSettings: () => ({}), evaluate: async () => { throw new RangeError(`boom ${MARKER}`) } },
+    })).toBe(true)
+    await new Promise(res => setTimeout(res, 0))
+    expect(out.text()).toBe('[auto-title] Failed for strand s1: range_error')
   })
 })

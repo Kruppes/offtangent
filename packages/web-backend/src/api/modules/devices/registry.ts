@@ -27,6 +27,19 @@ import type { Database } from '@axiom/core'
 export const DEVICE_SCOPES = ['status:read', 'interactions:answer'] as const
 export type DeviceScope = typeof DEVICE_SCOPES[number]
 
+/**
+ * Scopes that only the clock owner route (`/api/device/clock/devices`) grants
+ * and only the clock routes check: `clock:voice` (stage 3, push-to-talk,
+ * feat/clock-companion). They keep their clock name in storage and in the
+ * device view; `/api/devices` can neither grant nor require them, and a
+ * scope PATCH there rewrites the list without them (fail closed).
+ */
+export const CLOCK_ONLY_SCOPES = ['clock:voice'] as const
+export type ClockOnlyScope = typeof CLOCK_ONLY_SCOPES[number]
+/** Every scope a stored device row may carry after parsing. */
+export type StoredDeviceScope = DeviceScope | ClockOnlyScope
+const STORED_SCOPE_ORDER: readonly StoredDeviceScope[] = [...DEVICE_SCOPES, ...CLOCK_ONLY_SCOPES]
+
 /** Scope names of the first clock build, read as aliases (migration without re-issue). */
 export const LEGACY_SCOPE_ALIASES: Readonly<Record<string, DeviceScope>> = {
   'clock:state': 'status:read',
@@ -48,8 +61,8 @@ export interface Device {
   userId: number
   kind: DeviceKind
   name: string
-  /** Canonical scopes (legacy names already mapped). */
-  scopes: DeviceScope[]
+  /** Canonical scopes (legacy names already mapped), plus clock-only scopes. */
+  scopes: StoredDeviceScope[]
   privacy: boolean
   createdAt: string
   lastSeenAt: string | null
@@ -73,16 +86,16 @@ export function hashDeviceToken(token: string): string {
 }
 
 /** Canonical scopes of a stored scope string; unknown names are dropped (fail closed). */
-export function parseStoredScopes(raw: string): DeviceScope[] {
-  const out = new Set<DeviceScope>()
+export function parseStoredScopes(raw: string): StoredDeviceScope[] {
+  const out = new Set<StoredDeviceScope>()
   for (const name of raw.split(/\s+/).filter(Boolean)) {
-    const canonical = (DEVICE_SCOPES as readonly string[]).includes(name)
-      ? name as DeviceScope
+    const canonical = (STORED_SCOPE_ORDER as readonly string[]).includes(name)
+      ? name as StoredDeviceScope
       : LEGACY_SCOPE_ALIASES[name]
     if (canonical) out.add(canonical)
   }
   // Stable order, whatever the stored order was.
-  return DEVICE_SCOPES.filter(scope => out.has(scope))
+  return STORED_SCOPE_ORDER.filter(scope => out.has(scope))
 }
 
 /** Owner input -> canonical scope list, or null when anything is not a known scope. */

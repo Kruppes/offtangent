@@ -46,6 +46,25 @@ export function buildWavHeader(pcmBytes: number, sampleRate: number): Buffer {
   return header
 }
 
+/**
+ * Transcribes raw 16 bit mono PCM through the configured STT provider: puts
+ * the WAV header in front, takes the language from settings (auto when
+ * `match`/`auto`/empty). Shared by `/api/stt/transcribe-raw` (the puck) and the
+ * clock's voice route (stage 3). `pcm` must have an even byte count.
+ */
+export async function transcribeRawPcm(pcm: Buffer, rate: number): Promise<{ transcript: string }> {
+  const wav = Buffer.concat([buildWavHeader(pcm.length, rate), pcm])
+  ensureConfigTemplates()
+  const settings = loadConfig<Record<string, unknown>>('settings.json')
+  const settingsLanguage = (settings.language as string) ?? ''
+  const autoLanguages = ['match', 'auto', '']
+  const language = autoLanguages.includes(settingsLanguage.toLowerCase())
+    ? undefined
+    : settingsLanguage
+  const result = await transcribeAudio(wav, { language, filename: 'stream.wav' })
+  return { transcript: result.transcript }
+}
+
 /** `keepAudio=1` (query or multipart field) asks for the recording to be kept. */
 function wantsKeptAudio(value: unknown): boolean {
   if (typeof value !== 'string') return false
@@ -172,17 +191,7 @@ export function createSttRouter(): Router {
           : RAW_DEFAULT_RATE
         // An odd byte count would shift every sample by one byte; drop the tail.
         const pcm = body.length % 2 === 0 ? body : body.subarray(0, body.length - 1)
-        const wav = Buffer.concat([buildWavHeader(pcm.length, rate), pcm])
-
-        ensureConfigTemplates()
-        const settings = loadConfig<Record<string, unknown>>('settings.json')
-        const settingsLanguage = (settings.language as string) ?? ''
-        const autoLanguages = ['match', 'auto', '']
-        const language = autoLanguages.includes(settingsLanguage.toLowerCase())
-          ? undefined
-          : settingsLanguage
-
-        const result = await transcribeAudio(wav, { language, filename: 'stream.wav' })
+        const result = await transcribeRawPcm(pcm, rate)
         res.json({ transcript: result.transcript })
       } catch (err) {
         const message = (err as Error).message

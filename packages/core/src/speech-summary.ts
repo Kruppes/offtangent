@@ -33,6 +33,7 @@ import { loadConfig, warnConfigReadFailed } from './config.js'
 import { checkAutomaticModelFor, type ProviderPolicyView } from './data-policy.js'
 import { completeSimple } from './pi-models.js'
 import { withTimeout } from './promise-utils.js'
+import { errorClass } from './log-safe-error.js'
 import {
   buildModel,
   getApiKeyForProvider,
@@ -450,7 +451,7 @@ export async function summarizeForSpeech(
     } catch (err) {
       // The first answer is still good; a failed shortening round only means
       // it gets cut below. Never turn that into a failed voice.
-      logger.warn(`[speech-summary] shortening round failed: ${(err as Error).message}`)
+      logger.warn(`[speech-summary] shortening round failed: ${errorClass(err)}`)
     }
   }
 

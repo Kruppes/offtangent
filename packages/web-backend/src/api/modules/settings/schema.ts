@@ -789,7 +789,11 @@ export function mergeCaptureModes(
   return { error: null, changed: true }
 }
 
-/** `captureSources.puck.styleHint`: free text, same length bound as the mode hint. */
+/**
+ * `captureSources.<source>`: `puck.styleHint`, `clock.styleHint` (free text,
+ * same length bound as the mode hint) and `clock.enabled` (boolean, the
+ * product switch of the clock's voice route; companion K1).
+ */
 export function mergeCaptureSources(
   body: Record<string, unknown>,
   settingsRaw: Record<string, unknown>,
@@ -797,20 +801,34 @@ export function mergeCaptureSources(
   const captureSources = body.captureSources as Record<string, unknown> | undefined
   if (!captureSources) return { error: null, changed: false }
   const puck = captureSources.puck as Record<string, unknown> | undefined
-  if (!puck) return { error: null, changed: false }
+  const clock = captureSources.clock as Record<string, unknown> | undefined
+  if (!puck && !clock) return { error: null, changed: false }
 
   const existingSources = (settingsRaw.captureSources ?? {}) as Record<string, unknown>
-  const existing = (existingSources.puck ?? {}) as Record<string, unknown>
+  const nextPuck = { ...((existingSources.puck ?? {}) as Record<string, unknown>) }
+  const nextClock = { ...((existingSources.clock ?? {}) as Record<string, unknown>) }
 
-  if (puck.styleHint !== undefined) {
+  if (puck?.styleHint !== undefined) {
     if (typeof puck.styleHint !== 'string') return { error: 'captureSources.puck.styleHint must be a string', changed: false }
     if (puck.styleHint.length > CAPTURE_STYLE_HINT_MAX_LENGTH) {
       return { error: `captureSources.puck.styleHint must be at most ${CAPTURE_STYLE_HINT_MAX_LENGTH} characters`, changed: false }
     }
-    existing.styleHint = puck.styleHint.trim()
+    nextPuck.styleHint = puck.styleHint.trim()
+  }
+  if (clock?.styleHint !== undefined) {
+    if (typeof clock.styleHint !== 'string') return { error: 'captureSources.clock.styleHint must be a string', changed: false }
+    if (clock.styleHint.length > CAPTURE_STYLE_HINT_MAX_LENGTH) {
+      return { error: `captureSources.clock.styleHint must be at most ${CAPTURE_STYLE_HINT_MAX_LENGTH} characters`, changed: false }
+    }
+    nextClock.styleHint = clock.styleHint.trim()
+  }
+  if (clock?.enabled !== undefined) {
+    if (typeof clock.enabled !== 'boolean') return { error: 'captureSources.clock.enabled must be a boolean', changed: false }
+    nextClock.enabled = clock.enabled
   }
 
-  existingSources.puck = existing
+  if (puck) existingSources.puck = nextPuck
+  if (clock) existingSources.clock = nextClock
   settingsRaw.captureSources = existingSources
   return { error: null, changed: true }
 }

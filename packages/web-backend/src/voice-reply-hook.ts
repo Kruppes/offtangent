@@ -4,14 +4,17 @@
  * When a user switched `voiceReplies` on, every answer this user gets is also
  * spoken. The work happens AFTER the answer was persisted and always detached:
  * a turn is never delayed by the voice, and a voice that fails never turns a
- * good answer into an error. Failures are logged with the real message — a
- * silent voice with no trace in the log is worse than no voice.
+ * good answer into an error. Failures are logged with their error class (never
+ * the provider text, which may echo the answer) — a silent voice with no trace
+ * in the log is worse than no voice. Clock turns are skipped: the clock speaks
+ * its answer itself.
  *
  * The hook is deliberately thin. It decides "does this answer get a voice",
  * and hands the actual work to the same runner the explicit endpoint uses, so
  * both paths share one in-flight guard and one persistence path.
  */
 import {
+  errorClass,
   getVoiceRepliesEnabled,
   type Database,
   type PersistedAssistantMessage,
@@ -22,6 +25,9 @@ import {
   type VoiceNoteGenerator,
 } from './api/modules/speech/voice-note-runner.js'
 import type { ChatEventBus } from './chat-event-bus.js'
+
+/** `source` of clock turns (same value as `CLOCK_VOICE_SOURCE` in clock-device/voice.ts). */
+const CLOCK_SOURCE = 'clock'
 
 export interface VoiceReplyHookOptions {
   db: Database
@@ -65,6 +71,10 @@ export function createVoiceReplyHook(options: VoiceReplyHookOptions): VoiceReply
     }
     // Nothing to speak: a turn that only produced a file still writes a row.
     if (!message.content.trim()) return
+    // The clock speaks its answer itself (own TTS on the device, KONZEPT §2):
+    // a second, automatic voice note would duplicate the audio and send the
+    // clock answer to one more provider (rewrite + TTS). Review K0-K2-5 #1.
+    if (message.source === CLOCK_SOURCE) return
     if (!isEnabled(message.userId)) return
 
     const row = db.prepare('SELECT metadata FROM chat_messages WHERE id = ?')
@@ -102,9 +112,10 @@ export function createVoiceReplyHook(options: VoiceReplyHookOptions): VoiceReply
   return {
     handle(message) {
       const promise = run(message).catch((err: unknown) => {
+        // Class only: a rewrite/TTS provider may echo the answer text in its
+        // error (review K0-K2-5 #1).
         logger.error(
-          `[voice-reply] Voice note for message ${message.messageId} failed: `
-          + `${err instanceof Error ? err.message : String(err)}`,
+          `[voice-reply] Voice note for message ${message.messageId} failed: ${errorClass(err)}`,
         )
       })
       return promise

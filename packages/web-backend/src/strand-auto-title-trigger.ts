@@ -11,7 +11,7 @@
  * No push frame: clients pick the new title up with the next strand list /
  * detail fetch (the web client has no handler for strand frames yet either).
  */
-import { evaluateStrandAutoTitle, loadConfig, planStrandAutoTitle } from '@axiom/core'
+import { errorClass, evaluateStrandAutoTitle, loadConfig, planStrandAutoTitle } from '@axiom/core'
 import type { AutoTitleResult, AutoTitleTrigger, Database } from '@axiom/core'
 
 export interface AutoTitleSettings {
@@ -74,7 +74,7 @@ export function triggerStrandAutoTitle(options: TriggerAutoTitleOptions): boolea
   try {
     plan = planStrandAutoTitle(db, sessionId, trigger)
   } catch (err) {
-    deps.console.warn(`[auto-title] Gate failed for strand ${sessionId}: ${(err as Error).message}`)
+    deps.console.warn(`[auto-title] Gate failed for strand ${sessionId}: ${errorClass(err)}`)
     return false
   }
   if (!plan.run) return false
@@ -84,13 +84,17 @@ export function triggerStrandAutoTitle(options: TriggerAutoTitleOptions): boolea
     try {
       const result = await deps.evaluate(db, sessionId, trigger)
       if (result.outcome === 'changed') {
-        deps.console.log(`[auto-title] Strand ${sessionId}: renamed to "${result.title}" (${result.model}, trigger ${trigger})`)
+        // Strand id, title length and source only: the title is model output
+        // and can quote a phrase of the dictation (review K0-K2-4 #1).
+        deps.console.log(`[auto-title] Strand ${sessionId}: renamed (title length ${(result.title ?? '').length}, ${result.model}, trigger ${trigger})`)
       } else if (result.outcome === 'error') {
         deps.console.warn(`[auto-title] Strand ${sessionId}: no title (${(result.notes ?? []).join('; ')})`)
       }
       options.onSettled?.(result)
     } catch (err) {
-      deps.console.error(`[auto-title] Failed for strand ${sessionId}:`, err)
+      // Class only, never the Error object: its message and stack can carry
+      // a provider echo of the strand's turns (review K0-K2-3 #1).
+      deps.console.error(`[auto-title] Failed for strand ${sessionId}: ${errorClass(err)}`)
     } finally {
       inFlight.delete(sessionId)
     }

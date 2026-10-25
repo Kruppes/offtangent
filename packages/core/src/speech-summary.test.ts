@@ -197,6 +197,21 @@ describe('summarizeForSpeech', () => {
     expect(logs.some(l => l.includes('shortening round failed'))).toBe(true)
   })
 
+  it('logs a failed shortening round by class, never with the provider text (review K0-K2-5 #1)', async () => {
+    const marker = 'PRIVATE_CLOCK_DICTATION_MARKER_007'
+    const long = 'Ein langer Satz über den Stand der Arbeit. '.repeat(40)
+    const complete = vi.fn()
+      .mockResolvedValueOnce({ text: long, model: 'p:first' })
+      .mockRejectedValueOnce(new Error(`400 bad request, echoed draft: ${marker}`))
+    const logs: string[] = []
+    const logger = { info: (m: string) => logs.push(m), warn: (m: string) => logs.push(`WARN ${m}`) }
+
+    await summarizeForSpeech(LONG_DE, { complete, logger })
+
+    expect(logs.some(l => l.includes('shortening round failed: http_400'))).toBe(true)
+    expect(logs.join('\n')).not.toContain(marker)
+  })
+
   it('does not shorten when the caller opts out', async () => {
     const complete = completion('Ein langer Satz über den Stand der Arbeit. '.repeat(40))
     const result = await summarizeForSpeech(LONG_DE, {

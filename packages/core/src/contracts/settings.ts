@@ -508,6 +508,19 @@ export interface CaptureSourceSettingsContract {
  */
 export interface CaptureSourcesSettingsContract {
   puck: CaptureSourceSettingsContract
+  clock: CaptureClockSourceSettingsContract
+}
+
+/**
+ * The TC002 clock (stage 3, companion K1). Its spoken questions are captures
+ * with `source 'clock'` like any other; the router files them.
+ *
+ * `enabled` is the product switch of `POST /api/device/clock/voice` (default
+ * off). The environment variable `CLOCK_VOICE_ENABLED` stays as the hard
+ * emergency stop on top: the route answers only when BOTH are on.
+ */
+export interface CaptureClockSourceSettingsContract extends CaptureSourceSettingsContract {
+  enabled: boolean
 }
 
 /**
@@ -560,6 +573,17 @@ export const DEFAULT_ASSIST_STYLE_HINT =
 /** Style hint of the puck source: no screen, so nothing visual. */
 export const DEFAULT_PUCK_STYLE_HINT =
   'Die Antwort wird vorgelesen, der Empfaenger hat keinen Bildschirm: keine Tabellen, keine Links, keine Codebloecke.'
+
+/**
+ * Style hint of the clock source, variant H2 "core answer first" (companion
+ * concept §3.2): the first paragraph is what the clock speaks and shows, the
+ * rest stays a normal answer in the strand. Turn-local, never stored.
+ */
+export const DEFAULT_CLOCK_STYLE_HINT =
+  'Die Frage kam ueber die Uhr, der erste Absatz deiner Antwort wird dort vorgelesen und angezeigt. '
+  + 'Beginne deshalb mit einem ersten Absatz aus ein bis zwei kurzen, gesprochenen Saetzen mit der Kernantwort, '
+  + 'ohne Markdown, ohne Listen, ohne Links, ohne Codebloecke. '
+  + 'Danach darfst du normal weiterschreiben, mit Listen und Links, wenn die Sache sie braucht.'
 
 /** Offtangent-specific behaviour the product owner can tune. */
 export interface OfftangentSettingsContract {
@@ -854,6 +878,7 @@ export const DEFAULT_SETTINGS_CONTRACT: SettingsContract = {
   },
   captureSources: {
     puck: { styleHint: DEFAULT_PUCK_STYLE_HINT },
+    clock: { enabled: false, styleHint: DEFAULT_CLOCK_STYLE_HINT },
   },
   capture: {
     defaultAgentId: CAPTURE_DEFAULT_AGENT_AUTO,
@@ -1102,6 +1127,13 @@ export function normalizeSettingsContract(input: DeepPartial<SettingsContract> |
     captureSources: {
       puck: {
         styleHint: source.captureSources?.puck?.styleHint ?? DEFAULT_SETTINGS_CONTRACT.captureSources.puck.styleHint,
+      },
+      clock: {
+        // Only an explicit `true` switches the clock on; anything else is off.
+        enabled: source.captureSources?.clock?.enabled === true,
+        styleHint: typeof source.captureSources?.clock?.styleHint === 'string'
+          ? source.captureSources.clock.styleHint
+          : DEFAULT_SETTINGS_CONTRACT.captureSources.clock.styleHint,
       },
     },
     capture: {

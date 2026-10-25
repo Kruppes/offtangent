@@ -281,7 +281,17 @@ describe('runRouter', () => {
     expect(result.model).toBe('synthetic')
     expect(result.proposal.action).toBe('new_strand')
     expect(result.proposal.confidence).toBe(0)
-    expect(result.notes[0]).toContain('connection refused')
+    // Review K0-K2-2, MAJOR-5: the class, never the provider's message.
+    expect(result.notes[0]).toBe('p:down: call failed (network)')
+  })
+
+  it('never copies a provider error message into the notes', async () => {
+    const result = await runRouter(input(), {
+      chain: [entry('x')],
+      complete: async () => { throw new Error('provider echo PRIVATE_SPOKEN_PHRASE_SAMPLE') },
+    })
+    expect(result.notes).toEqual(['p:x: call failed (error)'])
+    expect(result.notes.join('\n')).not.toContain('PRIVATE_SPOKEN_PHRASE_SAMPLE')
   })
 
   it('does not call a model when there are no candidates', async () => {

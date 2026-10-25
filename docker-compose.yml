@@ -61,6 +61,9 @@ services:
       # See docs/reference/env-vars.md.
       - DEVICE_ALLOWED_CIDRS
       - CLOCK_ALLOWED_CIDRS
+      # Push-to-talk of the clock (POST /api/device/clock/voice). Off unless
+      # `true`/`1`/`on`/`yes`; also needs captureSources.clock.enabled.
+      - CLOCK_VOICE_ENABLED=${CLOCK_VOICE_ENABLED:-}
 
   # Uncomment to enable local Whisper for speech-to-text
   # whisper:

@@ -28,6 +28,7 @@
 import { captureLanguage } from './capture-router.js'
 import type { CaptureLanguage } from './capture-router.js'
 import { loadConfig, warnConfigReadFailed } from './config.js'
+import { errorClass } from './log-safe-error.js'
 import { completeSimple } from './pi-models.js'
 import { buildRouterModel, resolveRouterChain } from './router-model.js'
 import type { ResolvedRouterModel } from './router-model.js'
@@ -210,7 +211,16 @@ function stripFences(text: string): string {
 
 export type ParseStage1Result =
   | { ok: true; answer: Stage1Answer }
-  | { ok: false; error: string }
+  | { ok: false; error: string; code: Stage1RejectCode }
+
+/**
+ * Fixed class of a rejected stage 1 answer. `error` is for the repair prompt
+ * and may quote model output (a topic id, a sentence id value); only `code`
+ * goes into the notes, which are logged (review K0-K2-2, MAJOR-5).
+ */
+export type Stage1RejectCode =
+  | 'not_json' | 'not_object' | 'no_topics' | 'topic_not_object' | 'topic_without_sentence_ids'
+  | 'sentence_id_out_of_range' | 'sentence_in_two_topics' | 'sentences_not_assigned'
 
 function cleanTitle(raw: unknown, fallback: string): string {
   const text = typeof raw === 'string' ? raw.replace(/\s+/g, ' ').trim() : ''
@@ -227,27 +237,27 @@ export function parseStage1Answer(text: string, sentenceCount: number): ParseSta
   try {
     raw = JSON.parse(stripFences(text))
   } catch {
-    return { ok: false, error: 'not JSON' }
+    return { ok: false, error: 'not JSON', code: 'not_json' }
   }
-  if (typeof raw !== 'object' || raw === null || Array.isArray(raw)) return { ok: false, error: 'not an object' }
+  if (typeof raw !== 'object' || raw === null || Array.isArray(raw)) return { ok: false, error: 'not an object', code: 'not_object' }
   const obj = raw as Record<string, unknown>
-  if (!Array.isArray(obj.topics) || obj.topics.length === 0) return { ok: false, error: 'no topics' }
+  if (!Array.isArray(obj.topics) || obj.topics.length === 0) return { ok: false, error: 'no topics', code: 'no_topics' }
 
   const topics: SplitTopic[] = []
   const owner = new Map<number, string>()
   for (const [index, entry] of obj.topics.entries()) {
-    if (typeof entry !== 'object' || entry === null) return { ok: false, error: `topic ${index + 1} is not an object` }
+    if (typeof entry !== 'object' || entry === null) return { ok: false, error: `topic ${index + 1} is not an object`, code: 'topic_not_object' }
     const t = entry as Record<string, unknown>
     const id = typeof t.id === 'string' && t.id.trim() ? t.id.trim() : String.fromCharCode(65 + index)
-    if (!Array.isArray(t.sentenceIds)) return { ok: false, error: `topic ${id} without sentenceIds` }
+    if (!Array.isArray(t.sentenceIds)) return { ok: false, error: `topic ${id} without sentenceIds`, code: 'topic_without_sentence_ids' }
     const ids: number[] = []
     for (const value of t.sentenceIds) {
       if (!Number.isInteger(value) || (value as number) < 1 || (value as number) > sentenceCount) {
-        return { ok: false, error: `sentence id ${String(value)} out of range 1..${sentenceCount}` }
+        return { ok: false, error: `sentence id ${String(value)} out of range 1..${sentenceCount}`, code: 'sentence_id_out_of_range' }
       }
       const sentenceId = value as number
       if (owner.has(sentenceId)) {
-        return { ok: false, error: `sentence ${sentenceId} in topics ${owner.get(sentenceId)} and ${id}` }
+        return { ok: false, error: `sentence ${sentenceId} in topics ${owner.get(sentenceId)} and ${id}`, code: 'sentence_in_two_topics' }
       }
       owner.set(sentenceId, id)
       ids.push(sentenceId)
@@ -261,7 +271,7 @@ export function parseStage1Answer(text: string, sentenceCount: number): ParseSta
   }
   const missing: number[] = []
   for (let i = 1; i <= sentenceCount; i += 1) if (!owner.has(i)) missing.push(i)
-  if (missing.length > 0) return { ok: false, error: `sentences not assigned: ${missing.join(', ')}` }
+  if (missing.length > 0) return { ok: false, error: `sentences not assigned: ${missing.join(', ')}`, code: 'sentences_not_assigned' }
 
   const uncertain: SplitUncertainty[] = []
   if (Array.isArray(obj.uncertain)) {
@@ -309,6 +319,14 @@ ${rejected.slice(0, 2000)}
 Reply again with exactly one valid JSON object where every sentence id 1..${sentenceCount} appears exactly once.`
 }
 
+/** Stage 1 gave up; the message carries only fixed classes and counts. */
+class SplitStage1Failed extends Error {
+  constructor(message: string) {
+    super(message)
+    this.name = 'SplitStage1Failed'
+  }
+}
+
 export interface Stage1Outcome {
   answer: Stage1Answer
   attempts: number
@@ -329,17 +347,19 @@ export async function splitCapture(sentences: string[], complete: SplitCompletio
     try {
       text = await complete(STAGE1_SYSTEM_PROMPT, prompt)
     } catch (err) {
-      lastError = (err as Error).message
+      // Class only, never the message: a provider error can quote the
+      // dictation or a key, and the notes are logged (review K0-K2-2).
+      lastError = errorClass(err)
       notes.push(`split stage 1 attempt ${attempt} failed: ${lastError}`)
       continue
     }
     const parsed = parseStage1Answer(text, sentences.length)
     if (parsed.ok) return { answer: parsed.answer, attempts: attempt, notes }
-    lastError = parsed.error
-    notes.push(`split stage 1 attempt ${attempt} rejected: ${parsed.error}`)
+    lastError = parsed.code
+    notes.push(`split stage 1 attempt ${attempt} rejected: ${parsed.code}`)
     prompt = buildStage1RepairPrompt(base, text, parsed.error, sentences.length)
   }
-  throw new Error(`split stage 1 failed after ${SPLIT_REPAIR_ATTEMPTS} attempts: ${lastError}`)
+  throw new SplitStage1Failed(`split stage 1 failed after ${SPLIT_REPAIR_ATTEMPTS} attempts: ${lastError}`)
 }
 
 /**
@@ -553,7 +573,9 @@ export async function runCaptureSplit(text: string, options: CaptureSplitOptions
     return singlePartSplit(text, 'split unavailable', {
       model,
       latencyMs: Date.now() - startedAt,
-      notes: [(err as Error).message],
+      // splitCapture throws only its own message built from classes and
+      // counts; anything else is reduced to its class as well.
+      notes: [err instanceof SplitStage1Failed ? err.message : errorClass(err)],
     })
   }
   const notes = [...stage1.notes]
@@ -595,7 +617,7 @@ export async function runCaptureSplit(text: string, options: CaptureSplitOptions
       }
       return { index, title: topic.title, sentenceIds: ids, text }
     } catch (err) {
-      notes.push(`part ${index} consolidation failed (${(err as Error).message}), kept the sentences verbatim`)
+      notes.push(`part ${index} consolidation failed (${errorClass(err)}), kept the sentences verbatim`)
       return { index, title: topic.title, sentenceIds: ids, text: own.join(' ') }
     }
   }))

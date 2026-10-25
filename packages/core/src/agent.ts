@@ -1,3 +1,4 @@
+import { errorClass, withRawError } from './log-safe-error.js'
 import type { SteerOffer, SteerOfferOptions } from './steer.js'
 import { recordStrandTurnStart, recordStrandTurnFirstToken, recordStrandTurnEnd } from './strand-turns.js'
 import { randomUUID } from 'node:crypto'
@@ -430,7 +431,7 @@ export class AgentCore {
       if (runtime.getCurrentProvider()?.id === provider.id && runtime.getCurrentModel()?.id === modelId) return
       runtime.swapProvider(provider, personaRuntime.getCurrentApiKey(), modelId)
     } catch (err) {
-      console.warn(`[agent] Could not seed strand runtime of '${agentId}' from the persona runtime:`, err)
+      console.warn(`[agent] Could not seed strand runtime of '${agentId}' from the persona runtime: ${errorClass(err)}`)
     }
   }
 
@@ -1228,7 +1229,7 @@ export class AgentCore {
       }
       return block
     } catch (err) {
-      console.error('[strand] Failed to build strand context:', err)
+      console.error(`[strand] Failed to build strand context: ${errorClass(err)}`)
       return null
     }
   }
@@ -1240,7 +1241,7 @@ export class AgentCore {
       const cleaned = stripStrandContextFromLastUserMessage(runtime.getMessages())
       if (cleaned) runtime.setMessages(cleaned)
     } catch (err) {
-      console.error('[strand] Failed to strip strand context from transcript:', err)
+      console.error(`[strand] Failed to strip strand context from transcript: ${errorClass(err)}`)
     }
   }
 
@@ -1323,7 +1324,9 @@ export class AgentCore {
         // key off `chunk.injectionId` (unique per call) and not
         // `chunk.sessionId` (shared across concurrent injections targeting
         // the same lineage strand).
-        yield { ...chunk, sessionId, injectionId }
+        // `rawError` is non-enumerable (never serialized), so the spread
+        // drops it; re-attach it for the injection error mapping downstream.
+        yield withRawError({ ...chunk, sessionId, injectionId }, chunk.rawError)
       }
     } finally {
       endLocalTurn()
@@ -1526,7 +1529,8 @@ export class AgentCore {
       const textContent = response.content.filter(c => c.type === 'text')
 
       if (textContent.length === 0) {
-        console.warn('[session-summary] API response contained no text content. Full response.content:', JSON.stringify(response.content))
+        // Block types only, never their content (review K0-K2-4 #4).
+        console.warn(`[session-summary] API response contained no text content (block types: ${response.content.map(c => c.type).join(',') || 'none'}).`)
       }
 
       const raw = textContent
@@ -1538,7 +1542,7 @@ export class AgentCore {
       if (!parsed.ok) {
         // Safeguard: a bad delta never touches the stored version. Recorded
         // as a system tool call so 12.2 can count rejected deltas.
-        console.warn(`[session-summary] Rejected delta (${parsed.error}); keeping previous version. Raw: ${raw.slice(0, 200)}`)
+        console.warn(`[session-summary] Rejected delta (${parsed.error}); keeping previous version. Raw length: ${raw.length}`)
         logToolCall(this.db, {
           sessionId: sessionId ?? '',
           toolName: 'session_summary_delta',
@@ -1571,7 +1575,7 @@ export class AgentCore {
             status: 'success',
           })
         } catch (err) {
-          console.error('[session-summary] Failed to store summary version:', err)
+          console.error(`[session-summary] Failed to store summary version: ${errorClass(err)}`)
         }
       }
 
@@ -1584,7 +1588,8 @@ export class AgentCore {
       // Return no summary at all: a placeholder string would be written to
       // the daily memory file and shown as the session's summary card,
       // making a broken provider look like an uneventful conversation.
-      console.error('Failed to generate session summary:', err)
+      // Class only: a provider error can echo the conversation (review K0-K2-4 #4).
+      console.error(`Failed to generate session summary: ${errorClass(err)}`)
       return ''
     }
   }

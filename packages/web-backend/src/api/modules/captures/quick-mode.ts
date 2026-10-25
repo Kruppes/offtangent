@@ -69,10 +69,18 @@ export function planQuickMode(source: string): QuickModePlan {
 
 /**
  * The style hint of the device the capture came from. Only sources whose
- * output channel differs from a screen have one; everything else adds nothing.
+ * output channel differs from a screen have one (`puck`, `clock`); everything
+ * else adds nothing.
  */
-function styleHintForSource(source: string, captureSources: { puck: { styleHint: string } }): string {
-  return source.trim().toLowerCase() === 'puck' ? captureSources.puck.styleHint : ''
+export function styleHintForSource(
+  source: string,
+  captureSources: { puck: { styleHint: string }; clock: { styleHint: string } },
+): string {
+  const normalised = source.trim().toLowerCase()
+  if (normalised === 'puck') return captureSources.puck.styleHint
+  // The TC002 clock (companion K1): no real screen, the answer is read out.
+  if (normalised === 'clock') return captureSources.clock.styleHint
+  return ''
 }
 
 /**

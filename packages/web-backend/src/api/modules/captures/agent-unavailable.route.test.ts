@@ -6,7 +6,8 @@
  * has to say so honestly ("stored, routing pending") and a client retry with
  * the same `clientMessageId` must neither duplicate the capture nor fail.
  */
-import { describe, it, expect, beforeAll, afterAll, beforeEach } from 'vitest'
+import { inspect } from 'node:util'
+import { describe, it, expect, beforeAll, afterAll, beforeEach, vi } from 'vitest'
 import http from 'node:http'
 import fs from 'node:fs'
 import os from 'node:os'
@@ -138,5 +139,30 @@ describe('POST /api/captures without an agent core', () => {
     expect(res.body.code).toBe('routing_pending')
     expect((res.body.capture as { status: string }).status).toBe('unsorted')
     expect(captureCount()).toBe(1)
+  })
+})
+
+describe('filing failure log safety (review K0-K2-3 #4)', () => {
+  it('a filing that throws with the dictated text in its message is logged by class only', async () => {
+    const MARKER = 'PRIVATE_CLOCK_DICTATION_MARKER_007'
+    core = { getSessionManager: () => sessionManager } as unknown as AgentCore
+    const strand = sessionManager.createThread('1', 'main', 'Synthetic strand')
+    // The core is up, but filing throws an error quoting the dictation.
+    core = { getSessionManager: () => { throw new TypeError(`cannot file "${MARKER}"`) } } as unknown as AgentCore
+    nextAnswers.push(JSON.stringify({ action: 'append', strandId: strand.id, intent: 'note', confidence: 0.95, tags: [], rationale: 'synthetic' }))
+    const seen: unknown[] = []
+    const spies = (['log', 'info', 'warn', 'error', 'debug'] as const).map(level =>
+      vi.spyOn(console, level).mockImplementation((...args: unknown[]) => { seen.push(...args) }))
+    let res: { status: number; body: Record<string, unknown> }
+    try {
+      res = await post({ text: `diktat ${MARKER}`, clientMessageId: 'cm-logsafe-1' })
+    } finally {
+      for (const spy of spies) spy.mockRestore()
+    }
+    // Behaviour unchanged: the capture is parked in the tray.
+    expect((res.body.capture as { status: string }).status).toBe('unsorted')
+    const text = seen.map(arg => (typeof arg === 'string' ? arg : inspect(arg, { depth: 5 }))).join('\n')
+    expect(text).not.toContain(MARKER)
+    expect(text).toMatch(/\[captures\] filing capture \S+ part \d+ into \S+ failed \(type_error\), left unsorted/)
   })
 })

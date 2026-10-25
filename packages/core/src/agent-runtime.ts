@@ -17,6 +17,7 @@ import type { Api, AssistantMessage, Message, ImageContent, Model, SystemMessage
 import { Type } from '@earendil-works/pi-ai'
 import type { Database } from './database.js'
 import { logTokenUsage, logToolCall } from './token-logger.js'
+import { errorClass, errorTextClass, publicProviderError, withRawError } from './log-safe-error.js'
 import { estimateCost, getApiKeyForProvider, buildModel, buildStreamFn, loadProvidersDecrypted, parseProviderModelId, getProviderDefaultModel, resolvePromptProfileOptions } from './provider-config.js'
 import type { ProviderConfig } from './provider-config.js'
 import type { ProviderManager } from './provider-manager.js'
@@ -61,6 +62,10 @@ import {
   sliceFileForPrompt,
   READ_FILE_MAX_BYTES,
 } from './tool-output-limits.js'
+
+/** Fixed notices of the runtime itself; safe to show as they are. */
+const CORRUPTED_CONTEXT_NOTICE = '⚠️ Der Gesprächskontext war beschädigt und wurde automatisch zurückgesetzt. Bitte sende deine letzte Nachricht noch einmal.'
+const PREVIOUS_RUN_BUSY_NOTICE = '⚠️ Es läuft noch eine vorherige, länger dauernde Anfrage. Bitte warte, bis sie fertig ist, und sende die Nachricht dann erneut.'
 
 /**
  * Options for the shared base agent tool factory.
@@ -956,7 +961,7 @@ class PiAgentRuntime implements AgentRuntimeBoundary, AgentRuntimePiAgentAccess 
           this.recordManifest(outgoing)
           return outgoing
         } catch (err) {
-          console.error('[agent-runtime] redactKnown failed on the outgoing context:', err)
+          console.error(`[agent-runtime] redactKnown failed on the outgoing context: ${errorClass(err)}`)
           this.recordManifest(cleaned)
           return cleaned
         }
@@ -1022,7 +1027,7 @@ class PiAgentRuntime implements AgentRuntimeBoundary, AgentRuntimePiAgentAccess 
     try {
       return withCodemodeTool(base, loadCodemodeSettings(), this.model.id, () => this.agent)
     } catch (err) {
-      console.error('[agent-runtime] codemode tool assembly failed, continuing without it:', err)
+      console.error(`[agent-runtime] codemode tool assembly failed, continuing without it: ${errorClass(err)}`)
       return base
     }
   }
@@ -1101,7 +1106,7 @@ class PiAgentRuntime implements AgentRuntimeBoundary, AgentRuntimePiAgentAccess 
       const freshProvider = file.providers.find(p => p.id === provider.id)
       if (freshProvider) return await getApiKeyForProvider(freshProvider)
     } catch (err) {
-      console.error(`[${logScope}] OAuth token refresh failed:`, err)
+      console.error(`[${logScope}] OAuth token refresh failed: ${errorClass(err)}`)
     }
     return this.apiKey
   }
@@ -1264,7 +1269,7 @@ class PiAgentRuntime implements AgentRuntimeBoundary, AgentRuntimePiAgentAccess 
     try {
       this.agent.state.messages = cleaned
     } catch (err) {
-      console.error('[agent-runtime] Failed to write back sanitized history:', err)
+      console.error(`[agent-runtime] Failed to write back sanitized history: ${errorClass(err)}`)
       return false
     }
     return true
@@ -1520,7 +1525,9 @@ class PiAgentRuntime implements AgentRuntimeBoundary, AgentRuntimePiAgentAccess 
         preStreamError = err
       } else {
         // Mid-stream error — surface error to the user, then signal agent_end
-        console.error('Agent prompt error (mid-stream):', err)
+        // Class only: a provider error body can quote the prompt (= a
+        // dictation); its message and stack stay out of the log (review K0-K2-3 #2).
+        console.error(`Agent prompt error (mid-stream, session ${sessionId}): ${errorClass(err)}`)
         midStreamError = err
         eventQueue.push({ type: 'agent_end', messages: [] })
       }
@@ -1560,7 +1567,7 @@ class PiAgentRuntime implements AgentRuntimeBoundary, AgentRuntimePiAgentAccess 
             if (chunk.type === 'error') {
               // Suppress the raw provider corruption error (ugly, and we emit a
               // friendly recovery notice after auto-clearing below).
-              if (isCorruptedContextError(chunk.error)) {
+              if (isCorruptedContextError(chunk.rawError ?? chunk.error)) {
                 corruptedContext = true
                 continue
               }
@@ -1609,7 +1616,7 @@ class PiAgentRuntime implements AgentRuntimeBoundary, AgentRuntimePiAgentAccess 
           const msgs = this.agent.state.messages
           if (msgs.includes(undelivered as never)) this.agent.state.messages = msgs.filter(m => m !== undelivered)
         } catch (err) {
-          console.warn('[agent-runtime] Could not drop an undelivered steer:', (err as Error).message)
+          console.warn(`[agent-runtime] Could not drop an undelivered steer: ${errorClass(err)}`)
         }
       }
       this.steerSlot.runEnded()
@@ -1661,15 +1668,15 @@ class PiAgentRuntime implements AgentRuntimeBoundary, AgentRuntimePiAgentAccess 
     try {
       this.sanitizeInMemoryHistory(`turn end, session ${sessionId}`)
     } catch (err) {
-      console.error('[agent-runtime] Post-turn history sanitize failed:', err)
+      console.error(`[agent-runtime] Post-turn history sanitize failed: ${errorClass(err)}`)
     }
 
     // Surface mid-stream errors (e.g. context window exceeded after tool calls)
     if (midStreamError) {
       const errMsg = (midStreamError instanceof Error ? midStreamError.message : String(midStreamError)) || 'Unknown error'
-      console.error('Agent mid-stream error surfaced to user:', errMsg)
+      console.error(`Agent mid-stream error surfaced to user (session ${sessionId}): ${errorClass(midStreamError)}`)
       if (isCorruptedContextError(midStreamError)) corruptedContext = true
-      yield { type: 'error' as const, error: errMsg }
+      yield withRawError({ type: 'error' as const, error: publicProviderError(errMsg) }, errMsg)
     }
     if (preStreamError && isCorruptedContextError(preStreamError)) corruptedContext = true
 
@@ -1701,9 +1708,9 @@ class PiAgentRuntime implements AgentRuntimeBoundary, AgentRuntimePiAgentAccess 
       try {
         this.clearMessages()
       } catch (err) {
-        console.error('[agent-runtime] Failed to auto-clear corrupted context:', err)
+        console.error(`[agent-runtime] Failed to auto-clear corrupted context: ${errorClass(err)}`)
       }
-      yield { type: 'error' as const, error: '⚠️ Der Gesprächskontext war beschädigt und wurde automatisch zurückgesetzt. Bitte sende deine letzte Nachricht noch einmal.' }
+      yield withRawError({ type: 'error' as const, error: CORRUPTED_CONTEXT_NOTICE }, CORRUPTED_CONTEXT_NOTICE)
     }
 
     // Safety net: if no 'done' chunk was yielded (e.g. agent_end never fired),
@@ -1721,7 +1728,7 @@ class PiAgentRuntime implements AgentRuntimeBoundary, AgentRuntimePiAgentAccess 
       // incident 2026-07-20). The running turn finishes on its own.
       if (isAgentBusyError(preStreamError)) {
         console.warn(`[agent-runtime] prompt() rejected as busy (session ${sessionId}) — a previous turn is still running; asking user to retry`)
-        yield { type: 'error' as const, error: '⚠️ Es läuft noch eine vorherige, länger dauernde Anfrage. Bitte warte, bis sie fertig ist, und sende die Nachricht dann erneut.' }
+        yield withRawError({ type: 'error' as const, error: PREVIOUS_RUN_BUSY_NOTICE }, PREVIOUS_RUN_BUSY_NOTICE)
         yield { type: 'done' as const }
         return
       }
@@ -1733,7 +1740,7 @@ class PiAgentRuntime implements AgentRuntimeBoundary, AgentRuntimePiAgentAccess 
         && isRetryablePreStreamError(preStreamError)
 
       if (canRetry) {
-        console.warn('[AgentRuntime] Pre-stream error detected, swapping to fallback provider:', (preStreamError as Error).message)
+        console.warn(`[AgentRuntime] Pre-stream error detected (session ${sessionId}), swapping to fallback provider: ${errorClass(preStreamError)}`)
         this.providerManager!.swapToFallback()
         const fallback = this.providerManager!.getEffectiveProvider()!
         const apiKey = await getApiKeyForProvider(fallback)
@@ -1757,8 +1764,13 @@ class PiAgentRuntime implements AgentRuntimeBoundary, AgentRuntimePiAgentAccess 
       }
 
       // No retry possible — surface the error
-      console.error('Agent prompt error (pre-stream):', preStreamError)
-      yield { type: 'error' as const, error: (preStreamError as Error).message ?? String(preStreamError) }
+      // Class only, never the Error object (message + stack can carry a
+      // provider echo of the prompt, review K0-K2-3 #2). The client gets a
+      // fixed text plus class; the raw message stays in `rawError` for the
+      // runner's retry/auth classifiers (review K0-K2-4 #2).
+      console.error(`Agent prompt error (pre-stream, session ${sessionId}${isRetry ? ', after fallback' : ''}): ${errorClass(preStreamError)}`)
+      const preStreamMessage = (preStreamError as Error).message ?? String(preStreamError)
+      yield withRawError({ type: 'error' as const, error: publicProviderError(preStreamMessage) }, preStreamMessage)
       yield { type: 'done' as const }
     }
   }
@@ -1815,8 +1827,11 @@ class PiAgentRuntime implements AgentRuntimeBoundary, AgentRuntimePiAgentAccess 
             sessionId,
             agentId: this.agentId,
             contextWindow: this.model.contextWindow ?? null,
+            // Class only (review K0-K2-4 #2): the provider message can echo
+            // the prompt and this column is kept for months.
             error: (assistantMsg as { errorMessage?: string }).errorMessage
-              ?? ((assistantMsg as { stopReason?: string }).stopReason === 'error' ? 'Unknown model error' : null),
+              ? errorTextClass((assistantMsg as { errorMessage?: string }).errorMessage)
+              : ((assistantMsg as { stopReason?: string }).stopReason === 'error' ? 'Unknown model error' : null),
           })
           // SPEC 11.5: one line per turn so a cache regression is visible in
           // the container log without a query.
@@ -1839,13 +1854,15 @@ class PiAgentRuntime implements AgentRuntimeBoundary, AgentRuntimePiAgentAccess 
           const failure = assistantMsg as { stopReason?: string; errorMessage?: string }
           if (failure.errorMessage || failure.stopReason === 'error') {
             const errText = failure.errorMessage ?? 'Unknown model error'
-            console.error(`[agent-runtime] Assistant message carries error (stopReason=${failure.stopReason ?? 'n/a'}, session ${sessionId}): ${errText}`)
-            // Merge note: the RAW provider error goes into `chunk.error` so the
-            // TurnRunner's retry classifier (isRetryableTurnError, upstream
-            // 0.27.0) sees the untouched provider message. The human-readable
-            // "Modellfehler:" prefix lives in `text` for plain-text channels
-            // that render it directly instead of via the runner.
-            chunks.push({ type: 'error', error: errText, text: `Modellfehler: ${errText}` })
+            console.error(`[agent-runtime] Assistant message carries error (stopReason=${failure.stopReason ?? 'n/a'}, session ${sessionId}): ${errorTextClass(errText)}`)
+            // Merge note: the TurnRunner's retry classifier
+            // (isRetryableTurnError, upstream 0.27.0) needs the untouched
+            // provider message; it gets it from the in-process `rawError`.
+            // `error` and `text` are what leaves the process (client, error
+            // row, logs) and carry a fixed text plus class only, because the
+            // provider message can echo the prompt (review K0-K2-4 #2).
+            const publicError = publicProviderError(errText)
+            chunks.push(withRawError<ResponseChunk>({ type: 'error', error: publicError, text: `Modellfehler: ${publicError}` }, errText))
           }
         }
         break
@@ -1911,6 +1928,12 @@ class PiAgentRuntime implements AgentRuntimeBoundary, AgentRuntimePiAgentAccess 
 export function createAgentRuntime(options: AgentRuntimeOptions): AgentRuntimeBoundary {
   return new PiAgentRuntime(options)
 }
+
+/**
+ * Test-only handle on the runtime class (not re-exported from the package
+ * index): lets the log-safety test drive the turn loop on a stand-in.
+ */
+export { PiAgentRuntime as PiAgentRuntimeForTests }
 
 /** S1-D: a `message_start` that proves a model request reached the provider (not a local error/abort stub). */
 function isSentAssistantStart(message: unknown): boolean {

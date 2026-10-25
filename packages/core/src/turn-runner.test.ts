@@ -1,3 +1,4 @@
+import { publicProviderError } from './log-safe-error.js'
 import fs from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
@@ -501,6 +502,21 @@ describe('TurnRunner', () => {
     expect(seen[0]!.voiceNote).toMatchObject({ url: voiceNote.url })
   })
 
+  it('hands the channel of the turn to the assistant-message hook (clock skip, review K0-K2-5 #1)', async () => {
+    const db = freshDb()
+    const seen: Array<{ source?: string }> = []
+    const runner = startRunner(db, scriptedAgent([
+      { type: 'text', text: 'Antwort.' },
+      { type: 'done' },
+    ]), { onAssistantMessage: (message: { source?: string }) => { seen.push(message) } })
+
+    runner.startTurn({ userId: USER_ID, sessionId: SESSION_ID, text: 'frag', source: 'clock' })
+    await waitFor(() => !runner.hasActiveTurn(USER_ID))
+
+    expect(seen).toHaveLength(1)
+    expect(seen[0]!.source).toBe('clock')
+  })
+
   it('keeps the caption of an attachment on the event and in the assistant row metadata', async () => {
     const db = freshDb()
     const upload = {
@@ -576,7 +592,8 @@ describe('TurnRunner', () => {
 
     expect(chunkTypes(events)).toEqual(['text', 'error', 'done'])
     const errorChunk = events.find(e => e.type === 'chunk' && e.chunk.type === 'error') as { chunk: ResponseChunk }
-    expect(errorChunk.chunk.error).toContain('provider exploded')
+    // Review K0-K2-4 #2: a thrown error reaches the client as its class only.
+    expect(errorChunk.chunk.error).toBe('Agent error: error')
   })
 
   it('does not replay or resurrect anything for a fresh runner over the same database', async () => {
@@ -804,7 +821,7 @@ describe('TurnRunner', () => {
       await vi.advanceTimersByTimeAsync(0)
 
       expect(retryChunks(events).map(c => c.retry)).toMatchObject([
-        { attempt: 1, maxRetries: 3, delayMs: 2_000, error: '429 Too Many Requests' },
+        { attempt: 1, maxRetries: 3, delayMs: 2_000, error: publicProviderError('429 Too Many Requests') },
       ])
       expect(retryChunks(events)[0]!.text).toContain('retrying (1/3)')
 
@@ -1023,7 +1040,8 @@ describe('TurnRunner', () => {
       expect(chunkTypes(events)).toEqual(['error', 'done'])
       expect(calls).toHaveLength(1)
       const error = events.find(e => e.type === 'chunk' && e.chunk.type === 'error') as { chunk: ResponseChunk }
-      expect(error.chunk.error).toContain('insufficient_quota')
+      expect(error.chunk.error).toBe(publicProviderError('insufficient_quota: You exceeded your current quota, please check your billing details'))
+      expect(error.chunk.error).not.toContain('billing')
     })
 
     it('ends in a terminal error chunk once the retry budget is exhausted', async () => {
@@ -1046,7 +1064,7 @@ describe('TurnRunner', () => {
       expect(chunkTypes(events)).toEqual(['retry_scheduled', 'retry_scheduled', 'error', 'done'])
       expect(calls).toHaveLength(3)
       const error = events.find(e => e.type === 'chunk' && e.chunk.type === 'error') as { chunk: ResponseChunk }
-      expect(error.chunk.error).toBe('502 Bad Gateway')
+      expect(error.chunk.error).toBe('The model provider reported an error (http_502).')
     })
 
     it('takes the retry policy from the settings file when not overridden', async () => {
@@ -1161,11 +1179,13 @@ describe('TurnRunner', () => {
 
       const persisted = errorRows(db)
       expect(persisted).toHaveLength(1)
-      expect(persisted[0]!.content).toContain(providerError)
+      // Review K0-K2-4 #2: the row keeps the class (auth), never the provider text.
+      expect(persisted[0]!.content).toContain(publicProviderError(providerError))
+      expect(persisted[0]!.content).not.toContain('anthropic')
       expect(persisted[0]!.metadata).toMatchObject({
         kind: TURN_ERROR_KIND,
         cause: 'non_retryable',
-        error: providerError,
+        error: publicProviderError(providerError),
         attempts: 0,
         retryable: false,
       })
@@ -1174,7 +1194,7 @@ describe('TurnRunner', () => {
       // The chunk mirrors the row (id + text), so live rendering and a history
       // reload produce the very same bubble.
       const chunk = errorChunk(events)!
-      expect(chunk.error).toBe(providerError)
+      expect(chunk.error).toBe('The model provider reported an error (auth).')
       expect(chunk.text).toBe(persisted[0]!.content)
       expect(chunk.errorInfo).toMatchObject({
         messageId: persisted[0]!.id,
@@ -1201,7 +1221,7 @@ describe('TurnRunner', () => {
       expect(persisted).toHaveLength(1)
       expect(persisted[0]!.metadata).toMatchObject({
         cause: 'retry_exhausted',
-        error: '502 Bad Gateway',
+        error: 'The model provider reported an error (http_502).',
         attempts: 2,
         retryable: true,
       })
