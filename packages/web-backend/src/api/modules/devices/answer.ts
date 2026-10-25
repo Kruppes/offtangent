@@ -11,8 +11,14 @@
  */
 import crypto from 'node:crypto'
 import {
+  ASK_USER_OTHER_OPTION_ID,
   errorClass,
   extractAnswerableInteractionBlocks,
+  getInteraction,
+  isAskUserPayload,
+  type AskUserOption,
+  type AskUserPayload,
+  type AskUserQuestion,
   type Database,
   type InteractionBlock,
 } from '@axiom/core'
@@ -33,6 +39,37 @@ export function isDeviceAnswerableBlock(block: InteractionBlock): boolean {
 }
 
 /** Opaque positional id of the privacy mode: `~<1-based index>`. */
+/**
+ * The device rule for an `ask_user` interaction (fix/status-ask-user): a
+ * device may answer it only when the set holds exactly ONE question of type
+ * `choice` or `confirm` with at least one real option. A `multi` question or
+ * a set of several questions is answered as one atomic form on the phone; a
+ * single tap cannot fill it. ask_user has no destructive flag (its contract
+ * has none), so the destructive half of the fence rule cannot apply here.
+ * Returns the question, or null when the card is phone-only.
+ */
+export function deviceAnswerableAskUserQuestion(payload: AskUserPayload): AskUserQuestion | null {
+  if (payload.questions.length !== 1) return null
+  const question = payload.questions[0]!
+  if (question.type !== 'choice' && question.type !== 'confirm') return null
+  return deviceAskUserOptions(question).length >= 1 ? question : null
+}
+
+/**
+ * The options a device shows and may send: every option except the automatic
+ * free-text row ("Other"), which needs a typed comment a device cannot give.
+ */
+export function deviceAskUserOptions(question: AskUserQuestion): AskUserOption[] {
+  return question.options.filter(option => !option.other && option.id !== ASK_USER_OTHER_OPTION_ID)
+}
+
+/** Interaction ids (`ia_` + ULID) are opaque; an ask_user card uses one as its device `block_id`. */
+const INTERACTION_ID = /^ia_[0-9A-HJKMNP-TV-Z]{26}$/
+
+export function isInteractionBlockId(value: string): boolean {
+  return INTERACTION_ID.test(value)
+}
+
 const OPAQUE_ID = /^~([1-9]\d{0,3})$/
 
 function opaqueIndex(id: string): number | null {
@@ -120,6 +157,9 @@ export function applyDeviceAnswer(input: {
   logTag: string
 }): DeviceAnswerOutcome {
   const { db, device, body } = input
+  // ask_user cards (S1-B) live only in the `interactions` table; their
+  // device block_id is the interaction id. Fence cards keep the path below.
+  if (isInteractionBlockId(body.blockId)) return applyDeviceAskUserAnswer(input)
   const row = db.prepare('SELECT content FROM chat_messages WHERE id = ? AND user_id = ?')
     .get(body.messageId, device.userId) as { content: string } | undefined
   if (!row) return { status: 404, body: { error: 'No such message', code: 'unknown_message' } }
@@ -150,5 +190,56 @@ export function applyDeviceAnswer(input: {
     // error message may quote a private card or a dictation.
     console.error(`[${input.logTag}] Failed to apply the answer: ${errorClass(err)}`)
     return { status: 500, body: { error: 'Failed to apply the answer', code: 'internal' } }
+  }
+}
+
+function deviceAnswerError(err: unknown, logTag: string): DeviceAnswerOutcome {
+  if (err instanceof InteractionServiceError) {
+    return { status: err.status, body: { error: err.message, code: err.code } }
+  }
+  console.error(`[${logTag}] Failed to apply the answer: ${errorClass(err)}`)
+  return { status: 500, body: { error: 'Failed to apply the answer', code: 'internal' } }
+}
+
+/**
+ * The ask_user half of {@link applyDeviceAnswer}. Ownership and the message
+ * binding are checked here (a foreign or mismatched card is the same 404 as a
+ * missing one), the device rule decides 403, and the answer itself goes
+ * through `InteractionsService.answerById` with surface `api`: the same state
+ * machine, error codes (already_answered, closed, stale, idempotency_conflict)
+ * and answer turn as a tap in the app.
+ */
+function applyDeviceAskUserAnswer(input: {
+  db: Database
+  interactions: InteractionsService
+  device: { id: string; userId: number; privacy: boolean }
+  body: DeviceAnswerBody
+  clientNamespace: string
+  logTag: string
+}): DeviceAnswerOutcome {
+  const { db, device, body } = input
+  const record = getInteraction(db, body.blockId)
+  if (!record || record.userId !== device.userId || record.messageId !== body.messageId || !isAskUserPayload(record.payload)) {
+    return { status: 404, body: { error: 'No such block in this message', code: 'unknown_block' } }
+  }
+  const question = deviceAnswerableAskUserQuestion(record.payload)
+  if (!question) {
+    return { status: 403, body: { error: 'This question must be answered on the phone', code: 'not_allowed' } }
+  }
+  const options = deviceAskUserOptions(question)
+  const exact = options.find(option => option.id === body.value)
+  const index = opaqueIndex(body.value)
+  const positional = index === null ? undefined : options[index]
+  const option = device.privacy ? (positional ?? exact) : (exact ?? positional)
+  if (!option) return { status: 400, body: { error: 'value must be one of the shown options', code: 'invalid_value' } }
+  try {
+    const result = input.interactions.answerById(device.userId, record.id, {
+      answers: { [question.id]: { selected: [option.id] } },
+      clientRequestId: deviceClientMessageId(input.clientNamespace, device.id, body.clientId),
+      surface: 'api',
+    })
+    return { status: 200, body: { applied: true, idempotent: result.idempotent } }
+  } catch (err) {
+    return deviceAnswerError(err, input.logTag)
   }
 }

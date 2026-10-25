@@ -11,7 +11,7 @@ import os from 'node:os'
 import path from 'node:path'
 import http from 'node:http'
 import express from 'express'
-import { ingestInteractionMessage, initDatabase, readInteractionAnswers } from '@axiom/core'
+import { createInteraction, getInteraction, ingestInteractionMessage, initDatabase, parseAskUserArgs, readInteractionAnswers } from '@axiom/core'
 import type { Database } from '@axiom/core'
 import { createSharedInteractionsService } from '../interactions/route.js'
 import { createClockDeviceRouter } from '../clock-device/route.js'
@@ -20,7 +20,7 @@ import { generateAccessToken } from '../../../auth.js'
 import { createDevicesRouter, createStatusRouter } from './route.js'
 import { DeviceRegistry, hashDeviceToken, parseStoredScopes } from './registry.js'
 import { STATUS_NOTE_FILE_MAX, StatusNoteSource, parseStatusNote } from './note.js'
-import { deviceClientMessageId, isDeviceAnswerableBlock } from './answer.js'
+import { deviceAnswerableAskUserQuestion, deviceClientMessageId, isDeviceAnswerableBlock } from './answer.js'
 import { parseDeviceAllowedCidrs, resolveDeviceAllowedCidrs } from './gate.js'
 
 let db: Database
@@ -69,6 +69,32 @@ function insertBlockMessage(input: { sessionId?: string; userId?: number; payloa
     content,
   })
   return messageId
+}
+
+/**
+ * An ask_user card as the tool files it (S1-B): a tool row in chat_messages
+ * WITHOUT any fence block, the question only in `interactions`.
+ */
+function insertAskUser(input: { sessionId?: string; userId?: number; questions?: unknown[]; toolCallId?: string } = {}): { messageId: number; id: string } {
+  const toolCallId = input.toolCallId ?? `call_${Math.random().toString(36).slice(2, 10)}`
+  const parsed = parseAskUserArgs({
+    blocking: true,
+    questions: input.questions ?? [{
+      id: 'q1', type: 'choice', question: 'Welche Variante soll ich nehmen?', allowComment: true,
+      options: [{ id: 'kurz', label: 'Kurzfassung' }, { id: 'lang', label: 'Lange Fassung' }],
+    }],
+  }, { id: toolCallId })
+  if (!parsed.ok) throw new Error(`fixture invalid: ${parsed.error}`)
+  const sessionId = input.sessionId ?? 'strand-1'
+  const userId = input.userId ?? 1
+  const messageId = Number(db.prepare(
+    `INSERT INTO chat_messages (session_id, user_id, role, content, agent_id) VALUES (?, ?, 'tool', '{"pending":true}', 'main')`,
+  ).run(sessionId, userId).lastInsertRowid)
+  const { record } = createInteraction(db, {
+    strandId: sessionId, userId, messageId, agent: 'main', payload: parsed.value,
+    toolCallId, blockId: null, blocking: true,
+  })
+  return { messageId, id: record.id }
 }
 
 function insertRunningTask(id: string, name: string, sessionId: string, agentId = 'main'): void {
@@ -726,5 +752,149 @@ describe('migration of clock tokens issued before the generalisation', () => {
     expect((await call('GET', '/api/status', { token: clock.token })).status).toBe(200)
     const res = await call('POST', '/api/status/answer', { token: clock.token, body: { message_id: messageId, block_id: 'b1', value: 'kurz', client_id: 'l1' } })
     expect(res.status).toBe(200)
+  })
+})
+
+describe('ask_user cards on /api/status (fix/status-ask-user)', () => {
+  it('lists a single-choice ask_user card as a tappable question; the "other" row is not offered', async () => {
+    const { messageId, id } = insertAskUser()
+    const { json } = await call('GET', '/api/status')
+    const waiting = json.waiting as Array<Record<string, unknown>>
+    const questions = json.questions as Array<Record<string, unknown>>
+    expect(questions).toHaveLength(1)
+    expect(questions[0]).toEqual({
+      id: `m${messageId}:${id}`,
+      message_id: messageId,
+      block_id: id,
+      strand_id: 'strand-1',
+      persona: 'main',
+      kind: 'choice',
+      text: 'Welche Variante soll ich nehmen?',
+      options: [{ id: 'kurz', label: 'Kurzfassung' }, { id: 'lang', label: 'Lange Fassung' }],
+      since: expect.any(String),
+      expires_at: null,
+      answerable: true,
+      hint: null,
+    })
+    expect(waiting).toHaveLength(1)
+    expect(waiting[0]!.question_id).toBe(questions[0]!.id)
+  })
+
+  it('maps a confirm ask_user card to Ja/Nein', async () => {
+    insertAskUser({ questions: [{ id: 'c', type: 'confirm', question: 'Weiter?' }] })
+    const q = ((await call('GET', '/api/status')).json.questions as Array<Record<string, unknown>>)[0]!
+    expect(q.kind).toBe('confirm')
+    expect(q.options).toEqual([{ id: 'yes', label: 'Ja' }, { id: 'no', label: 'Nein' }])
+    expect(q.answerable).toBe(true)
+  })
+
+  it('shows multi and multi-question cards as text without options and with the phone hint; privacy strips the text', async () => {
+    insertSession('s2')
+    insertAskUser({ questions: [{ id: 'm', type: 'multi', question: 'Welche Umgebungen?', options: [{ id: 'dev', label: 'Dev' }, { id: 'prod', label: 'Prod' }] }] })
+    insertAskUser({ sessionId: 's2', questions: [
+      { id: 'a', type: 'choice', question: 'Erste Frage?', options: [{ id: 'x', label: 'X' }, { id: 'y', label: 'Y' }] },
+      { id: 'b', type: 'confirm', question: 'Zweite Frage?' },
+    ] })
+    const { json } = await call('GET', '/api/status')
+    const questions = json.questions as Array<Record<string, unknown>>
+    expect(questions).toHaveLength(2)
+    const multi = questions.find(q => q.strand_id === 'strand-1')!
+    const set = questions.find(q => q.strand_id === 's2')!
+    expect(multi).toMatchObject({ kind: 'multi', text: 'Welche Umgebungen?', options: [], answerable: false, hint: 'am Handy beantworten' })
+    expect(set).toMatchObject({ kind: 'set', text: 'Erste Frage? (+1 weitere)', options: [], answerable: false, hint: 'am Handy beantworten' })
+    expect((json.waiting as Array<Record<string, unknown>>).every(w => w.question_id === null)).toBe(true)
+
+    db.prepare('UPDATE clock_devices SET privacy = 1 WHERE id = ?').run(dashId)
+    const priv = JSON.stringify((await call('GET', '/api/status')).json)
+    for (const secret of ['Welche Umgebungen', 'Erste Frage', 'Zweite Frage', 'Dev', 'Prod']) expect(priv, secret).not.toContain(secret)
+    expect(priv).toContain('am Handy beantworten')
+  })
+
+  it('hides opaque option ids in privacy mode and the ~n id answers', async () => {
+    db.prepare('UPDATE clock_devices SET privacy = 1 WHERE id = ?').run(dashId)
+    const { messageId, id } = insertAskUser()
+    const { json } = await call('GET', '/api/status')
+    const text = JSON.stringify(json)
+    for (const secret of ['Welche Variante', 'Kurzfassung', '"kurz"', '"lang"']) expect(text, secret).not.toContain(secret)
+    const q = (json.questions as Array<{ block_id: string; options: Array<{ id: string; label: string }> }>)[0]!
+    expect(q.block_id).toBe(id)
+    expect(q.options.map(o => o.id)).toEqual(['~1', '~2'])
+    const res = await call('POST', '/api/status/answer', { body: { message_id: messageId, block_id: id, value: '~2', client_id: 'p1' } })
+    expect(res.status).toBe(200)
+    expect(getInteraction(db, id)!.answer!.value).toEqual(['q1:lang'])
+  })
+
+  it('answers through the interactions service: closed_surface api, answer turn in the strand, idempotent, double answer 409', async () => {
+    const { messageId, id } = insertAskUser()
+    const body = { message_id: messageId, block_id: id, value: 'lang', client_id: 'k1' }
+    const first = await call('POST', '/api/status/answer', { body })
+    expect(first.status).toBe(200)
+    expect(first.json).toEqual({ applied: true, idempotent: false })
+    const record = getInteraction(db, id)!
+    expect(record.status).toBe('answered')
+    expect(record.closedSurface).toBe('api')
+    expect(record.closeSource).toBe('answer')
+    expect(record.answer!.value).toEqual(['q1:lang'])
+    // The follow-up turn runs in the strand, like an answer in the app.
+    expect(turns).toHaveLength(1)
+    expect(turns[0]!.sessionId).toBe('strand-1')
+    expect(turns[0]!.text).toContain('lang')
+    const retry = await call('POST', '/api/status/answer', { body })
+    expect(retry.status).toBe(200)
+    expect(retry.json.idempotent).toBe(true)
+    expect(turns).toHaveLength(1)
+    const late = await call('POST', '/api/status/answer', { body: { ...body, client_id: 'k2' } })
+    expect(late.status).toBe(409)
+    expect(late.json.code).toBe('already_answered')
+    expect(turns).toHaveLength(1)
+    expect((await call('GET', '/api/status')).json.questions).toEqual([])
+  })
+
+  it('refuses multi and multi-question ask_user cards with 403 not_allowed, the destructive fence card too', async () => {
+    insertSession('s2'); insertSession('s3')
+    const multi = insertAskUser({ questions: [{ id: 'm', type: 'multi', question: 'Welche?', options: [{ id: 'a', label: 'A' }, { id: 'b', label: 'B' }] }] })
+    const set = insertAskUser({ sessionId: 's2', questions: [
+      { id: 'a', type: 'choice', question: 'Eins?', options: [{ id: 'x', label: 'X' }, { id: 'y', label: 'Y' }] },
+      { id: 'b', type: 'confirm', question: 'Zwei?' },
+    ] })
+    const destructive = insertBlockMessage({ sessionId: 's3', payload: { block: 'confirm', id: 'd1', question: 'Alles löschen?', destructive: true } })
+    for (const [messageId, blockId, value] of [[multi.messageId, multi.id, 'a'], [set.messageId, set.id, 'x'], [destructive, 'd1', 'yes']] as const) {
+      const res = await call('POST', '/api/status/answer', { body: { message_id: messageId, block_id: blockId, value, client_id: `x-${blockId}` } })
+      expect(res.status, blockId).toBe(403)
+      expect(res.json.code).toBe('not_allowed')
+    }
+    expect(getInteraction(db, multi.id)!.status).toBe('open')
+    expect(turns).toHaveLength(0)
+  })
+
+  it('maps closed and expired cards to closed / stale, and refuses foreign, mismatched and invented answers', async () => {
+    insertSession('s2'); insertSession('foreign', 2)
+    const a = insertAskUser()
+    db.prepare("UPDATE interactions SET status = 'dismissed', close_source = 'dismiss', closed_surface = 'web', closed_at = ? WHERE id = ?").run(new Date().toISOString(), a.id)
+    const closed = await call('POST', '/api/status/answer', { body: { message_id: a.messageId, block_id: a.id, value: 'kurz', client_id: 'c1' } })
+    expect(closed.status).toBe(409)
+    expect(closed.json.code).toBe('closed')
+    const b = insertAskUser({ sessionId: 's2' })
+    db.prepare('UPDATE interactions SET expires_at = ? WHERE id = ?').run(new Date(Date.now() - 1000).toISOString(), b.id)
+    const stale = await call('POST', '/api/status/answer', { body: { message_id: b.messageId, block_id: b.id, value: 'kurz', client_id: 'c2' } })
+    expect(stale.status).toBe(410)
+    expect(stale.json.code).toBe('stale')
+    const foreign = insertAskUser({ sessionId: 'foreign', userId: 2 })
+    expect((await call('POST', '/api/status/answer', { body: { message_id: foreign.messageId, block_id: foreign.id, value: 'kurz', client_id: 'c3' } })).status).toBe(404)
+    const own = insertAskUser({ sessionId: 's2' })
+    expect((await call('POST', '/api/status/answer', { body: { message_id: own.messageId + 999, block_id: own.id, value: 'kurz', client_id: 'c4' } })).status).toBe(404)
+    // "other" needs a typed comment; a device cannot send it.
+    expect((await call('POST', '/api/status/answer', { body: { message_id: own.messageId, block_id: own.id, value: 'other', client_id: 'c5' } })).status).toBe(400)
+    expect((await call('POST', '/api/status/answer', { body: { message_id: own.messageId, block_id: own.id, value: 'erfunden', client_id: 'c6' } })).status).toBe(400)
+    expect(turns).toHaveLength(0)
+  })
+
+  it('keeps the device rule for ask_user: exactly one choice/confirm question', () => {
+    const q = (type: string, id = 'q') => ({ id, type, question: 'x', allowComment: false, options: [{ id: 'a', label: 'A' }, { id: 'b', label: 'B' }] })
+    const p = (...questions: unknown[]) => ({ kind: 'ask_user', id: 'i', question: 'x', blocking: true, questions }) as never
+    expect(deviceAnswerableAskUserQuestion(p(q('choice')))).not.toBeNull()
+    expect(deviceAnswerableAskUserQuestion(p(q('confirm')))).not.toBeNull()
+    expect(deviceAnswerableAskUserQuestion(p(q('multi')))).toBeNull()
+    expect(deviceAnswerableAskUserQuestion(p(q('choice', 'a'), q('choice', 'b')))).toBeNull()
   })
 })

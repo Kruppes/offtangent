@@ -21,14 +21,19 @@ import {
   extractAnswerableInteractionBlocks,
   getStrandAttentions,
   getStrandReadStates,
+  isAskUserPayload,
+  listInteractionsForMessage,
   listStrandIdsForAttention,
+  sealInteractionValue,
   resolveInteractionBlockState,
   resolveTaskOwnerUserIdForTask,
+  type AskUserPayload,
   type Database,
   type InteractionBlock,
+  type InteractionRecord,
 } from '@axiom/core'
 import { personaId } from '../clock-device/text.js'
-import { isDeviceAnswerableBlock } from './answer.js'
+import { deviceAnswerableAskUserQuestion, deviceAskUserOptions, isDeviceAnswerableBlock } from './answer.js'
 import type { StatusNote } from './note.js'
 
 export const STATUS_VERSION = 2
@@ -64,12 +69,29 @@ export interface StatusQuestion {
   block_id: string
   strand_id: string
   persona: string
-  kind: 'confirm' | 'choice'
+  /**
+   * `confirm` / `choice`: one tappable question. `multi` (several picks) and
+   * `set` (an ask_user card with several questions) are phone-only.
+   */
+  kind: 'confirm' | 'choice' | 'multi' | 'set'
   text: string
+  /** Empty for a phone-only entry. */
   options: StatusQuestionOption[]
   since: string
   expires_at: string | null
+  /**
+   * True when a device may answer it with one tap on an option. False: the
+   * text is shown (empty in privacy mode), no buttons, `hint` says where to
+   * answer. Only ask_user cards produce false entries; fence cards that a
+   * device may not answer (destructive, danger, multi) stay out of
+   * `questions` entirely, as before.
+   */
+  answerable: boolean
+  /** "am Handy beantworten" for a phone-only entry, else null. */
+  hint: string | null
 }
+
+export const STATUS_PHONE_HINT = 'am Handy beantworten'
 
 export interface StatusRunning {
   id: string
@@ -160,6 +182,78 @@ function toStatusQuestion(
     options,
     since,
     expires_at: block.expiresAt ?? null,
+    answerable: true,
+    hint: null,
+  }
+}
+
+/**
+ * The newest open ask_user interaction of a message, or undefined. Read
+ * through the interactions store, the same rows the attention came from.
+ */
+function openAskUserRecord(db: Database, messageId: number, userId: number, now: number): InteractionRecord | undefined {
+  const open = listInteractionsForMessage(db, messageId).filter(record =>
+    record.status === 'open'
+    && record.userId === userId
+    && isAskUserPayload(record.payload)
+    && (!record.expiresAt || Date.parse(record.expiresAt) > now))
+  return open[open.length - 1]
+}
+
+/**
+ * An ask_user card as a status entry. `block_id` is the interaction id: it is
+ * opaque (ULID), so privacy mode keeps it; option ids become `~n` there.
+ * Question and labels are model text and pass the interaction seal first,
+ * like every other way an interaction row leaves the server.
+ */
+function askUserStatusQuestion(
+  record: InteractionRecord,
+  strandId: string,
+  since: string,
+  privacy: boolean,
+): StatusQuestion {
+  const payload = sealInteractionValue(record.payload as AskUserPayload)
+  const single = deviceAnswerableAskUserQuestion(payload)
+  const base = {
+    id: `m${record.messageId}:${record.id}`,
+    message_id: record.messageId,
+    block_id: record.id,
+    strand_id: strandId,
+    persona: personaId(record.agent),
+    since,
+    expires_at: record.expiresAt ?? payload.expiresAt ?? null,
+  }
+  if (!single) {
+    const first = payload.questions[0]
+    const more = payload.questions.length - 1
+    const text = lineText(first?.question ?? payload.question, STATUS_QUESTION_MAX - (more > 0 ? 12 : 0))
+    return {
+      ...base,
+      kind: payload.questions.length > 1 ? 'set' : 'multi',
+      text: privacy ? '' : more > 0 ? `${text} (+${more} weitere)` : text,
+      options: [],
+      answerable: false,
+      hint: STATUS_PHONE_HINT,
+    }
+  }
+  const shown = deviceAskUserOptions(single)
+  const yesNo = single.type === 'confirm'
+    && shown.length === 2
+    && shown.some(option => option.id === 'yes')
+    && shown.some(option => option.id === 'no')
+  return {
+    ...base,
+    kind: yesNo ? 'confirm' : 'choice',
+    text: privacy ? '' : lineText(single.question, STATUS_QUESTION_MAX),
+    options: shown.map((option, index) => {
+      if (yesNo) return { id: option.id, label: option.id === 'yes' ? 'Ja' : 'Nein' }
+      return {
+        id: privacy ? `~${index + 1}` : option.id,
+        label: privacy ? '' : lineText(option.label, STATUS_LABEL_MAX),
+      }
+    }),
+    answerable: true,
+    hint: null,
   }
 }
 
@@ -187,7 +281,18 @@ export function buildStatus(
   for (const [strandId, attention] of attentions) {
     const session = sessionStmt.get(strandId) as { title: string | null; agent_id: string | null } | undefined
     let questionId: string | null = null
-    if (attention.kind === 'interaction' && attention.messageId != null) {
+    const askUser = attention.kind === 'interaction' && attention.messageId != null
+      ? openAskUserRecord(db, attention.messageId, userId, now)
+      : undefined
+    if (askUser) {
+      // ask_user (S1-B): the question lives only in the interactions table,
+      // the message text carries no fence block.
+      const question = askUserStatusQuestion(askUser, strandId, attention.since, privacy)
+      questions.push(question)
+      // A phone-only entry leaves question_id null, so the waiting row still
+      // says "am Handy" on a device that does not know `answerable` yet.
+      if (question.answerable) questionId = question.id
+    } else if (attention.kind === 'interaction' && attention.messageId != null) {
       const row = messageStmt.get(attention.messageId, userId) as MessageRow | undefined
       if (row) {
         const blocks = extractAnswerableInteractionBlocks(row.content)
@@ -214,7 +319,8 @@ export function buildStatus(
   }
   const bySince = (a: { since: string }, b: { since: string }) => Date.parse(a.since) - Date.parse(b.since)
   waiting.sort((a, b) => bySince(a, b) || a.strand_id.localeCompare(b.strand_id))
-  questions.sort((a, b) => bySince(a, b) || a.message_id - b.message_id)
+  // Tappable entries first: a phone-only entry must never push one out of the cap.
+  questions.sort((a, b) => Number(b.answerable) - Number(a.answerable) || bySince(a, b) || a.message_id - b.message_id)
 
   // Every running task is scanned, the owner filter runs BEFORE any limit:
   // a cap on the scan would let older tasks of other users push the own ones
