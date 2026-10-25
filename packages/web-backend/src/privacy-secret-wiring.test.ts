@@ -192,6 +192,11 @@ describe('V3 entry path: web socket (ws-chat.ts)', () => {
         runtimeTexts.push(input.text)
         return { turnId: 't1', queued: false }
       },
+      // S1-D: ws-chat submits through submitUserMessage; with no live run
+      // it starts a turn, exactly like the real runner.
+      submitUserMessage(input: { text: string }) {
+        return { mode: 'started' as const, turn: this.startTurn(input) }
+      },
       hasActiveTurnInSession: () => false,
       subscribe: () => () => {},
       getActiveTurns: () => [],

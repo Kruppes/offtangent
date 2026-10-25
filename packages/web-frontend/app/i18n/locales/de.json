@@ -186,6 +186,8 @@
       "outdated": "Von dieser Ansicht gibt es eine neuere Revision.",
       "showLatest": "Neueste zeigen"
     },
+    "steered": "↪ Zwischenruf",
+    "steerWaiting": "⏳ wartet",
     "secretsSealed": "{count} Secret sicher abgelegt | {count} Secrets sicher abgelegt",
     "secretChipTooltip": "Abgelegtes Secret – der Wert bleibt auf diesem Server und geht nie an das Modell",
     "dictation": {

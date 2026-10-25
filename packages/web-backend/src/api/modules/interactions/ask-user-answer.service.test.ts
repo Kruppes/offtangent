@@ -256,6 +256,44 @@ describe('S1-B answerById with answers', () => {
     expect(n.n).toBe(0)
   })
 
+  it('S1-D: blocking=false answered during a running tool batch goes into that turn as a steer (no turn, resumed once delivered)', async () => {
+    const card = insertAskUser({ blocking: false })
+    const offers: Array<Record<string, unknown>> = []
+    const service = createInteractionsService({
+      db,
+      getTurnRunner: () => ({
+        startTurn: (input: Record<string, unknown>) => { turns.push(input); return {} },
+        offerSteerToLiveTurn: (input: Record<string, unknown>) => { offers.push(input); return { accepted: true, turnId: 'turn-live', settled: Promise.resolve(true) } },
+      } as never),
+    })
+    const result = service.answerById(1, card.id, { clientRequestId: 'cr-nb-steer', answers: goodAnswers(), surface: 'web' })
+    expect(result).toMatchObject({ applied: true, resumed: false, steered: { turnId: 'turn-live' } })
+    expect(turns).toHaveLength(0)
+    expect(offers).toHaveLength(1)
+    expect(offers[0]).toMatchObject({ sessionId: card.strandId, preformatted: true })
+    // The steer text is the structured answer block of this card.
+    expect(String(offers[0]!.text)).toContain(card.id)
+    await new Promise(r => setTimeout(r, 0))
+    // Delivered: marked resumed, so the next turn's context notes skip it.
+    expect(getInteraction(db, card.id)?.answer?.resumed).toBe(true)
+  })
+
+  it('S1-D: blocking=false with no tool batch running (steer refused) stays a context note for the next turn', async () => {
+    const card = insertAskUser({ blocking: false })
+    const service = createInteractionsService({
+      db,
+      getTurnRunner: () => ({
+        startTurn: (input: Record<string, unknown>) => { turns.push(input); return {} },
+        offerSteerToLiveTurn: () => ({ accepted: false, reason: 'not_in_tool_phase' }),
+      } as never),
+    })
+    const result = service.answerById(1, card.id, { clientRequestId: 'cr-nb-q', answers: goodAnswers(), surface: 'web' })
+    expect(result).not.toHaveProperty('steered')
+    expect(turns).toHaveLength(0)
+    await new Promise(r => setTimeout(r, 0))
+    expect(getInteraction(db, card.id)?.answer?.resumed).toBe(false)
+  })
+
   it('dismiss: closes the card without a turn', () => {
     const card = insertAskUser()
     makeService().dismiss(1, card.id, 'web')

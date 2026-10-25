@@ -160,6 +160,13 @@ export interface ChatMessage {
    * carries the information, so this is deliberately not persisted.
    */
   sealedCount?: number
+  /**
+   * S1-D: a user message sent while a turn ran. 'steered' = handed to that
+   * running turn as an interjection ("Zwischenruf"); 'waiting' = queued as a
+   * turn of its own ("wartet"). From the WS frames live and from the
+   * metadata (`steer` / `queued`) after a reload.
+   */
+  steerState?: 'steered' | 'waiting'
   /** Whether this is a task injection response */
   isTaskInjection?: boolean
   /** Whether this is a task result notification (system message) */
@@ -258,7 +265,7 @@ interface WsMessage {
   interaction?: unknown
   /** `interaction.pending` (S1-B): the announced question count of a running ask_user call. */
   questionCount?: number
-  type: 'feed_item' | 'board_updated' | 'canvas_view_updated' | 'interaction.open' | 'interaction.updated' | 'interaction.draft' | 'interaction.pending' | 'text' | 'thinking' | 'tool_call_start' | 'tool_call_end' | 'error' | 'done' | 'system' | 'external_user_message' | 'session_end' | 'session_summary' | 'reminder' | 'task_completed' | 'task_failed' | 'task_question' | 'task_status_update' | 'task_started' | 'task_progress' | 'task_finished' | 'pong' | 'attachment' | 'chat_action' | 'chat_action_resolved' | 'turn_replay_start' | 'turn_replay_end' | 'voice_note' | 'stall_warning' | 'stall_resolved' | 'retry_scheduled' | 'queued' | 'message_ack'
+  type: 'feed_item' | 'board_updated' | 'canvas_view_updated' | 'interaction.open' | 'interaction.updated' | 'interaction.draft' | 'interaction.pending' | 'text' | 'thinking' | 'tool_call_start' | 'tool_call_end' | 'error' | 'done' | 'system' | 'external_user_message' | 'session_end' | 'session_summary' | 'reminder' | 'task_completed' | 'task_failed' | 'task_question' | 'task_status_update' | 'task_started' | 'task_progress' | 'task_finished' | 'pong' | 'attachment' | 'chat_action' | 'chat_action_resolved' | 'turn_replay_start' | 'turn_replay_end' | 'voice_note' | 'stall_warning' | 'stall_resolved' | 'retry_scheduled' | 'queued' | 'message_ack' | 'message.steered' | 'message.queued'
   text?: string
   /** For `message_ack`: echo of the idempotency key we sent. */
   clientMessageId?: string
@@ -884,6 +891,11 @@ export function mapHistoryRows(rows: ChatHistoryRow[]): ChatMessage[] {
     if (m.role === 'user' && typeof meta.replyContext === 'string' && meta.replyContext) {
       base.replyContext = meta.replyContext
     }
+    // S1-D: interjection marker survives a reload (metadata of the user row).
+    if (m.role === 'user') {
+      if (meta.steer === true) base.steerState = 'steered'
+      else if (meta.queued === true) base.steerState = 'waiting'
+    }
     // Answers to interactive blocks (SPEC 7.4c) live in the metadata of the
     // message that carries the block, so an answered card comes back as its
     // chip after a reload instead of offering the buttons again.
@@ -1195,6 +1207,21 @@ export function useChat() {
     // It reports which secrets the server sealed out of the message we just
     // sent, and the bubble then shows the stored text (handles instead of the
     // typed secret, risk R7) plus a discreet hint.
+    // S1-D: the server tells which way a message sent during a running turn
+    // went. Addressed by idempotency key like the ack.
+    if (msg.type === 'message.steered' || msg.type === 'message.queued') {
+      const key = msg.clientMessageId
+      const index = key ? steerMarkTargets.get(key) : undefined
+      if (index === undefined) return
+      const target = messages.value[index]
+      if (!target || target.role !== 'user') return
+      const next = [...messages.value]
+      next[index] = { ...target, steerState: msg.type === 'message.steered' ? 'steered' : 'waiting' }
+      messages.value = next
+      // A steer can still fall back to "wartet" later; a queue mark is final.
+      if (msg.type === 'message.queued') steerMarkTargets.delete(key!)
+      return
+    }
     if (msg.type === 'message_ack') {
       const key = msg.clientMessageId
       if (!key) return
@@ -1896,6 +1923,12 @@ export function useChat() {
    * is ignored.
    */
   const pendingUserMessages = new Map<string, number>()
+  /**
+   * S1-D: idempotency keys of sent user messages → index in `messages`, kept
+   * after the ack so a later `message.steered|queued` frame can mark the
+   * bubble. Bounded: only the last few sends are remembered.
+   */
+  const steerMarkTargets = new Map<string, number>()
 
   /** Fresh idempotency key for one outgoing user message. */
   function newClientMessageId(): string {
@@ -1966,6 +1999,8 @@ export function useChat() {
     // collapses two different messages.
     const clientMessageId = newClientMessageId()
     pendingUserMessages.set(clientMessageId, messages.value.length - 1)
+    steerMarkTargets.set(clientMessageId, messages.value.length - 1)
+    while (steerMarkTargets.size > 20) steerMarkTargets.delete(steerMarkTargets.keys().next().value!)
 
     updateProgress(boundSessionId.value, 'send')
     isStreaming.value = true

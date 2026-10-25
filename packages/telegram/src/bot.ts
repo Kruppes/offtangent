@@ -43,6 +43,7 @@ import {
   renderInteractionMessageAsText,
   supersedeOpenOnUserMessage,
   getInteractionAnswerPort,
+  markUserMessageSteerState,
 } from '@axiom/core'
 import type { InteractionAnswerTurnInput, TurnErrorInfo, TurnPreambleToolCall, UploadDescriptor } from '@axiom/core'
 import {
@@ -60,6 +61,8 @@ import {
   parseTurnRetryCallbackData,
 } from './turn-retry.js'
 import { TelegramInteractionCards, INTERACTION_CALLBACK_PREFIX } from './interaction-cards.js'
+import { TurnStatusLine } from './status-line.js'
+import type { StatusLineEndMode } from './status-line.js'
 import type { CardChat } from './interaction-cards.js'
 
 /**
@@ -88,6 +91,12 @@ export interface TelegramConfig {
   webhookUrl: string
   batchingDelayMs: number
   sendVoiceReply?: boolean
+  /**
+   * S1-D, D2: the editable status line of a running turn. 'delete'
+   * (default) removes it at turn end, 'done' leaves "✅ fertig nach N s",
+   * 'off' sends none.
+   */
+  statusLine?: StatusLineEndMode | 'off'
 }
 
 /**
@@ -212,6 +221,17 @@ interface QueuedMessage {
    */
   agentText?: string
   preambleToolCalls?: TurnPreambleToolCall[]
+  /** S1-D: the user row was already written (an interjection that fell back to the queue). */
+  persistedMessageId?: number
+  /** S1-D: the `user_message` chat event was already emitted for this row. */
+  userEventSent?: boolean
+  /**
+   * S1-D (REVIEW-S1-D, finding 1): queue place reserved for an interjection
+   * handed to the running turn. Resolves `true` once the steer reached a
+   * model request (the entry is dropped), `false` when it did not (the entry
+   * runs as its own turn, in the place it reserved). Unset once settled false.
+   */
+  steerGate?: Promise<boolean>
 }
 
 interface PendingBatch {
@@ -244,6 +264,8 @@ interface TurnRequest {
   /** S1-C: an answer turn started from a question card. */
   inputMode?: 'typed' | 'voice' | 'answer' | null
   replyToInteractionId?: string | null
+  /** S1-D, D2: status line of this turn (tool starts are reported to it). */
+  statusLine?: TurnStatusLine | null
 }
 
 /** What the runner produced, collected for delivery to Telegram. */
@@ -633,7 +655,8 @@ export class TelegramBot {
     let total = 0
 
     for (const state of this.chatStates.values()) {
-      total += state.queue.length
+      // A reserved steer place is no waiting message (unless it fell back).
+      total += state.queue.filter(m => !m.steerGate).length
       if (state.pendingBatch) total += 1
       if (state.processing) total += 1
     }
@@ -1354,10 +1377,118 @@ export class TelegramBot {
 
     const batch = state.pendingBatch
     state.pendingBatch = null
+    if (state.processing) {
+      // S1-D: a turn of this chat runs. The message goes in as an
+      // interjection when the run is inside a tool batch, otherwise it waits.
+      await this.steerOrQueue(chatKey, state, batch)
+      return
+    }
     state.queue.push({ ctx: batch.ctx, text: batch.text, replyContext: batch.replyContext })
     this.emitQueueDepthChanged()
 
     await this.processQueue(chatKey)
+  }
+
+  /**
+   * S1-D, D1: a text batch that arrives while this chat's turn runs. Offered
+   * to the running turn as a steer (persisted first, `{steer:true, turnId}`);
+   * when the runner refuses (not in a tool batch, slot taken, other turn
+   * queued) the message is queued as before and the user is told it waits.
+   * A steer the run did not take any more (the batch ended the turn) falls
+   * back to the queue with the row it already has, so nothing is lost or
+   * filed twice.
+   */
+  private async steerOrQueue(chatKey: string, state: ChatState, batch: PendingBatch): Promise<void> {
+    const ctx = batch.ctx
+    const agentUserId = this.resolveUserId(ctx)
+    const numericUserId = this.resolveNumericUserId(ctx)
+    const queueIt = async (persistedMessageId?: number, userEventSent = false): Promise<void> => {
+      state.queue.push({
+        ctx,
+        text: batch.text,
+        replyContext: batch.replyContext,
+        ...(persistedMessageId !== undefined ? { persistedMessageId } : {}),
+        ...(userEventSent ? { userEventSent } : {}),
+      })
+      this.emitQueueDepthChanged()
+      await this.safeSendMessage(ctx, '⏳ Wartet, bis der Lauf fertig ist.')
+      // The loop may have finished in between; restart it (no-op while it runs).
+      void this.processQueue(chatKey)
+    }
+    // Messages already wait in this chat: an interjection would overtake them.
+    // A reserved steer place does not count: the run's one-per-batch slot
+    // already orders a second interjection behind it.
+    if (state.queue.some(m => !m.steerGate)) {
+      await queueIt()
+      return
+    }
+    let sessionId: string
+    try {
+      sessionId = this.agentCore.getSessionManager().getOrCreateSession(agentUserId, 'telegram', this.agentId).id
+    } catch {
+      await queueIt()
+      return
+    }
+    // Same agent text as a queued turn (reply context as a hint line).
+    const agentText = buildAgentMessage(batch.text, batch.replyContext)
+    let messageId: number | undefined
+    if (this.db && numericUserId) {
+      const metadata = batch.replyContext ? JSON.stringify({ replyContext: batch.replyContext }) : null
+      const row = this.db.prepare(
+        'INSERT INTO chat_messages (session_id, user_id, role, content, metadata, agent_id) VALUES (?, ?, ?, ?, ?, ?)'
+      ).run(sessionId, numericUserId, 'user', batch.text, metadata, this.agentId)
+      messageId = Number(row.lastInsertRowid)
+      supersedeOpenOnUserMessage(this.db, sessionId, numericUserId, messageId)
+    }
+    const offer = this.turnRunner.offerSteerToLiveTurn({
+      agentUserId,
+      agentId: this.agentId,
+      sessionId,
+      text: agentText,
+      source: this.isDMChat(ctx) ? 'telegram' : 'telegram-group',
+      messageId: messageId ?? null,
+    })
+    if (!offer.accepted) {
+      markUserMessageSteerState(this.db, messageId, { queued: true })
+      await queueIt(messageId)
+      return
+    }
+    // Reserve the queue place NOW, before any later message can be queued.
+    const placeholder: QueuedMessage = {
+      ctx,
+      text: batch.text,
+      replyContext: batch.replyContext,
+      ...(messageId !== undefined ? { persistedMessageId: messageId } : {}),
+      userEventSent: true,
+      steerGate: offer.settled,
+    }
+    state.queue.push(placeholder)
+    this.onChatEvent?.({
+      type: 'user_message',
+      userId: numericUserId,
+      sessionId,
+      agentId: this.agentId,
+      text: batch.text,
+      senderName: this.getSenderName(ctx),
+      replyContext: batch.replyContext,
+    })
+    await this.safeSendMessage(ctx, '↪️ Zwischenruf übergeben.')
+    // Wait in the chat queue behind the running turn (no-op while it runs).
+    void this.processQueue(chatKey)
+    void offer.settled.then(async (delivered) => {
+      if (delivered) {
+        const index = state.queue.indexOf(placeholder)
+        if (index >= 0) state.queue.splice(index, 1)
+        this.emitQueueDepthChanged()
+        return
+      }
+      delete placeholder.steerGate
+      markUserMessageSteerState(this.db, messageId, { queued: true })
+      this.emitQueueDepthChanged()
+      await this.safeSendMessage(ctx, '⏳ Wartet, bis der Lauf fertig ist.')
+    }).catch((err) => {
+      console.error('[telegram] Steer fallback failed:', err)
+    })
   }
 
   private async processQueue(chatKey: string): Promise<void> {
@@ -1369,7 +1500,20 @@ export class TelegramBot {
 
     try {
       while (state.queue.length > 0) {
-        const queuedMessage = state.queue.shift()!
+        const queuedMessage = state.queue[0]!
+        // A reserved steer place: wait until the steer settled (at the latest
+        // when the running turn ends). Delivered → dropped; else it runs here.
+        const delivered = queuedMessage.steerGate
+          ? await queuedMessage.steerGate.catch(() => false)
+          : false
+        const index = state.queue.indexOf(queuedMessage)
+        // Gone meanwhile (kill switch) or delivered as a steer: nothing to run.
+        if (index < 0 || delivered) {
+          if (index >= 0) state.queue.splice(index, 1)
+          this.emitQueueDepthChanged()
+          continue
+        }
+        state.queue.splice(index, 1)
         this.emitQueueDepthChanged()
         await this.processQueuedMessage(chatKey, queuedMessage)
       }
@@ -1468,7 +1612,7 @@ export class TelegramBot {
     // Skip if this came from handleIncomingAttachment (already saved).
     // When a reply context is present we stash it in the metadata JSON blob so
     // the web UI can render a WhatsApp/Telegram-style quote bubble on reload.
-    if (this.db && numericUserId && !attachments?.length) {
+    if (this.db && numericUserId && !attachments?.length && queuedMessage.persistedMessageId === undefined) {
       const metadata = replyContext ? JSON.stringify({ replyContext }) : null
       const row = this.db.prepare(
         'INSERT INTO chat_messages (session_id, user_id, role, content, metadata, agent_id) VALUES (?, ?, ?, ?, ?, ?)'
@@ -1480,7 +1624,7 @@ export class TelegramBot {
     // Broadcast user message event (skip if already broadcast by attachment
     // handler). Only the inbound message needs this: the assistant side of the
     // turn reaches other channels through their own runner subscription.
-    if (!attachments?.length) {
+    if (!attachments?.length && !queuedMessage.userEventSent) {
       this.onChatEvent?.({
         type: 'user_message',
         userId: numericUserId,
@@ -1509,6 +1653,9 @@ export class TelegramBot {
         }
       }, 4000)
 
+      const statusLine = this.createStatusLine(chatId)
+      statusLine?.start()
+
       let outcome: TurnOutcome
       try {
         // Merge (upstream 0.27.0): the streaming loop, persistence, stall
@@ -1527,9 +1674,12 @@ export class TelegramBot {
           source: isDM ? 'telegram' : 'telegram-group',
           attachments,
           preambleToolCalls,
+          statusLine,
         })
       } finally {
         clearInterval(typingInterval)
+        // Before the reply goes out, so the answer is not followed by a stale line.
+        await statusLine?.finish()
       }
 
       if (state.abortRequested) return
@@ -1697,6 +1847,7 @@ export class TelegramBot {
         }
 
         if (event.type === 'chunk') {
+          if (event.chunk.type === 'tool_call_start') input.statusLine?.toolStarted(event.chunk.toolName)
           this.handleTurnChunk(input.chatId, event.chunk, outcome)
           return
         }
@@ -1728,6 +1879,39 @@ export class TelegramBot {
         console.error('[telegram] Failed to deliver provider status notice:', err)
       })
     }
+  }
+
+  /**
+   * S1-D, D2: a status line for a turn in `chatId`, or null when it is
+   * switched off. `telegram.json` is read fresh per turn. Tool names are
+   * checked against the tools registered in the persona's runtime at the
+   * moment the tool starts (HANDOFF vocabulary rule).
+   */
+  private createStatusLine(chatId: string | number): TurnStatusLine | null {
+    let mode: StatusLineEndMode | 'off' = 'delete'
+    try {
+      const configured = loadConfig<{ statusLine?: unknown }>('telegram.json').statusLine
+      if (configured === 'off' || configured === 'done' || configured === 'delete') mode = configured
+    } catch (err) {
+      warnConfigReadFailed('telegram.json', err)
+    }
+    if (mode === 'off') return null
+    const api = this.bot.api
+    return new TurnStatusLine({
+      chatId,
+      onEnd: mode,
+      api: {
+        sendMessage: (id, text) => api.sendMessage(id, text),
+        editMessageText: (id, messageId, text) => api.editMessageText(id, messageId, text),
+        deleteMessage: (id, messageId) => api.deleteMessage(id, messageId),
+      },
+      knownTools: () => {
+        const snapshot = (this.agentCore as { getRuntimeStateSnapshot?: (agentId: string) => { toolNames: string[] } })
+          .getRuntimeStateSnapshot?.(this.agentId)
+        // Fail closed: without the registry no name is shown (other_tool).
+        return snapshot ? new Set(snapshot.toolNames) : new Set<string>()
+      },
+    })
   }
 
   /**

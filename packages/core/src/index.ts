@@ -619,6 +619,7 @@ export type {
   TurnStartModel,
   TurnSubscriber,
   StartTurnInput,
+  SubmitUserMessageResult,
   TurnPreambleToolCall,
 } from './turn-runner.js'
 export { hasTurnRuntimeOverrides } from './turn-overrides.js'
@@ -788,6 +789,8 @@ export {
 } from './task-agent-notice.js'
 export type { PendingTaskNotice, PendingNoticeQuery } from './task-agent-notice.js'
 export { TaskProgressGuard, stableArgsSignature } from './task-progress-guard.js'
+// S1-D, D2: the HANDOFF tool-name vocabulary rule, reused by the Telegram status line.
+export { handoffToolName } from './task-budget.js'
 export type { ProgressGuardKind, ProgressGuardLimits, ProgressGuardTrip, ProgressGuardState } from './task-progress-guard.js'
 export { getTaskCostSummary, getSubtreeCostForTasks, findTasksWithSubTasks, totalTokens, MAX_TASK_COST_DEPTH } from './task-cost.js'
 export type { TaskCostSummary, TaskUsageTotals } from './task-cost.js'
@@ -1900,3 +1903,6 @@ export type {
   InteractionPortAnswerInput,
   InteractionPortAnswerResult,
 } from './interaction-answer-port.js'
+// S1-D: user interjection (steer) into a running turn.
+export { formatSteerBlock, markUserMessageSteerState, SteerSlot, STEER_DATA_HEADER } from './steer.js'
+export type { SteerOffer, SteerOfferOptions, SteerRejectReason } from './steer.js'

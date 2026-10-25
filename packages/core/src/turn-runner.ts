@@ -53,6 +53,7 @@ import type { TurnRuntimeOverrides } from './turn-overrides.js'
 import { hasTurnRuntimeOverrides } from './turn-overrides.js'
 import { recordStrandTurnStart, recordStrandTurnFirstToken, recordStrandTurnEnd } from './strand-turns.js'
 import type { StrandTurnTrigger, StrandTurnInputMode } from './strand-turns.js'
+import { markUserMessageSteerState, type SteerOffer, type SteerOfferOptions, type SteerRejectReason } from './steer.js'
 
 /**
  * The slice of AgentCore the turn runner depends on. Keeping this narrow
@@ -96,7 +97,23 @@ export interface TurnAgentLike {
    * for blanket cancellations.
    */
   abort(scope?: AbortScope): void
+  /**
+   * S1-D: hand a user interjection to the live run of this strand (after the
+   * current tool batch). Optional; agents without it never steer.
+   */
+  offerSteer?(agentId: string, sessionId: string, text: string, messageId?: number | null, opts?: SteerOfferOptions): SteerOffer
 }
+
+/**
+ * S1-D: what became of a user message sent to a strand.
+ * - `steered`: handed to the running turn `turnId` (next model request);
+ * - `queued`: waits behind the live turn `waitingForTurnId` as its own turn;
+ * - `started`: no turn was live, it runs now.
+ */
+export type SubmitUserMessageResult =
+  | { mode: 'steered'; turnId: string; /** Resolves to the fallback turn when the run ended before taking it, else null. */ fallback: Promise<TurnInfo | null> }
+  | { mode: 'queued'; turn: TurnInfo; waitingForTurnId: string; reason: SteerRejectReason }
+  | { mode: 'started'; turn: TurnInfo }
 
 export interface TurnInfo {
   turnId: string
@@ -333,6 +350,10 @@ export interface TurnStartModel extends ModelSelection {
 }
 
 interface TurnState {
+  /** S1-D: set when the turn left the queue and drives the agent. */
+  running?: boolean
+  /** S1-D: queue place reserved for an offered, not yet delivered steer. */
+  steerPlaceholder?: boolean
   turnModelOverride?: ModelSelection | null
   /** Model frozen at turn start (see `resolveStartModel`). */
   startModel?: TurnStartModel | null
@@ -493,6 +514,8 @@ export class TurnRunner {
    * by AgentCore's TurnSemaphore.
    */
   private readonly queues = new Map<string, Promise<void>>()
+  /** S1-D: messageIds already requeued by {@link recoverUndeliveredSteers} in this process (guards a failed `steerRecovered` write). */
+  private readonly recoveredSteerIds = new Set<number>()
 
   constructor(options: TurnRunnerOptions) {
     this.db = options.db
@@ -672,6 +695,18 @@ export class TurnRunner {
    * user are queued so their streams stay ordered.
    */
   startTurn(input: StartTurnInput): TurnInfo {
+    return this.enqueueTurn(input, null)
+  }
+
+  /**
+   * {@link startTurn} with an optional steer gate (REVIEW-S1-D, finding 1):
+   * the turn takes its place in the strand queue NOW, as a placeholder for an
+   * offered interjection. `gate` resolving `true` (the steer reached a model
+   * request) removes the placeholder without a trace; `false` turns it into a
+   * real queued turn in the place it reserved, so a message that arrived
+   * later can never overtake it.
+   */
+  private enqueueTurn(input: StartTurnInput, gate: Promise<boolean> | null): TurnInfo {
     // Privacy (plan 2026-09-26, step 1) — belt and braces. Every channel
     // seals its own input at the edge (web REST, web socket, captures,
     // interactions, Telegram); this is the shared funnel every one of them
@@ -717,6 +752,7 @@ export class TurnRunner {
       finalMessage: null,
       ended: false,
       endedAt: null,
+      ...(gate ? { steerPlaceholder: true } : {}),
     }
 
     let turns = this.liveTurns.get(key)
@@ -730,9 +766,18 @@ export class TurnRunner {
     // per user+persona, so two personas of one user run side by side.
     const queueKey = `${key}\u0000${turn.agentId}`
     const previous = this.queues.get(queueKey) ?? Promise.resolve()
+    if (gate) {
+      void gate.then((delivered) => {
+        if (delivered) this.dropPlaceholder(turn)
+        else turn.steerPlaceholder = false
+      }, () => { turn.steerPlaceholder = false })
+    }
     const run = previous
       .catch(() => undefined)
-      .then(() => this.runTurn(turn, input))
+      .then(async () => {
+        if (gate && await gate.catch(() => false)) return
+        return this.runTurn(turn, input)
+      })
       .catch((err) => {
         console.error('[turn-runner] turn failed unexpectedly:', err)
       })
@@ -744,6 +789,148 @@ export class TurnRunner {
     })
 
     return toInfo(turn)
+  }
+
+  /**
+   * S1-D: a user message for a strand. While a turn of the same strand and
+   * persona is running its tool batch, the message is handed to that turn as
+   * an interjection (steer) and reaches the model in the next request of the
+   * SAME turn; `messageId` (the persisted user row) is stamped
+   * `{steer:true, turnId}`. Otherwise it is queued as its own turn (stamped
+   * `{queued:true}`) or, with no live turn, started. A steer the run did not
+   * take (the batch ended the turn) falls back to a queued turn, so the
+   * message is never lost and never delivered twice.
+   */
+  submitUserMessage(input: StartTurnInput & { messageId?: number | null }): SubmitUserMessageResult {
+    const { messageId = null, ...startInput } = input
+    const key = startInput.agentUserId ?? String(startInput.userId)
+    const agentId = startInput.agentId ?? 'main'
+    const live = [...(this.liveTurns.get(key) ?? [])].filter(t => !t.ended && t.agentId === agentId)
+    if (live.length === 0) return { mode: 'started', turn: this.startTurn(startInput) }
+    // Only plain text steers: attachments, a one-shot model, turn overrides
+    // or preamble tool calls need a turn of their own.
+    const plainText = !startInput.continueFromTranscript
+      && !(startInput.attachments?.length) && !startInput.turnModelOverride
+      && !startInput.turnOverrides && !(startInput.preambleToolCalls?.length)
+    const offer = this.offerSteerToLiveTurn({
+      agentUserId: key,
+      agentId,
+      sessionId: startInput.sessionId,
+      text: plainText ? startInput.text : '',
+      source: startInput.source,
+      messageId,
+    })
+    if (offer.accepted) {
+      // The queue place is reserved synchronously, before any later message
+      // can be queued (REVIEW-S1-D, finding 1).
+      const placeholder = this.enqueueTurn(startInput, offer.settled)
+      const fallback = offer.settled.then((delivered) => {
+        if (delivered) return null
+        markUserMessageSteerState(this.db, messageId, { queued: true })
+        return placeholder
+      })
+      return { mode: 'steered', turnId: offer.turnId, fallback }
+    }
+    const running = live.find(t => t.running) ?? null
+    const waitingFor = running ?? live[0]!
+    markUserMessageSteerState(this.db, messageId, { queued: true, waitingForTurnId: waitingFor.id })
+    return { mode: 'queued', turn: this.startTurn(startInput), waitingForTurnId: waitingFor.id, reason: offer.reason }
+  }
+
+  /**
+   * S1-D (REVIEW-S1-D, finding 2): after a restart, every persisted user
+   * message stamped `steer:true` without `steerDelivered:true` was accepted as
+   * an interjection but never reached a model request (the process died in
+   * between). Each comes back as a queued turn of its own, oldest first
+   * (`ORDER BY timestamp, id`). At-least-once: a crash between the real send
+   * start and the `steerDelivered` write yields a duplicate, never a loss.
+   * Idempotent per messageId: the row is restamped `{queued:true,
+   * steerRecovered:true}` before its turn is queued, so a second call (or a
+   * second start) finds nothing. Returns the number of requeued messages.
+   */
+  recoverUndeliveredSteers(): number {
+    if (!this.db) return 0
+    let rows: Array<{ id: number; session_id: string; user_id: number | null; content: string; agent_id: string | null; source: string | null }>
+    try {
+      rows = this.db.prepare(
+        `SELECT m.id, m.session_id, m.user_id, m.content, m.agent_id, s.source
+           FROM chat_messages m LEFT JOIN sessions s ON s.id = m.session_id
+          WHERE m.role = 'user'
+            AND json_valid(m.metadata)
+            AND json_extract(m.metadata, '$.steer') = 1
+            AND COALESCE(json_extract(m.metadata, '$.steerDelivered'), 0) != 1
+          ORDER BY m.timestamp, m.id`,
+      ).all() as typeof rows
+    } catch (err) {
+      console.warn('[turn-runner] Could not read undelivered steers:', (err as Error).message)
+      return 0
+    }
+    let count = 0
+    for (const row of rows) {
+      if (row.user_id === null) continue
+      // At-least-once within the process boundary: a row whose
+      // `steerRecovered` write failed is still `steer:true` in the db, but
+      // this process already requeued it and never does so again.
+      if (this.recoveredSteerIds.has(row.id)) continue
+      this.recoveredSteerIds.add(row.id)
+      if (!markUserMessageSteerState(this.db, row.id, { queued: true, steerRecovered: true })) {
+        console.warn(`[turn-runner] steerRecovered marker for message ${row.id} not written; requeued once in this process, a restart may requeue it again (at-least-once)`)
+      }
+      this.startTurn({
+        userId: row.user_id,
+        sessionId: row.session_id,
+        text: row.content,
+        source: row.source ?? 'web',
+        agentId: row.agent_id ?? 'main',
+      })
+      count++
+    }
+    return count
+  }
+
+  /**
+   * S1-D: offer `text` as an interjection to the RUNNING turn of this strand
+   * and persona. Refused when no such turn runs, another turn of the persona
+   * is already queued (a steer would overtake it), the run is not in a tool
+   * batch, or the batch already carries a steer. Accepted: the user row
+   * `messageId` is stamped `{steer:true, turnId}`; `settled` resolves `false`
+   * when the run ended without taking it (the caller decides the fallback).
+   * `preformatted`: `text` is an already escaped data block (ask_user answer).
+   */
+  offerSteerToLiveTurn(input: {
+    agentUserId: string
+    agentId?: string
+    sessionId: string
+    text: string
+    source?: string
+    messageId?: number | null
+    preformatted?: boolean
+  }): { accepted: true; turnId: string; settled: Promise<boolean> } | { accepted: false; reason: SteerRejectReason } {
+    const agentId = input.agentId ?? 'main'
+    const live = [...(this.liveTurns.get(input.agentUserId) ?? [])].filter(t => !t.ended && t.agentId === agentId)
+    const running = live.find(t => t.running) ?? null
+    if (!running || running.sessionId !== input.sessionId) return { accepted: false, reason: 'no_run' }
+    // Another message already waits: a steer would overtake it. A steer
+    // placeholder is no such message: the agent's one-per-batch slot keeps
+    // the order against it (slot taken / not in a tool phase → queued behind).
+    if (live.some(t => t !== running && !t.steerPlaceholder)) return { accepted: false, reason: 'turn_queued' }
+    if (!input.text) return { accepted: false, reason: 'unsupported' }
+    const agent = this.getAgent()
+    if (!agent?.offerSteer) return { accepted: false, reason: 'unsupported' }
+    const text = input.preformatted
+      ? input.text
+      : sealText(input.text, { tier: 'user', source: `steer:${input.source ?? 'unknown'}` }).text
+    const offer = agent.offerSteer(agentId, input.sessionId, text, input.messageId ?? null, { preformatted: input.preformatted === true })
+    if (!offer.accepted) return offer
+    markUserMessageSteerState(this.db, input.messageId, { steer: true, turnId: running.id })
+    // `settled` is true only once the block is part of an assembled model
+    // request; the marker lets the restart recovery skip it.
+    const db = this.db
+    const settled = offer.settled.then((delivered) => {
+      if (delivered) markUserMessageSteerState(db, input.messageId, { steerDelivered: true })
+      return delivered
+    }, () => false)
+    return { accepted: true, turnId: running.id, settled }
   }
 
   /**
@@ -841,6 +1028,18 @@ export class TurnRunner {
     }
   }
 
+  /** A steer placeholder whose interjection was delivered: gone, no events, no stats. */
+  private dropPlaceholder(turn: TurnState): void {
+    if (turn.ended) return
+    turn.ended = true
+    turn.endedAt = Date.now()
+    const turns = this.liveTurns.get(turn.key)
+    if (turns) {
+      turns.delete(turn)
+      if (turns.size === 0) this.liveTurns.delete(turn.key)
+    }
+  }
+
   private finishTurn(turn: TurnState): void {
     if (turn.ended) return
     turn.ended = true
@@ -885,6 +1084,7 @@ export class TurnRunner {
     // use the pair as a gauge (active requests), so an unmatched end would
     // decrement someone else's turn.
     this.onTurnStart?.(toInfo(turn))
+    turn.running = true
 
     if (turn.abortController.signal.aborted) {
       this.finishTurn(turn)

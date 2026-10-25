@@ -186,6 +186,8 @@
       "outdated": "A newer revision of this view exists.",
       "showLatest": "Show newest"
     },
+    "steered": "↪ Interjection",
+    "steerWaiting": "⏳ waiting",
     "secretsSealed": "{count} secret stored safely | {count} secrets stored safely",
     "secretChipTooltip": "Stored secret — the value stays on this server and never reaches the model",
     "dictation": {

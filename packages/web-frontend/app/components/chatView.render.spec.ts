@@ -587,6 +587,34 @@ describe('ChatView: special rows', () => {
   })
 })
 
+describe('ChatView: S1-D interjection markers', () => {
+  it('marks a message sent during a run as "Zwischenruf", flips it to "wartet" on fallback, and restores both from metadata', async () => {
+    history = [
+      row(1, 'user', 'old steer', { metadata: JSON.stringify({ steer: true, turnId: 't-0' }) }),
+      row(2, 'user', 'old queued', { metadata: JSON.stringify({ queued: true }) }),
+    ]
+    const { root } = await mountChat()
+    const marks = () => all(root).filter(n => 'data-steer-state' in n.props).map(n => n.props['data-steer-state'])
+    expect(marks()).toEqual(['steered', 'waiting'])
+
+    await typeInto(root, 'nimm Variante B')
+    await submit(root)
+    const sent = sentFrames().find(f => f.type === 'message')!
+    receive({ type: 'message.steered', clientMessageId: sent.clientMessageId, messageId: 9, turnId: 't-1', sessionId: 's', agentId: 'main' })
+    await flush()
+    expect(marks()).toEqual(['steered', 'waiting', 'steered'])
+    expect(textOf(root)).toContain('chat.steered')
+    // The run ended before it took the interjection: now it waits.
+    receive({ type: 'message.queued', clientMessageId: sent.clientMessageId, messageId: 9, turnId: 't-2', waitingForTurnId: 't-1', sessionId: 's', agentId: 'main' })
+    await flush()
+    expect(marks()).toEqual(['steered', 'waiting', 'waiting'])
+    // A frame for an unknown key changes nothing.
+    receive({ type: 'message.steered', clientMessageId: 'unknown', turnId: 't-9' })
+    await flush()
+    expect(marks()).toEqual(['steered', 'waiting', 'waiting'])
+  })
+})
+
 describe('ChatView: interaction blocks and actions', () => {
   const fence = '```offtangent\n{"block":"confirm","id":"b1","question":"Proceed?"}\n```'
 

@@ -64,7 +64,7 @@ interface ChatMessage {
 }
 
 interface ChatResponse {
-  type: 'text' | 'thinking' | 'tool_call_start' | 'tool_call_end' | 'error' | 'done' | 'system' | 'external_user_message' | 'session_end' | 'session_summary' | 'task_completed' | 'task_failed' | 'task_question' | 'task_status_update' | 'task_started' | 'task_progress' | 'task_finished' | 'reminder' | 'pong' | 'attachment' | 'chat_action' | 'chat_action_resolved' | 'turn_replay_start' | 'turn_replay_end' | 'stall_warning' | 'stall_resolved' | 'retry_scheduled' | 'message_ack' | 'queued' | 'turn_queued' | 'capture_routed' | 'capture_needs_review' | 'now_set_changed' | 'feed_item' | 'board_updated' | 'strand_project_changed' | 'strand_forked' | 'voice_note' | 'canvas_view_updated' | 'interaction.pending' | 'interaction.open' | 'interaction.updated' | 'interaction.draft'
+  type: 'text' | 'thinking' | 'tool_call_start' | 'tool_call_end' | 'error' | 'done' | 'system' | 'external_user_message' | 'session_end' | 'session_summary' | 'task_completed' | 'task_failed' | 'task_question' | 'task_status_update' | 'task_started' | 'task_progress' | 'task_finished' | 'reminder' | 'pong' | 'attachment' | 'chat_action' | 'chat_action_resolved' | 'turn_replay_start' | 'turn_replay_end' | 'stall_warning' | 'stall_resolved' | 'retry_scheduled' | 'message_ack' | 'queued' | 'turn_queued' | 'capture_routed' | 'capture_needs_review' | 'now_set_changed' | 'feed_item' | 'board_updated' | 'strand_project_changed' | 'strand_forked' | 'voice_note' | 'canvas_view_updated' | 'interaction.pending' | 'interaction.open' | 'interaction.updated' | 'interaction.draft' | 'message.steered' | 'message.queued'
   text?: string
   /**
    * Machine-readable reason of an `error` frame that refused an explicit
@@ -122,6 +122,13 @@ interface ChatResponse {
   interaction?: InteractionRecord | Omit<InteractionRecord, 'payload'>
   /** For `message_ack`: echoes the client's idempotency key. */
   clientMessageId?: string
+  /**
+   * S1-D: for `message.steered` the running turn the message went into as an
+   * interjection; for `message.queued` the turn the message waits as.
+   */
+  turnId?: string
+  /** S1-D, `message.queued`: the running turn the message waits for. */
+  waitingForTurnId?: string | null
   /** For `message_ack`: true when this key was seen before and no new turn was started. */
   duplicate?: boolean
   /**
@@ -846,7 +853,10 @@ export function setupWebSocketChat(
       // chunks, attachments, stall notices, `done` — arrives through the
       // per-connection turn subscription, so the turn survives this socket
       // going away and is replayed to whoever attaches next.
-      turnRunner.startTurn({
+      // S1-D: while this strand's turn runs its tool batch, the message is
+      // handed to that turn as an interjection (steer) instead of waiting.
+      const submitted = turnRunner.submitUserMessage({
+        messageId: savedMessageId ?? null,
         userId: currentUser.userId,
         sessionId: resolvedSessionId,
         text: agentText,
@@ -863,7 +873,23 @@ export function setupWebSocketChat(
       // Turns of one persona are serialized. Tell the client when its message
       // has to wait so a pending turn does not look stuck — `queuedTurn` was
       // sampled BEFORE startTurn, so it never counts this turn itself.
-      if (queuedTurn.queued) {
+      const steerFrameBase = {
+        ...(savedMessageId != null ? { messageId: savedMessageId } : {}),
+        ...(clientMessageId ? { clientMessageId } : {}),
+        sessionId: resolvedSessionId,
+        agentId,
+      }
+      if (submitted.mode === 'steered') {
+        sendMessage(ws, { type: 'message.steered', ...steerFrameBase, turnId: submitted.turnId })
+        // The run ended before it took the interjection: it now waits as a
+        // turn of its own; the client flips its marker to "wartet".
+        void submitted.fallback.then((turn) => {
+          if (turn) sendMessage(ws, { type: 'message.queued', ...steerFrameBase, turnId: turn.turnId, waitingForTurnId: submitted.turnId })
+        }).catch(() => undefined)
+      } else if (submitted.mode === 'queued') {
+        sendMessage(ws, { type: 'message.queued', ...steerFrameBase, turnId: submitted.turn.turnId, waitingForTurnId: submitted.waitingForTurnId })
+      }
+      if (queuedTurn.queued && submitted.mode !== 'steered') {
         const frame = {
           sessionId: resolvedSessionId,
           position: queuedTurn.position,

@@ -1,3 +1,4 @@
+import type { SteerOffer, SteerOfferOptions } from './steer.js'
 import { recordStrandTurnStart, recordStrandTurnFirstToken, recordStrandTurnEnd } from './strand-turns.js'
 import { randomUUID } from 'node:crypto'
 import { AsyncLocalStorage } from 'node:async_hooks'
@@ -1620,6 +1621,22 @@ export class AgentCore {
    */
   // Used by web/Telegram cancellation handlers.
   // fallow-ignore-next-line unused-class-member
+  /**
+   * S1-D: offer a user interjection to the live run of this strand. Only the
+   * runtime that currently runs `sessionId` can accept it (strand runtime
+   * first, then the persona's shared runtime).
+   */
+  offerSteer(agentId: string, sessionId: string, text: string, messageId: number | null = null, opts: SteerOfferOptions = {}): SteerOffer {
+    const candidates = [this.runtimes.get(AgentCore.runtimeKey(agentId, sessionId)), this.runtimes.get(agentId)]
+    for (const runtime of candidates) {
+      if (!runtime) continue
+      if (!runtime.offerSteer) return { accepted: false, reason: 'unsupported' }
+      const offer = runtime.offerSteer(sessionId, text, messageId, opts)
+      if (offer.accepted || offer.reason !== 'no_run') return offer
+    }
+    return { accepted: false, reason: 'no_run' }
+  }
+
   abort(scope?: AbortScope): void {
     for (const [key, runtime] of this.runtimes) {
       const agentId = AgentCore.agentIdOfKey(key)

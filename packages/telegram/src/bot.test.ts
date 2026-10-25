@@ -19,6 +19,7 @@ vi.mock('grammy', () => {
     }),
     sendMessage: vi.fn().mockResolvedValue({ message_id: 1 }),
     editMessageText: vi.fn().mockResolvedValue(true),
+    deleteMessage: vi.fn().mockResolvedValue(true),
     deleteWebhook: vi.fn().mockResolvedValue(true),
     setMyCommands: vi.fn().mockResolvedValue(true),
   }
@@ -903,6 +904,120 @@ describe('TelegramBot', () => {
     })
   })
 
+  describe('S1-D interjection (steer) during a running turn', () => {
+    function setup(offer: (input: any) => any) {
+      let release!: () => void
+      const firstDone = new Promise<void>((resolve) => { release = resolve })
+      async function* firstStream(): AsyncGenerator<ResponseChunk> {
+        yield { type: 'text', text: 'Working' }
+        await firstDone
+        yield { type: 'done' }
+      }
+      vi.mocked(agentCore.sendMessage)
+        .mockReturnValueOnce(firstStream())
+        .mockImplementation(() => doneOnlyStream())
+      const bot = new TelegramBot({ agentCore, config: defaultConfig })
+      const runner = (bot as any).turnRunner
+      const offerSpy = vi.fn(offer)
+      runner.offerSteerToLiveTurn = offerSpy
+      const handler = (bot.getBot() as unknown as MockBotInternals)._handlers.get('message:text')!
+      return { bot, handler, offerSpy, release: () => release() }
+    }
+    const replies = (ctx: any) => ctx.reply.mock.calls.map((c: unknown[]) => String(c[0]))
+
+    it('hands a message to the running turn and confirms "Zwischenruf übergeben"; no second turn', async () => {
+      let settle!: (delivered: boolean) => void
+      const { bot, handler, offerSpy, release } = setup(() => ({
+        accepted: true, turnId: 'turn-1', settled: new Promise<boolean>((r) => { settle = r }),
+      }))
+      await handler(createMockContext({ message: { text: 'First task', message_id: 1 } }))
+      await vi.advanceTimersByTimeAsync(2500)
+      const second = createMockContext({ message: { text: 'nimm Variante B', message_id: 2 } })
+      await handler(second)
+      await vi.advanceTimersByTimeAsync(2500)
+      expect(offerSpy).toHaveBeenCalledTimes(1)
+      expect(offerSpy.mock.calls[0]![0]).toMatchObject({ text: 'nimm Variante B', source: 'telegram' })
+      expect(replies(second).join('\n')).toContain('Zwischenruf übergeben')
+      expect(bot.getQueueDepth()).toBe(1)
+      settle(true)
+      release()
+      await flushAsyncWork()
+      await flushAsyncWork()
+      expect(agentCore.sendMessage).toHaveBeenCalledTimes(1)
+    })
+
+    it('queues with "wartet, bis der Lauf fertig ist" when the run refuses (no tool batch / slot taken)', async () => {
+      const { bot, handler, offerSpy, release } = setup(() => ({ accepted: false, reason: 'slot_taken' }))
+      await handler(createMockContext({ message: { text: 'First task', message_id: 1 } }))
+      await vi.advanceTimersByTimeAsync(2500)
+      const second = createMockContext({ message: { text: 'Second', message_id: 2 } })
+      await handler(second)
+      await vi.advanceTimersByTimeAsync(2500)
+      expect(offerSpy).toHaveBeenCalledTimes(1)
+      expect(replies(second).join('\n')).toMatch(/[Ww]artet, bis der Lauf fertig ist/)
+      expect(bot.getQueueDepth()).toBe(2)
+      release()
+      await flushAsyncWork()
+      await flushAsyncWork()
+      expect(vi.mocked(agentCore.sendMessage).mock.calls.map((c) => c[1])).toEqual(['First task', 'Second'])
+    })
+
+    it('a steer the run did not take falls back to the queue and runs once', async () => {
+      let settle!: (delivered: boolean) => void
+      const { handler, release } = setup(() => ({
+        accepted: true, turnId: 'turn-1', settled: new Promise<boolean>((r) => { settle = r }),
+      }))
+      await handler(createMockContext({ message: { text: 'First task', message_id: 1 } }))
+      await vi.advanceTimersByTimeAsync(2500)
+      const second = createMockContext({ message: { text: 'late', message_id: 2 } })
+      await handler(second)
+      await vi.advanceTimersByTimeAsync(2500)
+      settle(false)
+      await flushAsyncWork()
+      expect(replies(second).join('\n')).toMatch(/[Ww]artet/)
+      release()
+      await flushAsyncWork()
+      await flushAsyncWork()
+      expect(vi.mocked(agentCore.sendMessage).mock.calls.map((c) => c[1])).toEqual(['First task', 'late'])
+    })
+
+    it('REVIEW-S1-D finding 1: a refused steer keeps its reserved place ahead of a message queued meanwhile', async () => {
+      let settle!: (delivered: boolean) => void
+      let offered = 0
+      const { handler, release } = setup(() => {
+        offered++
+        if (offered > 1) return { accepted: false, reason: 'slot_taken' }
+        return { accepted: true, turnId: 'turn-1', settled: new Promise<boolean>((r) => { settle = r }) }
+      })
+      await handler(createMockContext({ message: { text: 'First task', message_id: 1 } }))
+      await vi.advanceTimersByTimeAsync(2500)
+      await handler(createMockContext({ message: { text: 'first', message_id: 2 } }))
+      await vi.advanceTimersByTimeAsync(2500)
+      await handler(createMockContext({ message: { text: 'second', message_id: 3 } }))
+      await vi.advanceTimersByTimeAsync(2500)
+      settle(false)
+      await flushAsyncWork()
+      release()
+      await flushAsyncWork()
+      await flushAsyncWork()
+      await flushAsyncWork()
+      expect(vi.mocked(agentCore.sendMessage).mock.calls.map((c) => c[1])).toEqual(['First task', 'first', 'second'])
+    })
+
+    it('a message behind an already waiting one is queued without a steer offer', async () => {
+      const { handler, offerSpy } = setup(() => ({ accepted: false, reason: 'slot_taken' }))
+      await handler(createMockContext({ message: { text: 'First task', message_id: 1 } }))
+      await vi.advanceTimersByTimeAsync(2500)
+      await handler(createMockContext({ message: { text: 'Second', message_id: 2 } }))
+      await vi.advanceTimersByTimeAsync(2500)
+      const third = createMockContext({ message: { text: 'Third', message_id: 3 } })
+      await handler(third)
+      await vi.advanceTimersByTimeAsync(2500)
+      expect(offerSpy).toHaveBeenCalledTimes(1)
+      expect(replies(third).join('\n')).toMatch(/[Ww]artet/)
+    })
+  })
+
   describe('kill switch', () => {
     it('/stop aborts the current task, flushes queued work, and reports the removed count', async () => {
       let releaseFirst!: () => void
@@ -1480,8 +1595,45 @@ describe('TelegramBot', () => {
       const botApi = (bot.getBot() as any).api
       expect(botApi.sendMessage.mock.calls.length).toBeGreaterThanOrEqual(2)
 
-      const allText = botApi.sendMessage.mock.calls.map((c: unknown[]) => c[1] as string).join('')
+      // S1-D, D2: the status line of the turn is a message of its own.
+      const replyCalls = botApi.sendMessage.mock.calls.filter((c: unknown[]) => !String(c[1]).startsWith('⏳ Arbeitet'))
+      expect(replyCalls.length).toBeGreaterThanOrEqual(2)
+      const allText = replyCalls.map((c: unknown[]) => c[1] as string).join('')
       expect(allText.length).toBe(5000)
+    })
+
+    it('S1-D D2: a turn draws a status line with tool names only (no args) and deletes it at the end', async () => {
+      const SECRET_ARG = 'ARG-CANARY-should-never-reach-telegram'
+      async function* mockStream(): AsyncGenerator<ResponseChunk> {
+        await new Promise(r => setTimeout(r, 4000))
+        yield { type: 'tool_call_start', toolName: 'read_file', toolArgs: { path: SECRET_ARG } } as ResponseChunk
+        await new Promise(r => setTimeout(r, 4000))
+        yield { type: 'tool_call_start', toolName: 'unregistered_tool', toolArgs: { q: SECRET_ARG } } as ResponseChunk
+        await new Promise(r => setTimeout(r, 4000))
+        yield { type: 'text', text: 'fertig' }
+        yield { type: 'done' }
+      }
+      vi.mocked(agentCore.sendMessage).mockReturnValue(mockStream())
+      ;(agentCore as unknown as { getRuntimeStateSnapshot: () => unknown }).getRuntimeStateSnapshot = () => ({ toolNames: ['read_file'] })
+
+      const bot = new TelegramBot({ agentCore, config: defaultConfig })
+      const underlying = bot.getBot() as unknown as MockBotInternals
+      const handler = underlying._handlers.get('message:text')!
+      await handler(createMockContext())
+      await vi.advanceTimersByTimeAsync(20000)
+
+      const botApi = (bot.getBot() as any).api
+      const sent = botApi.sendMessage.mock.calls.map((c: unknown[]) => String(c[1]))
+      expect(sent).toContain('⏳ Arbeitet… 0 s')
+      const edits = botApi.editMessageText.mock.calls.map((c: unknown[]) => String(c[2]))
+      expect(edits.some((t: string) => t.includes('read_file'))).toBe(true)
+      expect(edits.some((t: string) => t.includes('other_tool'))).toBe(true)
+      expect(edits.some((t: string) => t.includes('unregistered_tool'))).toBe(false)
+      const everything = JSON.stringify([botApi.sendMessage.mock.calls, botApi.editMessageText.mock.calls])
+      expect(everything).not.toContain(SECRET_ARG)
+      expect(botApi.deleteMessage).toHaveBeenCalledTimes(1)
+      // The reply still arrives, after the line is gone.
+      expect(sent.some((t: string) => t.includes('fertig'))).toBe(true)
     })
   })
 })

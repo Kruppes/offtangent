@@ -2628,6 +2628,15 @@ export async function createRuntimeComposition(options: RuntimeCompositionOption
 
       wireAgentCoreEvents()
 
+      // S1-D: interjections accepted before a restart but never delivered to
+      // a model request come back as queued turns (idempotent per message).
+      try {
+        const recovered = turnRunner.recoverUndeliveredSteers()
+        if (recovered > 0) logger.log(`[axiom] Requeued ${recovered} undelivered steer message(s)`)
+      } catch (err) {
+        logger.error('[axiom] Steer recovery failed:', err)
+      }
+
       agentCore.init().catch(err => {
         logger.error('[axiom] Error during agentCore.init():', err)
       })

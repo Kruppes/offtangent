@@ -6,6 +6,7 @@ import { spawn } from 'node:child_process'
 import { readStrandContextWindow, readStrandEcoMode } from './eco-mode-store.js'
 import { resolveTurnEcoOwner, freezeEcoToolResult } from './eco-tool-freeze.js'
 import { ASK_USER_TOOL_NAME, redactAskUserArgs } from './contracts/ask-user.js'
+import { SteerSlot, type SteerOffer, type SteerOfferOptions } from './steer.js'
 import { ASK_USER_SYSTEM_HINT, batchHasBlockingAskUser, claimInteractionContextNotes, createAskUserTool, isAskUserOfferedFor, markInteractionContextNotesDelivered, releaseInteractionContextNotes } from './ask-user-tool.js'
 import type { AfterToolCallContext, AfterToolCallResult } from '@earendil-works/pi-agent-core'
 import fs from 'node:fs'
@@ -216,6 +217,12 @@ export interface AgentRuntimeBoundary {
    * Optional so lightweight test doubles of this boundary stay valid.
    */
   getRunningSessionId?(): string | null
+  /**
+   * S1-D: hand a user interjection to the run of `sessionId`, delivered after
+   * the current tool batch (see `steer.ts`). Optional so lightweight test
+   * doubles of this boundary stay valid; absent = steering unsupported.
+   */
+  offerSteer?(sessionId: string, text: string, messageId?: number | null, opts?: SteerOfferOptions): SteerOffer
   getCurrentModel(): Model<Api>
   getCurrentApiKey(): string
   /** The current provider config, if the runtime was initialized with one. */
@@ -798,6 +805,8 @@ class PiAgentRuntime implements AgentRuntimeBoundary, AgentRuntimePiAgentAccess 
    * abort is process-wide and hits foreign strands.
    */
   private currentSessionId: string | null = null
+  /** S1-D: the one-per-batch user interjection slot of the current run. */
+  private readonly steerSlot = new SteerSlot()
 
   constructor(options: AgentRuntimeOptions) {
     this.model = options.model
@@ -929,6 +938,14 @@ class PiAgentRuntime implements AgentRuntimeBoundary, AgentRuntimePiAgentAccess 
             `[agent-runtime] tool_use/tool_result boundary violation caught before send (agent ${this.agentId}) — dropped ${drops.length} block(s): ${drops.join('; ')} | structure(before)=${describeHistoryStructure(messages)}`,
           )
         }
+        // S1-D (REVIEW-S1-D-2, finding 2): the steer is only ARMED here, on
+        // the sanitized outgoing context. It counts as delivered once the
+        // provider stream of this request emits its first event
+        // (`message_start` of a non-error assistant message, see the
+        // subscription in streamPrompt): a guard refusal or a pre-send
+        // exception never reaches that point and the steer falls back to a
+        // queued turn.
+        this.steerSlot.contextAssembled(cleaned)
         // Privacy (plan 2026-09-26, step 4): last net before the request
         // leaves the process. Everything already known (handles, secrets.json
         // env, provider keys, credential-looking process env) is replaced by
@@ -957,8 +974,32 @@ class PiAgentRuntime implements AgentRuntimeBoundary, AgentRuntimePiAgentAccess 
       // call of a batch sets `terminate`. A batch with a blocking ask_user
       // ran its other calls normally; the turn ends here, without a further
       // model request, and waits for the answer.
-      finishTurn: (turn) => this.finishAskUserTurn(turn.toolResults),
+      finishTurn: (turn) => this.finishTurnWithSteer(turn.toolResults),
     })
+  }
+
+  /**
+   * S1-B ask_user turn-end rule, then S1-D: a pending user interjection is
+   * handed to pi-agent-core's steering queue, which the loop drains right
+   * after this hook — so it reaches the next model request of this turn. A
+   * batch that ends the turn delivers nothing; the caller queues instead.
+   */
+  private finishTurnWithSteer(
+    toolResults: ReadonlyArray<{ toolName: string; isError: boolean; details?: unknown }>,
+  ): { action: 'end' } | undefined {
+    const decision = this.finishAskUserTurn(toolResults)
+    const block = this.steerSlot.batchFinished(decision?.action === 'end' || toolResults.length === 0)
+    if (block) {
+      const message = { role: 'user' as const, content: [{ type: 'text' as const, text: block }], timestamp: Date.now() }
+      this.steerSlot.attachMessage(message)
+      this.agent.steer(message)
+    }
+    return decision
+  }
+
+  offerSteer(sessionId: string, text: string, messageId: number | null = null, opts: SteerOfferOptions = {}): SteerOffer {
+    if (this.currentSessionId !== sessionId) return { accepted: false, reason: 'no_run' }
+    return this.steerSlot.offer(text, messageId, opts)
   }
 
   /** `end` after a tool batch with a blocking ask_user call (S1-B); resets the one-blocking slot per batch. */
@@ -1439,6 +1480,16 @@ class PiAgentRuntime implements AgentRuntimeBoundary, AgentRuntimePiAgentAccess 
     let midStreamError: unknown = null
 
     const unsubscribe = this.agent.subscribe((event: AgentEvent) => {
+      // S1-D: synchronous, so an interjection offered while this batch
+      // executes is accepted for it (the chunk consumer may lag behind).
+      if (event.type === 'tool_execution_start') this.steerSlot.toolStarted()
+      // S1-D (REVIEW-S1-D-2): send start = the provider stream's first
+      // `start` event (pi-ai pushes it only after the HTTP response
+      // arrived; the overflow guard forwards one per answered request and
+      // none on a refusal). The loop maps it to `message_start` of the
+      // partial assistant message; an error/abort without a start is mapped
+      // to a `message_start` of the final error message, which is ignored.
+      else if (event.type === 'message_start' && isSentAssistantStart(event.message)) this.steerSlot.requestStarted()
       eventQueue.push(event)
       if (resolveWaiting) {
         resolveWaiting()
@@ -1547,6 +1598,21 @@ class PiAgentRuntime implements AgentRuntimeBoundary, AgentRuntimePiAgentAccess 
       }
     } finally {
       unsubscribe()
+      // S1-D: an interjection the run did not take settles `false`; the
+      // caller queues it as a normal turn.
+      // An in-flight steer that never reached a request must not leak into
+      // the next run (it comes back as a queued turn of its own).
+      const undelivered = this.steerSlot.inFlightMessage()
+      if (undelivered) {
+        try {
+          this.agent.clearSteeringQueue()
+          const msgs = this.agent.state.messages
+          if (msgs.includes(undelivered as never)) this.agent.state.messages = msgs.filter(m => m !== undelivered)
+        } catch (err) {
+          console.warn('[agent-runtime] Could not drop an undelivered steer:', (err as Error).message)
+        }
+      }
+      this.steerSlot.runEnded()
       // Normally settled once `done` is set; after a watchdog abort it may
       // never settle (that's the failure mode we're guarding against), so
       // never await it unbounded.
@@ -1844,4 +1910,11 @@ class PiAgentRuntime implements AgentRuntimeBoundary, AgentRuntimePiAgentAccess 
 
 export function createAgentRuntime(options: AgentRuntimeOptions): AgentRuntimeBoundary {
   return new PiAgentRuntime(options)
+}
+
+/** S1-D: a `message_start` that proves a model request reached the provider (not a local error/abort stub). */
+function isSentAssistantStart(message: unknown): boolean {
+  if (!message || typeof message !== 'object') return false
+  const m = message as { role?: unknown; stopReason?: unknown }
+  return m.role === 'assistant' && m.stopReason !== 'error' && m.stopReason !== 'aborted'
 }

@@ -185,6 +185,10 @@ const WRITE_SITES: Record<string, { class: WriteClass; why: string }> = {
     class: 'model-text',
     why: 'The assistant row of an injected task answer, produced by an agent that ran behind the boundary.',
   },
+  'core/src/steer.ts#markUserMessageSteerState': {
+    class: 'infrastructure',
+    why: 'S1-D: rewrites only the metadata JSON of an existing user row (steer/turnId or queued flags); the content column is not touched.',
+  },
   // ------------------------------------------------------------ telegram
   'telegram/src/bot.ts#processQueuedMessage': {
     class: 'sealed-user-input',
@@ -193,6 +197,10 @@ const WRITE_SITES: Record<string, { class: WriteClass; why: string }> = {
   'telegram/src/bot.ts#handleIncomingAttachment': {
     class: 'sealed-user-input',
     why: 'Attachment captions are sealed in handleIncomingAttachment before the row is written.',
+  },
+  'telegram/src/bot.ts#queueIt': {
+    class: 'sealed-user-input',
+    why: 'S1-D interjection: the Telegram user row written before the steer offer (the scanner names the closure above it). batch.text is sealed in bufferMessage (user tier), the same text processQueuedMessage persists.',
   },
   'telegram/src/bot.ts#syncOutgoingMessageToWeb': {
     class: 'model-text',

@@ -82,6 +82,19 @@ export interface InteractionTurnStarter {
     /** S1-B: the ask_user interaction this turn answers. */
     replyToInteractionId?: string | null
   }) => unknown
+  /**
+   * S1-D: hand an already formatted block to the RUNNING turn of the strand
+   * as an interjection (steer). Optional: without it a non-blocking answer
+   * waits for the next turn as a context note.
+   */
+  offerSteerToLiveTurn?: (input: {
+    agentUserId: string
+    agentId?: string
+    sessionId: string
+    text: string
+    source?: string
+    preformatted?: boolean
+  }) => { accepted: true; turnId: string; settled: Promise<boolean> } | { accepted: false; reason: string }
 }
 
 /**
@@ -123,6 +136,8 @@ export interface AnswerInteractionResult {
   label: string
   /** S1-A: the row of the `interactions` table, after the answer (payload sealed). */
   interaction?: InteractionStateView
+  /** S1-D: a non-blocking answer was handed to the running turn as an interjection. */
+  steered?: { turnId: string }
 }
 
 /**
@@ -511,13 +526,54 @@ export function createInteractionsService(options: InteractionsServiceOptions): 
     })
     const result = (resumed: boolean, idempotent: boolean): AnswerInteractionResult =>
       ({ applied: true, resumed, idempotent, value: checked.value, label, interaction: interactionStateView(answered) })
-    if (!record.blocking) return result(false, false)
+    if (!record.blocking) {
+      const steered = steerNonBlockingAnswer(userId, row, answered, turnText, surface)
+      return steered ? { ...result(false, false), steered } : result(false, false)
+    }
     if (!inserted) return result(false, true)
     if (!turnRunnerOf()) {
       console.warn(`[interactions] No turn runner available; answer to ${record.id} was filed without a turn`)
       return result(false, false)
     }
     return resumeAskUser(userId, row, answered, surface, false)
+  }
+
+  /**
+   * S1-D (report.md ~357): the answer to a NON-blocking ask_user card that
+   * arrives while a turn of its strand runs a tool batch goes into that turn
+   * as a steer, instead of waiting for the next turn as a context note. Only
+   * a delivered steer marks the answer resumed (then the note path skips it);
+   * a steer the run did not take stays a note for the next turn. Never throws:
+   * the note path is the fallback.
+   */
+  function steerNonBlockingAnswer(
+    userId: number,
+    row: BlockMessageRow,
+    answered: InteractionRecord,
+    turnText: string,
+    surface: InteractionSurface,
+  ): { turnId: string } | null {
+    // The call's own starter (Telegram) may not steer; the shared runner can.
+    const runner = [callStarter, options.getTurnRunner?.()].find(r => r?.offerSteerToLiveTurn)
+    if (!runner?.offerSteerToLiveTurn) return null
+    try {
+      const offer = runner.offerSteerToLiveTurn({
+        agentUserId: String(row.user_id ?? userId),
+        agentId: row.agent_id ?? 'main',
+        sessionId: row.session_id,
+        text: turnText,
+        source: surface,
+        preformatted: true,
+      })
+      if (!offer.accepted) return null
+      void offer.settled.then((delivered) => {
+        if (delivered) markInteractionResumed(db, answered.id, true)
+      }).catch(() => undefined)
+      return { turnId: offer.turnId }
+    } catch (err) {
+      console.warn(`[interactions] Steer of the answer to ${answered.id} failed:`, (err as Error).message)
+      return null
+    }
   }
 
   /**

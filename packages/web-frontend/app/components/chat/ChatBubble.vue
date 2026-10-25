@@ -91,6 +91,14 @@
         <AppIcon name="lock" size="sm" class="h-3 w-3" />
         <span>{{ $t('chat.secretsSealed', { count: msg.sealedCount ?? 0 }) }}</span>
       </p>
+      <!-- S1-D: sent while a turn ran: interjection or waiting. -->
+      <p
+        v-if="msg.role === 'user' && msg.steerState"
+        class="mt-1 flex items-center gap-1 text-2xs text-muted-foreground"
+        :data-steer-state="msg.steerState"
+      >
+        <span>{{ msg.steerState === 'steered' ? $t('chat.steered') : $t('chat.steerWaiting') }}</span>
+      </p>
       <!-- The spoken version of this answer (also one made in the app), shown
            as its own element; it is played, never generated again. -->
       <VoiceNoteBubble v-if="msg.role === 'assistant' && voiceNoteOf(msg)" :url="voiceNoteOf(msg)!.url" :seconds="voiceNoteOf(msg)!.seconds" kind="assistant" />
