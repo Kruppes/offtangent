@@ -22,6 +22,7 @@ import {
   type InteractionBlock,
 } from '@axiom/core'
 import { panelText, personaId, shortLabel } from './text.js'
+import { isDeviceAnswerableBlock, resolveDeviceBlock, resolveDeviceOptionValue } from '../devices/answer.js'
 
 export const CLOCK_TITLE_MAX = 24
 export const CLOCK_QUESTION_MAX = 40
@@ -77,47 +78,15 @@ export interface ClockState {
 /**
  * May this card be answered on the clock? Only single-choice and yes/no, and
  * never anything the model marked as destructive — those stay on the phone,
- * where the full context is visible.
+ * where the full context is visible. Since the status API this is the one
+ * device rule ({@link isDeviceAnswerableBlock}); the clock names stay as
+ * aliases.
  */
-/** Opaque positional id of the privacy mode: `~<1-based index>`. */
-const OPAQUE_ID = /^~([1-9]\d{0,3})$/
-
-function opaqueIndex(id: string): number | null {
-  const match = OPAQUE_ID.exec(id)
-  return match ? Number(match[1]) - 1 : null
-}
-
-/**
- * The block a clock answer addresses. A real id and an opaque one (`~n` =
- * n-th answerable block of the message) are both accepted, so toggling the
- * privacy mode between the clock's poll and its answer never breaks it; the
- * form the device's current mode emits wins if both would match.
- */
-export function resolveClockBlock(
-  blocks: InteractionBlock[],
-  blockId: string,
-  privacy: boolean,
-): InteractionBlock | undefined {
-  const exact = blocks.find(candidate => candidate.id === blockId)
-  const index = opaqueIndex(blockId)
-  const positional = index === null ? undefined : blocks[index]
-  return privacy ? (positional ?? exact) : (exact ?? positional)
-}
-
-/** The real option id behind a clock answer value (same rule as above). */
-export function resolveClockOptionValue(block: InteractionBlock, value: string, privacy: boolean): string {
-  const exact = block.options.find(option => option.id === value)?.id
-  const index = opaqueIndex(value)
-  const positional = index === null ? undefined : block.options[index]?.id
-  return (privacy ? (positional ?? exact) : (exact ?? positional)) ?? value
-}
-
-export function isClockEligibleBlock(block: InteractionBlock): boolean {
-  if (block.kind !== 'choice' && block.kind !== 'confirm') return false
-  if (block.destructive) return false
-  if (block.options.some(option => option.style === 'danger')) return false
-  return block.options.length >= 2
-}
+export const isClockEligibleBlock = isDeviceAnswerableBlock
+/** See {@link resolveDeviceBlock}: real id or opaque `~n` of the privacy mode. */
+export const resolveClockBlock = resolveDeviceBlock
+/** See {@link resolveDeviceOptionValue}. */
+export const resolveClockOptionValue = resolveDeviceOptionValue
 
 /** SQLite `datetime('now')` text (UTC, no zone) to ISO-8601 UTC. */
 function sqliteToIso(value: string | null): string | null {

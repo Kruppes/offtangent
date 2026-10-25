@@ -50,12 +50,17 @@ services:
       # many characters of the answer, which then travels through Google.
       - PUSH_PREVIEW_CHARS=${PUSH_PREVIEW_CHARS:-0}
       # LED clock (TC002 Berry app "Offtangent", /api/device/clock). Empty =
-      # code defaults: no wake call (the clock polls every 15 s) and the
-      # private-range LAN allowlist. See docs/reference/env-vars.md.
+      # code defaults: no wake call (the clock polls every 15 s).
       - CLOCK_WAKE_URL=${CLOCK_WAKE_URL:-}
       - CLOCK_WAKE_ENABLED=${CLOCK_WAKE_ENABLED:-}
       - CLOCK_WAKE_APP=${CLOCK_WAKE_APP:-}
-      - CLOCK_ALLOWED_CIDRS=${CLOCK_ALLOWED_CIDRS:-}
+      # Device LAN allowlist (/api/status and the clock). Bare names on purpose:
+      # passed through only when set in the shell or .env. A SET but empty
+      # value refuses every device (fail closed), so `${VAR:-}` would lock the
+      # devices out; unset = the private-range default.
+      # See docs/reference/env-vars.md.
+      - DEVICE_ALLOWED_CIDRS
+      - CLOCK_ALLOWED_CIDRS
 
   # Uncomment to enable local Whisper for speech-to-text
   # whisper:

@@ -1154,6 +1154,15 @@ function ensureClockDeviceTable(db: Database): void {
       DELETE FROM clock_devices WHERE user_id = OLD.id;
     END;
   `)
+  // General device tokens (status API): the table now holds every device
+  // kind, the clock was only the first. Additive column; every row of an
+  // earlier build is a clock, which the default records. The legacy scope
+  // names `clock:state` / `clock:answer` stay as stored and are read as
+  // aliases of `status:read` / `interactions:answer` (devices/registry.ts).
+  const cols = new Set((db.prepare('PRAGMA table_info(clock_devices)').all() as Array<{ name: string }>).map(c => c.name))
+  if (!cols.has('kind')) {
+    db.exec("ALTER TABLE clock_devices ADD COLUMN kind TEXT NOT NULL DEFAULT 'clock'")
+  }
 }
 
 /**

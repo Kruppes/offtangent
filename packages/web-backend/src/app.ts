@@ -43,6 +43,7 @@ import { createFeedRouter } from './api/modules/feed/route.js'
 import { createBoardsRouter } from './api/modules/boards/route.js'
 import { createInteractionsRouter, createSharedInteractionsService, createStrandInteractionsRouter } from './api/modules/interactions/route.js'
 import { createClockDeviceRouter } from './api/modules/clock-device/route.js'
+import { createDevicesRouter, createStatusRouter } from './api/modules/devices/route.js'
 import type { CaptureTurnStarter } from './api/modules/captures/service.js'
 import type { StrandTurnGuard } from './api/modules/strands/service.js'
 import type { PersonaTurnGuard } from './api/modules/personas/service.js'
@@ -250,6 +251,14 @@ export function createApp(options?: AppOptions): express.Express {
       db: options.db,
       getInteractions: () => interactionsService,
     }))
+    // General status for polling screens (Pi dashboard, ...): device token
+    // (LAN only) or user JWT; answers through the same service as a tap.
+    app.use('/api/status', createStatusRouter({
+      db: options.db,
+      getInteractions: () => interactionsService,
+    }))
+    // Owner side of every device token (create/list/scopes/privacy/revoke).
+    app.use('/api/devices', createDevicesRouter({ db: options.db }))
     const strandRouters = createStrandsRouters({
       db: options.db,
       getAgentCore,

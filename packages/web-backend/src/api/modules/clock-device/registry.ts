@@ -1,22 +1,38 @@
 /**
  * Device tokens for the LED clock (TC002 Berry app "Offtangent", stage 1+2).
  *
- * A clock token is NOT a user JWT. It carries exactly two scopes,
- * `clock:state` (read the reduced panel state) and `clock:answer` (answer a
- * clock-eligible choice/confirm card), and nothing else: no chat, no feed, no
- * memory, no strands. Only its SHA-256 is stored, so a database dump does not
- * hand out working tokens. Revoking sets `revoked_at`; the next request with
- * that token is a 401.
+ * Since the status API the clock is one device kind of the general device
+ * registry (`../devices/registry.ts`, same table `clock_devices`). This
+ * wrapper keeps the clock's view of it unchanged:
+ *
+ * - only devices of kind `clock` are visible here (list, get, verify, wake);
+ * - the scopes keep their clock names, `clock:state` (read the reduced panel
+ *   state) and `clock:answer` (answer a clock-eligible choice/confirm card).
+ *   In the general registry they are aliases of `status:read` and
+ *   `interactions:answer`; a clock token of the first build is valid for
+ *   `GET /api/status` without being re-issued;
+ * - new clock tokens keep the prefix `otc_` and the stored scope string
+ *   `clock:state clock:answer`, byte for byte what the first build wrote.
+ *
+ * A clock token is NOT a user JWT: no chat, no feed, no memory, no strands.
+ * Only its SHA-256 is stored; revoking sets `revoked_at`, the next request
+ * with that token is a 401.
  */
-import crypto from 'node:crypto'
 import type { Database } from '@axiom/core'
+import {
+  DeviceRegistry,
+  normaliseName,
+  type Device,
+  type DeviceScope,
+} from '../devices/registry.js'
 
 export const CLOCK_SCOPES = ['clock:state', 'clock:answer'] as const
 export type ClockScope = typeof CLOCK_SCOPES[number]
 
-/** Prefix makes a leaked token recognisable in logs and secret scanners. */
-const TOKEN_PREFIX = 'otc_'
-const NAME_MAX = 40
+const CLOCK_NAME_OF: Record<DeviceScope, ClockScope> = {
+  'status:read': 'clock:state',
+  'interactions:answer': 'clock:answer',
+}
 
 export interface ClockDevice {
   id: string
@@ -29,95 +45,74 @@ export interface ClockDevice {
   revokedAt: string | null
 }
 
-interface ClockDeviceRow {
-  id: string
-  user_id: number
-  name: string
-  scopes: string
-  privacy: number
-  created_at: string
-  last_seen_at: string | null
-  revoked_at: string | null
-}
-
-function hashToken(token: string): string {
-  return crypto.createHash('sha256').update(token, 'utf8').digest('hex')
-}
-
-function toDevice(row: ClockDeviceRow): ClockDevice {
-  const scopes = row.scopes.split(/\s+/).filter((s): s is ClockScope => (CLOCK_SCOPES as readonly string[]).includes(s))
+function toClockDevice(device: Device): ClockDevice {
   return {
-    id: row.id,
-    userId: row.user_id,
-    name: row.name,
-    scopes,
-    privacy: row.privacy === 1,
-    createdAt: row.created_at,
-    lastSeenAt: row.last_seen_at,
-    revokedAt: row.revoked_at,
+    id: device.id,
+    userId: device.userId,
+    name: device.name,
+    scopes: device.scopes.map(scope => CLOCK_NAME_OF[scope]),
+    privacy: device.privacy,
+    createdAt: device.createdAt,
+    lastSeenAt: device.lastSeenAt,
+    revokedAt: device.revokedAt,
   }
 }
 
 export function normaliseDeviceName(raw: unknown): string | null {
-  if (raw === undefined || raw === null) return 'TC002'
-  if (typeof raw !== 'string') return null
-  const name = raw.replace(/\s+/g, ' ').trim()
-  if (!name || name.length > NAME_MAX) return null
-  return name
+  return normaliseName(raw, 'TC002')
 }
 
 export class ClockDeviceRegistry {
-  constructor(private readonly db: Database) {}
+  private readonly devices: DeviceRegistry
 
-  /** Creates a device and returns the plaintext token ONCE. */
+  constructor(db: Database) {
+    this.devices = new DeviceRegistry(db)
+  }
+
+  /** Creates a clock and returns the plaintext token ONCE. */
   create(userId: number, input: { name: string; privacy?: boolean }): { device: ClockDevice; token: string } {
-    const id = `clk_${crypto.randomBytes(6).toString('hex')}`
-    const token = `${TOKEN_PREFIX}${crypto.randomBytes(24).toString('base64url')}`
-    this.db.prepare(
-      `INSERT INTO clock_devices (id, user_id, name, token_hash, scopes, privacy)
-       VALUES (?, ?, ?, ?, ?, ?)`,
-    ).run(id, userId, input.name, hashToken(token), CLOCK_SCOPES.join(' '), input.privacy ? 1 : 0)
-    return { device: this.get(userId, id)!, token }
+    const { device, token } = this.devices.create(userId, {
+      name: input.name,
+      kind: 'clock',
+      scopes: ['status:read', 'interactions:answer'],
+      storedScopes: CLOCK_SCOPES.join(' '),
+      privacy: input.privacy,
+    })
+    return { device: toClockDevice(device), token }
   }
 
   get(userId: number, id: string): ClockDevice | null {
-    const row = this.db.prepare('SELECT * FROM clock_devices WHERE id = ? AND user_id = ?').get(id, userId) as ClockDeviceRow | undefined
-    return row ? toDevice(row) : null
+    const device = this.devices.get(userId, id)
+    return device && device.kind === 'clock' ? toClockDevice(device) : null
   }
 
   listForUser(userId: number): ClockDevice[] {
-    const rows = this.db.prepare('SELECT * FROM clock_devices WHERE user_id = ? ORDER BY created_at DESC, id').all(userId) as ClockDeviceRow[]
-    return rows.map(toDevice)
+    return this.devices.listForUser(userId).filter(device => device.kind === 'clock').map(toClockDevice)
   }
 
-  /** True when an active device of this user was revoked now. */
+  /** True when an active clock of this user was revoked now. */
   revoke(userId: number, id: string): boolean {
-    const result = this.db.prepare(
-      "UPDATE clock_devices SET revoked_at = datetime('now') WHERE id = ? AND user_id = ? AND revoked_at IS NULL",
-    ).run(id, userId)
-    return result.changes === 1
+    if (!this.get(userId, id)) return false
+    return this.devices.revoke(userId, id)
   }
 
   setPrivacy(userId: number, id: string, privacy: boolean): ClockDevice | null {
-    const result = this.db.prepare(
-      'UPDATE clock_devices SET privacy = ? WHERE id = ? AND user_id = ? AND revoked_at IS NULL',
-    ).run(privacy ? 1 : 0, id, userId)
-    return result.changes === 1 ? this.get(userId, id) : null
+    if (!this.get(userId, id)) return null
+    const device = this.devices.update(userId, id, { privacy })
+    return device ? toClockDevice(device) : null
   }
 
   /**
-   * The active device a bearer token belongs to, or null. Constant work per
-   * lookup (hash + unique index), so timing does not leak token prefixes.
+   * The active clock a bearer token belongs to, or null. Tokens of other
+   * device kinds (dashboard, ...) are not clocks and get null here; they use
+   * `/api/status`.
    */
   verify(token: string): ClockDevice | null {
-    if (!token.startsWith(TOKEN_PREFIX) || token.length > 128) return null
-    const row = this.db.prepare(
-      'SELECT * FROM clock_devices WHERE token_hash = ? AND revoked_at IS NULL',
-    ).get(hashToken(token)) as ClockDeviceRow | undefined
-    return row ? toDevice(row) : null
+    const device = this.devices.verify(token)
+    return device && device.kind === 'clock' ? toClockDevice(device) : null
   }
 
   touch(id: string): void {
-    this.db.prepare("UPDATE clock_devices SET last_seen_at = datetime('now') WHERE id = ?").run(id)
+    this.devices.touch(id)
   }
 }

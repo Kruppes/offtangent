@@ -18,6 +18,7 @@ Authoritative reference material for Offtangent's configuration surface.
 - [**Interaction blocks**](./interaction-blocks) - Answers you tap instead of type: the fenced block format, the `draft` block a device types out, and `POST /api/interactions`.
 - [**Voice API**](./voice-api) - Speech to text, keeping the spoken recording and attaching it to the message that carries its transcript.
 - [**Push API**](./push-api) - Device registration for the companion app and the FCM doorbell the backend sends.
+- [**Status API**](./status-api) - `GET /api/status` for polling screens (Pi dashboard, LED clock), general device tokens with scopes, LAN gate, answers from devices, the note from Main.
 - [**Model Policy API**](./model-policy-api) - The model roles: reading and writing `modelPolicy.roles`, validation against the configured providers, and the resolve route that explains which step decided.
 - [**Secrets API**](./secrets-api) - `/api/secrets/handles`: metadata of the sealed secrets, creating, renaming and deleting handles. The value is never part of a response.
 - [**Memory View API**](./memory-view-api) - The structured memory view: wiki tree, facts per node, graph, fact provenance and conflicts.
