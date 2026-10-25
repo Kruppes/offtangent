@@ -2420,6 +2420,7 @@ import {
   voiceNoteDraftFromCatalog,
   type VoiceNoteDraft,
 } from '../voiceNoteForm'
+import { cloneCaptureSources } from '../captureForm'
 import type { MemoryConsolidationSettings, FactExtractionSettings, HealthMonitorNotificationToggles, HealthMonitorSettings, AgentHeartbeatSettings, TasksSettings, TtsSettings, SttSettings, UploadsSettings, TelegramSettings, WatchdogSettings, RetrySettings, OfftangentSettings, CaptureModesSettings, CaptureSourcesSettings, CaptureSettings } from '~/composables/useSettings'
 import { useCapturesApi, type ClientPersona } from '~/api/captures'
 import type { TelegramUser } from '~/composables/useTelegramUsers'
@@ -2818,7 +2819,9 @@ function hydrateForm() {
     // and the form is what `save()` sends back: dropping it here would post a
     // captureModes object without the assist hint on every save.
     captureModes: { quick: { ...s.captureModes.quick }, assist: { ...s.captureModes.assist } },
-    captureSources: { puck: { ...s.captureSources.puck } },
+    // `clock` (voice switch + style hint) is not edited here either; the
+    // helper clones every source so a save never drops it.
+    captureSources: cloneCaptureSources(s.captureSources),
     capture: { defaultAgentId: s.capture?.defaultAgentId ?? 'auto' },
   }
 }

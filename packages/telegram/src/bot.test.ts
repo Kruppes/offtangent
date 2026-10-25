@@ -1240,11 +1240,16 @@ describe('TelegramBot', () => {
       await vi.advanceTimersByTimeAsync(2500)
 
       const botApi = (bot.getBot() as any).api
+      // The raw exception text never leaves the process: Telegram gets the
+      // fixed public text with the error class only (publicError).
       expect(botApi.sendMessage).toHaveBeenCalledWith(
         67890,
-        expect.stringContaining('agent failed'),
+        expect.stringContaining('Agent error: error'),
         expect.objectContaining({ parse_mode: 'HTML' }),
       )
+      for (const call of vi.mocked(botApi.sendMessage).mock.calls) {
+        expect(String(call[1])).not.toContain('agent failed')
+      }
     })
   })
 
@@ -2015,7 +2020,12 @@ describe('turn retry channel', () => {
     expect(button).toBeDefined()
     expect(button!.callback_data).toBe(`retry:${errorRowId()}`)
     const errorText = api.sendMessage.mock.calls.find((c: any[]) => c[2]?.reply_markup)![1] as string
-    expect(errorText).toContain('invalid_api_key')
+    // Provider text stays in-process; the chat only sees the fixed text with
+    // the error class (publicProviderError).
+    expect(errorText).toContain('The model provider reported an error (auth).')
+    for (const call of api.sendMessage.mock.calls) {
+      expect(String(call[1])).not.toContain('invalid_api_key')
+    }
   })
 
   it('re-runs the failed turn on tap and delivers the answer to the Telegram chat', async () => {
