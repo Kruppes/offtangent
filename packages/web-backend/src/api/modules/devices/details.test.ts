@@ -16,7 +16,7 @@ import { createSharedInteractionsService } from '../interactions/route.js'
 import { generateAccessToken } from '../../../auth.js'
 import { createStatusRouter } from './route.js'
 import { DeviceRegistry } from './registry.js'
-import { berlinDayOf, buildTokensReport } from './details.js'
+import { berlinDayOf, buildStrandDetail, buildTokensReport } from './details.js'
 
 let db: Database
 let server: http.Server
@@ -464,5 +464,54 @@ describe('review fixes F2/F5/F6/F7 (own, stricter regressions)', () => {
     expect(report.days[5]).toMatchObject({ measured: false, total: null, input: null })
     expect(report.measured_days).toBe(1)
     expect(report.total).toMatchObject({ total: 0 })
+  })
+})
+
+// Review I-01 (INTEGRATION-REVIEW-20261026, P3): the strand detail used to cut
+// the running-task list at 10 rows BEFORE the ownership filter, so ten older
+// contradictory child sessions hid a legitimate own task. Independent repro
+// taken over verbatim in its assertions; the positive control stays as well.
+describe('review I-01: strand running tasks are authorised before the limit', () => {
+  function strandWithChildren(total: number): Database {
+    const mem = initDatabase(':memory:')
+    mem.prepare("INSERT INTO users(id,username,password_hash,role) VALUES(1,'i01-a','x','user'),(2,'i01-b','x','user')").run()
+    mem.prepare("INSERT INTO sessions(id,user_id,session_user,type) VALUES('own',1,'1','interactive')").run()
+    for (let i = 0; i < total; i++) {
+      const good = i === total - 1
+      mem.prepare("INSERT INTO sessions(id,user_id,type,parent_session_id) VALUES(?,?,'task','own')").run(`session-${i}`, good ? null : 2)
+      mem.prepare("INSERT INTO tasks(id,name,prompt,status,trigger_type,session_id,started_at) VALUES(?,?,'x','running','user',?,?)")
+        .run(`task-${i}`, `task-${i}`, `session-${i}`, good ? '2026-10-26 10:00:00' : '2026-10-26 09:00:00')
+    }
+    return mem
+  }
+
+  it('own running task remains visible after ten contradictory child sessions', () => {
+    const mem = strandWithChildren(11)
+    try {
+      expect(buildStrandDetail(mem, { userId: 1, privacy: false, strandId: 'own' })!.running_tasks.map(t => t.id)).toEqual(['task-10'])
+    } finally { mem.close() }
+  })
+
+  it('positive control: nine contradictory children do not hide own task', () => {
+    const mem = strandWithChildren(10)
+    try {
+      expect(buildStrandDetail(mem, { userId: 1, privacy: false, strandId: 'own' })!.running_tasks.map(t => t.id)).toEqual(['task-9'])
+    } finally { mem.close() }
+  })
+
+  it('still shows at most ten own running tasks and never a foreign one', () => {
+    const mem = initDatabase(':memory:')
+    try {
+      mem.prepare("INSERT INTO users(id,username,password_hash,role) VALUES(1,'i01-a','x','user'),(2,'i01-b','x','user')").run()
+      mem.prepare("INSERT INTO sessions(id,user_id,session_user,type) VALUES('own',1,'1','interactive')").run()
+      for (let i = 0; i < 25; i++) {
+        const foreign = i % 2 === 1
+        mem.prepare("INSERT INTO sessions(id,user_id,type,parent_session_id) VALUES(?,?,'task','own')").run(`s-${i}`, foreign ? 2 : null)
+        mem.prepare("INSERT INTO tasks(id,name,prompt,status,trigger_type,session_id,started_at) VALUES(?,?,'x','running','user',?,?)")
+          .run(`t-${i}`, `t-${i}`, `s-${i}`, `2026-10-26 09:${String(i).padStart(2, '0')}:00`)
+      }
+      const ids = buildStrandDetail(mem, { userId: 1, privacy: false, strandId: 'own' })!.running_tasks.map(t => t.id)
+      expect(ids).toEqual(['t-0', 't-2', 't-4', 't-6', 't-8', 't-10', 't-12', 't-14', 't-16', 't-18'])
+    } finally { mem.close() }
   })
 })

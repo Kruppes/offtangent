@@ -33,6 +33,9 @@ export const DETAIL_SUMMARY_MAX = 280
 export const DETAIL_LIST_MAX = 4
 export const DETAIL_LINE_MAX = 120
 export const DETAIL_SUBTASKS_MAX = 8
+/** Running tasks shown in a strand detail, and the bounded scan they are picked from. */
+export const STRAND_RUNNING_MAX = 10
+export const STRAND_RUNNING_SCAN_MAX = 200
 export const TOKENS_DAYS = 7
 export const TOKENS_TIMEZONE = 'Europe/Berlin'
 export const TOKENS_COUNTING =
@@ -373,11 +376,16 @@ export function buildStrandDetail(
     }
   }
 
+  // Authorise first, then apply the public limit (review I-01): the SQL scan is
+  // bounded (STRAND_RUNNING_SCAN_MAX, same bound as the descendant walk), so
+  // contradictory or foreign rows can no longer push an own task out of the
+  // first STRAND_RUNNING_MAX entries, and there is still no unbounded traversal.
   const running = (db.prepare(
     `SELECT ${TASK_COLUMNS.replace(/(^|,\s*)(\w+)/g, '$1t.$2')} FROM tasks t JOIN sessions s ON s.id = t.session_id
-      WHERE t.status = 'running' AND s.parent_session_id = ? ORDER BY COALESCE(t.started_at, t.created_at) ASC LIMIT 10`,
-  ).all(session.id) as TaskDetailRow[])
+      WHERE t.status = 'running' AND s.parent_session_id = ? ORDER BY COALESCE(t.started_at, t.created_at) ASC LIMIT ?`,
+  ).all(session.id, STRAND_RUNNING_SCAN_MAX) as TaskDetailRow[])
     .filter(row => ownerOf(db, row) === userId)
+    .slice(0, STRAND_RUNNING_MAX)
     .map(row => ({ id: row.id, name: privacy ? '' : lineText(row.name, 60), started_at: sqliteToIso(row.started_at) }))
 
   return {
