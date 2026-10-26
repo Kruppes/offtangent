@@ -11,6 +11,11 @@
  *                  -> 200 { applied: true, idempotent }
  *                     400 invalid_body | 401 unauthorized | 403 not_lan | forbidden_scope | not_allowed
  *                     404 unknown_message | unknown_block | 409 already_answered | 410 stale
+ *   GET  /task/:id     same auth as GET /  -> 200 TaskDetail   (devices/details.ts)
+ *   GET  /strand/:id   same auth as GET /  -> 200 StrandDetail
+ *   GET  /tokens       same auth as GET /  -> 200 TokensReport (7 days, Europe/Berlin)
+ *                  404 not_found for unknown AND foreign ids (no probing).
+ *                  On demand only (a device asks when the user taps), never polled.
  *
  * `/api/devices` (owner, user JWT):
  *   GET    /                                       -> { devices }   (every kind, clocks included)
@@ -41,6 +46,7 @@ import {
   type DeviceScope,
 } from './registry.js'
 import { buildStatus } from './status.js'
+import { buildStrandDetail, buildTaskDetail, buildTokensReport } from './details.js'
 
 export interface StatusRouterOptions {
   db: Database
@@ -105,6 +111,36 @@ export function createStatusRouter(options: StatusRouterOptions): Router {
       return
     }
     res.json(status)
+  })
+
+  /** Who asks, with which privacy; shared by the on-demand detail routes. */
+  function viewer(req: DeviceRequest & AuthenticatedRequest): { userId: number; privacy: boolean } {
+    return { userId: req.device?.userId ?? req.user!.userId, privacy: req.device?.privacy ?? false }
+  }
+
+  router.get('/task/:id', statusAuth, (req: DeviceRequest & AuthenticatedRequest, res) => {
+    res.set('Cache-Control', 'no-store')
+    const detail = buildTaskDetail(db, { ...viewer(req), taskId: String(req.params.id) })
+    if (!detail) {
+      res.status(404).json({ error: 'Not found', code: 'not_found' })
+      return
+    }
+    res.json(detail)
+  })
+
+  router.get('/strand/:id', statusAuth, (req: DeviceRequest & AuthenticatedRequest, res) => {
+    res.set('Cache-Control', 'no-store')
+    const detail = buildStrandDetail(db, { ...viewer(req), strandId: String(req.params.id) })
+    if (!detail) {
+      res.status(404).json({ error: 'Not found', code: 'not_found' })
+      return
+    }
+    res.json(detail)
+  })
+
+  router.get('/tokens', statusAuth, (req: DeviceRequest & AuthenticatedRequest, res) => {
+    res.set('Cache-Control', 'no-store')
+    res.json(buildTokensReport(db, { userId: viewer(req).userId }))
   })
 
   router.post(
