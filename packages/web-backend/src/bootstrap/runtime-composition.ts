@@ -78,6 +78,7 @@ import { completeSimple, errorClass, publicProviderError } from '@axiom/core'
 // W5/P3: close out feed-only outcomes that are too old to still announce.
 import { archivePendingTaskNotices } from '@axiom/core'
 import { getCurrentTaskAgentId, getCurrentTaskExecutionContext, resolveTaskDefaultProvider as resolveTaskDefaultProviderChain } from '@axiom/core'
+import type { TaskOwnershipLineage } from '@axiom/core'
 import { resolveRoleSpec } from '@axiom/core'
 import { backfillStrandModelPins, resolveBackfillStrandModel, loadModelPolicyRoles } from '@axiom/core'
 import { resolveTaskModelRoleFrom } from '@axiom/core'
@@ -921,6 +922,20 @@ export async function createRuntimeComposition(options: RuntimeCompositionOption
   }
 
   /**
+   * B-01-R: the execution/admission gate. Returns a refusal reason for an
+   * `invalid` ownership lineage, null for `owner` and `none`. The TaskRunner
+   * treats a throw as a refusal (fail closed).
+   */
+  function taskExecutionRefusal(task: TaskOwnershipLineage): string | null {
+    const ownership = resolveTaskOwnershipForTask(db, task)
+    if (ownership.kind !== 'invalid') return null
+    logger.warn(
+      `[axiom] Task ${task.id}: invalid ownership lineage (sessionId=${task.sessionId ?? 'none'}); execution refused (B-01-R)`,
+    )
+    return 'invalid ownership lineage'
+  }
+
+  /**
    * Strand activity (SPEC 10.x): announce the birth, progress and end of a
    * task in the strand it works for, so a wave of sub-tasks is visible while
    * it runs instead of only after it finished. Frames without a resolvable
@@ -949,6 +964,36 @@ export async function createRuntimeComposition(options: RuntimeCompositionOption
     options: { markAttempt?: boolean; persisted?: boolean } = {},
   ): boolean {
     if (!agentCore) return false
+    // B-01-R: a persisted injection (fresh, sweeper retry or boot replay)
+    // whose task lineage is invalid is never replayed into a strand; the
+    // row is abandoned. A missing task row keeps the existing semantics.
+    const injectedRow = db.prepare(
+      'SELECT id, trigger_type, trigger_source_id, session_id FROM tasks WHERE id = ?',
+    ).get(row.taskId) as { id: string; trigger_type: string; trigger_source_id: string | null; session_id: string | null } | undefined
+    if (injectedRow) {
+      const injectedTask = {
+        id: injectedRow.id,
+        triggerType: injectedRow.trigger_type,
+        triggerSourceId: injectedRow.trigger_source_id,
+        sessionId: injectedRow.session_id,
+      }
+      let refusal: string | null
+      try {
+        refusal = taskExecutionRefusal(injectedTask)
+      } catch (err) {
+        refusal = `execution gate failed: ${err instanceof Error ? err.message : String(err)}`
+      }
+      if (refusal) {
+        if (options.persisted !== false) {
+          try {
+            abandonTaskInjection(db, row.id, `B-01-R: ${refusal}`)
+          } catch (err) {
+            logger.warn(`[axiom] Could not abandon refused injection ${row.id}:`, err)
+          }
+        }
+        return false
+      }
+    }
     // Queued results survive restarts and persona changes; resolve delivery identity anew.
     const current = db.prepare("SELECT agent_id FROM sessions WHERE id = ? AND (user_id = ? OR (user_id IS NULL AND session_user = ?)) AND type = 'interactive'")
       .get(row.sessionId, row.userId, String(row.userId)) as { agent_id: string | null } | undefined
@@ -1245,6 +1290,11 @@ export async function createRuntimeComposition(options: RuntimeCompositionOption
       verification: taskSettings.verification,
       getProviderById: (id: string) => resolveProvider(id),
       resolveTaskOrigin,
+      // B-01-R execution gate: an `invalid` ownership lineage never runs —
+      // no model, no provider credential, no tool. `owner` and genuinely
+      // unowned `none` work (cronjob, heartbeat, agent chains naming nobody)
+      // are admitted unchanged.
+      refuseTaskExecution: (task: Task) => taskExecutionRefusal(task),
       taskEventBus,
       // Watchdog fallback for tasks that never set maxDurationMinutes
       // (heartbeat, consolidation, cronjobs, scheduled tasks). Without
@@ -1591,6 +1641,45 @@ export async function createRuntimeComposition(options: RuntimeCompositionOption
       // strand the task is assigned to and is always dormant here.
       createForkStrandTool(forkStrandToolOptions('background')),
     )
+    // B-01-R defence in depth: the runner refuses invalid tasks before any
+    // model/credential/tool, and re-checks per call. These shared tools
+    // re-check too, keyed on the task execution context of the call, so no
+    // path that reaches them with an invalid task's context (replay, a
+    // runner-external caller) gets the capability. Calls without a task
+    // context and calls of `owner`/`none` tasks pass through unchanged.
+    for (let i = 0; i < backgroundTaskTools.length; i++) {
+      backgroundTaskTools[i] = gateInvalidTaskTool(backgroundTaskTools[i]!)
+    }
+  }
+
+  function gateInvalidTaskTool(tool: AgentTool): AgentTool {
+    const originalExecute = tool.execute.bind(tool)
+    return {
+      ...tool,
+      execute: (async (toolCallId: string, params: unknown, signal?: AbortSignal, onUpdate?: unknown) => {
+        const taskId = getCurrentTaskExecutionContext()?.taskId
+        if (taskId) {
+          let refusal: string | null
+          try {
+            const row = db.prepare(
+              'SELECT id, trigger_type, trigger_source_id, session_id FROM tasks WHERE id = ?',
+            ).get(taskId) as { id: string; trigger_type: string; trigger_source_id: string | null; session_id: string | null } | undefined
+            refusal = row
+              ? taskExecutionRefusal({ id: row.id, triggerType: row.trigger_type, triggerSourceId: row.trigger_source_id, sessionId: row.session_id })
+              : null
+          } catch (err) {
+            refusal = `execution gate failed: ${err instanceof Error ? err.message : String(err)}`
+          }
+          if (refusal) {
+            return {
+              content: [{ type: 'text' as const, text: `Tool refused (B-01-R): ${refusal}` }],
+              details: { error: true, refused: true },
+            }
+          }
+        }
+        return (originalExecute as (...args: unknown[]) => Promise<unknown>)(toolCallId, params, signal, onUpdate)
+      }) as AgentTool['execute'],
+    }
   }
   rebuildBackgroundTaskTools()
 

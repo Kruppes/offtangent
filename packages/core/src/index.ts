@@ -704,7 +704,7 @@ export type {
   TaskFilterClause,
   TaskFilterClauseOptions,
 } from './task-store.js'
-export { TaskRunner, formatTaskInjection } from './task-runner.js'
+export { TaskRunner, formatTaskInjection, TaskExecutionRefusedError, TASK_EXECUTION_REFUSED_PREFIX } from './task-runner.js'
 export type { TaskRunnerOptions, TaskOverrides, TaskQueueInfo, TaskSteerResult } from './task-runner.js'
 export {
   DEFAULT_MAX_CONCURRENT_TASKS,

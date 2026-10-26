@@ -101,6 +101,24 @@ function failedRunSummary(errorMessage: string): string {
   return `Task failed with an exception, error class: ${classifyHandoffError(errorMessage)}. The raw error text is not published here.`
 }
 
+/** Result/error prefix of a task refused by the B-01-R execution gate. */
+export const TASK_EXECUTION_REFUSED_PREFIX = 'Task refused before execution (B-01-R)'
+
+/**
+ * B-01-R: thrown when the execution gate refuses a task. The row is already
+ * quarantined (`failed`); no model, credential or tool was touched.
+ */
+export class TaskExecutionRefusedError extends Error {
+  readonly taskId: string
+  readonly refusal: string
+  constructor(taskId: string, refusal: string) {
+    super(`${TASK_EXECUTION_REFUSED_PREFIX}: ${refusal}`)
+    this.name = 'TaskExecutionRefusedError'
+    this.taskId = taskId
+    this.refusal = refusal
+  }
+}
+
 /** Closed codes for a task the restart recovery did not resume (REVIEW-S0-A-4). */
 type RestartRefusalCode = 'provider_unavailable' | 'model_unavailable' | 'lean_local_refused'
 
@@ -229,6 +247,16 @@ export interface TaskRunnerOptions {
    * Without it, a task has no user and tools that deliver to one refuse.
    */
   resolveTaskOrigin?: (task: Task) => TaskOrigin
+  /**
+   * B-01-R execution/admission gate: returns a refusal reason when the task
+   * must not execute at all (invalid ownership lineage), null to admit.
+   * Consulted before any model is built, any provider credential is resolved
+   * or any tool runs — at admission, when a queued task is dequeued, on
+   * resume, on restart recovery, before verifier/schema-correction rounds,
+   * on every credential refresh and on every tool call. A throwing gate
+   * refuses (fail closed). Absent = every task is admitted (tests, legacy).
+   */
+  refuseTaskExecution?: (task: Task) => string | null
   /** Optional event bus for streaming task execution events to WebSocket clients */
   taskEventBus?: TaskEventBus
   /**
@@ -738,6 +766,67 @@ export class TaskRunner {
    * all four answer "whose task is this and where does its output go?"
    * identically.
    */
+  /**
+   * B-01-R: the refusal reason of the execution gate for this task, or null.
+   * Reads the CURRENT row, so a lineage that turned invalid while the task
+   * waited (queue, pause, restart) is refused too. Fail closed: a missing row
+   * or a throwing gate refuses.
+   */
+  private executionRefusal(taskId: string): string | null {
+    const gate = this.options.refuseTaskExecution
+    if (!gate) return null
+    const task = this.store.getById(taskId)
+    if (!task) return 'task row missing'
+    try {
+      return gate(task)
+    } catch (err) {
+      return `execution gate failed: ${err instanceof Error ? err.message : String(err)}`
+    }
+  }
+
+  /**
+   * B-01-R: quarantine a task the gate refused. Terminal `failed` row, no
+   * model, no credential, no tool, no delivery callback (an invalid lineage
+   * has no recipient anyway).
+   */
+  private quarantineRefusedTask(taskId: string, refusal: string): void {
+    console.warn(`[task-runner] Task ${taskId} refused before execution (B-01-R): ${refusal}`)
+    const now = new Date().toISOString().replace('T', ' ').slice(0, 19)
+    try {
+      this.updateTaskRow(taskId, {
+        status: 'failed',
+        resultStatus: 'failed',
+        resultSummary: `${TASK_EXECUTION_REFUSED_PREFIX}: ${refusal}`,
+        errorMessage: `${TASK_EXECUTION_REFUSED_PREFIX}: ${refusal}`,
+        completedAt: now,
+      })
+    } catch (err) {
+      console.error(`[task-runner] Failed to quarantine refused task ${taskId}:`, err)
+    }
+  }
+
+  /**
+   * B-01-R: wrap the tools of one task so every call re-checks the execution
+   * gate against the current row. A refused task gets an error result and
+   * the underlying tool never runs.
+   */
+  private gateTaskTools(taskId: string, tools: AgentTool[]): AgentTool[] {
+    if (!this.options.refuseTaskExecution) return tools
+    return tools.map(tool => ({
+      ...tool,
+      execute: async (toolCallId: string, params: unknown, signal?: AbortSignal, onUpdate?: unknown) => {
+        const refusal = this.executionRefusal(taskId)
+        if (refusal) {
+          return {
+            content: [{ type: 'text' as const, text: `${TASK_EXECUTION_REFUSED_PREFIX}: ${refusal}` }],
+            details: { error: true, refused: true },
+          }
+        }
+        return (tool.execute as (...args: unknown[]) => Promise<unknown>)(toolCallId, params, signal, onUpdate)
+      },
+    }) as AgentTool)
+  }
+
   private taskExecutionContext(taskId: string, provider: ProviderConfig | null): TaskExecutionContext {
     const task = this.store.getById(taskId)
     let origin: TaskOrigin | null = null
@@ -874,6 +963,12 @@ export class TaskRunner {
     forceQueue: boolean,
   ): Promise<string> {
     const taskId = task.id
+    // B-01-R: refuse before queueing or occupying a slot.
+    const refusal = this.executionRefusal(taskId)
+    if (refusal) {
+      this.quarantineRefusedTask(taskId, refusal)
+      throw new TaskExecutionRefusedError(taskId, refusal)
+    }
     // The provider the caller resolved (task pin, persona, role or
     // tasks.defaultProvider) is the slot key. A missing id lands in the
     // shared `unknown` bucket instead of failing the start.
@@ -918,6 +1013,10 @@ export class TaskRunner {
     try {
       // Inside the try on purpose: the caller already holds a slot, and only
       // the catch below releases it. A throw before the try leaked the slot.
+      // B-01-R: re-checked here (queue pump, recovery) before the session,
+      // model, credential or tools are touched.
+      const refusal = this.executionRefusal(taskId)
+      if (refusal) throw new TaskExecutionRefusedError(taskId, refusal)
       this.validateStatusUpdatesConfig()
       const sessionId = this.ensureTaskSession(task, parentSessionId)
 
@@ -1035,6 +1134,9 @@ export class TaskRunner {
 
       // Create isolated PiAgent
       const resolveApiKey = async (): Promise<string> => {
+        // B-01-R: no credential for a task whose lineage turned invalid mid-run.
+        const refusal = this.executionRefusal(taskId)
+        if (refusal) throw new TaskExecutionRefusedError(taskId, refusal)
         try {
           const fresh = this.options.getProviderById?.(provider.id) ?? provider
           return await this.options.getApiKey(fresh)
@@ -1054,7 +1156,7 @@ export class TaskRunner {
         initialState: {
           systemPrompt,
           model,
-          tools: effectiveTools,
+          tools: this.gateTaskTools(taskId, effectiveTools),
           thinkingLevel: this.resolveTaskThinkingLevel(task),
         },
         // The task session id is stable for the whole run — hand it to the
@@ -1218,7 +1320,7 @@ export class TaskRunner {
         this.updateTaskRow(taskId, {
           status: 'failed',
           resultStatus: 'failed',
-          resultSummary: `Task failed to start: ${errorMessage}`,
+          resultSummary: err instanceof TaskExecutionRefusedError ? errorMessage : `Task failed to start: ${errorMessage}`,
           errorMessage,
           completedAt: now,
         })
@@ -1321,6 +1423,9 @@ export class TaskRunner {
     // Lean local worker: the output_schema is the check. A reviewer round
     // would resend the private raw data — possibly to a cloud reviewer.
     if (task.workerProfile === LEAN_LOCAL_PROFILE) return null
+    // B-01-R: no reviewer model/credential/revision round for a refused task.
+    const refusal = this.executionRefusal(taskId)
+    if (refusal) return { status: 'failed', summary: `${TASK_EXECUTION_REFUSED_PREFIX}: ${refusal}` }
 
     try {
       const dedicatedReviewer = cfg?.providerId ? this.options.getProviderById?.(cfg.providerId) ?? null : null
@@ -1420,6 +1525,11 @@ export class TaskRunner {
     taskProvider: ProviderConfig | null,
   ): Promise<{ status: TaskResultStatus; summary: string } | null> {
     const task = this.store.getById(taskId)
+    // B-01-R: no correction turn (model + tools) for a refused task.
+    if (task?.outputSchema) {
+      const refusal = this.executionRefusal(taskId)
+      if (refusal) return { status: 'failed', summary: `${TASK_EXECUTION_REFUSED_PREFIX}: ${refusal}` }
+    }
     // Lean local worker: the schema IS the result contract. Without a usable
     // schema nothing was validated, so fail closed instead of accepting, and
     // on success hand back only the validated JSON (no prose around it).
@@ -1976,6 +2086,8 @@ export class TaskRunner {
     // It may only go to a local detector; otherwise the systematic check
     // (no LLM) is all this task gets.
     if (this.store.getById(runningTask.taskId)?.workerProfile === LEAN_LOCAL_PROFILE && !isLocalProvider(resolvedProvider)) return
+    // B-01-R: no detector model/credential for a refused task.
+    if (this.executionRefusal(runningTask.taskId)) return
 
     // Apply specific model override if provided
     const provider = modelId ? { ...resolvedProvider, enabledModels: [modelId] } : resolvedProvider
@@ -2938,6 +3050,15 @@ Hint: Inspect it with get_task (task_id ${task.id}); use cancel_task if anything
   async resumeTask(taskId: string, message: string): Promise<boolean> {
     const pausedTask = this.pausedTasks.get(taskId)
     if (!pausedTask) return false
+    // B-01-R: a paused task whose lineage is invalid is not resumed; its
+    // agent is dropped and the row quarantined before any slot/model/tool.
+    const refusal = this.executionRefusal(taskId)
+    if (refusal) {
+      pausedTask.agent.abort()
+      this.pausedTasks.delete(taskId)
+      this.quarantineRefusedTask(taskId, refusal)
+      return false
+    }
     this.validateStatusUpdatesConfig()
 
     // E5: a resume bypasses the queue — a human already waited for this
@@ -3338,6 +3459,13 @@ Hint: Inspect it with get_task (task_id ${task.id}); use cancel_task if anything
     // Handle running tasks — build summary from stored tool_calls and re-start
     const runningTasks = this.store.list({ status: 'running' })
     for (const task of runningTasks) {
+      // B-01-R: an invalid lineage is not copied into a "(resumed)" run.
+      const refusal = this.executionRefusal(task.id)
+      if (refusal) {
+        this.quarantineRefusedTask(task.id, `server restart; not resumed: ${refusal}`)
+        failed++
+        continue
+      }
       const baseProvider = task.provider ? getProvider(task.provider) : null
       // Keep the model pin of the interrupted run: `getProvider` returns the
       // provider config whose first enabled model is its default, so without
