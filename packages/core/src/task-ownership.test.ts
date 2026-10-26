@@ -11,6 +11,7 @@ import {
   parseStrictUserId,
   resolveTaskOwnerUserId,
   resolveTaskOwnerUserIdForTask,
+  resolveTaskSessionLineage,
 } from './task-ownership.js'
 
 let db: Database
@@ -175,6 +176,70 @@ describe('resolveTaskOwnerUserIdForTask', () => {
     // Within the limit the owner is found, far beyond it the walk stops.
     expect(resolveTaskOwnerUserIdForTask(db, { id: 'deep-3', triggerType: 'agent', triggerSourceId: 'deep-2', sessionId: null })).toBe(1)
     expect(resolveTaskOwnerUserIdForTask(db, { id: 'deep-12', triggerType: 'agent', triggerSourceId: 'deep-11', sessionId: null })).toBeNull()
+  })
+})
+
+describe('fail closed: invalid session lineage never falls back to the task parent (review F3)', () => {
+  beforeEach(() => {
+    initTasksTable(db)
+    db.prepare('INSERT INTO users (id, username, password_hash, role) VALUES (1, ?, ?, ?)').run('one', 'x', 'user')
+    db.prepare('INSERT INTO users (id, username, password_hash, role) VALUES (2, ?, ?, ?)').run('two', 'x', 'user')
+  })
+
+  function task(id: string, triggerSourceId: string | null, sessionId: string | null) {
+    db.prepare(
+      `INSERT INTO tasks (id, name, prompt, status, trigger_type, trigger_source_id, session_id)
+       VALUES (?, ?, 'p', 'completed', 'agent', ?, ?)`,
+    ).run(id, `task ${id}`, triggerSourceId, sessionId)
+    return { id, triggerType: 'agent', triggerSourceId, sessionId }
+  }
+
+  it('contradictory owners across the session chain stay null even with an owned task parent', () => {
+    session('strand-u1', null, '1', 1)
+    session('tsess-root', 'strand-u1', null)
+    const root = task('root', null, 'tsess-root')
+    // Child session claims user 2 but hangs below a strand of user 1.
+    session('tsess-conflict', 'strand-u1', '2', 2)
+    const child = task('conflict', root.id, 'tsess-conflict')
+    expect(resolveTaskSessionLineage(db, 'tsess-conflict')).toEqual({ kind: 'invalid' })
+    expect(resolveTaskOwnerUserIdForTask(db, root)).toBe(1)
+    expect(resolveTaskOwnerUserIdForTask(db, child)).toBeNull()
+  })
+
+  it('an owned session below an unowned root is invalid, not system work', () => {
+    session('strand-u1', null, '1', 1)
+    session('tsess-root', 'strand-u1', null)
+    const root = task('root', null, 'tsess-root')
+    session('unowned-root', null, null)
+    session('tsess-owned-mid', 'unowned-root', '2')
+    const child = task('child', root.id, 'tsess-owned-mid')
+    expect(resolveTaskSessionLineage(db, 'tsess-owned-mid')).toEqual({ kind: 'invalid' })
+    expect(resolveTaskOwnerUserIdForTask(db, child)).toBeNull()
+  })
+
+  it('a missing or cyclic task session does not fall back either', () => {
+    session('strand-u1', null, '1', 1)
+    session('tsess-root', 'strand-u1', null)
+    const root = task('root', null, 'tsess-root')
+    const missing = task('missing', root.id, 'tsess-gone')
+    expect(resolveTaskSessionLineage(db, 'tsess-gone')).toEqual({ kind: 'invalid' })
+    expect(resolveTaskOwnerUserIdForTask(db, missing)).toBeNull()
+    session('cyc-a', null, null)
+    session('cyc-b', 'cyc-a', null)
+    db.prepare('UPDATE sessions SET parent_session_id = ? WHERE id = ?').run('cyc-b', 'cyc-a')
+    expect(resolveTaskSessionLineage(db, 'cyc-a')).toEqual({ kind: 'invalid' })
+    const cyclic = task('cyclic', root.id, 'cyc-a')
+    expect(resolveTaskOwnerUserIdForTask(db, cyclic)).toBeNull()
+  })
+
+  it('the legitimate orphan sub-task (no owner anywhere) still resolves via its parent', () => {
+    session('strand-u1', null, '1', 1)
+    session('tsess-root', 'strand-u1', null)
+    const root = task('root', null, 'tsess-root')
+    session('tsess-orphan', null, null)
+    const child = task('orphan', root.id, 'tsess-orphan')
+    expect(resolveTaskSessionLineage(db, 'tsess-orphan')).toEqual({ kind: 'none' })
+    expect(resolveTaskOwnerUserIdForTask(db, child)).toBe(1)
   })
 })
 

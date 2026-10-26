@@ -1724,8 +1724,8 @@ export {
   buildTaskFeedItem,
 } from './task-feed.js'
 export type { TaskFeedItemOptions } from './task-feed.js'
-export { resolveTaskOwnerUserId, resolveTaskOwnerUserIdForTask, parseStrictUserId } from './task-ownership.js'
-export type { TaskOwnershipLineage } from './task-ownership.js'
+export { resolveTaskOwnerUserId, resolveTaskOwnerUserIdForTask, resolveTaskSessionLineage, parseStrictUserId } from './task-ownership.js'
+export type { TaskOwnershipLineage, TaskSessionLineage } from './task-ownership.js'
 export {
   buildStrandTaskTree,
   buildTaskActivityFrame,

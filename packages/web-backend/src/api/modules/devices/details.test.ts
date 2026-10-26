@@ -294,3 +294,167 @@ describe('auth on the detail endpoints', () => {
     }
   })
 })
+
+// ---------------------------------------------------------------------------
+// Independent review (dashboard-v2/review/adversarial.test.ts, findings F2,
+// F3, F5, F6, F7) taken over verbatim as permanent regression tests.
+// ---------------------------------------------------------------------------
+describe('adversarial release invariants', () => {
+  it('all new routes enforce no-token, read-scope and CIDR gates', async () => {
+    task('t-gate', { parent: 's-own' })
+    const strict = await listen(makeApp('10.0.0.0/8'))
+    try {
+      for (const p of ['/api/status/task/t-gate', '/api/status/strand/s-own', '/api/status/tokens']) {
+        expect((await get(p, null)).status).toBe(401)
+        expect((await get(p, answerOnlyToken)).status).toBe(403)
+        expect((await get(p, readToken, strict.base)).status).toBe(403)
+      }
+    } finally { await new Promise<void>(resolve => strict.server.close(() => resolve())) }
+  })
+  it('root detail does not leak a foreign/conflicting child whose trigger names the root', async () => {
+    task('t-root', { parent: 's-own' })
+    task('t-foreign-child', { parent: 't-root', name: 'FOREIGN_CHILD_SECRET', tokens: [12345, 0, 0, 0] })
+    db.prepare("UPDATE sessions SET user_id=2 WHERE id='ts-t-foreign-child'").run()
+    // Direct read correctly refuses the foreign child.
+    expect((await get('/api/status/task/t-foreign-child', readToken)).status).toBe(404)
+    const { json } = await get('/api/status/task/t-root', readToken)
+    console.log('ADVERSARIAL foreign child root response', JSON.stringify(json))
+    expect(JSON.stringify(json)).not.toContain('FOREIGN CHILD SECRET')
+    expect(json.tokens_with_subtasks?.total ?? json.tokens.total).toBe(1015)
+  })
+  it('child task with contradictory owner fields never falls back to parent ownership', async () => {
+    task('t-root', { parent: 's-own' })
+    task('t-conflict', { parent: 't-root' })
+    db.prepare("UPDATE sessions SET user_id=1, session_user='2' WHERE id='ts-t-conflict'").run()
+    const res = await get('/api/status/task/t-conflict', readToken)
+    console.log('ADVERSARIAL conflicting owner task response', res.status)
+    expect(res.status).toBe(404)
+  })
+  it('spring DST 00:30 Berlin produces seven consecutive CALENDAR days', () => {
+    usage('s-own', '2026-03-29 10:00:00', 100, 0, 0, 0)
+    const report=buildTokensReport(db,{userId:1,now:Date.parse('2026-03-29T22:30:00Z')})
+    console.log('ADVERSARIAL DST', JSON.stringify(report))
+    expect(report.days.map(d=>d.day)).toEqual(['2026-03-24','2026-03-25','2026-03-26','2026-03-27','2026-03-28','2026-03-29','2026-03-30'])
+    expect(report.total?.total).toBe(100)
+  })
+  it('days with no reported usage remain unavailable, not measured zero', () => {
+    const report=buildTokensReport(db,{userId:1,now:Date.parse('2026-07-03T10:00:00Z')})
+    console.log('ADVERSARIAL no rows', JSON.stringify(report))
+    expect(report.days.at(-1)?.total).toBeNull()
+    expect(report.total).toBeNull()
+  })
+  it('provider report must not count estimated voice-note usage as LLM provider tokens', () => {
+    const now=Date.parse('2026-07-03T10:00:00Z')
+    usage('s-own','2026-07-03 09:00:00',10,5,100,0)
+    usage('s-own','2026-07-03 09:01:00',9999,9999,0,0)
+    db.prepare("UPDATE token_usage SET kind='voice_note' WHERE prompt_tokens=9999").run()
+    const report=buildTokensReport(db,{userId:1,now})
+    console.log('ADVERSARIAL estimated rows', JSON.stringify(report.total))
+    expect(report.total?.total).toBe(115)
+  })
+})
+
+describe('independent ownership and all-route authentication probes', () => {
+  it('does not recover contradictory task session lineage through trigger-source fallback', async () => {
+    task('t-root', {parent:'s-own'})
+    task('t-conflict', {parent:'t-root', name:'CONTRADICTORY OWNER SECRET'})
+    db.prepare("UPDATE sessions SET user_id=2, session_user='2', parent_session_id='s-own' WHERE id='ts-t-conflict'").run()
+    const got = await get('/api/status/task/t-conflict', readToken)
+    console.log('CONTRADICTORY_LINEAGE_ROUTE', got.status, got.json.name)
+    expect(got.status).toBe(404)
+  })
+  it('never leaks contradictory child session ownership through an owned strand running-task list', async () => {
+    task('t-conflict', {parent:'s-own', name:'CONTRADICTORY STRAND SECRET'})
+    db.prepare("UPDATE sessions SET user_id=2, session_user='2' WHERE id='ts-t-conflict'").run()
+    const got = await get('/api/status/strand/s-own', readToken)
+    console.log('CONTRADICTORY_STRAND_RUNNING', JSON.stringify(got.json.running_tasks))
+    expect(JSON.stringify(got.json)).not.toContain('CONTRADICTORY STRAND SECRET')
+  })
+  it('requires unknown/missing/revoked tokens on ALL new routes and rejects proxy headers', async () => {
+    const p = await listen(makeApp('127.0.0.0/8'))
+    try {
+      task('t-root',{parent:'s-own'})
+      for (const route of ['/api/status/task/t-root','/api/status/strand/s-own','/api/status/tokens']) {
+        expect((await get(route, null,p.base)).status).toBe(401)
+        expect((await get(route,'otd_bad',p.base)).status).toBe(401)
+        const res=await fetch(p.base+route,{headers:{Authorization:`Bearer ${readToken}`,'X-Forwarded-For':'10.0.0.1'}})
+        expect(res.status).toBe(403)
+      }
+      db.prepare('UPDATE clock_devices SET revoked_at=CURRENT_TIMESTAMP').run()
+      for(const route of ['/api/status/task/t-root','/api/status/strand/s-own','/api/status/tokens']) expect((await get(route,readToken,p.base)).status).toBe(401)
+    } finally {await new Promise<void>(r=>p.server.close(()=>r()))}
+  })
+  it('privacy still removes ALL text for a nested task and strand; tokens contain only counts', async () => {
+    task('t-root',{parent:'s-own',name:'PRIVATE ROOT SECRET',status:'completed',result:'PRIVATE RESULT SECRET'})
+    task('t-child',{parent:'t-root',name:'PRIVATE CHILD SECRET'})
+    for (const route of ['/api/status/task/t-root','/api/status/strand/s-own','/api/status/tokens']) {
+      const res=await get(route,privacyToken)
+      expect(res.status).toBe(200)
+      expect(JSON.stringify(res.json)).not.toContain('PRIVATE')
+      expect(JSON.stringify(res.json)).not.toContain('secret prompt text')
+    }
+  })
+})
+
+describe('review fixes F2/F5/F6/F7 (own, stricter regressions)', () => {
+  it('F2: a foreign child and its whole branch contribute neither ids, text nor tokens', async () => {
+    task('t-root', { parent: 's-own' })
+    task('t-ok', { parent: 't-root', name: 'OWN CHILD', tokens: [1, 0, 0, 0] })
+    task('t-foreign-child', { parent: 't-root', name: 'FOREIGN_CHILD_SECRET', tokens: [12345, 0, 0, 0] })
+    db.prepare("UPDATE sessions SET user_id=2 WHERE id='ts-t-foreign-child'").run()
+    task('t-grandchild', { parent: 't-foreign-child', name: 'GRANDCHILD_SECRET', tokens: [777, 0, 0, 0] })
+    // A non-agent row whose trigger_source_id happens to equal the root id is not a task edge.
+    task('t-cron', { parent: 't-root', name: 'CRON_SECRET', tokens: [555, 0, 0, 0] })
+    db.prepare("UPDATE tasks SET trigger_type='cronjob' WHERE id='t-cron'").run()
+    const { status, json } = await get('/api/status/task/t-root', readToken)
+    expect(status).toBe(200)
+    const body = JSON.stringify(json)
+    for (const marker of ['FOREIGN_CHILD_SECRET', 't-foreign-child', 'GRANDCHILD_SECRET', 't-grandchild', 'CRON_SECRET', 't-cron']) {
+      expect(body).not.toContain(marker)
+    }
+    expect(json.subtasks.map((s: { id: string }) => s.id)).toEqual(['t-ok'])
+    expect(json.subtasks_total).toBe(1)
+    expect(json.tokens.total).toBe(1015)
+    expect(json.tokens_with_subtasks.total).toBe(1016)
+  })
+
+  it('F5: estimated side accounting (voice_note) is excluded from strand tokens and the report', async () => {
+    // Session counters 100/20/3000/50 include a voice-note estimate of 40+10.
+    db.prepare(
+      `INSERT INTO token_usage (timestamp, provider, model, prompt_tokens, completion_tokens, cache_read, cache_write, session_id, kind)
+       VALUES (datetime('now', '-1 minutes'), 'gemini', 'tts', 40, 10, 0, 0, 's-own', 'voice_note')`,
+    ).run()
+    const strandRes = await get('/api/status/strand/s-own', readToken)
+    expect(strandRes.json.tokens).toMatchObject({ input: 60, output: 10, cache_read: 3000, cache_write: 50, total: 3120 })
+    const report = await get('/api/status/tokens', readToken)
+    expect(report.json.measured_kinds).toEqual(['request'])
+    expect(report.json.total).toBeNull()
+    expect(report.json.counting).toContain('Schätzung')
+  })
+
+  it('F6: seven consecutive calendar days at both DST switches, at day start and day end', () => {
+    const expectRun = (nowIso: string, last: string) => {
+      const days = buildTokensReport(db, { userId: 1, now: Date.parse(nowIso) }).days.map(d => d.day)
+      expect(days).toHaveLength(7)
+      expect(days[6]).toBe(last)
+      for (let i = 1; i < 7; i++) {
+        expect(Date.parse(`${days[i]}T00:00:00Z`) - Date.parse(`${days[i - 1]}T00:00:00Z`)).toBe(86_400_000)
+      }
+    }
+    expectRun('2026-03-29T22:30:00Z', '2026-03-30') // 30.03. 00:30 CEST
+    expectRun('2026-03-29T21:59:00Z', '2026-03-29') // 29.03. 23:59 CEST
+    expectRun('2026-03-28T23:30:00Z', '2026-03-29') // 29.03. 00:30 CET, switch day
+    expectRun('2026-10-25T22:59:00Z', '2026-10-25') // 25.10. 23:59 CET
+    expectRun('2026-10-24T22:30:00Z', '2026-10-25') // 25.10. 00:30 CEST, switch day
+    expectRun('2026-10-26T00:30:00Z', '2026-10-26')
+  })
+
+  it('F7: missing days are null and unmeasured; a measured zero stays 0', () => {
+    usage('s-own', '2026-07-03 09:00:00', 0, 0, 0, 0)
+    const report = buildTokensReport(db, { userId: 1, now: Date.parse('2026-07-03T10:00:00Z') })
+    expect(report.days[6]).toMatchObject({ day: '2026-07-03', measured: true, total: 0, input: 0 })
+    expect(report.days[5]).toMatchObject({ measured: false, total: null, input: null })
+    expect(report.measured_days).toBe(1)
+    expect(report.total).toMatchObject({ total: 0 })
+  })
+})

@@ -69,7 +69,27 @@ export function resolveTaskOwnerUserId(
   db: Database,
   taskSessionId: string | null | undefined,
 ): number | null {
-  if (!taskSessionId) return null
+  const lineage = resolveTaskSessionLineage(db, taskSessionId)
+  return lineage.kind === 'owner' ? lineage.userId : null
+}
+
+/**
+ * Outcome of the session-lineage walk, keeping "nobody owns this" apart from
+ * "the lineage is broken". Only `none` may fall back to the task-parent edge:
+ * an `invalid` lineage (contradictory or malformed owner anywhere in the
+ * chain, missing session row, cycle, depth exceeded, or an owned session
+ * hanging below an unowned root) must never be repaired by another edge.
+ */
+export type TaskSessionLineage =
+  | { kind: 'owner'; userId: number }
+  | { kind: 'none' }
+  | { kind: 'invalid' }
+
+export function resolveTaskSessionLineage(
+  db: Database,
+  taskSessionId: string | null | undefined,
+): TaskSessionLineage {
+  if (!taskSessionId) return { kind: 'none' }
 
   let currentId: string | null = taskSessionId
   let safety = MAX_SESSION_LINEAGE_DEPTH
@@ -77,7 +97,7 @@ export function resolveTaskOwnerUserId(
   const owners = new Set<number>()
   while (currentId && safety-- > 0) {
     // A cyclic parent chain would otherwise burn the whole depth budget.
-    if (seen.has(currentId)) return null
+    if (seen.has(currentId)) return { kind: 'invalid' }
     seen.add(currentId)
 
     const row = db.prepare(
@@ -87,17 +107,21 @@ export function resolveTaskOwnerUserId(
       user_id: number | null
       session_user: string | null
     } | undefined
-    if (!row) return null
+    if (!row) return { kind: 'invalid' }
     const owner = sessionOwner(row)
     if (row.session_user != null || row.user_id != null) {
-      if (owner === null) return null
+      if (owner === null) return { kind: 'invalid' }
       owners.add(owner)
-      if (owners.size > 1) return null
+      if (owners.size > 1) return { kind: 'invalid' }
     }
-    if (!row.parent_session_id) return owner
+    if (!row.parent_session_id) {
+      if (owner !== null) return { kind: 'owner', userId: owner }
+      // Unowned root: system work only when NOTHING in the chain named a user.
+      return owners.size === 0 ? { kind: 'none' } : { kind: 'invalid' }
+    }
     currentId = row.parent_session_id
   }
-  return null
+  return { kind: 'invalid' }
 }
 
 /**
@@ -172,10 +196,11 @@ export function resolveTaskOwnerUserIdForTask(
     if (seen.has(current.id)) return null
     seen.add(current.id)
 
-    const own = current.sessionId ? db.prepare('SELECT user_id, session_user FROM sessions WHERE id = ?').get(current.sessionId) as { user_id: number | null; session_user: string | null } | undefined : undefined
-    if (own && (own.user_id != null || own.session_user != null) && sessionOwner(own) === null) return null
-    const direct = resolveTaskOwnerUserId(db, current.sessionId)
-    if (direct !== null) return direct
+    // Fail closed: only a lineage that names nobody may continue to the
+    // task parent. A contradictory or broken chain ends the walk with null.
+    const lineage = resolveTaskSessionLineage(db, current.sessionId)
+    if (lineage.kind === 'owner') return lineage.userId
+    if (lineage.kind === 'invalid') return null
 
     // Only `agent` tasks carry a parent TASK id here. For `cronjob` the
     // column holds a cronjob id, for `heartbeat` a marker string — following

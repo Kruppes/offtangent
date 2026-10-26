@@ -38,7 +38,10 @@ export const TOKENS_TIMEZONE = 'Europe/Berlin'
 export const TOKENS_COUNTING =
   'Provider-Zählung: input = ungecachte Eingabe, cache_read = aus dem Cache gelesen, '
   + 'cache_write = in den Cache geschrieben, output = Ausgabe; total = Summe aller vier. '
-  + 'Zugeordnet: eigene Strands und eigene Tasks; System-Läufe (Heartbeat, Konsolidierung) zählen nicht mit.'
+  + 'Zugeordnet: eigene Strands und eigene Tasks; System-Läufe (Heartbeat, Konsolidierung) zählen nicht mit. '
+  + 'Gezählt werden nur gemessene Provider-Requests (token_usage.kind = request); Nebenbuchungen wie '
+  + 'Sprachnotizen oder Bildgenerierung (teils lokale Schätzungen) sind ausgeschlossen. '
+  + 'Ein Tag ohne Messung ist null (unbekannt), nicht 0.'
 
 /** Ids are UUIDs (tasks) or UUID/ULID-like strand ids; nothing else is looked up. */
 const ID_RE = /^[A-Za-z0-9_-]{1,80}$/
@@ -79,6 +82,8 @@ export interface TokenCounts {
 
 function counts(row: { p: number | null; c: number | null; cr: number | null; cw: number | null } | undefined): TokenCounts | null {
   if (!row) return null
+  // Unknown is null: a row without a single numeric counter is "not measured".
+  if (row.p == null && row.c == null && row.cr == null && row.cw == null) return null
   const input = Number(row.p ?? 0)
   const output = Number(row.c ?? 0)
   const cacheRead = Number(row.cr ?? 0)
@@ -176,9 +181,17 @@ function ownerOf(db: Database, row: TaskDetailRow): number | null {
   })
 }
 
-/** All descendants (breadth first, bounded) of a task. */
-function descendants(db: Database, rootId: string, limit = 200): TaskDetailRow[] {
-  const stmt = db.prepare(`SELECT ${TASK_COLUMNS} FROM tasks WHERE trigger_source_id = ? ORDER BY COALESCE(started_at, created_at) ASC, id ASC`)
+/**
+ * All descendants (breadth first, bounded) of a task that belong to `userId`.
+ *
+ * Only real delegation edges are followed (`trigger_type = 'agent'`; for other
+ * trigger types `trigger_source_id` is a cronjob/heartbeat id, not a task id)
+ * and EVERY child is authorized on its own. A foreign, contradictory or
+ * otherwise unresolvable child is dropped together with its whole branch —
+ * it contributes neither text, ids, status nor token counts (review F2).
+ */
+function descendants(db: Database, rootId: string, userId: number, limit = 200): TaskDetailRow[] {
+  const stmt = db.prepare(`SELECT ${TASK_COLUMNS} FROM tasks WHERE trigger_source_id = ? AND trigger_type = 'agent' ORDER BY COALESCE(started_at, created_at) ASC, id ASC`)
   const out: TaskDetailRow[] = []
   const queue = [rootId]
   const seen = new Set<string>([rootId])
@@ -187,6 +200,7 @@ function descendants(db: Database, rootId: string, limit = 200): TaskDetailRow[]
     for (const row of stmt.all(parent) as TaskDetailRow[]) {
       if (seen.has(row.id)) continue
       seen.add(row.id)
+      if (ownerOf(db, row) !== userId) continue
       out.push(row)
       queue.push(row.id)
       if (out.length >= limit) break
@@ -215,7 +229,7 @@ export function buildTaskDetail(
   const budget = row.max_duration_minutes != null && row.max_duration_minutes > 0 ? row.max_duration_minutes : null
   const budgetUsed = budget != null && runtime != null ? Math.round((runtime / (budget * 60)) * 100) / 100 : null
 
-  const children = descendants(db, row.id)
+  const children = descendants(db, row.id, input.userId)
   const direct = children.filter(child => child.trigger_source_id === row.id)
   const own = taskTokens(row)
   let withSubs: TokenCounts | null = own
@@ -302,6 +316,31 @@ function textList(raw: unknown): string[] {
     .map(item => lineText(item, DETAIL_LINE_MAX))
 }
 
+/**
+ * Strand counters without side accounting. `logTokenUsage` also adds voice
+ * notes / image generations (partly local estimates) to the session counters;
+ * those rows are subtracted again so only measured requests remain (review
+ * F5). An inconsistent result (negative) is reported as unknown.
+ */
+function strandTokens(
+  db: Database,
+  session: { id: string; prompt_tokens: number | null; completion_tokens: number | null; cache_read: number | null; cache_write: number | null },
+): TokenCounts | null {
+  const base = counts({ p: session.prompt_tokens, c: session.completion_tokens, cr: session.cache_read, cw: session.cache_write })
+  if (!base) return null
+  const side = db.prepare(
+    `SELECT COALESCE(SUM(prompt_tokens), 0) AS p, COALESCE(SUM(completion_tokens), 0) AS c,
+            COALESCE(SUM(cache_read), 0) AS cr, COALESCE(SUM(cache_write), 0) AS cw
+       FROM token_usage WHERE session_id = ? AND kind <> ?`,
+  ).get(session.id, TOKENS_MEASURED_KIND) as { p: number; c: number; cr: number; cw: number }
+  const input = base.input - Number(side.p)
+  const output = base.output - Number(side.c)
+  const cacheRead = base.cache_read - Number(side.cr)
+  const cacheWrite = base.cache_write - Number(side.cw)
+  if (input < 0 || output < 0 || cacheRead < 0 || cacheWrite < 0) return null
+  return { input, output, cache_read: cacheRead, cache_write: cacheWrite, total: input + output + cacheRead + cacheWrite }
+}
+
 export function buildStrandDetail(
   db: Database,
   input: { userId: number; privacy: boolean; strandId: string; now?: number },
@@ -358,14 +397,25 @@ export function buildStrandDetail(
     open,
     next,
     summary_at: summaryAt,
-    tokens: counts({ p: session.prompt_tokens, c: session.completion_tokens, cr: session.cache_read, cw: session.cache_write }),
+    tokens: strandTokens(db, session),
     running_tasks: running,
   }
 }
 
-export interface TokenDay extends TokenCounts {
+/** Only `kind = 'request'` rows are real, provider-reported request counts. */
+export const TOKENS_MEASURED_KIND = 'request'
+
+export interface TokenDay {
   /** Calendar day in Europe/Berlin, YYYY-MM-DD. */
   day: string
+  /** True when at least one measured request row exists for this day. */
+  measured: boolean
+  /** All counters are null when the day has no measured row (unknown, not 0). */
+  input: number | null
+  output: number | null
+  cache_read: number | null
+  cache_write: number | null
+  total: number | null
 }
 
 export interface TokensReport {
@@ -374,8 +424,19 @@ export interface TokensReport {
   generated_at: string
   timezone: string
   counting: string
+  /** Which `token_usage.kind` values are counted; everything else is excluded. */
+  measured_kinds: string[]
+  /** Number of days (of the seven) with at least one measured row. */
+  measured_days: number
   days: TokenDay[]
-  total: TokenCounts
+  /** Null when no day in the window has a measured row. */
+  total: TokenCounts | null
+}
+
+/** YYYY-MM-DD shifted by whole calendar days (pure date arithmetic, no clock time). */
+function shiftDay(day: string, delta: number): string {
+  const [y, m, d] = day.split('-').map(Number)
+  return new Date(Date.UTC(y, m - 1, d + delta)).toISOString().slice(0, 10)
 }
 
 const berlinDay = new Intl.DateTimeFormat('en-CA', { timeZone: TOKENS_TIMEZONE, year: 'numeric', month: '2-digit', day: '2-digit' })
@@ -391,13 +452,12 @@ export function berlinDayOf(ms: number): string {
  */
 export function buildTokensReport(db: Database, input: { userId: number; now?: number }): TokensReport {
   const now = input.now ?? Date.now()
+  // Calendar days: today's Berlin date, then whole-day steps on the DATE
+  // itself. Subtracting 24 h from the clock skipped a day after the spring
+  // DST switch (review F6).
+  const today = berlinDayOf(now)
   const days: string[] = []
-  for (let i = TOKENS_DAYS - 1; i >= 0; i--) {
-    // Noon steps never skip or double a day across DST.
-    const label = berlinDayOf(now - i * 86_400_000)
-    if (!days.includes(label)) days.push(label)
-  }
-  while (days.length < TOKENS_DAYS) days.unshift(berlinDayOf(Date.parse(`${days[0]}T12:00:00Z`) - 86_400_000))
+  for (let i = TOKENS_DAYS - 1; i >= 0; i--) days.push(shiftDay(today, -i))
   // Earliest possible UTC instant of the first Berlin day (Berlin is UTC+1/+2).
   const fromMs = Date.parse(`${days[0]}T00:00:00Z`) - 2 * 3_600_000
   const from = new Date(fromMs).toISOString().slice(0, 19).replace('T', ' ')
@@ -407,9 +467,9 @@ export function buildTokensReport(db: Database, input: { userId: number; now?: n
             s.user_id AS uid, s.session_user AS suser,
             SUM(t.prompt_tokens) AS p, SUM(t.completion_tokens) AS c, SUM(t.cache_read) AS cr, SUM(t.cache_write) AS cw
        FROM token_usage t LEFT JOIN sessions s ON s.id = t.session_id
-      WHERE t.timestamp >= ?
+      WHERE t.timestamp >= ? AND t.kind = ?
       GROUP BY t.session_id, hour`,
-  ).all(from) as Array<{ sid: string | null; hour: string; type: string | null; uid: unknown; suser: unknown; p: number; c: number; cr: number; cw: number }>
+  ).all(from, TOKENS_MEASURED_KIND) as Array<{ sid: string | null; hour: string; type: string | null; uid: unknown; suser: unknown; p: number; c: number; cr: number; cw: number }>
 
   const taskBySession = db.prepare(
     'SELECT id, trigger_type, trigger_source_id, session_id FROM tasks WHERE session_id = ? LIMIT 1',
@@ -432,28 +492,32 @@ export function buildTokensReport(db: Database, input: { userId: number; now?: n
     return own
   }
 
-  const byDay = new Map<string, TokenDay>(days.map(day => [day, { day, input: 0, output: 0, cache_read: 0, cache_write: 0, total: 0 }]))
+  const byDay = new Map<string, TokenCounts>()
   for (const row of rows) {
     if (!isOwn(row)) continue
     const ms = Date.parse(`${row.hour.replace(' ', 'T')}:00:00Z`)
     if (!Number.isFinite(ms)) continue
-    const bucket = byDay.get(berlinDayOf(ms))
-    if (!bucket) continue
+    const label = berlinDayOf(ms)
+    if (!days.includes(label)) continue
+    const bucket = byDay.get(label) ?? { input: 0, output: 0, cache_read: 0, cache_write: 0, total: 0 }
     bucket.input += Number(row.p ?? 0)
     bucket.output += Number(row.c ?? 0)
     bucket.cache_read += Number(row.cr ?? 0)
     bucket.cache_write += Number(row.cw ?? 0)
+    bucket.total = bucket.input + bucket.output + bucket.cache_read + bucket.cache_write
+    byDay.set(label, bucket)
   }
-  const total: TokenCounts = { input: 0, output: 0, cache_read: 0, cache_write: 0, total: 0 }
-  const list = days.map(day => {
-    const d = byDay.get(day)!
-    d.total = d.input + d.output + d.cache_read + d.cache_write
+  let total: TokenCounts | null = null
+  const list: TokenDay[] = days.map(day => {
+    const d = byDay.get(day)
+    if (!d) return { day, measured: false, input: null, output: null, cache_read: null, cache_write: null, total: null }
+    total ??= { input: 0, output: 0, cache_read: 0, cache_write: 0, total: 0 }
     total.input += d.input
     total.output += d.output
     total.cache_read += d.cache_read
     total.cache_write += d.cache_write
     total.total += d.total
-    return d
+    return { day, measured: true, ...d }
   })
   return {
     v: DETAIL_VERSION,
@@ -461,6 +525,8 @@ export function buildTokensReport(db: Database, input: { userId: number; now?: n
     generated_at: new Date(now).toISOString(),
     timezone: TOKENS_TIMEZONE,
     counting: TOKENS_COUNTING,
+    measured_kinds: [TOKENS_MEASURED_KIND],
+    measured_days: list.filter(d => d.measured).length,
     days: list,
     total,
   }
