@@ -1019,6 +1019,13 @@ export class TaskRunner {
       if (refusal) throw new TaskExecutionRefusedError(taskId, refusal)
       this.validateStatusUpdatesConfig()
       const sessionId = this.ensureTaskSession(task, parentSessionId)
+      // B-01-R-NEW-01: materializing the session of a sessionless task writes
+      // the parent lineage onto the row, which can turn a `none` task into an
+      // invalid one (contradictory or cyclic parent). Re-check the gate on the
+      // persisted row before any model, credential, agent or tool; the catch
+      // below quarantines the row (`failed` + refusal marker) and frees the slot.
+      const postSessionRefusal = this.executionRefusal(taskId)
+      if (postSessionRefusal) throw new TaskExecutionRefusedError(taskId, postSessionRefusal)
 
       // Pre-resolve once so broken credentials still fail before the task starts.
       const model = this.options.buildModel(provider)
