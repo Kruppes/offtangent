@@ -187,20 +187,46 @@ export function resolveTaskOwnerUserIdForTask(
   db: Database,
   task: TaskOwnershipLineage,
 ): number | null {
+  const ownership = resolveTaskOwnershipForTask(db, task)
+  return ownership.kind === 'owner' ? ownership.userId : null
+}
+
+/**
+ * Outcome of the task owner walk, keeping "legitimately unowned system work"
+ * (`none`: cronjob/heartbeat, or an agent chain whose every hop names nobody)
+ * apart from "the lineage is broken" (`invalid`). `resolveTaskOwnerUserIdForTask`
+ * collapses both to `null`, which is correct for read gates (deny). A runtime
+ * consumer that substitutes a fallback identity for unowned work MUST use this
+ * function and give `invalid` NO identity at all (B-01): otherwise a
+ * contradictory user lineage is executed and reported as the fallback user.
+ *
+ * `invalid` covers: a contradictory/broken session lineage on any hop, a cycle
+ * in `trigger_source_id`, a dangling task-parent reference and an exceeded hop
+ * budget — none of them proves that the task is system work.
+ */
+export type TaskOwnership =
+  | { kind: 'owner'; userId: number }
+  | { kind: 'none' }
+  | { kind: 'invalid' }
+
+export function resolveTaskOwnershipForTask(
+  db: Database,
+  task: TaskOwnershipLineage,
+): TaskOwnership {
   let current: TaskOwnershipLineage | null = task
   const seen = new Set<string>()
 
-  for (let hop = 0; current && hop <= MAX_TASK_PARENT_HOPS; hop++) {
+  for (let hop = 0; hop <= MAX_TASK_PARENT_HOPS; hop++) {
     // A cycle in `trigger_source_id` (only reachable through bad data) must
     // not spin, and must not be answered with a guess.
-    if (seen.has(current.id)) return null
+    if (seen.has(current.id)) return { kind: 'invalid' }
     seen.add(current.id)
 
     // Fail closed: only a lineage that names nobody may continue to the
-    // task parent. A contradictory or broken chain ends the walk with null.
+    // task parent. A contradictory or broken chain ends the walk as invalid.
     const lineage = resolveTaskSessionLineage(db, current.sessionId)
-    if (lineage.kind === 'owner') return lineage.userId
-    if (lineage.kind === 'invalid') return null
+    if (lineage.kind === 'owner') return lineage
+    if (lineage.kind === 'invalid') return { kind: 'invalid' }
 
     // Only `agent` tasks carry a parent TASK id here. For `cronjob` the
     // column holds a cronjob id, for `heartbeat` a marker string — following
@@ -208,10 +234,13 @@ export function resolveTaskOwnerUserIdForTask(
     const parentId = current.triggerType === 'agent'
       ? (current.triggerSourceId?.trim() || null)
       : null
-    if (!parentId) return null
+    if (!parentId) return { kind: 'none' }
 
-    current = loadTaskLineage(db, parentId)
+    // A parent edge that names a missing task cannot prove system work.
+    const parent = loadTaskLineage(db, parentId)
+    if (!parent) return { kind: 'invalid' }
+    current = parent
   }
 
-  return null
+  return { kind: 'invalid' }
 }

@@ -22,7 +22,7 @@ import {
   deliverTaskStatusUpdate,
   resolveTaskStrandOrigin,
   taskOwnerAgentId,
-  resolveTaskOwnerUserIdForTask,
+  resolveTaskOwnershipForTask,
   parseStrictUserId,
   editCronjobTool,
   ensureConfigStructure,
@@ -885,19 +885,39 @@ export async function createRuntimeComposition(options: RuntimeCompositionOption
    * `sessionId` is the interactive strand resolved through the full lineage,
    * or null for tasks without a strand origin.
    */
-  function resolveTaskOrigin(task: Task): TaskOrigin & { userId: number } {
-    // A sub-task has a task-parent edge but no parent session. Walk both
-    // kinds of lineage before falling back to the provisioned admin user.
-    const resolvedUserId = resolveTaskOwnerUserIdForTask(db, task)
-    if (resolvedUserId == null && task.sessionId) {
-      logger.warn(
-        `[axiom] Task ${task.id}: could not resolve target user from session lineage (sessionId=${task.sessionId}); falling back to default user`,
-      )
-    }
+  function resolveTaskOrigin(task: Task): TaskOrigin {
+    const userId = resolveTaskUserId(task)
+    // B-01: an invalid lineage gets NO identity and NO strand. The strand is
+    // resolved by a separate walk and may belong to another user, so it is
+    // withheld too; every personal side effect keys off this null.
+    if (userId === null) return { userId: null, sessionId: null }
     return {
-      userId: resolvedUserId ?? getFallbackUserId(),
+      userId,
       sessionId: resolveTaskStrandOrigin(db, task),
     }
+  }
+
+  /**
+   * The ONE place that turns task ownership into a runtime user id.
+   *
+   * - `owner`   → that user (session lineage first, then the task-parent edge).
+   * - `none`    → genuinely unowned system work (cronjob, heartbeat, an agent
+   *               chain naming nobody): the provisioned fallback user.
+   * - `invalid` → contradictory/broken lineage: null, never the fallback.
+   *               Callers must drop personal side effects (status rows,
+   *               result delivery, Telegram, activity frames, restart notices)
+   *               and run the task without a user identity (B-01).
+   */
+  function resolveTaskUserId(task: Task): number | null {
+    const ownership = resolveTaskOwnershipForTask(db, task)
+    if (ownership.kind === 'owner') return ownership.userId
+    if (ownership.kind === 'invalid') {
+      logger.warn(
+        `[axiom] Task ${task.id}: invalid ownership lineage (sessionId=${task.sessionId ?? 'none'}); no user identity, personal delivery suppressed`,
+      )
+      return null
+    }
+    return getFallbackUserId()
   }
 
   /**
@@ -909,7 +929,7 @@ export async function createRuntimeComposition(options: RuntimeCompositionOption
   const taskActivityDeps = {
     db,
     chatEventBus,
-    resolveUserId: (task: Task) => resolveTaskOwnerUserIdForTask(db, task) ?? getFallbackUserId(),
+    resolveUserId: (task: Task) => resolveTaskUserId(task),
     logger: { warn: (msg: string, ...args: unknown[]) => logger.warn(msg, ...args) },
   }
 
@@ -978,6 +998,13 @@ export async function createRuntimeComposition(options: RuntimeCompositionOption
     // result may enter a strand at all is decided by `routeTaskOutcome` from
     // the task's own lineage, not by whatever session happens to be cached.
     const { userId } = resolveTaskOrigin(task)
+    if (userId === null) {
+      // B-01: invalid lineage. The result stays in the task row (notice not
+      // marked delivered); it is neither delivered to a parent, a strand, a
+      // feed nor Telegram under a guessed identity.
+      logger.error(`[axiom] Task ${taskId}: outcome not delivered, task ownership lineage is invalid`)
+      return
+    }
 
     // Strand or feed (SPEC 2.9). `routeTaskOutcome` decides from the task's
     // own lineage; everything below is the machinery it needs, unchanged in
@@ -1065,6 +1092,8 @@ export async function createRuntimeComposition(options: RuntimeCompositionOption
     if (!task) return
 
     const { userId } = resolveTaskOrigin(task)
+    // B-01: no status row, broadcast or Telegram for an invalid lineage.
+    if (userId === null) return
     const statusAgentId = taskOwnerAgentId(task)
     // Progress stays on the lineage strand, or the task's own transcript
     // for feed-only work. Never consult or create an active chat session.
@@ -1437,19 +1466,25 @@ export async function createRuntimeComposition(options: RuntimeCompositionOption
       const ctx = getCurrentTaskExecutionContext()
       if (!ctx?.taskId) return { userId: undefined, strandId: null, taskId: null }
       const task = taskRuntime.tasks.getById(ctx.taskId)
+      // B-01: a task without identity (invalid lineage) has no strand either.
+      const userId = ctx.userId ?? undefined
       return {
-        userId: ctx.userId ?? undefined,
-        strandId: task ? resolveTaskStrandOrigin(db, task) : null,
+        userId,
+        strandId: task && userId !== undefined ? resolveTaskStrandOrigin(db, task) : null,
         taskId: ctx.taskId,
       }
     }
 
     const resolveUserId = () => (scope === 'background'
       ? taskStrandOrigin().userId
-      : taskStrandOrigin().userId ?? agentCore?.getCurrentToolUserId())
+      // Inside a task context the task identity is authoritative, even when
+      // it is null (B-01): never borrow a concurrent interactive user.
+      : taskStrandOrigin().taskId ? taskStrandOrigin().userId : agentCore?.getCurrentToolUserId())
     const resolveStrandId = () => (scope === 'background'
       ? taskStrandOrigin().strandId
-      : taskStrandOrigin().strandId ?? agentCore?.getCurrentInteractiveSessionId() ?? null)
+      : taskStrandOrigin().taskId && taskStrandOrigin().userId === undefined
+        ? null
+        : taskStrandOrigin().strandId ?? agentCore?.getCurrentInteractiveSessionId() ?? null)
 
     return {
       db,
@@ -1591,7 +1626,12 @@ export async function createRuntimeComposition(options: RuntimeCompositionOption
     // Boards: the interactive persona can publish one too ("put this on a
     // board"), with the user taken from the running turn.
     createPublishBoardTool(publishBoardToolOptions(
-      () => getCurrentTaskExecutionContext()?.userId ?? agentCore?.getCurrentToolUserId(),
+      // A bound task context is authoritative even when its user is null
+      // (invalid lineage, B-01): no fallback to the interactive turn's user.
+      () => {
+        const ctx = getCurrentTaskExecutionContext()
+        return ctx ? ctx.userId ?? undefined : agentCore?.getCurrentToolUserId()
+      },
       () => agentCore?.getCurrentToolAgentId(),
     )),
     // The fork in the path: the persona branches the strand it is talking in
@@ -2771,12 +2811,15 @@ export async function createRuntimeComposition(options: RuntimeCompositionOption
     const runningTasks: RunningTaskSummary[] = []
     try {
       for (const task of taskRuntime.tasks.list({ status: 'running' })) {
+        // B-01: no restart notice under a guessed identity.
+        const runningUserId = resolveTaskUserId(task)
+        if (runningUserId === null) continue
         runningTasks.push({
           taskId: task.id,
           name: task.name,
           sessionId: resolveTaskStrandOrigin(db, task),
           agentId: taskOwnerAgentId(task),
-          userId: resolveTaskOwnerUserIdForTask(db, task) ?? getFallbackUserId(),
+          userId: runningUserId,
           triggerType: task.triggerType,
           // `recoverTasks` names its replacement row "<name> (resumed)";
           // this only decorates the notice text, never a decision.
