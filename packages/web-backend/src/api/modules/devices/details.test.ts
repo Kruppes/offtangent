@@ -181,6 +181,8 @@ describe('GET /api/status/strand/:id', () => {
     db.prepare(`INSERT INTO session_summaries (session_id, version, schema_json) VALUES ('s-own', 1, ?)`).run(JSON.stringify({ goal: 'Alt' }))
     db.prepare(`INSERT INTO session_summaries (session_id, version, schema_json) VALUES ('s-own', 2, ?)`).run(JSON.stringify({ goal: 'Dashboard bauen', open: ['Review', 7, 'Deploy'], next: ['Screens'] }))
     task('t-run', { parent: 's-own' })
+    // F5-R2: strand tokens are measured request rows only (session aggregate is not evidence)
+    usage('s-own', '2026-07-01 10:00:00', 100, 20, 3000, 50)
     const { status, json } = await get('/api/status/strand/s-own', readToken)
     expect(status).toBe(200)
     expect(json.goal).toBe('Dashboard bauen')
@@ -420,6 +422,12 @@ describe('review fixes F2/F5/F6/F7 (own, stricter regressions)', () => {
 
   it('F5: estimated side accounting (voice_note) is excluded from strand tokens and the report', async () => {
     // Session counters 100/20/3000/50 include a voice-note estimate of 40+10.
+    // F5-R2: the strand value comes from the measured request row (60/10/3000/50),
+    // not from the session aggregate minus the side row.
+    db.prepare(
+      `INSERT INTO token_usage (timestamp, provider, model, prompt_tokens, completion_tokens, cache_read, cache_write, session_id, kind)
+       VALUES (datetime('now', '-2 minutes'), 'anthropic', 'm', 60, 10, 3000, 50, 's-own', 'request')`,
+    ).run()
     db.prepare(
       `INSERT INTO token_usage (timestamp, provider, model, prompt_tokens, completion_tokens, cache_read, cache_write, session_id, kind)
        VALUES (datetime('now', '-1 minutes'), 'gemini', 'tts', 40, 10, 0, 0, 's-own', 'voice_note')`,
@@ -428,7 +436,7 @@ describe('review fixes F2/F5/F6/F7 (own, stricter regressions)', () => {
     expect(strandRes.json.tokens).toMatchObject({ input: 60, output: 10, cache_read: 3000, cache_write: 50, total: 3120 })
     const report = await get('/api/status/tokens', readToken)
     expect(report.json.measured_kinds).toEqual(['request'])
-    expect(report.json.total).toBeNull()
+    expect(report.json.total.total).toBe(3120)
     expect(report.json.counting).toContain('Schätzung')
   })
 

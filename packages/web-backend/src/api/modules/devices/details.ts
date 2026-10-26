@@ -317,28 +317,24 @@ function textList(raw: unknown): string[] {
 }
 
 /**
- * Strand counters without side accounting. `logTokenUsage` also adds voice
- * notes / image generations (partly local estimates) to the session counters;
- * those rows are subtracted again so only measured requests remain (review
- * F5). An inconsistent result (negative) is reported as unknown.
+ * Strand tokens come only from measured provider requests (review F5, F5-R2):
+ * the SUM of the `token_usage` rows of this session with `kind = 'request'`.
+ * The `sessions` aggregate counters are not used: they also contain side
+ * accounting (voice notes, image generations, partly local estimates), and a
+ * historical migration added the session cache columns with DEFAULT 0 and no
+ * backfill, so "aggregate minus side rows" is not evidence of anything.
+ * No request row at all (fresh strand, or side accounting only) is unknown
+ * (`null`), never a measured 0; an explicitly logged zero request is 0.
  */
-function strandTokens(
-  db: Database,
-  session: { id: string; prompt_tokens: number | null; completion_tokens: number | null; cache_read: number | null; cache_write: number | null },
-): TokenCounts | null {
-  const base = counts({ p: session.prompt_tokens, c: session.completion_tokens, cr: session.cache_read, cw: session.cache_write })
-  if (!base) return null
-  const side = db.prepare(
-    `SELECT COALESCE(SUM(prompt_tokens), 0) AS p, COALESCE(SUM(completion_tokens), 0) AS c,
+function strandTokens(db: Database, session: { id: string }): TokenCounts | null {
+  const row = db.prepare(
+    `SELECT COUNT(*) AS n,
+            COALESCE(SUM(prompt_tokens), 0) AS p, COALESCE(SUM(completion_tokens), 0) AS c,
             COALESCE(SUM(cache_read), 0) AS cr, COALESCE(SUM(cache_write), 0) AS cw
-       FROM token_usage WHERE session_id = ? AND kind <> ?`,
-  ).get(session.id, TOKENS_MEASURED_KIND) as { p: number; c: number; cr: number; cw: number }
-  const input = base.input - Number(side.p)
-  const output = base.output - Number(side.c)
-  const cacheRead = base.cache_read - Number(side.cr)
-  const cacheWrite = base.cache_write - Number(side.cw)
-  if (input < 0 || output < 0 || cacheRead < 0 || cacheWrite < 0) return null
-  return { input, output, cache_read: cacheRead, cache_write: cacheWrite, total: input + output + cacheRead + cacheWrite }
+       FROM token_usage WHERE session_id = ? AND kind = ?`,
+  ).get(session.id, TOKENS_MEASURED_KIND) as { n: number; p: number; c: number; cr: number; cw: number }
+  if (!row || Number(row.n) === 0) return null
+  return counts({ p: row.p, c: row.c, cr: row.cr, cw: row.cw })
 }
 
 export function buildStrandDetail(
