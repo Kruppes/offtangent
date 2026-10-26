@@ -117,15 +117,6 @@ export interface InteractionsServiceOptions {
   getTurnRunner?: () => InteractionTurnStarter | null
   /** Captures service, for blocks that hang off a capture. Optional: without it every block takes the generic path. */
   getCaptureConfirmer?: () => CaptureBlockConfirmer | null
-  /** Tell other clients of this user that the card was answered. */
-  broadcast?: (input: {
-    userId: number
-    sessionId: string
-    agentId: string
-    messageId: number
-    blockId: string
-    label: string
-  }) => void
 }
 
 export interface AnswerInteractionResult {
@@ -517,14 +508,6 @@ export function createInteractionsService(options: InteractionsServiceOptions): 
       throw err
     }
 
-    options.broadcast?.({
-      userId,
-      sessionId: row.session_id,
-      agentId: row.agent_id ?? 'main',
-      messageId: row.id,
-      blockId: record.id,
-      label,
-    })
     const result = (resumed: boolean, idempotent: boolean): AnswerInteractionResult =>
       ({ applied: true, resumed, idempotent, value: checked.value, label, interaction: interactionStateView(answered) })
     if (!record.blocking) {
@@ -761,14 +744,6 @@ export function createInteractionsService(options: InteractionsServiceOptions): 
     // Mirror for clients that still read the answer from the message
     // metadata (the released app, until S1-C). The table stays the truth.
     recordAnswer(row, block.id, validated.value, validated.label, clientRequestId, false)
-    options.broadcast?.({
-      userId,
-      sessionId: row.session_id,
-      agentId: row.agent_id ?? 'main',
-      messageId: row.id,
-      blockId: block.id,
-      label: validated.label,
-    })
 
     // A non-blocking card (blocking=0) stores and emits its answer, but starts
     // NO turn (review 1, finding 8); feeding it into the next turn's context

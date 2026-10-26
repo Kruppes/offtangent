@@ -43,18 +43,13 @@ export function createSharedInteractionsService(options: InteractionsRouterOptio
     db: options.db,
     getTurnRunner: options.getTurnRunner,
     getCaptureConfirmer: options.getCaptureConfirmer,
-    broadcast: input => {
-      // Other tabs collapse the card to its chip without a reload. The answer
-      // itself also travels as an ordinary `user_message`.
-      options.chatEventBus?.broadcast({
-        type: 'user_message',
-        userId: input.userId,
-        source: 'web',
-        sessionId: input.sessionId,
-        agentId: input.agentId,
-        text: input.label,
-      })
-    },
+    // No `user_message` echo of the answer (fix/interaction-answer-echo). The
+    // repository write already emits `interaction.updated` with the sealed row
+    // (interaction-broadcast.ts) to every client of the owner, the answering
+    // one included; that frame switches the card to its answered chip. The old
+    // echo went out as source 'web' whatever surface answered, reached the
+    // answering client too (REST has no connection id to exclude) and carried
+    // the unsealed label, so the app showed "web (other channel): <label>".
   })
 }
 
