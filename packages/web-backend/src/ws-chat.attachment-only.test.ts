@@ -90,7 +90,7 @@ async function harness(holdMs: number) {
     "INSERT INTO chat_messages (session_id, user_id, role, content, metadata, agent_id, client_message_id) VALUES ('sess-main', 1, 'user', ?, ?, 'main', ?)",
   ).run(content, JSON.stringify({ files }), clientMessageId)
   return {
-    db, port, token, calls, storedRow,
+    db, port, token, calls, storedRow, runner,
     close: async () => {
       await new Promise<void>((r) => setTimeout(r, 20))
       for (const c of wss.clients) c.terminate()
@@ -128,12 +128,19 @@ describe('ws-chat: photos without text (Android skipSave frame without content)'
       const c = await connect(h.port, h.token)
       c.ws.send(JSON.stringify({ type: 'message', agentId: 'main', clientMessageId: 'cm-photo', skipSave: true, attachments: photos }))
       await until(() => c.all.some(f => f.type === 'message_ack' && f.clientMessageId === 'cm-photo'))
+      // F4: the ack tells the client that the photos wait for a follow-up.
+      expect(c.all.find(f => f.type === 'message_ack' && f.clientMessageId === 'cm-photo')).toMatchObject({ held: true, holdMs: 2_000 })
       await new Promise(r => setTimeout(r, 300))
       expect(h.calls).toHaveLength(0)
 
       h.storedRow('cm-voice', 'Was ist auf den Fotos?', [recording])
       c.ws.send(JSON.stringify({ type: 'message', content: 'Was ist auf den Fotos?', agentId: 'main', clientMessageId: 'cm-voice', skipSave: true, attachments: [recording] }))
       await until(() => h.calls.length === 1)
+      // An ordinary message carries no hold fields.
+      const voiceAck = c.all.find(f => f.type === 'message_ack' && f.clientMessageId === 'cm-voice')
+      expect(voiceAck).toBeDefined()
+      expect(voiceAck).not.toHaveProperty('held')
+      expect(voiceAck).not.toHaveProperty('holdMs')
       await new Promise(r => setTimeout(r, 2_300))
       expect(h.calls).toEqual([
         { text: 'Was ist auf den Fotos?', files: ['46195.jpg', '46196.jpg', 'recording-2026-10-29-091734.m4a'] },
@@ -152,6 +159,28 @@ describe('ws-chat: photos without text (Android skipSave frame without content)'
       await until(() => c.all.some(f => f.type === 'error'))
       c.ws.close()
     } finally {
+      await h.close()
+    }
+  })
+
+  it('submitUserMessage throws: the client gets an error frame, the log carries only the error class', async () => {
+    const h = await harness(50)
+    const logged = vi.spyOn(console, 'error').mockImplementation(() => undefined)
+    try {
+      vi.spyOn(h.runner, 'submitUserMessage').mockImplementation(() => { throw new Error('secret-detail boom') })
+      h.storedRow('cm-throw', 'hallo', [])
+      const c = await connect(h.port, h.token)
+      c.ws.send(JSON.stringify({ type: 'message', content: 'hallo', agentId: 'main', clientMessageId: 'cm-throw', skipSave: true }))
+      await until(() => c.all.some(f => f.type === 'error'))
+      expect(c.all.find(f => f.type === 'error')).toMatchObject({ error: 'Message could not be processed' })
+      expect(c.all.some(f => f.type === 'message_ack' && f.clientMessageId === 'cm-throw')).toBe(false)
+      expect(h.calls).toHaveLength(0)
+      const line = logged.mock.calls.map(args => args.join(' ')).find(text => text.includes('[ws-chat] Frame handling failed'))
+      expect(line).toBe('[ws-chat] Frame handling failed: error')
+      expect(line).not.toContain('secret-detail')
+      c.ws.close()
+    } finally {
+      logged.mockRestore()
       await h.close()
     }
   })

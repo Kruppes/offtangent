@@ -8,7 +8,7 @@ import type {
   SlashCommandPicker,
   VoiceNote,
 } from '@axiom/core'
-import { isSlashCommandPicker, isSlashCommandAgentTurn, isSessionAccessError, sealText, supersedeOpenOnUserMessage, ASK_USER_TOOL_NAME } from '@axiom/core'
+import { errorClass, isSlashCommandPicker, isSlashCommandAgentTurn, isSessionAccessError, sealText, supersedeOpenOnUserMessage, ASK_USER_TOOL_NAME } from '@axiom/core'
 import type { InteractionRecord, SealedRef } from '@axiom/core'
 import { parseTurnModelSelection } from './model-selection.js'
 import { normalizeClientMessageId, normalizeSessionId, resolveAgentId } from './persona-request.js'
@@ -131,6 +131,14 @@ interface ChatResponse {
   waitingForTurnId?: string | null
   /** For `message_ack`: true when this key was seen before and no new turn was started. */
   duplicate?: boolean
+  /**
+   * For `message_ack`: the message (photos without text) waits up to
+   * `holdMs` for a follow-up in the same strand before its turn starts, so
+   * a client can show "wartet" instead of a stuck bubble. Additive, absent
+   * for every other message; legacy clients ignore it.
+   */
+  held?: boolean
+  holdMs?: number
   /**
    * For `message_ack`: the secret handles the server created for this message
    * (plan 2026-09-26, step 1). Additive and omitted when empty, so a client
@@ -931,6 +939,7 @@ export function setupWebSocketChat(
           agentId,
           sessionId: resolvedSessionId,
           duplicate: duplicateRow,
+          ...(submitted.mode === 'held' ? { held: true, holdMs: submitted.holdMs } : {}),
           // The server's own time for the row the client rendered
           // optimistically. Without it the bubble keeps the client clock and
           // is not comparable to the rows that come back from history.
@@ -948,7 +957,7 @@ export function setupWebSocketChat(
     // client would wait for a turn that never comes. Log it and tell it.
     ws.on('message', (data) => {
       handleFrame(data).catch((err: unknown) => {
-        console.error('[ws-chat] Frame handling failed:', err instanceof Error ? err.name : typeof err)
+        console.error(`[ws-chat] Frame handling failed: ${errorClass(err)}`)
         sendMessage(ws, { type: 'error', error: 'Message could not be processed' })
       })
     })

@@ -189,6 +189,10 @@ const WRITE_SITES: Record<string, { class: WriteClass; why: string }> = {
     class: 'infrastructure',
     why: 'S1-D: rewrites only the metadata JSON of an existing user row (steer/turnId or queued flags); the content column is not touched.',
   },
+  'core/src/unanswered-attachments.ts#markImagesSettled': {
+    class: 'infrastructure',
+    why: 'Adds imagesDiscarded/imagesTakenBy flags to the metadata JSON of an existing user row; no text of its own, content is not touched.',
+  },
   // ------------------------------------------------------------ telegram
   'telegram/src/bot.ts#processQueuedMessage': {
     class: 'sealed-user-input',

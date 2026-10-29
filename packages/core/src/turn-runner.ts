@@ -55,7 +55,7 @@ import { hasTurnRuntimeOverrides } from './turn-overrides.js'
 import { recordStrandTurnStart, recordStrandTurnFirstToken, recordStrandTurnEnd } from './strand-turns.js'
 import type { StrandTurnTrigger, StrandTurnInputMode } from './strand-turns.js'
 import { markUserMessageSteerState, type SteerOffer, type SteerOfferOptions, type SteerRejectReason } from './steer.js'
-import { collectUnansweredImageUploads, mergeUploads } from './unanswered-attachments.js'
+import { collectUnansweredImages, markImagesSettled, mergeUploads } from './unanswered-attachments.js'
 
 /**
  * The slice of AgentCore the turn runner depends on. Keeping this narrow
@@ -521,6 +521,8 @@ export const DEFAULT_ATTACHMENT_ONLY_HOLD_MS = 8_000
 
 interface HeldSubmission {
   input: StartTurnInput & { messageId?: number | null }
+  /** Every user row whose attachments this hold carries (merged holds). */
+  messageIds: number[]
   timer: ReturnType<typeof setTimeout>
 }
 
@@ -853,31 +855,40 @@ export class TurnRunner {
     // A follow-up in the same strand takes the attachments of a held
     // attachment-only message into its own turn (one turn, all photos).
     const held = this.heldSubmissions.get(holdKey)
+    let heldMessageIds: number[] = []
     if (held) {
       clearTimeout(held.timer)
       this.heldSubmissions.delete(holdKey)
+      heldMessageIds = held.messageIds
       input = { ...input, attachments: mergeUploads(held.input.attachments, input.attachments) }
     }
 
     const live = [...(this.liveTurns.get(key) ?? [])].filter(t => !t.ended && t.agentId === agentId)
     if (live.length === 0 && this.shouldHold(input)) {
+      const holdInput = input
+      const messageIds = [...heldMessageIds, ...(input.messageId != null ? [input.messageId] : [])]
       const timer = setTimeout(() => {
         if (this.heldSubmissions.get(holdKey)?.timer !== timer) return
         this.heldSubmissions.delete(holdKey)
-        this.submitNow(input)
+        this.submitNow(holdInput, messageIds)
       }, this.attachmentOnlyHoldMs)
       timer.unref?.()
-      this.heldSubmissions.set(holdKey, { input, timer })
+      this.heldSubmissions.set(holdKey, { input: holdInput, messageIds, timer })
       return { mode: 'held', holdMs: this.attachmentOnlyHoldMs }
     }
-    return this.submitNow(input)
+    return this.submitNow(input, heldMessageIds)
   }
 
-  /** Photos without text wait for the words that belong to them. */
+  /**
+   * Photos without text wait for the words that belong to them. Only pure
+   * image messages: a document or a recording without text is complete on
+   * its own and starts its turn at once.
+   */
   private shouldHold(input: StartTurnInput & { messageId?: number | null }): boolean {
     return this.attachmentOnlyHoldMs > 0
       && input.messageId != null
       && (input.attachments?.length ?? 0) > 0
+      && (input.attachments ?? []).every(upload => upload.kind === 'image')
       && input.text.trim() === ''
       && !input.continueFromTranscript
       && !input.turnOverrides
@@ -890,26 +901,40 @@ export class TurnRunner {
    * `messageId`. Only for a turn that starts now: a queued or steered message
    * waits behind turns that answer those rows themselves.
    */
-  private withUnansweredImages(input: StartTurnInput, messageId: number | null): StartTurnInput {
-    if (!this.db || messageId == null || input.continueFromTranscript) return input
-    let carried: UploadDescriptor[] = []
+  private withUnansweredImages(input: StartTurnInput, messageId: number | null): { input: StartTurnInput; carriedMessageIds: number[] } {
+    if (!this.db || messageId == null || input.continueFromTranscript) return { input, carriedMessageIds: [] }
+    let carried: { uploads: UploadDescriptor[]; messageIds: number[] }
     try {
-      carried = collectUnansweredImageUploads(this.db, { sessionId: input.sessionId, beforeMessageId: messageId })
+      carried = collectUnansweredImages(this.db, { sessionId: input.sessionId, userId: input.userId, beforeMessageId: messageId })
     } catch (err) {
       console.error('[turn-runner] Could not collect unanswered attachments:', errorClass(err))
-      return input
+      return { input, carriedMessageIds: [] }
     }
-    if (carried.length === 0) return input
-    return { ...input, attachments: mergeUploads(carried, input.attachments) }
+    if (carried.uploads.length === 0) return { input, carriedMessageIds: [] }
+    return { input: { ...input, attachments: mergeUploads(carried.uploads, input.attachments) }, carriedMessageIds: carried.messageIds }
   }
 
-  private submitNow(input: StartTurnInput & { messageId?: number | null }): SubmitUserMessageResult {
+  /**
+   * F1 boundary: the images of a user row get at most ONE turn. As soon as a
+   * turn exists for them (started or queued), their rows are stamped
+   * `imagesTakenBy`; a later stop, kill or failure of that turn does not hand
+   * them to the next turn of the strand. A stop during the hold stamps
+   * `imagesDiscarded` instead (see {@link dropHeldSubmissions}).
+   */
+  private markTaken(turn: TurnInfo, messageIds: Array<number | null | undefined>): void {
+    markImagesSettled(this.db, messageIds, { takenByTurnId: turn.turnId })
+  }
+
+  private submitNow(input: StartTurnInput & { messageId?: number | null }, heldMessageIds: number[] = []): SubmitUserMessageResult {
     const { messageId = null, ...rawStartInput } = input
     const key = rawStartInput.agentUserId ?? String(rawStartInput.userId)
     const agentId = rawStartInput.agentId ?? 'main'
     const live = [...(this.liveTurns.get(key) ?? [])].filter(t => !t.ended && t.agentId === agentId)
     if (live.length === 0) {
-      return { mode: 'started', turn: this.startTurn(this.withUnansweredImages(rawStartInput, messageId)) }
+      const { input: withCarried, carriedMessageIds } = this.withUnansweredImages(rawStartInput, messageId)
+      const turn = this.startTurn(withCarried)
+      this.markTaken(turn, [...carriedMessageIds, ...heldMessageIds, messageId])
+      return { mode: 'started', turn }
     }
     const startInput = rawStartInput
     // Only plain text steers: attachments, a one-shot model, turn overrides
@@ -939,7 +964,9 @@ export class TurnRunner {
     const running = live.find(t => t.running) ?? null
     const waitingFor = running ?? live[0]!
     markUserMessageSteerState(this.db, messageId, { queued: true, waitingForTurnId: waitingFor.id })
-    return { mode: 'queued', turn: this.startTurn(startInput), waitingForTurnId: waitingFor.id, reason: offer.reason }
+    const queuedTurn = this.startTurn(startInput)
+    this.markTaken(queuedTurn, [...heldMessageIds, messageId])
+    return { mode: 'queued', turn: queuedTurn, waitingForTurnId: waitingFor.id, reason: offer.reason }
   }
 
   /**
@@ -1091,6 +1118,8 @@ export class TurnRunner {
       if (heldUser !== key || (sessionId !== null && heldSession !== sessionId)) continue
       clearTimeout(held.timer)
       this.heldSubmissions.delete(holdKey)
+      // The user cancelled these photos: no later turn may bring them back.
+      markImagesSettled(this.db, held.messageIds, { discarded: true })
       dropped = true
     }
     return dropped

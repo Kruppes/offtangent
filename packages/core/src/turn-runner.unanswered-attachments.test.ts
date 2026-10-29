@@ -20,7 +20,7 @@ import { TurnRunner } from './turn-runner.js'
 import type { TurnAgentLike } from './turn-runner.js'
 import type { UploadDescriptor } from './uploads.js'
 import { serializeUploadsMetadata } from './uploads.js'
-import { collectUnansweredImageUploads, mergeUploads } from './unanswered-attachments.js'
+import { collectUnansweredImageUploads, collectUnansweredImages, mergeUploads } from './unanswered-attachments.js'
 
 function upload(name: string, kind: 'image' | 'file' = 'image', mimeType = 'image/jpeg'): UploadDescriptor {
   const relativePath = `2026/10/29/${name}`
@@ -159,7 +159,7 @@ describe('collectUnansweredImageUploads', () => {
     row('user', '', [upload('p1.jpg'), upload('rec.m4a', 'file', 'audio/mp4')])
     const current = row('user', 'jetzt', [upload('p2.jpg')])
     row('user', 'später', [upload('later.jpg')])
-    const found = collectUnansweredImageUploads(db, { sessionId: 's-1', beforeMessageId: current })
+    const found = collectUnansweredImageUploads(db, { sessionId: 's-1', userId: 1, beforeMessageId: current })
     expect(found.map(u => u.originalName)).toEqual(['p1.jpg'])
   })
 
@@ -168,11 +168,196 @@ describe('collectUnansweredImageUploads', () => {
     const old = row('user', '', [upload('stale.jpg')])
     db.prepare("UPDATE chat_messages SET timestamp = datetime('now', '-2 hours') WHERE id = ?").run(old)
     const current = row('user', 'neu')
-    expect(collectUnansweredImageUploads(db, { sessionId: 's-1', beforeMessageId: current })).toEqual([])
+    expect(collectUnansweredImageUploads(db, { sessionId: 's-1', userId: 1, beforeMessageId: current })).toEqual([])
   })
 
   it('mergeUploads keeps order and drops the same stored file twice', () => {
     const a = upload('a.jpg')
     expect(mergeUploads([a, upload('b.jpg')], [a, upload('c.jpg')]).map(u => u.originalName)).toEqual(['a.jpg', 'b.jpg', 'c.jpg'])
+  })
+})
+
+/**
+ * Review of 725e1d25 (F1, F5, F6): images get at most one turn. A stop
+ * during the hold discards them, a turn that started with them settles them
+ * whatever its outcome; nothing comes back in a later turn of the strand.
+ */
+class GatedAgent implements TurnAgentLike {
+  calls: Array<{ text: string; attachments: string[] }> = []
+  private gates: Array<() => void> = []
+  async *sendMessage(_userId: string, text: string, _source?: string, attachments?: UploadDescriptor[]): AsyncIterable<ResponseChunk> {
+    this.calls.push({ text, attachments: (attachments ?? []).map(a => a.originalName) })
+    if (text.includes('[block]')) await new Promise<void>(resolve => this.gates.push(resolve))
+    yield { type: 'text', text: 'ok' }
+    yield { type: 'done' }
+  }
+  release(): void {
+    for (const gate of this.gates.splice(0)) gate()
+  }
+  abort(): void {
+    this.release()
+  }
+}
+
+function gatedSetup(holdMs = 8_000) {
+  const ctx = setup(holdMs)
+  const agent = new GatedAgent()
+  const runner = new TurnRunner({ db: ctx.db, getAgent: () => agent, retryPolicy: { enabled: false }, attachmentOnlyHoldMs: holdMs })
+  return { ...ctx, agent, runner }
+}
+
+function meta(db: Database, id: number): Record<string, unknown> {
+  const row = db.prepare('SELECT metadata FROM chat_messages WHERE id = ?').get(id) as { metadata: string | null }
+  return row.metadata ? JSON.parse(row.metadata) as Record<string, unknown> : {}
+}
+
+describe('review F1/F5: stopped or taken images never come back', () => {
+  it('/stop during the hold, then a new turn in the same strand: no image of the stopped message', async () => {
+    vi.useFakeTimers()
+    const { db, agent, runner, row } = setup()
+    const photo = upload('stopped.jpg')
+    const photoId = row('user', '', [photo])
+    expect(runner.submitUserMessage({ ...base, text: '', attachments: [photo], messageId: photoId }).mode).toBe('held')
+    expect(runner.abortTurnInSession(1, 's-1')).toBe(true)
+    expect(meta(db, photoId).imagesDiscarded).toBe(true)
+
+    const nextId = row('user', 'Neues Thema')
+    expect(runner.submitUserMessage({ ...base, text: 'Neues Thema', messageId: nextId }).mode).toBe('started')
+    await vi.advanceTimersByTimeAsync(9_000)
+    await flush()
+    expect(agent.calls).toEqual([{ text: 'Neues Thema', attachments: [] }])
+  })
+
+  it('abortTurn(user) (/kill) drops a held message in every strand and discards its images', async () => {
+    vi.useFakeTimers()
+    const { db, agent, runner, row } = setup()
+    const p1 = upload('kill-1.jpg')
+    const p2 = upload('kill-2.jpg')
+    const id1 = row('user', '', [p1])
+    const id2 = row('user', '', [p2], 's-2')
+    runner.submitUserMessage({ ...base, text: '', attachments: [p1], messageId: id1 })
+    runner.submitUserMessage({ ...base, sessionId: 's-2', text: '', attachments: [p2], messageId: id2 })
+    expect(runner.abortTurn(1)).toBe(true)
+    await vi.advanceTimersByTimeAsync(9_000)
+    await flush()
+    expect(agent.calls).toHaveLength(0)
+    expect(meta(db, id1).imagesDiscarded).toBe(true)
+    expect(meta(db, id2).imagesDiscarded).toBe(true)
+
+    const nextId = row('user', 'weiter')
+    runner.submitUserMessage({ ...base, text: 'weiter', messageId: nextId })
+    await vi.advanceTimersByTimeAsync(10)
+    await flush()
+    expect(agent.calls).toEqual([{ text: 'weiter', attachments: [] }])
+  })
+
+  it('a turn stopped while running (no assistant row) does not hand its images to the next turn', async () => {
+    const { db, agent, runner, row } = gatedSetup(0)
+    const photo = upload('running.jpg')
+    const id = row('user', '[block] schau', [photo])
+    const first = runner.submitUserMessage({ ...base, text: '[block] schau', attachments: [photo], messageId: id })
+    expect(first.mode).toBe('started')
+    await new Promise(r => setTimeout(r, 20))
+    expect(agent.calls).toHaveLength(1)
+    expect(typeof meta(db, id).imagesTakenBy).toBe('string')
+    expect(runner.abortTurnInSession(1, 's-1')).toBe(true)
+    await new Promise(r => setTimeout(r, 20))
+    expect(db.prepare("SELECT COUNT(*) AS n FROM chat_messages WHERE role = 'assistant' AND session_id = 's-1' AND content = 'ok'").get()).toEqual({ n: 0 })
+
+    const nextId = row('user', 'nochmal ohne Bild')
+    runner.submitUserMessage({ ...base, text: 'nochmal ohne Bild', messageId: nextId })
+    await new Promise(r => setTimeout(r, 20))
+    expect(agent.calls[1]).toEqual({ text: 'nochmal ohne Bild', attachments: [] })
+  })
+
+  it('two photo messages, then text: ONE turn with all images, none twice', async () => {
+    vi.useFakeTimers()
+    const { db, agent, runner, row } = setup()
+    const a = [upload('a1.jpg'), upload('a2.jpg')]
+    const b = [upload('b1.jpg')]
+    const idA = row('user', '', a)
+    expect(runner.submitUserMessage({ ...base, text: '', attachments: a, messageId: idA }).mode).toBe('held')
+    await vi.advanceTimersByTimeAsync(3_000)
+    const idB = row('user', '', b)
+    expect(runner.submitUserMessage({ ...base, text: '', attachments: b, messageId: idB }).mode).toBe('held')
+    await vi.advanceTimersByTimeAsync(3_000)
+    const textId = row('user', 'Vergleiche die Bilder')
+    expect(runner.submitUserMessage({ ...base, text: 'Vergleiche die Bilder', messageId: textId }).mode).toBe('started')
+    await vi.advanceTimersByTimeAsync(10_000)
+    await flush()
+    expect(agent.calls).toEqual([{ text: 'Vergleiche die Bilder', attachments: ['a1.jpg', 'a2.jpg', 'b1.jpg'] }])
+    // Both photo rows are settled by that turn.
+    expect(typeof meta(db, idA).imagesTakenBy).toBe('string')
+    expect(meta(db, idB).imagesTakenBy).toBe(meta(db, idA).imagesTakenBy)
+  })
+
+  it('the hold timer fires while another strand of the persona runs: the photos are queued, not lost', async () => {
+    const { agent, runner, row } = gatedSetup(40)
+    const photo = upload('queued.jpg')
+    const photoId = row('user', '', [photo])
+    expect(runner.submitUserMessage({ ...base, text: '', attachments: [photo], messageId: photoId }).mode).toBe('held')
+    const blockId = row('user', '[block] zweite', [], 's-2')
+    expect(runner.submitUserMessage({ ...base, sessionId: 's-2', text: '[block] zweite', messageId: blockId }).mode).toBe('started')
+    await new Promise(r => setTimeout(r, 100))
+    // Timer fired during the s-2 turn: no call yet for the photos (queued).
+    expect(agent.calls.map(c => c.text)).toEqual(['[block] zweite'])
+    agent.release()
+    await new Promise(r => setTimeout(r, 50))
+    expect(agent.calls[1]).toEqual({ text: '', attachments: ['queued.jpg'] })
+  })
+
+  it('a document or a recording without text is not held (images only, F6)', async () => {
+    const { agent, runner, row } = setup()
+    const doc = upload('notiz.pdf', 'file', 'application/pdf')
+    const docId = row('user', '', [doc])
+    expect(runner.submitUserMessage({ ...base, text: '', attachments: [doc], messageId: docId }).mode).toBe('started')
+    await new Promise(r => setTimeout(r, 20))
+    const mixed = [upload('m.jpg'), upload('rec.m4a', 'file', 'audio/mp4')]
+    const mixedId = row('user', '', mixed)
+    expect(runner.submitUserMessage({ ...base, text: '', attachments: mixed, messageId: mixedId }).mode).toBe('started')
+    await new Promise(r => setTimeout(r, 20))
+    expect(agent.calls.map(c => c.attachments)).toEqual([['notiz.pdf'], ['m.jpg', 'rec.m4a']])
+  })
+})
+
+describe('collectUnansweredImages: isolation, settled rows, cap (F1/F3)', () => {
+  it('only rows of the same session and user (legacy NULL user tolerated)', () => {
+    const { db, row } = setup()
+    db.prepare("INSERT INTO users (id, username, password_hash, role) VALUES (2, 'u2', 'h', 'user')").run()
+    row('user', '', [upload('own.jpg')])
+    row('user', '', [upload('other-session.jpg')], 's-2')
+    db.prepare("INSERT INTO chat_messages (session_id, user_id, role, content, metadata, agent_id) VALUES ('s-1', 2, 'user', '', ?, 'main')")
+      .run(JSON.stringify({ files: [upload('other-user.jpg')] }))
+    db.prepare("INSERT INTO chat_messages (session_id, user_id, role, content, metadata, agent_id) VALUES ('s-1', NULL, 'user', '', ?, 'main')")
+      .run(JSON.stringify({ files: [upload('legacy.jpg')] }))
+    const current = row('user', 'jetzt')
+    expect(collectUnansweredImageUploads(db, { sessionId: 's-1', userId: 1, beforeMessageId: current }).map(u => u.originalName))
+      .toEqual(['own.jpg', 'legacy.jpg'])
+    expect(collectUnansweredImageUploads(db, { sessionId: 's-1', userId: 2, beforeMessageId: current }).map(u => u.originalName))
+      .toEqual(['other-user.jpg', 'legacy.jpg'])
+    expect(collectUnansweredImageUploads(db, { sessionId: 's-1', userId: null, beforeMessageId: current })).toEqual([])
+  })
+
+  it('skips discarded and taken rows', () => {
+    const { db, row } = setup()
+    const discarded = row('user', '', [upload('d.jpg')])
+    const taken = row('user', '', [upload('t.jpg')])
+    row('user', '', [upload('open.jpg')])
+    db.prepare('UPDATE chat_messages SET metadata = ? WHERE id = ?').run(JSON.stringify({ files: [upload('d.jpg')], imagesDiscarded: true }), discarded)
+    db.prepare('UPDATE chat_messages SET metadata = ? WHERE id = ?').run(JSON.stringify({ files: [upload('t.jpg')], imagesTakenBy: 'turn-x' }), taken)
+    const current = row('user', 'jetzt')
+    const found = collectUnansweredImages(db, { sessionId: 's-1', userId: 1, beforeMessageId: current })
+    expect(found.uploads.map(u => u.originalName)).toEqual(['open.jpg'])
+    expect(found.messageIds).toHaveLength(1)
+  })
+
+  it('at most 8 images, the newest win, sent order kept', () => {
+    const { db, row } = setup()
+    for (let r = 0; r < 4; r++) row('user', '', [upload(`r${r}-a.jpg`), upload(`r${r}-b.jpg`), upload(`r${r}-c.jpg`)])
+    const current = row('user', 'jetzt')
+    const found = collectUnansweredImageUploads(db, { sessionId: 's-1', userId: 1, beforeMessageId: current })
+    expect(found.map(u => u.originalName)).toEqual([
+      'r1-b.jpg', 'r1-c.jpg', 'r2-a.jpg', 'r2-b.jpg', 'r2-c.jpg', 'r3-a.jpg', 'r3-b.jpg', 'r3-c.jpg',
+    ])
   })
 })
