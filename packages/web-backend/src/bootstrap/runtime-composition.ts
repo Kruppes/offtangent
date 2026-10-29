@@ -125,6 +125,7 @@ import {
   type ReplyToTask,
 } from '../task-reply.js'
 import { deliverSubtaskResultToParent, routeTaskOutcome } from '../task-outcome.js'
+import { logBootStepDuration, timeBootStep } from './boot-stall-monitor.js'
 import {
   enqueueTaskInjection,
   abandonTaskInjection,
@@ -254,6 +255,12 @@ export interface RuntimeComposition {
   onTelegramSettingsChanged: () => void
   onActiveProviderChanged: () => void
   setWebSocketChatPresenceChecker: (checker: { hasActiveWebSocket: (userId: number) => boolean } | null) => void
+  /**
+   * Starts the network services whose first request carries a short timeout
+   * (MQTT connect/publish, Ollama `/api/tags` warm-up). Called once the HTTP
+   * server listens, so the boot work cannot starve them. Idempotent.
+   */
+  startDeferredServices: () => void
   stopBackgroundServices: () => Promise<void>
 }
 
@@ -2053,7 +2060,9 @@ export async function createRuntimeComposition(options: RuntimeCompositionOption
   healthMonitorService.start()
 
   quotaMonitorService.start()
-  homeAssistantMqtt.start()
+  // MQTT connects in startDeferredServices(), after `listen`: the boot path
+  // below (orphan restore, backfills) keeps the event loop busy long enough
+  // to trip the 5 s publish timeout and log a false failure.
 
   const consolidationScheduler = new MemoryConsolidationScheduler({
     db,
@@ -2082,6 +2091,10 @@ export async function createRuntimeComposition(options: RuntimeCompositionOption
   // providers page. Runs in parallel over the configured Ollama providers, is
   // not awaited (a box that is off must not delay the server start), keeps the
   // 4 s per-request timeout and swallows every error with one log line.
+  // The first run starts in startDeferredServices(), after `listen`: during
+  // the boot path the busy event loop let the 4 s timeout fire before the
+  // answer could be read. A timed-out provider gets no extra retry; it is
+  // picked up again by the next regular background run (every 10 min).
   const ollamaTagWarmupService = createOllamaTagWarmup({
     listProviders: () => loadProviderConfigs().providers.map(provider => ({
       id: provider.id,
@@ -2090,7 +2103,6 @@ export async function createRuntimeComposition(options: RuntimeCompositionOption
     })),
     logger,
   })
-  ollamaTagWarmupService.start()
 
   // Only the events the turn runner does not already stream to every attached
   // channel; the assistant side of a Telegram turn reaches web clients through
@@ -2636,6 +2648,7 @@ export async function createRuntimeComposition(options: RuntimeCompositionOption
         }
       }
 
+      const agentCoreConstructStartedAt = performance.now()
       agentCore = new AgentCore({
         model,
         apiKey,
@@ -2704,6 +2717,7 @@ export async function createRuntimeComposition(options: RuntimeCompositionOption
           }
         },
       })
+      logBootStepDuration(logger, 'new AgentCore', performance.now() - agentCoreConstructStartedAt)
 
       // Install once on this core's manager before tools, routers, Telegram or init can read it.
       // The resolver itself reads mode and maximum afresh on every call.
@@ -2746,7 +2760,7 @@ export async function createRuntimeComposition(options: RuntimeCompositionOption
       // forbids. Idempotent (marker row + `model_id IS NULL` guard) and
       // logged with the affected ids so it can be reverted.
       try {
-        const backfill = backfillStrandModelPins(db, resolveStrandBackfillModel)
+        const backfill = timeBootStep(logger, 'backfillStrandModelPins', () => backfillStrandModelPins(db, resolveStrandBackfillModel))
         if (backfill.ran) {
           logger.log(`[axiom] Strand model pin backfill: ${backfill.pinned} pinned, ${backfill.skipped} skipped of ${backfill.candidates} candidates`)
         }
@@ -2764,7 +2778,7 @@ export async function createRuntimeComposition(options: RuntimeCompositionOption
       // S1-D: interjections accepted before a restart but never delivered to
       // a model request come back as queued turns (idempotent per message).
       try {
-        const recovered = turnRunner.recoverUndeliveredSteers()
+        const recovered = timeBootStep(logger, 'recoverUndeliveredSteers', () => turnRunner.recoverUndeliveredSteers())
         if (recovered > 0) logger.log(`[axiom] Requeued ${recovered} undelivered steer message(s)`)
       } catch (err) {
         logger.error(`[axiom] Steer recovery failed: ${errorClass(err)}`)
@@ -2788,7 +2802,9 @@ export async function createRuntimeComposition(options: RuntimeCompositionOption
     }
   }
 
+  const agentCoreBootStartedAt = performance.now()
   await initOrUpdateAgentCore()
+  logBootStepDuration(logger, 'initOrUpdateAgentCore (wall, incl. awaits)', performance.now() - agentCoreBootStartedAt)
 
   // Backfill semantic vectors for memory rows that don't have one yet
   // (no-op when memoryEmbeddings is disabled). Fire-and-forget — lexical
@@ -2980,6 +2996,15 @@ export async function createRuntimeComposition(options: RuntimeCompositionOption
 
   injectionSweeper.start()
 
+  let deferredServicesStarted = false
+  let backgroundServicesStopped = false
+  function startDeferredServices(): void {
+    if (deferredServicesStarted || backgroundServicesStopped) return
+    deferredServicesStarted = true
+    homeAssistantMqtt.start()
+    ollamaTagWarmupService.start()
+  }
+
   return {
     db,
     runtimeMetrics,
@@ -2997,6 +3022,7 @@ export async function createRuntimeComposition(options: RuntimeCompositionOption
     pushSender,
     getAgentCore: () => agentCore,
     getTaskRuntime: () => taskRuntime,
+    startDeferredServices,
     replyToTask,
     resolveProvider,
     getTaskDefaultProvider,
@@ -3018,13 +3044,16 @@ export async function createRuntimeComposition(options: RuntimeCompositionOption
       wsChatPresenceChecker = checker ? checker.hasActiveWebSocket : null
     },
     stopBackgroundServices: async () => {
+      backgroundServicesStopped = true
+      // Synchronous timer stops first: nothing below the first await may
+      // still fire the Ollama warm-up interval.
+      ollamaTagWarmupService.stop()
       healthMonitorService.stop()
       quotaMonitorService.stop()
       await homeAssistantMqtt.stop()
       consolidationScheduler.stop()
       agentHeartbeatService.stop()
       uploadCleanupService.stop()
-      ollamaTagWarmupService.stop()
       taskRuntime.schedules.stop()
       injectionSweeper.stop()
 

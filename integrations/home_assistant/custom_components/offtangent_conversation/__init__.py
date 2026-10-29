@@ -8,6 +8,7 @@ from homeassistant.exceptions import ConfigEntryNotReady, ConfigEntryError
 
 from .client import AdapterClient, AdapterError
 from .fallback import local_fallback_entry
+from .const import DEFAULT_KEEP_ALIVE
 from .ollama import OllamaClient
 
 _LOGGER = logging.getLogger(__name__)
@@ -39,7 +40,8 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         try:
             client.local = OllamaClient(settings["local_url"], settings.get("local_model") or "gemma4:12b-mlx",
                                         num_ctx=int(settings.get("local_num_ctx") or 16384),
-                                        timeout=int(settings.get("local_timeout") or 15))
+                                        timeout=int(settings.get("local_timeout") or 15),
+                                        keep_alive=settings.get("local_keep_alive") or DEFAULT_KEEP_ALIVE)
         except ValueError as err:
             await client.close()
             raise ConfigEntryError("invalid_local_primary") from err

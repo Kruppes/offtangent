@@ -1,6 +1,7 @@
 import type { Server } from 'node:http'
 import { startHttpBoundary } from './http-boundary.js'
 import { createRuntimeComposition } from './runtime-composition.js'
+import { BOOT_STALL_AFTER_LISTEN_MS, startBootStallMonitor } from './boot-stall-monitor.js'
 
 export interface StartBackendServerOptions {
   port?: number
@@ -22,7 +23,15 @@ export async function startBackendServer(options: StartBackendServerOptions = {}
   const port = options.port ?? Number.parseInt(process.env.PORT ?? '3000', 10)
   const host = options.host ?? process.env.HOST ?? '0.0.0.0'
 
-  const runtimeComposition = await createRuntimeComposition({ logger })
+  // Boot diagnostics: one log line with the event-loop stalls of the start.
+  const bootStalls = startBootStallMonitor({ logger })
+  let runtimeComposition
+  try {
+    runtimeComposition = await createRuntimeComposition({ logger })
+  } catch (err) {
+    bootStalls.finish()
+    throw err
+  }
 
   let httpBoundary
   try {
@@ -31,14 +40,22 @@ export async function startBackendServer(options: StartBackendServerOptions = {}
     await runtimeComposition.stopBackgroundServices().catch(() => {
       // ignore cleanup errors on startup failure
     })
+    bootStalls.finish()
     throw err
   }
+
+  // Short-timeout network services start only now that the server listens
+  // and the boot work no longer holds the event loop.
+  runtimeComposition.startDeferredServices()
+  bootStalls.markListening()
+  setTimeout(() => bootStalls.finish(), BOOT_STALL_AFTER_LISTEN_MS).unref?.()
 
   let stopPromise: Promise<void> | null = null
   const stop = (): Promise<void> => {
     if (stopPromise) return stopPromise
 
     stopPromise = (async () => {
+      bootStalls.finish()
       await runtimeComposition.stopBackgroundServices()
       await httpBoundary.stopHttp()
     })()

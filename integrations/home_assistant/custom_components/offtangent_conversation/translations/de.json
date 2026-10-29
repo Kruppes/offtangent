@@ -14,6 +14,7 @@
           "fallback_agent": "Vorhandener lokaler Ollama-Agent (nur als Ersatz, Konfiguration bleibt unverändert)",
           "local_url": "Ollama-URL für den lokalen Primärpfad (leer = nur Relay), z. B. http://ollama.local:11434",
           "local_model": "Lokales Modell für den Primärpfad",
+          "local_keep_alive": "Ollama keep_alive für das lokale Modell (z. B. 15m, 1h; -1 = dauerhaft geladen, 0 = sofort entladen)",
           "turn_log_dir": "Verzeichnis für das JSONL-Turn-Log (leer = aus)"
         }
       }
@@ -35,6 +36,7 @@
           "fallback_agent": "Vorhandener lokaler Ollama-Agent (nur als Ersatz, Konfiguration bleibt unverändert)",
           "local_url": "Ollama-URL für den lokalen Primärpfad (leer = nur Relay), z. B. http://ollama.local:11434",
           "local_model": "Lokales Modell für den Primärpfad",
+          "local_keep_alive": "Ollama keep_alive für das lokale Modell (z. B. 15m, 1h; -1 = dauerhaft geladen, 0 = sofort entladen)",
           "turn_log_dir": "Verzeichnis für das JSONL-Turn-Log (leer = aus)"
         }
       }

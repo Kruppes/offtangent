@@ -179,4 +179,42 @@ describe('MQTT transport with in-process mock', () => {
     } finally { vi.useRealTimers() }
   })
 
+  it('logs one "connected (recovered)" line after a logged failure, and none on a clean first connect', async () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
+    const log = vi.spyOn(console, 'log').mockImplementation(() => {})
+    try {
+      const service = new HomeAssistantMqttService(db)
+      service.apply({ ...defaults, enabled: true, host: 'example.invalid' })
+      await ready()
+      const client = mock.connects[0].client as Fake
+      const recovered = () => log.mock.calls.filter(call => call[0] === '[mqtt] connected (recovered)').length
+      const failed = () => warn.mock.calls.filter(call => call[0] === '[mqtt] Connection or publish failed (details withheld)').length
+
+      client.connected = true; client.emit('connect'); await ready()
+      expect(recovered()).toBe(0)
+
+      client.connected = false
+      client.emit('error', new Error('ECONNREFUSED secret-host'))
+      client.emit('error', new Error('again'))
+      expect(failed()).toBe(1)
+      client.emit('offline')
+      client.emit('reconnect')
+      client.connected = true; client.emit('connect'); await ready()
+      expect(recovered()).toBe(1)
+      // A further connect without a new failure stays silent.
+      client.emit('connect'); await ready()
+      expect(recovered()).toBe(1)
+      // A new failure episode logs again and recovers again, once each.
+      client.emit('error', new Error('x'))
+      expect(failed()).toBe(2)
+      client.emit('connect'); await ready()
+      expect(recovered()).toBe(2)
+      // No broker error text ever reaches the log.
+      expect(JSON.stringify([...warn.mock.calls, ...log.mock.calls])).not.toContain('secret-host')
+      await service.stop()
+    } finally {
+      warn.mockRestore()
+      log.mockRestore()
+    }
+  })
 })

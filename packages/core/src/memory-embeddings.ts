@@ -68,6 +68,125 @@ export function loadMemoryEmbeddingSettings(): MemoryEmbeddingSettings {
   }
 }
 
+/** Upper bound of the error body that is read from the endpoint, in bytes. */
+export const EMBEDDING_ERROR_BODY_MAX_BYTES = 4096
+
+/**
+ * Log-safe classes of an embedding endpoint error. Only these fixed tokens
+ * ever reach the log, never text from the endpoint itself: an error body can
+ * echo headers, cookies, credentials or the memory text that was sent.
+ */
+export type EmbeddingErrorClass =
+  | 'queue_full'
+  | 'model_not_found'
+  | 'timeout'
+  | 'context_too_long'
+  | 'unknown'
+
+/** Allowlist of known error shapes; the first match wins. */
+const EMBEDDING_ERROR_PATTERNS: ReadonlyArray<readonly [EmbeddingErrorClass, RegExp]> = [
+  ['queue_full', /maximum pending requests exceeded|server busy|too many (?:pending|concurrent) requests/i],
+  ['model_not_found', /\bmodel\b[^\n]{0,160}?\bnot found|no such model|unknown model/i],
+  ['timeout', /timed? ?out|timeout|deadline exceeded/i],
+  ['context_too_long', /context length|context window|input (?:is )?too long|exceeds? (?:the )?(?:maximum )?(?:context|input)|too many tokens/i],
+]
+
+/**
+ * Maps an embedding endpoint error body onto a fixed class via the allowlist
+ * above. The body is only matched, never returned or logged. Never throws.
+ */
+export function classifyEmbeddingError(body: string): EmbeddingErrorClass {
+  for (const [cls, pattern] of EMBEDDING_ERROR_PATTERNS) {
+    if (pattern.test(body)) return cls
+  }
+  return 'unknown'
+}
+
+/**
+ * Reads at most {@link EMBEDDING_ERROR_BODY_MAX_BYTES} of a response body and
+ * cancels the rest of the stream, so a huge error body is never buffered.
+ * Never throws; an unreadable body yields ''.
+ */
+export async function readBoundedBody(
+  response: Response,
+  maxBytes: number = EMBEDDING_ERROR_BODY_MAX_BYTES,
+): Promise<string> {
+  const stream = response.body
+  if (!stream) return ''
+  const reader = stream.getReader()
+  const chunks: Uint8Array[] = []
+  let total = 0
+  try {
+    while (total < maxBytes) {
+      const { done, value } = await reader.read()
+      if (done) break
+      if (!value) continue
+      const take = value.byteLength > maxBytes - total ? value.subarray(0, maxBytes - total) : value
+      chunks.push(take)
+      total += take.byteLength
+    }
+  } catch {
+    // Unreadable remainder: classify what arrived.
+  } finally {
+    reader.cancel().catch(() => {})
+  }
+  const joined = new Uint8Array(total)
+  let offset = 0
+  for (const chunk of chunks) {
+    joined.set(chunk, offset)
+    offset += chunk.byteLength
+  }
+  return new TextDecoder().decode(joined)
+}
+
+/**
+ * Log-safe classes of a failed embedding call that threw (network, abort,
+ * unparsable 200 body, ...). Like {@link EmbeddingErrorClass}, only these
+ * fixed tokens are ever logged: an exception message can quote the response
+ * body (a JSON `SyntaxError` does) or a URL with credentials.
+ */
+export type EmbeddingFailureClass = 'invalid_json' | 'timeout' | 'network' | 'unknown'
+
+const NETWORK_ERROR_CODES = new Set([
+  'ECONNREFUSED', 'ECONNRESET', 'ECONNABORTED', 'ENOTFOUND', 'EAI_AGAIN', 'EHOSTUNREACH',
+  'ENETUNREACH', 'ENETDOWN', 'EPIPE', 'UND_ERR_SOCKET', 'UND_ERR_CLOSED',
+])
+const TIMEOUT_ERROR_CODES = new Set([
+  'ETIMEDOUT', 'UND_ERR_CONNECT_TIMEOUT', 'UND_ERR_HEADERS_TIMEOUT', 'UND_ERR_BODY_TIMEOUT',
+])
+
+function errorField(value: unknown, field: 'name' | 'code'): string {
+  if (!value || typeof value !== 'object') return ''
+  try {
+    const raw = (value as Record<string, unknown>)[field]
+    return typeof raw === 'string' ? raw : ''
+  } catch {
+    return ''
+  }
+}
+
+/**
+ * Maps a thrown error onto a fixed class using only `name` and `code` (also
+ * of `cause`, where Node's fetch puts the socket error). Never reads, returns
+ * or logs `message`. Never throws.
+ */
+export function classifyEmbeddingFailure(err: unknown): EmbeddingFailureClass {
+  const name = errorField(err, 'name')
+  if (name === 'SyntaxError') return 'invalid_json'
+  if (name === 'AbortError' || name === 'TimeoutError') return 'timeout'
+  let cause: unknown
+  try {
+    cause = err && typeof err === 'object' ? (err as { cause?: unknown }).cause : undefined
+  } catch {
+    cause = undefined
+  }
+  for (const code of [errorField(err, 'code'), errorField(cause, 'code')]) {
+    if (TIMEOUT_ERROR_CODES.has(code)) return 'timeout'
+    if (NETWORK_ERROR_CODES.has(code)) return 'network'
+  }
+  return 'unknown'
+}
+
 /**
  * Embed a batch of texts. Returns null when embeddings are disabled or the
  * endpoint call fails — callers must treat null as "no semantic signal".
@@ -88,7 +207,8 @@ export async function embedTexts(
       signal: controller.signal,
     })
     if (!response.ok) {
-      console.warn(`[memory-embeddings] Endpoint returned ${response.status}`)
+      const errorClass = classifyEmbeddingError(await readBoundedBody(response))
+      console.warn(`[memory-embeddings] Endpoint returned ${response.status} (${errorClass})`)
       return null
     }
     const payload = await response.json() as { data?: Array<{ index: number; embedding: number[] }> }
@@ -98,7 +218,7 @@ export async function embedTexts(
     const sorted = [...payload.data].sort((a, b) => a.index - b.index)
     return sorted.map((d) => Float32Array.from(d.embedding))
   } catch (err) {
-    console.warn('[memory-embeddings] Embedding call failed:', (err as Error).message)
+    console.warn(`[memory-embeddings] Embedding call failed (${classifyEmbeddingFailure(err)})`)
     return null
   } finally {
     clearTimeout(timer)
@@ -143,7 +263,7 @@ export function embedMemoryBestEffort(db: Database, id: number, content: string)
       db.prepare('UPDATE memories SET embedding = ? WHERE id = ?').run(embeddingToBuffer(vectors[0]), id)
     })
     .catch((err) => {
-      console.warn(`[memory-embeddings] Failed to embed memory ${id}:`, (err as Error).message)
+      console.warn(`[memory-embeddings] Failed to embed memory ${id} (${classifyEmbeddingFailure(err)})`)
     })
 }
 

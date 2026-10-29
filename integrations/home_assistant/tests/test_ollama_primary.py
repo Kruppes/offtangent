@@ -267,9 +267,11 @@ class OllamaPrimaryEntityTests(unittest.IsolatedAsyncioTestCase):
         await agent._async_handle_message(self.input, self.log())
         self.assertEqual(len(self.tool.calls), 2)
         self.assertEqual(len(relay.local.requests), 1)  # the "ja" runs the held batch, no model round
-        recs = await self.records()
-        self.assertEqual(recs[0]["guard"][0]["reason"], "multi_domain")
-        self.assertTrue(recs[1]["guard"][0]["guard_confirmed"])
+        # The turn log is appended via the executor: file order is not turn order, so match by text.
+        by_text = {r["text"]: r for r in await self.records() if r["kind"] == "agent"}
+        self.assertEqual(set(by_text), {"Mach das Küchenlicht und das Kellerlicht aus.", "Ja"})
+        self.assertEqual(by_text["Mach das Küchenlicht und das Kellerlicht aus."]["guard"][0]["reason"], "multi_domain")
+        self.assertTrue(by_text["Ja"]["guard"][0]["guard_confirmed"])
 
     async def test_keep_warm_reuses_last_local_prompt_and_tools(self):
         agent, relay = self.primary([o_reply(calls=[o_call()]), o_reply("Das Licht ist aus.")])
@@ -288,9 +290,9 @@ class OllamaPrimaryEntityTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(warmed[0][0], sent["messages"][0]["content"])  # identical prompt start
         self.assertEqual(warmed[0][1], sent["tools"])
         self.assertEqual(len(self.tool.calls), 1)  # the ping runs no tool
-        recs = await self.records()
-        self.assertEqual([r["kind"] for r in recs], ["agent", "warm"])
-        self.assertEqual(recs[1]["prompt_eval_count"], 10)
+        recs = await self.records()  # executor appends: compare kinds as a multiset, pick by kind
+        self.assertEqual(sorted(r["kind"] for r in recs), ["agent", "warm"])
+        self.assertEqual([r["prompt_eval_count"] for r in recs if r["kind"] == "warm"], [10])
 
     async def test_ollama_unreachable_relay_takes_over_before_dispatch(self):
         agent, relay = self.primary([AdapterError("ollama_unreachable")], [reply(calls=[call()]), reply()])

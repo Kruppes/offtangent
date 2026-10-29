@@ -121,6 +121,9 @@ export class HomeAssistantMqttService {
       client.on('connect', () => {
         if (gen !== this.generation) return
         this.status = 'connected'
+        // One line per failure episode: the warning above said "failed", so a
+        // later successful (re)connect says so too, once, then re-arms both.
+        if (this.loggedError) console.log('[mqtt] connected (recovered)')
         this.loggedError = false
         client.publish(`${next.baseTopic}/status`, 'online', { qos: 1, retain: true })
         client.options.reconnectPeriod = 1000

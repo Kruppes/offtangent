@@ -162,3 +162,41 @@ Modellausweichroute: externen Rollback/Analyseweg verwenden.
    Kein globales `.storage`-Restore über inzwischen fremde Änderungen.
 6. Dieselben rein lesenden Fingerprints prüfen; keine `conversation.process`,
    `automation.trigger`, `light`, `switch`, `cover`, STT-/TTS-Livejobs als Rollbacktest.
+
+## Update einer installierten Komponente (0.1.0 -> 0.2.0, Branch fix/boot-warnings)
+
+Nur nach Review und Deployfreigabe, zusammen mit dem Backend-Deploy des Branches.
+Quelle ist ausschließlich `integrations/home_assistant/custom_components/offtangent_conversation/`
+aus dem reviewten Commit (`git archive <sha> integrations/home_assistant/custom_components/offtangent_conversation`),
+keine Tests, kein `__pycache__`.
+
+1. Bestand sichern: Ordner `/config/custom_components/offtangent_conversation` nach
+   `/config/offtangent_conversation.bak-<YYYYMMDD-HHMM>` kopieren (außerhalb von
+   `custom_components`, sonst lädt HA die Kopie als zweite Integration), `__pycache__`
+   weglassen, `sha256sum` von Host und Backup vergleichen.
+2. Vorher prüfen, dass der Host dem bisherigen Repo-Stand entspricht (sha256 aller
+   `*.py`, `manifest.json`, `strings.json`, `translations/de.json`). Abweichung = Stop.
+3. Die 14 Dateien aus dem Archiv über den Ordner kopieren (geändert in 0.2.0:
+   `__init__.py`, `config_flow.py`, `const.py`, `conversation.py`, `manifest.json`,
+   `ollama.py`, `strings.json`, `translations/de.json`), `__pycache__` löschen.
+4. `ha core check`, dann `ha core restart`. Ein Reload des Config-Entrys reicht nicht:
+   Python-Module werden nur beim Start neu geladen.
+5. Nachher: sha256 Host == Archiv; Entry geladen; im HA-Log keine Fehler von
+   `offtangent_conversation`. Der bestehende Entry hat kein `local_keep_alive` und
+   bekommt den Default `15m` (vorher fest -1). Wer dauerhaft geladen will, setzt im
+   Options-Flow `-1`; ein Speichern des Options-Flows lädt nur diesen Entry neu.
+6. Prüfen, passiv und ohne Aktoren: keine eigene Testäußerung, keine Probe-Frage. Der
+   Warm-Ping startet erst nach dem ersten lokalen Turn seit dem Neustart (vorher fehlt ihm
+   der Prompt). Deshalb den nächsten regulären Sprach-Turn des Haushalts abwarten; der
+   Warm-Ping danach (Intervall 5 min) liefert den Nachweis. Kommt kein regulärer Turn, wird
+   nicht nachgeholfen; die Prüfung bleibt offen, bis einer kommt.
+
+   Nachweis: spätestens 5 min nach diesem regulären Turn steht im Turn-Log ein
+   `"kind": "warm"`-Eintrag ohne `error` (mit `prompt_eval_count`/`wall_ms`); im Ollama-Log auf dem Mac keine 500 mehr
+   zum Warm-Ping. Ein Warm-Eintrag mit `"error": "preempted_by_turn"` ist normal: ein
+   Nutzer-Turn hat einen laufenden Ping abgebrochen, statt auf ihn zu warten. Ohne HA-Pings
+   entlädt Ollama das Modell nach 15 min (`ollama ps` auf dem Mac).
+
+Rollback: Backup-Ordner zurückkopieren, `__pycache__` löschen, `ha core check`,
+`ha core restart`. Der Options-Wert `local_keep_alive` bleibt im Entry stehen und wird
+von 0.1.0 ignoriert.

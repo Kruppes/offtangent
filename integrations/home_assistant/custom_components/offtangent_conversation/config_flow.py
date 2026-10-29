@@ -7,7 +7,7 @@ from homeassistant.core import callback
 from homeassistant.helpers import selector
 
 from .client import ALL_ASSIST_TOOLS, TOOL_NAME, validate_url
-from .const import DEFAULT_MODEL, DOMAIN
+from .const import DEFAULT_KEEP_ALIVE, DEFAULT_MODEL, DOMAIN
 from .fallback import local_fallback_entry
 
 
@@ -24,6 +24,7 @@ def _schema(defaults):
         # Optional native Ollama primary path (empty = relay only) and JSONL turn log directory.
         vol.Optional("local_url", default=defaults.get("local_url", "")): str,
         vol.Optional("local_model", default=defaults.get("local_model", "gemma4:12b-mlx")): str,
+        vol.Optional("local_keep_alive", default=str(defaults.get("local_keep_alive", DEFAULT_KEEP_ALIVE))): str,
         vol.Optional("turn_log_dir", default=defaults.get("turn_log_dir", "")): str,
     })
 
@@ -45,6 +46,9 @@ def _validate(data):
         model = data.get("local_model") or "gemma4:12b-mlx"
         if not MODEL_NAME.fullmatch(model) or model.endswith((":cloud", "-cloud")):
             raise ValueError()
+    if data.get("local_keep_alive") not in (None, ""):
+        from .ollama import parse_keep_alive
+        parse_keep_alive(data["local_keep_alive"])
     log_dir = data.get("turn_log_dir")
     if log_dir not in (None, "") and (not isinstance(log_dir, str)
                                       or not re.fullmatch(r"/[A-Za-z0-9._/-]{1,200}", log_dir) or ".." in log_dir):

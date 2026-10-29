@@ -15,12 +15,18 @@ from uuid import uuid4
 import aiohttp
 
 from .client import MAX_REQUEST_BYTES, MAX_RESPONSE_BYTES, AdapterError, Reply, decode_json
+from .const import DEFAULT_KEEP_ALIVE
 
 MODEL_NAME = re.compile(r"^[A-Za-z0-9._:/-]{1,128}$")
 # HA appends "Current time is HH:MM:SS. Today's date is ..." to the system prompt when no
 # GetDateTime tool exists. Changing every second, it would invalidate the cached prompt prefix
 # (tools are rendered after the system text), so it moves to the end of the user message.
 _TIME_LINE = re.compile(r"^Current time is \d{1,2}:\d{2}(?::\d{2})?\. Today's date is [0-9-]+\.\s*$", re.M)
+# Ollama keep_alive: -1 (stay loaded), 0 (unload after the request) or a duration such as "15m".
+KEEP_ALIVE = re.compile(r"^(?:-1|0|[1-9][0-9]{0,5}(?:ms|s|m|h))$")
+# The keep-warm ping re-evaluates the whole prompt when the server cache is cold (about 5900 tokens
+# on the 27B model, longer than the 15 s turn timeout), so it gets its own, longer budget.
+WARM_TIMEOUT_S = 60
 TIMING_KEYS = ("total_duration", "load_duration", "prompt_eval_count", "prompt_eval_duration",
                "eval_count", "eval_duration")
 
@@ -32,6 +38,16 @@ def validate_ollama_url(value: str) -> str:
             or url.query or url.fragment or url.path not in {"", "/"}):
         raise ValueError("invalid_ollama_url")
     return value.rstrip("/")
+
+
+def parse_keep_alive(value) -> int | str:
+    """Validate an Ollama keep_alive option: "-1" and "0" become ints, durations stay strings."""
+    if isinstance(value, bool) or not isinstance(value, (int, str)):
+        raise ValueError("invalid_keep_alive")
+    text = str(value).strip()
+    if not KEEP_ALIVE.fullmatch(text):
+        raise ValueError("invalid_keep_alive")
+    return int(text) if text in {"-1", "0"} else text
 
 
 def stable_prompt(prompt: str) -> tuple[str, str | None]:
@@ -181,16 +197,19 @@ def validate_ollama_reply(data: Any, model: str, tools: list[dict]) -> Reply:
 class OllamaClient:
     """Dedicated HTTP session to a LAN Ollama; keep_alive/num_ctx set per request only."""
 
-    def __init__(self, url: str, model: str, num_ctx: int = 16384, timeout: int = 20, keep_alive: int = -1):
+    def __init__(self, url: str, model: str, num_ctx: int = 16384, timeout: int = 20,
+                 keep_alive: int | str = DEFAULT_KEEP_ALIVE, warm_timeout: int = WARM_TIMEOUT_S):
         self.url = validate_ollama_url(url)
         if (not isinstance(model, str) or not MODEL_NAME.fullmatch(model) or model.endswith((":cloud", "-cloud"))
                 or not isinstance(num_ctx, int) or not 2048 <= num_ctx <= 131072
-                or not isinstance(timeout, int) or not 1 <= timeout <= 100):
+                or not isinstance(timeout, int) or not 1 <= timeout <= 100
+                or not isinstance(warm_timeout, int) or isinstance(warm_timeout, bool) or not 1 <= warm_timeout <= 300):
             raise ValueError("invalid_ollama_config")
         self.model = model
         self.num_ctx = num_ctx
-        self.keep_alive = keep_alive
+        self.keep_alive = parse_keep_alive(keep_alive)
         self.timeout = timeout
+        self.warm_timeout = warm_timeout
         self._session = aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=timeout), trust_env=False)
 
     async def close(self):
@@ -237,15 +256,22 @@ class OllamaClient:
 
         Refreshes the server's prompt cache for the stable prompt start and keeps the model
         loaded (keep_alive per request). The reply is discarded; nothing is dispatched.
+        Timeout: warm_timeout (default 60 s), independent of the turn timeout.
         """
         body = self.payload([{"role": "system", "content": prompt}, {"role": "user", "content": "ping"}], tools)
         body["options"] = {**body["options"], "num_predict": 1}
         start = time.monotonic()
         try:
+            # Own budget (warm_timeout), not the session's turn timeout: with a cold prompt cache this
+            # ping takes longer than a user turn may, and aborting it only leaves an HTTP 500 in the
+            # Ollama log while the cache stays cold.
             async with self._session.post(self.url + "/api/chat", data=json.dumps(body, ensure_ascii=False).encode(),
-                                          allow_redirects=False, headers={"Content-Type": "application/json"}) as response:
+                                          allow_redirects=False, headers={"Content-Type": "application/json"},
+                                          timeout=aiohttp.ClientTimeout(total=self.warm_timeout)) as response:
                 data = await response.json(content_type=None) if response.status == 200 else {}
-        except (aiohttp.ClientError, OSError, TimeoutError, ValueError) as err:
+        except TimeoutError as err:
+            raise AdapterError("ollama_timeout") from err
+        except (aiohttp.ClientError, OSError, ValueError) as err:
             raise AdapterError("ollama_unreachable") from err
         out = {k: data.get(k) for k in TIMING_KEYS if isinstance(data, dict) and isinstance(data.get(k), int)}
         out["wall_ms"] = round((time.monotonic() - start) * 1000)

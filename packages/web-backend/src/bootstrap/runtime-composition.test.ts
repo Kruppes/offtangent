@@ -131,6 +131,52 @@ describe('background task tools rebuild on email account change', () => {
     composition = null
     fetchSpy.mockRestore()
   })
+
+  // Boot warnings: the real startDeferredServices (no mocked composition).
+  // Only the network-touching start() methods are spied, so the test stays offline.
+  it('startDeferredServices starts MQTT and the Ollama warm-up exactly once, however often it is called', async () => {
+    composition = await createRuntimeComposition({ logger: silentLogger })
+    const mqttStart = vi.spyOn(composition.homeAssistantMqtt, 'start').mockImplementation(() => {})
+    const warmupStart = vi.spyOn(composition.ollamaTagWarmupService, 'start').mockImplementation(() => {})
+
+    composition.startDeferredServices()
+    composition.startDeferredServices()
+    composition.startDeferredServices()
+
+    expect(mqttStart).toHaveBeenCalledTimes(1)
+    expect(warmupStart).toHaveBeenCalledTimes(1)
+  })
+
+  it('startDeferredServices starts nothing once the background services were stopped', async () => {
+    composition = await createRuntimeComposition({ logger: silentLogger })
+    const mqttStart = vi.spyOn(composition.homeAssistantMqtt, 'start').mockImplementation(() => {})
+    const warmupStart = vi.spyOn(composition.ollamaTagWarmupService, 'start').mockImplementation(() => {})
+
+    await composition.stopBackgroundServices()
+    composition.startDeferredServices()
+
+    expect(mqttStart).not.toHaveBeenCalled()
+    expect(warmupStart).not.toHaveBeenCalled()
+    composition = null
+  })
+
+  it('stopBackgroundServices stops the Ollama warm-up timers before its first await', async () => {
+    composition = await createRuntimeComposition({ logger: silentLogger })
+    vi.spyOn(composition.homeAssistantMqtt, 'start').mockImplementation(() => {})
+    vi.spyOn(composition.ollamaTagWarmupService, 'start').mockImplementation(() => {})
+    composition.startDeferredServices()
+    let releaseMqtt!: () => void
+    vi.spyOn(composition.homeAssistantMqtt, 'stop').mockImplementation(
+      () => new Promise<void>((resolve) => { releaseMqtt = resolve }))
+    const warmupStop = vi.spyOn(composition.ollamaTagWarmupService, 'stop')
+
+    const stopping = composition.stopBackgroundServices()
+    // MQTT stop is still pending: the warm-up must already be stopped.
+    expect(warmupStop).toHaveBeenCalledTimes(1)
+    releaseMqtt()
+    await stopping
+    composition = null
+  })
 })
 
 describe('strandHasLiveWriter (who persists a file sent with send_file_to_user)', () => {

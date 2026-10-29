@@ -186,6 +186,8 @@ class OfftangentConversationEntity(conversation.ConversationEntity, conversation
         self._pending = {}  # history key -> (monotonic, batch) awaiting the user's "ja" (local guard)
         self._key = None
         self._warm_payload = None  # (prompt, tools) of the last local turn for the keep-warm ping
+        self._warm_task = None  # running keep-warm request; a starting turn cancels it
+        self._warm_preempted_tasks = set()  # pings cancelled by a turn (per task, never a shared flag)
         self._degradation_count = 0
         self._last_path = "relay"
         self._auth_state = "unknown"
@@ -233,18 +235,41 @@ class OfftangentConversationEntity(conversation.ConversationEntity, conversation
     async def _keep_warm(self, _now=None):
         """Every WARM_INTERVAL_S: refresh the Ollama prompt cache with the last local prompt start.
 
-        Skipped while a turn runs or before the first local turn (nothing to warm yet).
+        Skipped while a turn runs, while a ping is still running, or before the first local turn
+        (nothing to warm yet). A user turn never waits for the ping: _async_handle_message cancels
+        a running ping first (the ping may take up to warm_timeout, the turn only local_timeout).
         Failures are only counted in the turn log; they never change the primary path.
         """
-        if self._local is None or self._warm_payload is None or self._lock.locked():
+        if self._local is None or self._warm_payload is None or self._lock.locked() or self._warm_task is not None:
             return
+        task = asyncio.ensure_future(self._local.warm(*self._warm_payload))
+        self._warm_task = task
         try:
-            timing = await self._local.warm(*self._warm_payload)
+            timing = await task
             entry = {"kind": "warm", "ts": datetime.now(UTC).isoformat(), "model": self._local.model, **timing}
         except AdapterError as err:
+            # Expected while Ollama is busy, cold or down; the next turn falls back on its own.
+            _LOGGER.debug("Keep-warm ping to Ollama failed (%s); primary path unchanged", err)
             entry = {"kind": "warm", "ts": datetime.now(UTC).isoformat(), "error": str(err)}
+        except asyncio.CancelledError:
+            current = asyncio.current_task()
+            if task not in self._warm_preempted_tasks or (current is not None and current.cancelling()):
+                raise  # shutdown / outer cancel (also right after a preemption): always propagate
+            _LOGGER.debug("Keep-warm ping cancelled: a user turn started")
+            entry = {"kind": "warm", "ts": datetime.now(UTC).isoformat(), "error": "preempted_by_turn"}
+        finally:
+            if self._warm_task is task:
+                self._warm_task = None
+            self._warm_preempted_tasks.discard(task)
         if self._turn_log_dir:
             await log_async(self.hass, self._turn_log_dir, entry)
+
+    def _preempt_warm(self):
+        """Cancel a running keep-warm request so the user turn gets Ollama without waiting for it."""
+        task = self._warm_task
+        if task is not None and not task.done():
+            self._warm_preempted_tasks.add(task)  # marks only this ping as preempted
+            task.cancel()
 
     async def _poll_auth(self, _now=None):
         if not hasattr(self._client, "auth_status"):
@@ -335,6 +360,7 @@ class OfftangentConversationEntity(conversation.ConversationEntity, conversation
         if self._lock.locked():
             return _error_result(user_input, chat_log.conversation_id, "Der Assistent ist noch beschäftigt. Es wurde keine weitere Aktion versucht.")
         async with self._lock:
+            self._preempt_warm()
             progress = TurnProgress()
             key = self._history_key(user_input, chat_log)
             self._key = key
