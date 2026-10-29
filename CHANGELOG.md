@@ -2,6 +2,15 @@
 
 Notable behavior changes. Newest first.
 
+## Unreleased — fix/image-only-voice-coalesce
+
+### Photos without text always reach the model; photos + voice note become one turn
+
+- **Bug fixed:** the Android app leaves out `content` when it is empty (kotlinx `encodeDefaults = false`), so the `skipSave` frame of photos sent without text had no `content`. `ws-chat.ts` died in `parsed.content.startsWith('/')` (unhandled rejection): no turn, no `message_ack`, no error frame. The frame now defaults `content` to `''`, and a frame that throws answers with an `error` frame instead of vanishing.
+- **New hold (intentional behavior change):** a web/app message with attachments but no text waits up to 8 s (`TurnRunnerOptions.attachmentOnlyHoldMs`, `DEFAULT_ATTACHMENT_ONLY_HOLD_MS`) for a follow-up in the same strand. A follow-up inside the window (typically the voice note) takes the photos into ITS turn; without one the photos start their own turn after 8 s. A strand `/stop` drops a held message.
+- **Carry-over:** a turn that starts now also gets the images of earlier user messages of the same strand that no turn answered yet (after the last assistant row, max. 10 min old; images only, recordings/documents are represented by their text).
+- Not changed: Telegram (photos already start a turn with caption or file name as text; photo and voice note stay two turns). Voice note first, photos while that turn runs: the photos still get a queued turn of their own.
+
 ## Unreleased — feat/eco-context-policy
 
 ### Context-overflow guard for every request (Normal and Eco) — intentional behavior change

@@ -506,7 +506,7 @@ export function setupWebSocketChat(
       attachToTurns(ws, user.userId)
     }
 
-    ws.on('message', async (data) => {
+    const handleFrame = async (data: WebSocket.RawData): Promise<void> => {
       let parsed: ChatMessage
 
       try {
@@ -515,6 +515,16 @@ export function setupWebSocketChat(
         sendMessage(ws, { type: 'error', error: 'Invalid JSON message' })
         return
       }
+      if (!parsed || typeof parsed !== 'object') {
+        sendMessage(ws, { type: 'error', error: 'Invalid JSON message' })
+        return
+      }
+      // A client may leave out an empty `content` (the Android app serializes
+      // with `encodeDefaults = false`, so the `skipSave` frame of a photo sent
+      // without text carries no `content` at all). Every later step treats
+      // `content` as a string; without this the frame died in
+      // `parsed.content.startsWith('/')` and the photos never got a turn.
+      if (typeof parsed.content !== 'string') parsed = { ...parsed, content: '' }
 
       // Handle auth via first message if not already authenticated
       if (!authenticatedClients.has(ws)) {
@@ -932,6 +942,15 @@ export function setupWebSocketChat(
             : {}),
         })
       }
+    }
+
+    // A frame that throws must not vanish as an unhandled rejection: the
+    // client would wait for a turn that never comes. Log it and tell it.
+    ws.on('message', (data) => {
+      handleFrame(data).catch((err: unknown) => {
+        console.error('[ws-chat] Frame handling failed:', err instanceof Error ? err.name : typeof err)
+        sendMessage(ws, { type: 'error', error: 'Message could not be processed' })
+      })
     })
 
     ws.on('close', () => {

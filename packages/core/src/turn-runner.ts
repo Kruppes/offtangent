@@ -55,6 +55,7 @@ import { hasTurnRuntimeOverrides } from './turn-overrides.js'
 import { recordStrandTurnStart, recordStrandTurnFirstToken, recordStrandTurnEnd } from './strand-turns.js'
 import type { StrandTurnTrigger, StrandTurnInputMode } from './strand-turns.js'
 import { markUserMessageSteerState, type SteerOffer, type SteerOfferOptions, type SteerRejectReason } from './steer.js'
+import { collectUnansweredImageUploads, mergeUploads } from './unanswered-attachments.js'
 
 /**
  * The slice of AgentCore the turn runner depends on. Keeping this narrow
@@ -115,6 +116,13 @@ export type SubmitUserMessageResult =
   | { mode: 'steered'; turnId: string; /** Resolves to the fallback turn when the run ended before taking it, else null. */ fallback: Promise<TurnInfo | null> }
   | { mode: 'queued'; turn: TurnInfo; waitingForTurnId: string; reason: SteerRejectReason }
   | { mode: 'started'; turn: TurnInfo }
+  /**
+   * A message with attachments but no text (photos sent on their own). It
+   * waits up to `holdMs` for a follow-up in the same strand (typically the
+   * voice note the photos belong to) and then starts its own turn; a
+   * follow-up inside the window takes the attachments into ITS turn.
+   */
+  | { mode: 'held'; holdMs: number }
 
 export interface TurnInfo {
   turnId: string
@@ -305,6 +313,12 @@ export interface TurnRunnerOptions {
     agentId: string
     turnOverride: ModelSelection | null
   }) => TurnStartModel | null
+  /**
+   * How long a user message with attachments but no text waits for a
+   * follow-up before it starts a turn of its own (see `submitUserMessage`).
+   * 0 disables the hold. Default {@link DEFAULT_ATTACHMENT_ONLY_HOLD_MS}.
+   */
+  attachmentOnlyHoldMs?: number
   onTurnStart?: (turn: TurnInfo) => void
   onTurnEnd?: (turn: TurnInfo) => void
   /**
@@ -497,8 +511,24 @@ function sleepUnlessAborted(ms: number, signal: AbortSignal): Promise<boolean> {
  * the partial turn and then continue live. Turns are never recovered across a
  * process restart — the buffer is in-memory only and a lost turn simply ends.
  */
+/**
+ * Photos and the voice note that explains them reach the server seconds apart
+ * and in either order (the recording still uploads and transcribes while the
+ * photos are already stored). 8 s covers that gap without making a photo sent
+ * on its own wait noticeably.
+ */
+export const DEFAULT_ATTACHMENT_ONLY_HOLD_MS = 8_000
+
+interface HeldSubmission {
+  input: StartTurnInput & { messageId?: number | null }
+  timer: ReturnType<typeof setTimeout>
+}
+
 export class TurnRunner {
   private readonly db: Database | null
+  private readonly attachmentOnlyHoldMs: number
+  /** Attachment-only messages waiting for a follow-up, per user+persona+strand. */
+  private readonly heldSubmissions = new Map<string, HeldSubmission>()
   private readonly getAgent: () => TurnAgentLike | null
   private readonly stallWarnMs?: number
   private readonly stallAbortMs?: number
@@ -544,6 +574,7 @@ export class TurnRunner {
     this.onAssistantMessage = options.onAssistantMessage
     this.recoverAuth = options.recoverAuth
     this.resolveStartModel = options.resolveStartModel
+    this.attachmentOnlyHoldMs = Math.max(0, options.attachmentOnlyHoldMs ?? DEFAULT_ATTACHMENT_ONLY_HOLD_MS)
   }
 
   /**
@@ -815,11 +846,72 @@ export class TurnRunner {
    * message is never lost and never delivered twice.
    */
   submitUserMessage(input: StartTurnInput & { messageId?: number | null }): SubmitUserMessageResult {
-    const { messageId = null, ...startInput } = input
-    const key = startInput.agentUserId ?? String(startInput.userId)
-    const agentId = startInput.agentId ?? 'main'
+    const key = input.agentUserId ?? String(input.userId)
+    const agentId = input.agentId ?? 'main'
+    const holdKey = `${key}\u0000${agentId}\u0000${input.sessionId}`
+
+    // A follow-up in the same strand takes the attachments of a held
+    // attachment-only message into its own turn (one turn, all photos).
+    const held = this.heldSubmissions.get(holdKey)
+    if (held) {
+      clearTimeout(held.timer)
+      this.heldSubmissions.delete(holdKey)
+      input = { ...input, attachments: mergeUploads(held.input.attachments, input.attachments) }
+    }
+
     const live = [...(this.liveTurns.get(key) ?? [])].filter(t => !t.ended && t.agentId === agentId)
-    if (live.length === 0) return { mode: 'started', turn: this.startTurn(startInput) }
+    if (live.length === 0 && this.shouldHold(input)) {
+      const timer = setTimeout(() => {
+        if (this.heldSubmissions.get(holdKey)?.timer !== timer) return
+        this.heldSubmissions.delete(holdKey)
+        this.submitNow(input)
+      }, this.attachmentOnlyHoldMs)
+      timer.unref?.()
+      this.heldSubmissions.set(holdKey, { input, timer })
+      return { mode: 'held', holdMs: this.attachmentOnlyHoldMs }
+    }
+    return this.submitNow(input)
+  }
+
+  /** Photos without text wait for the words that belong to them. */
+  private shouldHold(input: StartTurnInput & { messageId?: number | null }): boolean {
+    return this.attachmentOnlyHoldMs > 0
+      && input.messageId != null
+      && (input.attachments?.length ?? 0) > 0
+      && input.text.trim() === ''
+      && !input.continueFromTranscript
+      && !input.turnOverrides
+      && !(input.preambleToolCalls?.length)
+  }
+
+  /**
+   * Images of earlier user messages of this strand that no turn answered
+   * (a held photo row, or one whose turn never started) join the turn of
+   * `messageId`. Only for a turn that starts now: a queued or steered message
+   * waits behind turns that answer those rows themselves.
+   */
+  private withUnansweredImages(input: StartTurnInput, messageId: number | null): StartTurnInput {
+    if (!this.db || messageId == null || input.continueFromTranscript) return input
+    let carried: UploadDescriptor[] = []
+    try {
+      carried = collectUnansweredImageUploads(this.db, { sessionId: input.sessionId, beforeMessageId: messageId })
+    } catch (err) {
+      console.error('[turn-runner] Could not collect unanswered attachments:', errorClass(err))
+      return input
+    }
+    if (carried.length === 0) return input
+    return { ...input, attachments: mergeUploads(carried, input.attachments) }
+  }
+
+  private submitNow(input: StartTurnInput & { messageId?: number | null }): SubmitUserMessageResult {
+    const { messageId = null, ...rawStartInput } = input
+    const key = rawStartInput.agentUserId ?? String(rawStartInput.userId)
+    const agentId = rawStartInput.agentId ?? 'main'
+    const live = [...(this.liveTurns.get(key) ?? [])].filter(t => !t.ended && t.agentId === agentId)
+    if (live.length === 0) {
+      return { mode: 'started', turn: this.startTurn(this.withUnansweredImages(rawStartInput, messageId)) }
+    }
+    const startInput = rawStartInput
     // Only plain text steers: attachments, a one-shot model, turn overrides
     // or preamble tool calls need a turn of their own.
     const plainText = !startInput.continueFromTranscript
@@ -970,7 +1062,8 @@ export class TurnRunner {
   // @axiom/core exports map, so it sees no caller outside this class.
   // fallow-ignore-next-line unused-class-member
   abortTurn(user: number | string): boolean {
-    return this.abortMatching(String(user), () => true)
+    const dropped = this.dropHeldSubmissions(String(user), null)
+    return this.abortMatching(String(user), () => true) || dropped
   }
 
   /**
@@ -986,7 +1079,21 @@ export class TurnRunner {
   // fallow-ignore-next-line unused-class-member
   abortTurnInSession(user: number | string, sessionId: string): boolean {
     if (!sessionId) return false
-    return this.abortMatching(String(user), turn => turn.sessionId === sessionId)
+    const dropped = this.dropHeldSubmissions(String(user), sessionId)
+    return this.abortMatching(String(user), turn => turn.sessionId === sessionId) || dropped
+  }
+
+  /** A stop also cancels attachment-only messages still waiting for a follow-up. */
+  private dropHeldSubmissions(key: string, sessionId: string | null): boolean {
+    let dropped = false
+    for (const [holdKey, held] of this.heldSubmissions) {
+      const [heldUser, , heldSession] = holdKey.split('\u0000')
+      if (heldUser !== key || (sessionId !== null && heldSession !== sessionId)) continue
+      clearTimeout(held.timer)
+      this.heldSubmissions.delete(holdKey)
+      dropped = true
+    }
+    return dropped
   }
 
   private abortMatching(key: string, match: (turn: TurnState) => boolean): boolean {
