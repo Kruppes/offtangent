@@ -16,6 +16,7 @@
 import {
   errorClass,
   getVoiceRepliesEnabled,
+  skipPrivateMcpSession,
   type Database,
   type PersistedAssistantMessage,
 } from '@axiom/core'
@@ -76,6 +77,8 @@ export function createVoiceReplyHook(options: VoiceReplyHookOptions): VoiceReply
     // clock answer to one more provider (rewrite + TTS). Review K0-K2-5 #1.
     if (message.source === CLOCK_SOURCE) return
     if (!isEnabled(message.userId)) return
+    // MCP local_only: the answer would go to the speech summary model and TTS.
+    if (skipPrivateMcpSession(db, message.sessionId, 'voice reply')) return
 
     const row = db.prepare('SELECT metadata FROM chat_messages WHERE id = ?')
       .get(message.messageId) as { metadata: string | null } | undefined

@@ -79,7 +79,7 @@ import { completeSimple, errorClass, publicProviderError } from '@axiom/core'
 import { archivePendingTaskNotices } from '@axiom/core'
 import { getCurrentTaskAgentId, getCurrentTaskExecutionContext, resolveTaskDefaultProvider as resolveTaskDefaultProviderChain } from '@axiom/core'
 import type { TaskOwnershipLineage } from '@axiom/core'
-import { resolveRoleSpec } from '@axiom/core'
+import { resolveRoleSpec, skipPrivateMcpSession } from '@axiom/core'
 import { backfillStrandModelPins, resolveBackfillStrandModel, loadModelPolicyRoles } from '@axiom/core'
 import { resolveTaskModelRoleFrom } from '@axiom/core'
 import type { TaskModelPolicyHit, TaskModelRoleKind } from '@axiom/core'
@@ -1824,6 +1824,8 @@ export async function createRuntimeComposition(options: RuntimeCompositionOption
     createVoiceMessageTool({
       getCurrentToolUserId: () => agentCore?.getCurrentToolUserId(),
       getCurrentInteractiveSessionId: () => agentCore?.getCurrentInteractiveSessionId() ?? null,
+      // MCP local_only: the TTS route is not known to be local (fail closed).
+      isPrivateStrand: (sessionId) => skipPrivateMcpSession(db, sessionId, 'send_voice_message'),
       isCarriedByCurrentTurn: () => strandHasLiveWriter(
         agentCore?.getCurrentInteractiveSessionId() ?? null,
         {
@@ -1842,11 +1844,19 @@ export async function createRuntimeComposition(options: RuntimeCompositionOption
    */
   function buildChatContextBlock(userId: string, agentId: string, maxMessages = 15, maxChars = 4000): string | null {
     try {
-      const rows = db.prepare(
-        `SELECT role, content FROM chat_messages
+      const allRows = db.prepare(
+        `SELECT role, content, session_id FROM chat_messages
          WHERE user_id = ? AND agent_id = ? AND role IN ('user','assistant') AND content != ''
          ORDER BY id DESC LIMIT ?`
-      ).all(Number(userId), agentId, maxMessages) as Array<{ role: string; content: string }>
+      ).all(Number(userId), agentId, maxMessages) as Array<{ role: string; content: string; session_id: string | null }>
+      // MCP local_only: rows of a private strand never reach the task/plan
+      // model (fail closed per strand, see skipPrivateMcpSession).
+      const privateStrands = new Map<string, boolean>()
+      const rows = allRows.filter(row => {
+        const sid = row.session_id ?? ''
+        if (!privateStrands.has(sid)) privateStrands.set(sid, skipPrivateMcpSession(db, row.session_id, 'task chat context'))
+        return !privateStrands.get(sid)
+      })
       if (rows.length === 0) return null
 
       const lines: string[] = []

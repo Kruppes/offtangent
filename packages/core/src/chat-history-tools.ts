@@ -4,6 +4,8 @@ import type { Database } from './database.js'
 import { normalizeFtsQuery } from './fts-utils.js'
 import { resolveAgentReadScope } from './agent-read-scope.js'
 import { createLeanShield, leanSessionExcludeSql } from './lean-session-shield.js'
+import { isPrivateMcpSession, MCP_PRIVATE_HISTORY_NOTICE } from './mcp-egress.js'
+import { getCurrentTaskExecutionContext } from './task-execution-context.js'
 
 export interface ChatHistoryToolsOptions {
   db: Database
@@ -23,6 +25,11 @@ export interface ChatHistoryToolsOptions {
    * on-disk personas. Injectable for tests.
    */
   listAgentIds?: () => string[]
+  /**
+   * MCP egress gate (review 2 / B): true only while the calling turn runs on
+   * a strictly local model. Absent = not allowed (fail closed).
+   */
+  allowPrivateMcp?: () => boolean
 }
 
 interface ChatMessageRow {
@@ -347,6 +354,26 @@ export function createReadChatHistoryTool(options: ChatHistoryToolsOptions): Age
 
         const rows = options.db.prepare(selectSql).all(...selectParams, limit, offset) as ChatMessageRow[]
 
+        // MCP egress gate (review 2 / B): rows of a strand with private
+        // (local_only) MCP material are withheld whole from a non-local model;
+        // served to a strictly local model the result carries `mcpPrivate`,
+        // so the runtime refuses every later cloud request of that context.
+        let allowPrivate = false
+        // Review 5: a background task never receives private MCP rows, even on
+        // a local model and even with a shared tool instance whose caller allows them.
+        try { allowPrivate = !getCurrentTaskExecutionContext() && options.allowPrivateMcp?.() === true } catch { allowPrivate = false }
+        const privateSessions = new Map<string, boolean>()
+        const isPrivateRow = (row: ChatMessageRow): boolean => {
+          let p = privateSessions.get(row.session_id)
+          if (p === undefined) {
+            p = isPrivateMcpSession(options.db, row.session_id)
+            privateSessions.set(row.session_id, p)
+          }
+          return p
+        }
+        let mcpPrivate = false
+        let mcpPrivateWithheld = 0
+
         // Format messages for readability
         const formatted = rows.map(row => {
           const meta = parseMetadata(row.metadata)
@@ -362,7 +389,14 @@ export function createReadChatHistoryTool(options: ChatHistoryToolsOptions): Age
 
           // Truncate very long messages to keep output manageable
           const maxContentLength = 2000
-          const raw = leanShield.replacement(row) ?? row.content
+          let raw = leanShield.replacement(row) ?? row.content
+          if (isPrivateRow(row)) {
+            if (allowPrivate) mcpPrivate = true
+            else {
+              raw = MCP_PRIVATE_HISTORY_NOTICE
+              mcpPrivateWithheld += 1
+            }
+          }
           const content = raw.length > maxContentLength
             ? raw.slice(0, maxContentLength) + `\n... (truncated, ${raw.length} chars total)`
             : raw
@@ -380,6 +414,8 @@ export function createReadChatHistoryTool(options: ChatHistoryToolsOptions): Age
         return {
           content: [{ type: 'text' as const, text: output + paginationInfo }],
           details: {
+            ...(mcpPrivate ? { mcpPrivate: true } : {}),
+            ...(mcpPrivateWithheld > 0 ? { mcpPrivateWithheld } : {}),
             count: rows.length,
             total,
             offset,

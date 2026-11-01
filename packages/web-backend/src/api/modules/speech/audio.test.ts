@@ -260,6 +260,17 @@ describe('POST /api/speech/audio', () => {
     expect(synthCalls[0].text).toBe('The container is healthy and the smoke test passed.')
   })
 
+  it('refuses a message of a strand with private (local_only) MCP data before summary and TTS', async () => {
+    db.prepare("INSERT INTO chat_messages (session_id, user_id, role, content, metadata, agent_id) VALUES ('strand-1', 1, 'tool', 'Tool: mcp_x_read', ?, 'main')")
+      .run(JSON.stringify({ toolName: 'mcp_x_read', toolResult: { content: [{ type: 'text', text: 'PRIVATE_SYNTHETIC_9921' }], details: { mcpDataClass: 'local_only' } } }))
+    const id = insertMessage({ content: `Quote: PRIVATE_SYNTHETIC_9921 ${LONG_REPORT}`, userId: 1 })
+    const res = await postAudio({ messageId: id })
+    expect(res.status).toBe(403)
+    expect(res.json).toEqual({ error: 'mcp_private' })
+    expect(synthCalls).toEqual([])
+    expect(cloudCalls).toEqual([])
+  })
+
   it('answers 404 for an unknown message id', async () => {
     const res = await postAudio({ messageId: 987654 })
     expect(res.status).toBe(404)

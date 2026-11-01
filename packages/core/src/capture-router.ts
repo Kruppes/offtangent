@@ -21,6 +21,7 @@ import { buildRouterModel, resolveRouterChain } from './router-model.js'
 import type { ResolvedRouterModel } from './router-model.js'
 import { deriveStrandTitle } from './strand-title.js'
 import type { StrandTitleSource } from './session-manager.js'
+import { skipPrivateMcpSession } from './mcp-egress.js'
 
 export const ROUTER_CANDIDATE_CAP = 25
 export const ROUTER_RECENT_STRANDS = 20
@@ -318,7 +319,9 @@ export function selectCandidates(
   }
 
   const projectNames = projectNameMap(db, userId)
-  return Array.from(picked.values()).map(row => toCandidate(db, row, projectNames))
+  return Array.from(picked.values())
+    .filter(row => !skipPrivateMcpSession(db, row.id, 'capture router candidate'))
+    .map(row => toCandidate(db, row, projectNames))
 }
 
 export function buildRouterInput(

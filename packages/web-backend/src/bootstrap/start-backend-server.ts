@@ -1,4 +1,5 @@
 import type { Server } from 'node:http'
+import { closeSharedMcpManager } from '@axiom/core'
 import { startHttpBoundary } from './http-boundary.js'
 import { createRuntimeComposition } from './runtime-composition.js'
 import { BOOT_STALL_AFTER_LISTEN_MS, startBootStallMonitor } from './boot-stall-monitor.js'
@@ -57,6 +58,12 @@ export async function startBackendServer(options: StartBackendServerOptions = {}
     stopPromise = (async () => {
       bootStalls.finish()
       await runtimeComposition.stopBackgroundServices()
+      // MCP: close sessions and stop stdio server children. Bounded, so a
+      // hanging server cannot delay the shutdown past the signal deadline.
+      await Promise.race([
+        closeSharedMcpManager().catch(() => {}),
+        new Promise<void>(resolve => setTimeout(resolve, 2500).unref?.()),
+      ])
       await httpBoundary.stopHttp()
     })()
 

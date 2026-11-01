@@ -30,6 +30,7 @@ import { failPersonaDelegation, recordPersonaDelegation } from './persona-delega
 import { getSubtreeCostForTasks } from './task-cost.js'
 import type { TaskCostSummary } from './task-cost.js'
 import { loadHeuristics } from './heuristics.js'
+import { isPrivateMcpSession, skipPrivateMcpSession } from './mcp-egress.js'
 import { checkLeanPreconditions, parseWorkerProfileInput } from './lean-worker-profile.js'
 
 export interface TaskToolsOptions {
@@ -411,6 +412,19 @@ export function createTaskTool(options: TaskToolsOptions): AgentTool {
         // Bound to the session of THIS turn (AsyncLocalStorage in AgentCore),
         // not to whatever strand is active elsewhere; null inside tasks.
         const turnSessionId = options.getParentSessionId?.() ?? null
+        // MCP local_only (fail closed): the brief of a task started from a
+        // private strand may quote private MCP output, and the task model is
+        // not known to be strictly local. Starting tasks is disabled there.
+        // Review 3 / P2: no strand id is never "clean". Inside a task the
+        // task's own session and its origin strand are checked; with no id at
+        // all the shared classification treats the scope as unknown (refused).
+        const taskCtx = getCurrentTaskExecutionContext()
+        const scopeIds = turnSessionId
+          ? [turnSessionId]
+          : [taskCtx?.taskSessionId, taskCtx?.sessionId].filter((id): id is string => typeof id === 'string' && id.length > 0)
+        if ((scopeIds.length === 0 ? [null] : scopeIds).some(id => skipPrivateMcpSession(options.db, id, 'create_task'))) {
+          return { content: [{ type: 'text' as const, text: 'Error: MCP privacy gate: this strand holds private (local_only) MCP data, so create_task is disabled here. Start the task from a new strand without that data.' }], details: { error: true, mcpPrivate: true } }
+        }
         const parentProvider = getCurrentTaskExecutionContext()?.provider ?? null
         const strandPin = !parentProvider && turnSessionId
           ? (options.getStrandModelPin ?? ((id: string) => readStrandModelPin(options.db, id)))(turnSessionId)
@@ -501,6 +515,22 @@ export function createTaskTool(options: TaskToolsOptions): AgentTool {
             return {
               content: [{ type: 'text' as const, text: `Error: continuation_of task "${predecessorId}" not found or not manageable from here.` }],
               details: { error: true },
+            }
+          }
+          // Review 5: a predecessor whose session (or its parent strand) holds
+          // private MCP material is never copied into a new task. Fail closed.
+          let predecessorPrivate = true
+          try {
+            const sid = (predecessor as { sessionId?: string | null }).sessionId ?? null
+            const parent = sid && options.db
+              ? (options.db.prepare('SELECT parent_session_id FROM sessions WHERE id = ?').get(sid) as { parent_session_id: string | null } | undefined)?.parent_session_id ?? null
+              : null
+            predecessorPrivate = (sid !== null && isPrivateMcpSession(options.db, sid)) || (parent !== null && isPrivateMcpSession(options.db, parent))
+          } catch { predecessorPrivate = true }
+          if (predecessorPrivate) {
+            return {
+              content: [{ type: 'text' as const, text: `Error: MCP privacy gate: continuation_of task "${predecessorId}" belongs to a strand with private (local_only) MCP data and is not handed to a new task.` }],
+              details: { error: true, mcpPrivate: true },
             }
           }
           continuationOfId = predecessor.id

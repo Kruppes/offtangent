@@ -31,7 +31,7 @@ The directory itself is created with `0700` mode the first time the backend runs
 
 The non-secret runtime config. Edited via every Settings UI panel except [Telegram](../settings/telegram) (which writes to `telegram.json`) and [Secrets](../settings/secrets) (which writes to `secrets.json`).
 
-The on-disk shape is a **superset** of [`SettingsContract`](https://github.com/) (`packages/core/src/contracts/settings.ts`): the contract describes what the API exchanges with the frontend; the file may also contain a few keys the UI doesn't surface (`tokenPriceTable`, `builtinTools`, `codemode`, `braveSearchApiKey`, `searxngUrl`, `tavilyApiKey`) plus dead fields from older versions until they get re-saved.
+The on-disk shape is a **superset** of [`SettingsContract`](https://github.com/) (`packages/core/src/contracts/settings.ts`): the contract describes what the API exchanges with the frontend; the file may also contain a few keys the UI doesn't surface (`tokenPriceTable`, `builtinTools`, `codemode`, `mcp`, `braveSearchApiKey`, `searxngUrl`, `tavilyApiKey`) plus dead fields from older versions until they get re-saved.
 
 ### Home Assistant MQTT (admin-only)
 
@@ -73,6 +73,7 @@ The on-disk shape is a **superset** of [`SettingsContract`](https://github.com/)
 | `tokenPriceTable`                  | `Record<string, { input: number; output: number }>`               | seed prices    | not validated by API                    | Per-model USD/1M-token costs used by [Token Usage](../web-ui/token-usage). Merged on top of `DEFAULT_PRICE_TABLE`. |
 | `builtinTools`                     | object                                                            | see below      | not validated by API                    | Enable/disable built-in `web_search` and `web_fetch` tools, choose the search provider.                           |
 | `codemode`                         | object                                                            | `mode: "off"` | strict, see below (PUT only)          | Opt-in `codemode` tool: one sandboxed script calls several allowlisted tools in a single model turn.              |
+| `mcp`                              | object                                                            | off            | strict, see below (file only)           | Opt-in MCP client: tools of explicitly configured MCP servers, scoped per persona.                                |
 | `braveSearchApiKey`                | `string`                                                          | `""`           | not validated by API                    | **Legacy** — read at boot, migrated into `builtinTools.webSearch.braveSearchApiKey` if present.                   |
 | `searxngUrl`                       | `string`                                                          | `""`           | not validated by API                    | **Legacy** — read at boot, migrated into `builtinTools.webSearch.searxngUrl` if present.                          |
 | `tavilyApiKey`                     | `string`                                                          | `""`           | not validated by API                    | **Legacy** — read at boot, migrated into `builtinTools.webSearch.tavilyApiKey` if present.                       |
@@ -157,6 +158,99 @@ Behaviour worth knowing:
 - The final output is sealed by the secret boundary again, so a registered secret cannot leave through `text()`, `return`, `console` or an error message.
 - `PUT /api/settings` rejects the whole write (HTTP 400) on an invalid value or an unknown field inside `codemode`, and also when a field already stored in `settings.json` is invalid (it would keep codemode off); send a valid value for that field in the same write.
 - Not bounded by the settings: `memoryLimitBytes` limits only the sandbox heap, not what the host allocates while collecting the output (the library's own cap of 16 Mi characters / 100 000 output items applies there); and a chat turn has no overall tool-call guard like the 300-call cap of tasks, only the per-script caps above.
+
+### `mcp`
+
+Opt-in MCP client (Model Context Protocol). Offtangent connects to the MCP servers listed here, discovers their tools and offers them as ordinary tools named `mcp_<server>_<tool>` to the listed personas and users. It stays off unless `mcp.enabled` is `true` and at least one server is valid. Without the key, no MCP code is loaded. Edit `settings.json` by hand. The Settings UI and `PUT /api/settings` do not handle this key. Changes apply at the next turn start, without a restart.
+
+Supported: the client side of MCP **tools** (`tools/list`, `tools/call`) over **stdio** (a local child process) and **Streamable HTTP**, in **interactive chat turns** only. Not supported: background tasks and cronjobs (they get no MCP tools), Codemode scripts (MCP tools are never on the Codemode allowlist), the deprecated HTTP+SSE transport, OAuth, resources, prompts, sampling, elicitation, roots.
+
+```json
+"mcp": {
+  "enabled": true,
+  "servers": {
+    "files": {
+      "transport": "stdio",
+      "command": "/usr/bin/node",
+      "args": ["/opt/mcp/files-server.js"],
+      "env": { "API_TOKEN": "{{secret:<slug>}}" },
+      "personas": ["main"],
+      "users": [1]
+    },
+    "wiki": {
+      "transport": "http",
+      "url": "https://mcp.example.org/mcp",
+      "headers": { "Authorization": "Bearer {{secret:<slug>}}" },
+      "remoteEgress": true,
+      "dataClass": "cloud_ok",
+      "personas": ["main", "bob"],
+      "users": [1, 2],
+      "tools": { "allow": ["search", "read_page"] }
+    }
+  }
+}
+```
+
+Validation is strict and fail closed: an unknown field (also a typo such as `user` for `users`), a wrong type (`"enabled": "false"`) or a value out of range makes the server invalid. An invalid server is dropped with a warning in the log, the other servers keep working. An unknown top-level field under `mcp` disables the whole block.
+
+| Key (per server) | Type | Default | Notes |
+| --- | --- | --- | --- |
+| server id (object key) | string | — | `^[a-z0-9][a-z0-9-]{0,23}$`, part of the tool name |
+| `transport` | `"stdio" \| "http"` | — | required |
+| `enabled` | boolean | `true` | `false` skips the server |
+| `personas` | string[] | — | **required, non-empty**. Persona ids that may see and call the tools. No "all personas" default |
+| `users` | (int\|string)[] | — | **required, non-empty**. Authenticated user ids that may see and call the tools. No "all users" default; a turn without an authenticated user gets no MCP tools |
+| `dataClass` | `"local_only" \| "cloud_ok"` | `local_only` | see *Data and egress* below |
+| `remoteEgress` | boolean | `false` | http only. Required (`true`) for a non-loopback URL: you acknowledge that tool arguments leave the box |
+| `command`, `args`, `cwd` | string, string[], absolute path | — | stdio only |
+| `env` | object | `{}` | stdio only. Values may contain secret handles |
+| `url` | string | — | http only. `https://`, or `http://` on loopback. Other plain http needs `allowInsecureHttp: true`. No credentials in the URL |
+| `headers` | object | `{}` | http only. Values may contain secret handles. Transport headers (`Host`, `Content-Type`, `Accept`, `Mcp-Session-Id`, `Mcp-Protocol-Version` and similar) are rejected |
+| `tools.allow`, `tools.deny` | string[] | all / none | exact remote tool names. deny wins |
+| `connectTimeoutMs` | int | `10000` | 1000–60000. One hard deadline for the whole connection setup: transport, `initialize`, `notifications/initialized` and the complete tool listing (all pages together) |
+| `callTimeoutMs` | int | `60000` | 1000–600000 per `tools/call` |
+| `maxOutputChars` | int | `20000` | 1000–200000. Longer output is cut |
+| `maxTools` | int | `64` | 1–256 tools offered per server |
+| `toolsTtlMs` | int | `300000` | 0–86400000. After this time the next turn re-lists the tools over the wire on the existing session. `0` means only on reconnect |
+| `maxSessions` | int | `8` | 1–64 concurrent sessions of this server (one per user × persona × strand). When full, the least recently used idle session is closed; if none is idle, the new strand gets no tools from this server |
+| `idleTimeoutMs` | int | `900000` | 60000–86400000. A session unused for this long is closed by an in-process timer (no further turn needed; the timer does not keep the process alive and stops on shutdown) |
+
+Data and egress:
+
+- **Sessions**: every user × persona × strand gets its own MCP session (its own stdio child or its own HTTP session). Nothing a server keeps per session is shared between users, personas or strands.
+- **`dataClass: local_only`** (default): MCP output is treated as private local data, like a `local_only` connector. The tools are offered only while the turn runs on a strictly local model (same check as connectors, any doubt counts as remote), a call is refused (`server is local_only and the current model is not strictly local`) when the model changed in between, and a result already in the transcript is replaced by a fixed notice in every request to a non-local model. Results without a data-class marker are withheld too.
+- **Private strand (fail closed)**: once a strand holds `local_only` MCP material anywhere — a result, the arguments of an MCP call, assistant text written after it, a tool declaration, a recalled history row, or a persisted MCP row of the strand — no request of that strand is sent to a model that is not strictly local. The check runs before every single model request on the actual target model, also after a provider switch inside a turn and after a history reload. The request is refused with the fixed error `MCP privacy gate: … the request was NOT sent to the non-local model`; quotes are not anonymised. The way out is a strictly local model or a new strand. `recall_message` and `read_chat_history` return a fixed notice instead of rows of such a strand while the calling turn runs on a non-local model. There is no consent switch.
+- **Automatic helpers skip a private strand (fail closed)**: features that read a strand on their own and call a model outside the turn leave such a strand out entirely, whatever model they would use, before any data is handed over: session summary (stays `Empty session.`), fact extraction (`skipped: mcp_private`), strand auto-title and project assignment (`outcome: skipped, reason: mcp_private`), capture router (the strand is never a candidate), delegation context of a task (no window, summary or message ids; mode falls back to `clean`), `create_task` from such a strand (refused with `MCP privacy gate: …`), the plan-draft chat context (rows of private strands dropped), automatic voice replies (not generated), the `send_voice_message` and `ask_agent` tools (refused with `MCP privacy gate: …`), speech summary / voice note of a message (`403 mcp_private`) and the clock companion's short spoken version (cut at a word instead). The check is the same persisted-row query as the turn gate; a database error counts as private. A skip is logged as `[mcp-egress] <site> skipped: strand holds private MCP data (local_only) or its scope is unknown`.
+- **Private marker without a tool call**: the private material also counts when it is only the declaration (name, description, schema) of a `local_only` MCP tool sent to a strictly local model, with no MCP call at all. Immediately before such a request the strand is marked private in memory for the running turn and persistently in the table `mcp_private_sessions`, so all of the helpers above treat it as private from then on, also after a reload and for helpers running in parallel. If the marker cannot be written (no database or no strand id in the runtime, write error), the request is refused. Side effect: a strand that runs on a local model with `local_only` MCP tools enabled becomes private as soon as its first request is sent, even if no MCP tool is ever called.
+- **Unknown scope counts as private**: a helper or tool that gets no database, no strand id, or a strand id without a row in `sessions` makes no model request (fact extraction, session summary, `ask_agent`, `send_voice_message` without the strand check wired, `create_task` with neither a strand nor a task origin). Inside a background task, `create_task` checks the task's own session and the strand that started it.
+- **Tools in a private strand (central allowlist)**: in a strand with private MCP material the runtime checks every tool call before it runs, once per call (a tool that was offered to the model before the strand turned private is caught as well). Only these tools run: `ask_user`, `read_file`, `list_files`, `read_chat_history`, `recall_message`, `list_tasks`, `get_task`, `list_cronjobs`, `get_cronjob`, `list_agent_skills`, plus the MCP tools of servers whose policy is `dataClass: local_only` and that are offered to that turn right now. Every other tool is refused with `MCP privacy gate: … was NOT executed`, and new tools are refused until they are reviewed and added to `MCP_PRIVATE_TOOL_ALLOWLIST` (`mcp-egress.ts`). Inventory and reason:
+  - Universal tools: `shell` and `codemode` could run any network call or file write, and there is **no sandbox**, so privacy cannot be guaranteed for them. They are off in a private strand. Codemode also never wraps MCP tools, in any strand, so an MCP result cannot feed shell, web or file calls inside one script run without a model request.
+  - Other execution contexts and strands: `create_task`, `resume_task`, `steer_task`, `cancel_task`, `fork_strand` and `ask_agent` deliver model-written text to a task, persona or strand that may run on a cloud model.
+  - Deferred prompts: create, update or run cronjobs and reminders store a prompt that later runs on whatever model the job uses.
+  - Persistent stores that a cloud model reads later: `write_file`, `edit_file` (including MEMORY.md, the wiki and skills), memory and skill writes, boards, canvas and artefacts.
+  - Network egress: email, web search and fetch, `ask_connector`, voice (TTS), STT, image generation, `send_file_to_user` and `cloud_ok` MCP servers (a remote service, so model-written arguments could quote private data).
+  - Embedding-backed search: `search_memories` sends the query to the embedding provider.
+  - Allowed tools only read local state into the strictly local model, or ask the user.
+  - Clean strands and `cloud_ok`-only strands are not affected.
+- **Name identity of allowed tools**: an allowed name only runs when it resolves to exactly one tool of the runtime's own assembled set (core factories plus the host's exclusive tools) or, for an `mcp_` name, to the MCP tool discovered for that turn. A duplicate or a later foreign tool under an allowed name is refused.
+- **Background tasks**: tasks get no MCP tools. `read_chat_history` and `recall_message` withhold rows of private strands from every background task, also on a local model and regardless of what the host wires as the allow callback. A task whose own session, parent strand or origin strand is private runs only the same allowlist (checked per call), sends no request to a model that is not the strictly local one it was built with, and skips the loop detector. `continuation_of` refuses a predecessor whose session or parent strand is private, and the delegation context of a private strand stays empty.
+- **No sandbox**: this is a data-flow gate for a trusted host agent, not an isolation boundary. A clean strand or clean task with `shell`/`read_file` can still read host files (for example the SQLite database) directly; that is not prevented.
+- **Fork of a private strand**: the child strand is marked private in the same transaction that stores the seed. If the marker cannot be written, the fork is refused (`private_marker_failed`). This means facts, summary, title and every other helper treat the seed as private from the start. `fork_strand` is itself refused as a tool in a private strand; the marker covers other fork paths (HTTP).
+- **Provider switch during a turn**: the request gate looks at the model the running loop actually sends each request to, not at the runtime's current provider setting, so a cloud → local or local → cloud switch in the middle of a turn cannot send private material to the old cloud endpoint.
+- **`dataClass: cloud_ok`**: your explicit declaration that this server's output may go to cloud models. Set it only for servers whose data you would paste into a cloud chat yourself.
+- **Arguments**: tool arguments go to the server. For a stdio server they stay on the box. For an http server on another host they leave it, which is why such a server needs `remoteEgress: true`.
+
+Security behaviour:
+
+- **Secrets**: store tokens in the secret store and reference them by handle in `env` or `headers`. Handles are resolved only at connect time. An unknown handle means the server does not connect. Tool arguments are passed verbatim, so handles in arguments are not resolved. Tool results pass through the same secret boundary as every other tool.
+- **Remote metadata**: tool names, titles, descriptions and input schemas come from the server and reach the model. A tool whose metadata contains a known secret is dropped; the check runs on every decoded string and object key before any serialisation, so JSON escaping (quotes, backslashes) cannot hide a secret. Structured results are redacted string by string before they are serialised. Reject logs name only the server id and a fixed reason, never remote text. An input schema must fit a small, bounded JSON Schema subset (object root, local types and keywords only, no `$ref`, no `pattern`/`patternProperties`, bounded depth, nodes, properties and enum sizes); a tool with any other schema is dropped and logged.
+- **stdio env**: the child gets only the MCP SDK's safe variables (on Linux `HOME`, `LOGNAME`, `PATH`, `SHELL`, `TERM`, `USER`) plus the configured `env`, never the Offtangent process environment. Its stderr is discarded. The command runs with the rights of the Offtangent process, without a sandbox, so configure only binaries you trust.
+- **http**: redirects are refused. There is no OAuth flow; use a static header. Response bodies are size-limited. Discovery reads at most 10 pages and stops early once enough tools are collected.
+- **Errors**: status and logs show only fixed error classes (for example `server denied access (HTTP 403)`, `connection timed out`), never a raw server response or exception text.
+- **Output**: text only, labelled as untrusted MCP output and cut at `maxOutputChars`. Images, audio and binary resources are replaced by a placeholder. A result with `isError` becomes a failed tool call. Labelling reduces prompt injection from server output, it does not prevent it.
+- **Scope**: persona, user, tool filters and the data class are checked at discovery and again at every call against the current `settings.json`. A server removed or re-scoped can no longer be called.
+- **No replay**: a `tools/call` is sent once. A call that times out or is aborted is reported as failed and not resent by the MCP client; its outcome on the server stays unknown. Offtangent has no crash recovery that re-executes tool calls. A retried chat turn continues from the transcript, so the model may decide to call the tool again.
+- **Failure**: a failing server is retried with backoff (5 s, 30 s, 2 min, 5 min) and contributes no tools in the meantime; other servers are not blocked by it. Aborting the turn also aborts a pending discovery; the connection being set up is closed when no other turn still waits for it, and this does not count as a server failure. The first turn after enabling a server waits at most `connectTimeoutMs` for it. Tool names that collide with built-in tools are skipped. On shutdown, all sessions are closed, including connections still being set up, and stdio children are stopped.
 
 ### `retry`
 

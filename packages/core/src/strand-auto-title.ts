@@ -35,6 +35,7 @@ import { loadProvidersDecrypted } from './provider-config.js'
 import type { ProviderConfig } from './provider-config.js'
 import { withTimeout } from './promise-utils.js'
 import { errorClass } from './log-safe-error.js'
+import { MCP_PRIVATE_SKIP_REASON, skipPrivateMcpSession } from './mcp-egress.js'
 
 /** First run once the strand has this many user turns. */
 export const AUTO_TITLE_FIRST_TURN = 4
@@ -78,6 +79,7 @@ export type AutoTitleSkipReason =
   | 'already_evaluated_at_this_length'
   | 'rate_limited'
   | 'cooldown'
+  | typeof MCP_PRIVATE_SKIP_REASON
 
 export type AutoTitlePlan =
   | { run: true; turnCount: number; messageCount: number; summaryVersion: number; retry: boolean }
@@ -552,6 +554,7 @@ export async function evaluateStrandAutoTitle(
     return { outcome: 'error', notes: [`internal: ${errorClass(err)}`] }
   }
   if (!plan.run) return { outcome: 'skipped', reason: plan.reason }
+  if (skipPrivateMcpSession(db, strandId, 'strand auto-title')) return { outcome: 'skipped', reason: MCP_PRIVATE_SKIP_REASON }
 
   try {
     const input = buildAutoTitleInput(db, strandId)

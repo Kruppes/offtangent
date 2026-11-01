@@ -15,6 +15,7 @@
  * gets a clear error instead of a note nobody will ever see.
  */
 
+import { isPrivateMcpScope } from './mcp-egress.js'
 import type { AgentTool } from '@earendil-works/pi-agent-core'
 import { Type } from '@earendil-works/pi-ai'
 import {
@@ -50,6 +51,11 @@ export interface VoiceMessageToolOptions {
    * tool refuses rather than producing audio that is never delivered.
    */
   isCarriedByCurrentTurn?: () => boolean
+  /**
+   * MCP local_only (fail closed): true when the strand holds private MCP
+   * data. The text is then never sent to a speech summary model or TTS.
+   */
+  isPrivateStrand?: (sessionId: string | null) => boolean
   /** Test seam / policy override: the effective voice-note route. */
   loadConfig?: () => EffectiveVoiceNoteConfig
   /** Test seam: the deterministic pipeline. */
@@ -110,6 +116,13 @@ export function createVoiceMessageTool(options: VoiceMessageToolOptions): AgentT
           + 'writing an answer in this strand, so the voice message would never reach the user. '
           + 'Answer in text instead.',
         )
+      }
+
+      // Review 3 / P1-2 + P2: a missing privacy check is never a bypass. Without
+      // the wired strand check the shared classification decides, and with no
+      // database that means: unknown scope, refused (fail closed).
+      if ((options.isPrivateStrand ?? ((sid: string | null) => isPrivateMcpScope(undefined, sid)))(sessionId)) {
+        return fail(`Error: MCP privacy gate: ${VOICE_MESSAGE_TOOL_NAME} is disabled in a strand with private (local_only) MCP data. Answer in text instead.`)
       }
 
       const trimmed = typeof text === 'string' ? text.trim() : ''

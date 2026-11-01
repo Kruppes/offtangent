@@ -112,6 +112,23 @@ describe('createVoiceReplyHook', () => {
     expect(JSON.parse(row.metadata).voiceNote.url).toBe('/api/uploads/voice-note-1.ogg')
   })
 
+  it('never speaks an answer of a strand with private (local_only) MCP data', async () => {
+    setVoiceRepliesEnabled(db, 1, true)
+    db.prepare("INSERT INTO chat_messages (session_id, user_id, role, content, metadata, agent_id) VALUES ('strand-1', 1, 'tool', 'Tool: mcp_x_read', ?, 'main')")
+      .run(JSON.stringify({ toolName: 'mcp_x_read', toolResult: { content: [{ type: 'text', text: 'PRIVATE_SYNTHETIC_7731' }], details: { mcpDataClass: 'local_only' } } }))
+    const spoken: string[] = []
+    const hook = createVoiceReplyHook({
+      db,
+      chatEventBus: new ChatEventBus(),
+      generate: async raw => { spoken.push(raw); runs += 1; return generated(raw) },
+      logger: { warn: () => {}, error: () => {} },
+    })
+    const id = insertMessage('Quote: PRIVATE_SYNTHETIC_7731')
+    await hook.handle({ messageId: id, userId: 1, sessionId: 'strand-1', agentId: 'main', content: 'Quote: PRIVATE_SYNTHETIC_7731' })
+    expect(spoken).toEqual([])
+    expect(runs).toBe(0)
+  })
+
   it('keeps the attachments of the answer', async () => {
     setVoiceRepliesEnabled(db, 1, true)
     const metadata = JSON.stringify({ files: [{ urlPath: '/api/uploads/report.pdf' }] })

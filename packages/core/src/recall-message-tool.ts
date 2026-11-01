@@ -1,4 +1,5 @@
 import type { AgentTool } from '@earendil-works/pi-agent-core'
+import { isPrivateMcpSession, MCP_PRIVATE_HISTORY_NOTICE } from './mcp-egress.js'
 import { Type } from '@earendil-works/pi-ai'
 import type { Database } from './database.js'
 import { resolveAgentReadScope } from './agent-read-scope.js'
@@ -47,6 +48,12 @@ export interface RecallMessageToolOptions {
   getCurrentSessionId?: () => string | undefined
   /** Hard cap on returned characters (the caller can page with `offset`). */
   maxChars?: number
+  /**
+   * MCP egress gate (review 2 / B): true only while the calling turn runs on
+   * a strictly local model. Rows of a strand with private (local_only) MCP
+   * material are withheld otherwise. Absent = not allowed (fail closed).
+   */
+  allowPrivateMcp?: () => boolean
 }
 
 interface RecallRow {
@@ -134,6 +141,15 @@ function ecoOriginalVisible(options: RecallMessageToolOptions, row: RecallRow): 
  * stored tool result. The output is prefixed with the recalled marker so a
  * later fact extraction does not treat it as new information.
  */
+function safeAllow(allow: (() => boolean) | undefined): boolean {
+  try {
+    // Review 5: background tasks never receive private MCP rows (see read_chat_history).
+    return !getCurrentTaskExecutionContext() && allow?.() === true
+  } catch {
+    return false
+  }
+}
+
 export function createRecallMessageTool(options: RecallMessageToolOptions): AgentTool {
   const maxChars = options.maxChars ?? DEFAULT_MAX_CHARS
   return {
@@ -195,6 +211,17 @@ export function createRecallMessageTool(options: RecallMessageToolOptions): Agen
         }
       }
 
+      // MCP egress gate (review 2 / B): a row of a strand with private MCP
+      // material is withheld from a non-local model; served to a local model
+      // it carries `mcpPrivate`, so the runtime refuses any later cloud request.
+      const mcpPrivate = isPrivateMcpSession(options.db, row.session_id)
+      if (mcpPrivate && !safeAllow(options.allowPrivateMcp)) {
+        return {
+          content: [{ type: 'text' as const, text: `${RECALLED_MARKER} message ${row.id} (${row.role}, ${row.timestamp})\n${MCP_PRIVATE_HISTORY_NOTICE}` }],
+          details: { messageId: row.id, role: row.role, mcpPrivateWithheld: true },
+        }
+      }
+
       let body = row.content
       // Tool caps run inside the tool, BEFORE the result is stored: the stored
       // text is then the capped output, never the raw one. Say so.
@@ -224,7 +251,7 @@ export function createRecallMessageTool(options: RecallMessageToolOptions): Agen
               const page = recallPage(originalText, rawOffset, maxChars)
               return {
                 content: [{ type: 'text' as const, text: `${RECALLED_MARKER} message ${row.id} (tool ${meta.toolName ?? 'unknown'}, verbatim original of an Eco-compacted result, ${originalText.length} chars${ecoCapNote}${page.note})\n${page.slice}` }],
-                details: { messageId: row.id, role: row.role, totalChars: originalText.length, offset: page.offset, returnedChars: page.slice.length, remainingChars: page.remaining, ecoOriginal: true },
+                details: { ...(mcpPrivate ? { mcpPrivate: true } : {}), messageId: row.id, role: row.role, totalChars: originalText.length, offset: page.offset, returnedChars: page.slice.length, remainingChars: page.remaining, ecoOriginal: true },
               }
             }
           }
@@ -250,7 +277,7 @@ export function createRecallMessageTool(options: RecallMessageToolOptions): Agen
 
       return {
         content: [{ type: 'text' as const, text: `${header}\n${slice}${footer}` }],
-        details: { messageId: row.id, role: row.role, sessionId: row.session_id, offset, returned: slice.length, remaining },
+        details: { ...(mcpPrivate ? { mcpPrivate: true } : {}), messageId: row.id, role: row.role, sessionId: row.session_id, offset, returned: slice.length, remaining },
       }
     },
   }

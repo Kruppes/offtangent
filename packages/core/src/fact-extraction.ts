@@ -10,6 +10,7 @@ import { loadHeuristics } from './heuristics.js'
 import { logToolCall } from './token-logger.js'
 import { assertLlmResponseOk } from './llm-response.js'
 import { resolveBackgroundReasoning } from './thinking-level.js'
+import { MCP_PRIVATE_SKIP_REASON, skipPrivateMcpSession } from './mcp-egress.js'
 
 const DUPLICATE_SEARCH_LIMIT = 25
 // `maxFacts` and `duplicateOverlap` are heuristics (SPEC 12.1) read from
@@ -317,6 +318,10 @@ export async function extractAndStoreFacts(
 ): Promise<{ extracted: number; stored: number; duplicates: number; skipped?: string }> {
   if (!sessionKindProducesFacts(sessionKind)) {
     return { extracted: 0, stored: 0, duplicates: 0, skipped: `session kind ${sessionKind} produces no durable facts` }
+  }
+
+  if (skipPrivateMcpSession(db, sessionId, 'fact extraction')) {
+    return { extracted: 0, stored: 0, duplicates: 0, skipped: MCP_PRIVATE_SKIP_REASON }
   }
 
   // Recall loop prevention (gate 2): injected facts, wiki reads and the

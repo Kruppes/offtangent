@@ -73,6 +73,11 @@ describe('fact-extraction', () => {
     db.prepare("INSERT INTO projects(id,user_id,name) VALUES ('fixture-project','1','Fixture')").run()
     for (const id of ['session-a', 'session-old', 'session-new']) db.prepare("INSERT INTO sessions(id,user_id,session_user,agent_id,type,project_id) VALUES (?,1,'1','main','interactive','fixture-project')").run(id)
     db.prepare("INSERT INTO sessions(id,user_id,session_user,agent_id,type) VALUES ('session-b',2,'2','main','interactive'), ('session-coder',1,'1','coder','interactive')").run()
+    // Review 4 / P2: an id without a sessions row is an unknown (private)
+    // scope, so every strand a test extracts from exists as a real clean row.
+    // s1/s2 share the fixture project so a key from s1 is superseded in s2.
+    for (const id of ['session-advisor', 'session-empty', 'session-error']) db.prepare("INSERT INTO sessions(id,user_id,session_user,agent_id,type) VALUES (?,1,'1','main','interactive')").run(id)
+    for (const id of ['s1', 's2']) db.prepare("INSERT INTO sessions(id,user_id,session_user,agent_id,type,project_id) VALUES (?,1,'1','main','interactive','fixture-project')").run(id)
     mockCompleteSimple.mockReset()
   })
 

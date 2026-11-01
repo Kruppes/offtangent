@@ -1,5 +1,6 @@
 import type { AgentTool } from '@earendil-works/pi-agent-core'
 import type { Api, Model } from '@earendil-works/pi-ai'
+import { skipPrivateMcpSession } from './mcp-egress.js'
 import { Type } from '@earendil-works/pi-ai'
 import { completeSimple } from './pi-models.js'
 import { loadPersona, getPersonaDir } from './persona-loader.js'
@@ -220,6 +221,16 @@ export function createAskAgentTool(options: AskAgentToolOptions): AgentTool {
         return {
           content: [{ type: 'text' as const, text: 'Error: agent_id is required.' }],
           details: { error: true },
+        }
+      }
+
+      // MCP local_only (fail closed): the question may quote private MCP data
+      // of this strand; the cross-persona call path has no strict-locality
+      // check of its own, so it is disabled in such a strand.
+      if (skipPrivateMcpSession(options.db, options.getCurrentSessionId?.(), 'ask_agent')) {
+        return {
+          content: [{ type: 'text' as const, text: 'Error: MCP privacy gate: ask_agent is disabled in a strand with private (local_only) MCP data.' }],
+          details: { error: true, mcpPrivate: true },
         }
       }
 

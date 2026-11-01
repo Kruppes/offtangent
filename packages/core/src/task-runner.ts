@@ -29,6 +29,8 @@ import type { SessionManager, SessionType } from './session-manager.js'
 import { logTokenUsage, logToolCall } from './token-logger.js'
 import { estimateCost, parseProviderModelId, buildStreamFn, getProviderDefaultModel } from './provider-config.js'
 import type { ProviderConfig } from './provider-config.js'
+import { findPrivateMcpEvidence, isPrivateMcpSession, isToolAllowedInPrivateMcpScope, McpPrivateContextError, MCP_PRIVATE_TOOL_BLOCKED } from './mcp-egress.js'
+import { isStrictlyLocalModel } from './data-policy.js'
 import { runOutsideTaskExecutionContext, runWithTaskExecutionContext, type TaskExecutionContext, type TaskOrigin } from './task-execution-context.js'
 import {
   ToolCallTracker,
@@ -827,6 +829,59 @@ export class TaskRunner {
     }) as AgentTool)
   }
 
+  /**
+   * Review 5: a task is private when its own session, its parent session or
+   * its resolved origin strand holds private (local_only) MCP material.
+   * Creating a task from such a strand is refused (create_task), so this only
+   * catches a marker that appears later or a lineage the tool did not see.
+   * Fail closed: any lookup error counts as private.
+   */
+  private isTaskMcpPrivate(taskId: string, sessionId: string | null): boolean {
+    try {
+      const ids = new Set<string>()
+      if (sessionId) {
+        ids.add(sessionId)
+        const parent = (this.db.prepare('SELECT parent_session_id FROM sessions WHERE id = ?').get(sessionId) as { parent_session_id: string | null } | undefined)?.parent_session_id
+        if (parent) ids.add(parent)
+      }
+      const task = this.store.getById(taskId)
+      if (task?.sessionId) ids.add(task.sessionId)
+      const origin = task && this.options.resolveTaskOrigin ? this.options.resolveTaskOrigin(task) : null
+      if (origin?.sessionId) ids.add(origin.sessionId)
+      for (const id of ids) if (isPrivateMcpSession(this.db, id)) return true
+      return false
+    } catch {
+      return true
+    }
+  }
+
+  /**
+   * Review 5: last check before every task wire request. A private task may
+   * only talk to the strictly local model it was built with (the request
+   * target the SDK actually uses, identity-checked), and no request whose
+   * outgoing context carries private MCP evidence leaves for a non-local one.
+   */
+  private gateTaskRequest(taskId: string, sessionId: string, provider: ProviderConfig, builtModel: unknown, inner: ReturnType<typeof buildStreamFn>): ReturnType<typeof buildStreamFn> {
+    return ((model, context, options) => {
+      let local = false
+      try { local = model === builtModel && typeof model?.id === 'string' && isStrictlyLocalModel(provider.id, model.id) } catch { local = false }
+      if (!local) {
+        let refuse: boolean
+        try {
+          refuse = this.isTaskMcpPrivate(taskId, sessionId)
+            || findPrivateMcpEvidence((context as { messages?: unknown[] } | null)?.messages ?? [], new Set()) !== null
+        } catch {
+          refuse = true
+        }
+        if (refuse) {
+          console.warn(`[task-runner] MCP privacy gate refused a non-local request of task ${taskId}`)
+          throw new McpPrivateContextError()
+        }
+      }
+      return inner(model, context, options)
+    }) as ReturnType<typeof buildStreamFn>
+  }
+
   private taskExecutionContext(taskId: string, provider: ProviderConfig | null): TaskExecutionContext {
     const task = this.store.getById(taskId)
     let origin: TaskOrigin | null = null
@@ -1169,7 +1224,7 @@ export class TaskRunner {
         // The task session id is stable for the whole run — hand it to the
         // provider so a per-session prompt cache keeps hitting across the
         // hundreds of tool-loop calls a task makes.
-        streamFn: buildStreamFn(provider, undefined, {
+        streamFn: this.gateTaskRequest(taskId, sessionId, provider, model, buildStreamFn(provider, undefined, {
           getSessionId: () => sessionId,
           // Native Ollama (plan 2026-10-05-ollama-native-context): the task
           // reads ITS OWN session row — the snapshot copied from the parent at
@@ -1177,7 +1232,7 @@ export class TaskRunner {
           // Lean: never a per-request num_ctx — the server keeps its one
           // window, so no request can force a model reload between turns.
           getContextWindowChoice: () => lean ? null : readStrandContextWindow(this.db, sessionId),
-        }),
+        })),
         // Real Eco (plan 2026-10-05-real-eco): a NEW tool result is compacted
         // once, before the model ever sees it, and that projection is what the
         // transcript keeps. Already-sent context is never touched.
@@ -1187,6 +1242,12 @@ export class TaskRunner {
         // guard) as a model-issued call. A trip blocks the call and tears the
         // task down; the abort reaches the sandbox through the tool signal.
         beforeToolCall: async (ctx) => {
+          // Review 5: same allowlist as the interactive runtime, per call.
+          // Tasks get no MCP tools, so no MCP name is ever offered here.
+          if (this.isTaskMcpPrivate(taskId, sessionId) && !isToolAllowedInPrivateMcpScope(ctx.toolCall.name, new Set())) {
+            console.warn(`[task-runner] MCP privacy gate refused a tool call in task ${taskId}: ${ctx.toolCall.name.startsWith('mcp_') ? 'mcp tool' : ctx.toolCall.name}`)
+            return { block: true, reason: MCP_PRIVATE_TOOL_BLOCKED }
+          }
           if (!isNestedCodemodeCallId(ctx.toolCall.id)) return undefined
           const running = this.runningTasks.get(taskId)
           if (!running) return undefined
@@ -2095,6 +2156,8 @@ export class TaskRunner {
     if (this.store.getById(runningTask.taskId)?.workerProfile === LEAN_LOCAL_PROFILE && !isLocalProvider(resolvedProvider)) return
     // B-01-R: no detector model/credential for a refused task.
     if (this.executionRefusal(runningTask.taskId)) return
+    // Review 5: a private task's tool history never goes to the (possibly cloud) detector.
+    if (this.isTaskMcpPrivate(runningTask.taskId, this.store.getById(runningTask.taskId)?.sessionId ?? null)) return
 
     // Apply specific model override if provided
     const provider = modelId ? { ...resolvedProvider, enabledModels: [modelId] } : resolvedProvider

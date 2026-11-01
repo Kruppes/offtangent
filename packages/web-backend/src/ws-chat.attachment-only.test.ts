@@ -136,6 +136,9 @@ describe('ws-chat: photos without text (Android skipSave frame without content)'
       h.storedRow('cm-voice', 'Was ist auf den Fotos?', [recording])
       c.ws.send(JSON.stringify({ type: 'message', content: 'Was ist auf den Fotos?', agentId: 'main', clientMessageId: 'cm-voice', skipSave: true, attachments: [recording] }))
       await until(() => h.calls.length === 1)
+      // The merged turn can start before the voice ack frame reaches the
+      // client (race, also flaky on main 1359c3ca): wait for the frame itself.
+      await until(() => c.all.some(f => f.type === 'message_ack' && f.clientMessageId === 'cm-voice'))
       // An ordinary message carries no hold fields.
       const voiceAck = c.all.find(f => f.type === 'message_ack' && f.clientMessageId === 'cm-voice')
       expect(voiceAck).toBeDefined()

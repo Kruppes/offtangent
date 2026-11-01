@@ -66,6 +66,8 @@ function build(overrides: Partial<Parameters<typeof createVoiceMessageTool>[0]> 
     getCurrentToolUserId: () => 7,
     getCurrentInteractiveSessionId: () => 'strand-1',
     isCarriedByCurrentTurn: () => true,
+    // Production wiring (runtime-composition) always passes the strand check.
+    isPrivateStrand: () => false,
     loadConfig: () => resolveVoiceNoteConfig(readAloud(), { rewrite: true, maxChars: 200 }),
     speak,
     ...overrides,
@@ -79,6 +81,26 @@ describe('createVoiceMessageTool', () => {
     expect(tool.name).toBe(VOICE_MESSAGE_TOOL_NAME)
     expect(VOICE_MESSAGE_TOOL_NAME).toBe('send_voice_message')
     expect(JSON.stringify(tool.parameters)).toContain('text')
+  })
+
+  it('refuses in a strand with private MCP data and never calls the speech pipeline', async () => {
+    const seen: Array<string | null> = []
+    const { tool, speak } = build({ isPrivateStrand: sid => { seen.push(sid); return true } })
+    const result = await tool.execute('call-p', { text: 'Quote: PRIVATE_SYNTHETIC_4410' })
+    expect((result.details as VoiceNoteToolDetails).error).toBe(true)
+    expect(JSON.stringify(result.content)).toContain('MCP privacy gate')
+    expect(seen).toEqual(['strand-1'])
+    expect(speak).not.toHaveBeenCalled()
+    const clean = build({ isPrivateStrand: () => false })
+    await clean.tool.execute('call-c', { text: 'All gates are green.' })
+    expect(clean.speak).toHaveBeenCalledTimes(1)
+  })
+
+  it('review 3 / P2: a missing strand check is no bypass (unknown scope is refused)', async () => {
+    const { tool, speak } = build({ isPrivateStrand: undefined })
+    const result = await tool.execute('call-u', { text: 'Quote: PRIVATE_SYNTHETIC_4410' })
+    expect(JSON.stringify(result.content)).toContain('MCP privacy gate')
+    expect(speak).not.toHaveBeenCalled()
   })
 
   it('speaks the given text and returns the note in the tool details', async () => {

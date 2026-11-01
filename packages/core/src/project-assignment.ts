@@ -40,6 +40,7 @@ import {
   recordProjectAssignmentRun,
 } from './project-assignment-store.js'
 import type { ProjectAssignmentOutcome } from './project-assignment-store.js'
+import { MCP_PRIVATE_SKIP_REASON, skipPrivateMcpSession } from './mcp-egress.js'
 
 /** Never before the third user/assistant message: below that there is nothing to classify. */
 export const PROJECT_ASSIGNMENT_MIN_MESSAGES = 3
@@ -67,6 +68,7 @@ export type ProjectAssignmentSkipReason =
   | 'already_evaluated_at_this_length'
   | 'dismissed_often_enough'
   | 'no_projects'
+  | typeof MCP_PRIVATE_SKIP_REASON
 
 export type ProjectAssignmentPlan =
   | { run: true; messageCount: number; userId: string }
@@ -440,6 +442,7 @@ export async function evaluateStrandProject(
 ): Promise<EvaluateStrandProjectResult> {
   const plan = planProjectAssignment(db, strandId, trigger)
   if (!plan.run) return { outcome: 'skipped', reason: plan.reason }
+  if (skipPrivateMcpSession(db, strandId, 'project assignment')) return { outcome: 'skipped', reason: MCP_PRIVATE_SKIP_REASON }
 
   const input = buildProjectAssignmentInput(db, strandId, plan.userId)
   if (!input) return { outcome: 'skipped', reason: 'unknown_strand' }

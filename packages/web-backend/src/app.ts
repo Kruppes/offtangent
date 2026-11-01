@@ -8,7 +8,7 @@ import fs from 'node:fs'
 import express from 'express'
 import type { Database } from '@axiom/core'
 import type { AgentCore } from '@axiom/core'
-import { registerInteractionAnswerPort, shortenForVoice } from '@axiom/core'
+import { registerInteractionAnswerPort, shortenForVoice, skipPrivateMcpSession } from '@axiom/core'
 import { createAuthRouter } from './routes/auth.js'
 import { createChatRouter } from './routes/chat.js'
 import { createThreadsRouter } from './routes/threads.js'
@@ -129,7 +129,7 @@ export interface AppOptions {
    * Companion K2, H3 fallback: a short spoken version of an answer whose
    * first paragraph ignored the clock style (small model). Null = word cut.
    */
-  clockVoiceShorten?: ((text: string, maxChars: number) => Promise<string | null>) | null
+  clockVoiceShorten?: ((text: string, maxChars: number, strandId?: string | null) => Promise<string | null>) | null
   /**
    * The process wide push sender (PROTOCOL chapter 7). Used by the captures
    * path: when the router files a capture as a note but the text might be
@@ -288,7 +288,10 @@ export function createApp(options?: AppOptions): express.Express {
         // H3 fallback (§2.3): a small router-chain model shortens a first
         // paragraph that ignored H2; null in an option turns it off.
         shorten: options.clockVoiceShorten === undefined
-          ? (text: string, max: number) => shortenForVoice(text, max)
+          // MCP local_only: a private strand's answer is cut at a word instead.
+          ? (text: string, max: number, strandId?: string | null) => (skipPrivateMcpSession(options.db, strandId, 'clock voice shorten')
+            ? Promise.resolve(null)
+            : shortenForVoice(text, max))
           : options.clockVoiceShorten,
       },
     }))

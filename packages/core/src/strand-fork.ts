@@ -40,6 +40,7 @@ import type { Database } from './database.js'
 import { captureLanguage, type CaptureLanguage } from './capture-router.js'
 import { getLatestSessionSummary } from './session-summary-store.js'
 import { createStrandLink } from './strand-store.js'
+import { isPrivateMcpScope, markPrivateMcpSession } from './mcp-egress.js'
 import type { SessionSummary } from './session-summary-schema.js'
 
 /** Longest lineage chain a fork may create (root strand = depth 0). */
@@ -77,6 +78,7 @@ export type ForkStrandErrorCode =
   | 'invalid_seed'
   | 'fork_depth_exceeded'
   | 'fork_lineage_cycle'
+  | 'private_marker_failed'
 
 export class ForkStrandError extends Error {
   constructor(readonly code: ForkStrandErrorCode, message: string) {
@@ -375,7 +377,15 @@ export function forkStrand(input: ForkStrandInput): StrandFork {
   const parentSourceRow = db.prepare('SELECT source FROM sessions WHERE id = ?').get(parent.id) as { source?: string | null } | undefined
   const source = inheritableForkSource(parentSourceRow?.source)
 
+  // Review 4 / P1-B: a fork of a strand with private MCP material is private
+  // itself BEFORE its seed exists, so no helper (facts, summary, title) or
+  // cloud model ever reads the seed as a clean strand. Fail closed.
+  const parentPrivate = isPrivateMcpScope(db, parent.id)
+
   const write = db.transaction(() => {
+    if (parentPrivate && !markPrivateMcpSession(db, child.id)) {
+      throw new ForkStrandError('private_marker_failed', 'The fork of a private MCP strand could not be marked private')
+    }
     db.prepare(
       'UPDATE sessions SET parent_strand_id = ?, forked_at = ?, forked_from_message_id = ?, source = ? WHERE id = ?',
     ).run(parent.id, forkedAt, forkedFromMessageId, source, child.id)

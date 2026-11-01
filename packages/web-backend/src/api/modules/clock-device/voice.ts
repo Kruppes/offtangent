@@ -297,7 +297,7 @@ export interface ClockVoiceOptions {
   /** The TurnRunner the default tracker subscribes to. */
   getTurnRunner?: () => ClockTurnSource | null
   /** H3 (E2 fallback): short spoken version from a small model; see exchange.ts. */
-  shorten?: ((text: string, maxChars: number) => Promise<string | null>) | null
+  shorten?: ((text: string, maxChars: number, strandId?: string | null) => Promise<string | null>) | null
   /** Defaults to {@link clockVoiceEnabled} (env AND settings), read per request. */
   isEnabled?: () => boolean
   /** STT; defaults to the shared raw PCM path of `/api/stt/transcribe-raw`. */

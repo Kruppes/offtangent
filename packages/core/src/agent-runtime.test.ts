@@ -7,6 +7,8 @@ import type { AgentTool } from '@earendil-works/pi-agent-core'
 import { assembleSystemPrompt } from './memory.js'
 import { logToolCall } from './token-logger.js'
 import { loadConfig } from './config.js'
+import { closeSharedMcpManager } from './mcp-client.js'
+import { invalidateKnownValues } from './secret-boundary.js'
 import { subscribeProviderPhase, STREAM_ACTIVITY_SIGNAL_INTERVAL_MS } from './provider-phase.js'
 import type { ProviderPhaseEvent } from './provider-phase.js'
 
@@ -692,4 +694,97 @@ describe('persisted strand working mode in the actual runtime prompt', () => {
     expect(String((agent.state.messages[0] as unknown as { content: string }).content)).not.toContain('<strand_working_mode')
     db.close()
   })
+})
+
+// MCP wiring in the interactive runtime (plan MCP support). Synthetic stdio
+// server from src/__fixtures__; the client itself is covered in mcp-client.test.ts.
+describe('AgentRuntime MCP wiring', () => {
+  const baseConfig = { language: 'de', timezone: 'Europe/Berlin', builtinTools: { webSearch: { enabled: true } } }
+  const fixture = new URL('./__fixtures__/mcp-test-server.mjs', import.meta.url).pathname
+
+  function withConfig<T>(mcp: unknown, fn: () => T | Promise<T>): Promise<T> {
+    const mockedLoadConfig = vi.mocked(loadConfig)
+    const previous = mockedLoadConfig.getMockImplementation()
+    mockedLoadConfig.mockImplementation(() => ({ ...baseConfig, ...(mcp === undefined ? {} : { mcp }) }))
+    return Promise.resolve(fn()).finally(() => mockedLoadConfig.mockImplementation(previous!))
+  }
+
+  async function runTurn(runtime: ReturnType<typeof createAgentRuntime>, sessionId: string) {
+    runtimeHarness.promptBehaviors.push(async (agent) => { agent.emit({ type: 'agent_end', messages: [] }) })
+    for await (const _chunk of runtime.streamPrompt('hello', sessionId)) { /* drain */ }
+  }
+
+  beforeEach(() => {
+    runtimeHarness.promptBehaviors = []
+    runtimeHarness.promptCalls = []
+  })
+  afterEach(async () => {
+    await closeSharedMcpManager()
+  })
+
+  it('adds no MCP tools when the mcp block is missing', async () => {
+    await withConfig(undefined, async () => {
+      const runtime = createAgentRuntime(opts())
+      await runTurn(runtime, 'session-mcp-off')
+      expect(runtime.getStateSnapshot().toolNames.some(n => n.startsWith('mcp_'))).toBe(false)
+    })
+  })
+
+  const opts = (agentId = 'main', userId: number | null = 1) => ({ model: makeModel(), apiKey: 'k', db: initDatabase(':memory:'), tools: [], agentId, getCurrentToolUserId: () => userId ?? undefined })
+  const server = (extra: Record<string, unknown> = {}) => ({ transport: 'stdio', command: process.execPath, args: [fixture, 'stdio'], personas: ['main'], users: ['1'], dataClass: 'cloud_ok', ...extra })
+
+  it('adds the discovered tools at turn start only for an allowed persona and user', async () => {
+    await withConfig({ enabled: true, servers: { test: server() } }, async () => {
+      const main = createAgentRuntime(opts())
+      expect(main.getStateSnapshot().toolNames).not.toContain('mcp_test_echo')
+      await runTurn(main, 'session-mcp-main')
+      expect(main.getStateSnapshot().toolNames).toContain('mcp_test_echo')
+
+      const other = createAgentRuntime(opts('bob'))
+      await runTurn(other, 'session-mcp-bob')
+      expect(other.getStateSnapshot().toolNames.some(n => n.startsWith('mcp_'))).toBe(false)
+
+      // Review P1-2: an unlisted or unauthenticated user gets nothing.
+      for (const userId of [2, null]) {
+        const stranger = createAgentRuntime(opts('main', userId))
+        await runTurn(stranger, `session-mcp-user-${userId}`)
+        expect(stranger.getStateSnapshot().toolNames.some(n => n.startsWith('mcp_'))).toBe(false)
+      }
+    })
+    // Config removed: the next turn drops the tools again.
+    await withConfig(undefined, async () => {
+      const runtime = createAgentRuntime(opts())
+      await runTurn(runtime, 'session-mcp-removed')
+      expect(runtime.getStateSnapshot().toolNames.some(n => n.startsWith('mcp_'))).toBe(false)
+    })
+  }, 30_000)
+
+  it('offers a local_only (default) server to no cloud model (review P1-3)', async () => {
+    const { dataClass: _drop, ...localOnly } = server()
+    await withConfig({ enabled: true, servers: { test: localOnly } }, async () => {
+      const runtime = createAgentRuntime(opts())
+      await runTurn(runtime, 'session-mcp-local-only')
+      expect(runtime.getStateSnapshot().toolNames.some(n => n.startsWith('mcp_'))).toBe(false)
+    })
+  }, 30_000)
+
+  it('never sends a known secret from remote tool metadata to the model (review P1-1)', async () => {
+    const secret = 'dummy-runtime-probe-value-one'
+    process.env.MCP_RUNTIME_PROBE_API_KEY = secret
+    invalidateKnownValues()
+    try {
+      await withConfig({ enabled: true, servers: { test: server({ env: { MCP_TEST_DESCRIPTION_SUFFIX: ` ${secret}` } }) } }, async () => {
+        const runtime = createAgentRuntime(opts())
+        await runTurn(runtime, 'session-mcp-secret-meta')
+        const names = runtime.getStateSnapshot().toolNames
+        expect(names).not.toContain('mcp_test_echo')
+        expect(names).toContain('mcp_test_env_probe')
+        const sent = JSON.stringify(runtimeHarness.promptCalls) + JSON.stringify(names)
+        expect(sent).not.toContain(secret)
+      })
+    } finally {
+      delete process.env.MCP_RUNTIME_PROBE_API_KEY
+      invalidateKnownValues()
+    }
+  }, 30_000)
 })

@@ -28,6 +28,7 @@ import crypto from 'node:crypto'
 import { pipeline, Transform, type Readable } from 'node:stream'
 import {
   errorClass,
+  isPrivateMcpSession,
   loadTtsSettings,
   ttsCacheScope,
   resolveSpeechSummaryModel,
@@ -280,6 +281,12 @@ export function createSpeechService(options: SpeechServiceOptions): SpeechServic
     )
     if (!owned) {
       throw new SpeechServiceError(404, 'not_found', 'No such message')
+    }
+    // MCP local_only (fail closed): a message of a private strand never goes to
+    // the speech summary model or a TTS provider. Checked after ownership, so
+    // a foreign row still answers like a missing one.
+    if (isPrivateMcpSession(db, row.session_id)) {
+      throw new SpeechServiceError(403, 'mcp_private', 'Speech is disabled for strands with private MCP data')
     }
     return row
   }

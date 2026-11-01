@@ -22,6 +22,7 @@ import { queryMemoriesFts, estimateTokens, extractTopicTags } from './session-st
 import { RECALLED_MARKER, formatMessageDigest } from './message-digest.js'
 import { loadStrandRows } from './strand-context.js'
 import { loadHeuristics } from './heuristics.js'
+import { skipPrivateMcpSession } from './mcp-egress.js'
 
 export interface DelegationContextSelection {
   strandSummary?: boolean
@@ -70,6 +71,11 @@ export function buildDelegationContext(options: BuildDelegationContextOptions): 
   const dropped: number[] = []
   if (mode === 'clean' || !parentSessionId) {
     return { block: null, mode: parentSessionId ? mode : 'clean', droppedMessageIds: dropped, tokens: 0 }
+  }
+  // MCP local_only: no summary, message or fork window of a private strand is
+  // handed to a task (whose model is not known to be local). Fail closed.
+  if (skipPrivateMcpSession(db, parentSessionId, 'delegation context')) {
+    return { block: null, mode: 'clean', droppedMessageIds: dropped, tokens: 0 }
   }
 
   const sections: string[] = []

@@ -181,7 +181,7 @@ export interface ClockExchangeTrackerOptions {
   /** The TurnRunner; null while the agent core is not up. */
   getTurnSource: () => ClockTurnSource | null
   /** H3: short spoken version of a long first paragraph. Null = word cut only. */
-  shorten?: ((text: string, maxChars: number) => Promise<string | null>) | null
+  shorten?: ((text: string, maxChars: number, strandId?: string | null) => Promise<string | null>) | null
   /** Called when a backgrounded answer is ready (wake call of the clock, notifier.ts). */
   onAnswerReady?: (ready: ClockAnswerReady) => void
   now?: () => number
@@ -721,7 +721,7 @@ export class ClockExchangeTracker {
     let settled = false
     const timer = setTimeout(() => { if (!settled) { settled = true; finish(null) } }, this.shortenTimeoutMs)
     timer.unref?.()
-    shorten(source, CLOCK_SPOKEN_MAX).then(
+    shorten(source, CLOCK_SPOKEN_MAX, entry.strandId).then(
       text => { if (!settled) { settled = true; clearTimeout(timer); finish(text) } },
       () => { if (!settled) { settled = true; clearTimeout(timer); finish(null) } },
     )

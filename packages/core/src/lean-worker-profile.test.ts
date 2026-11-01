@@ -178,6 +178,15 @@ describe('lean-worker-profile (runner + create_task)', () => {
       resolveProvider: () => provider,
       defaultMaxDurationMinutes: 10,
       maxDurationMinutesCap: 60,
+      // Production wiring (runtime-composition taskToolsOptions) passes the
+      // database and the caller's interactive strand. The MCP gate refuses an
+      // unknown scope (no strand / no sessions row), so the fixture uses a
+      // real, clean strand row like production does.
+      db,
+      getParentSessionId: () => {
+        db.prepare("INSERT OR IGNORE INTO sessions (id, agent_id) VALUES ('lean-parent-strand', 'main')").run()
+        return 'lean-parent-strand'
+      },
     })
   }
 

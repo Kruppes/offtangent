@@ -40,6 +40,7 @@ import { assembleStrandContextWithStats, trimMessagesToBudget, stripStrandContex
 import type { EffectiveModel, ModelSelection } from './model-resolution.js'
 import type { TurnRuntimeOverrides } from './turn-overrides.js'
 import { voiceReplyHintFor } from './voice-note.js'
+import { skipPrivateMcpSession } from './mcp-egress.js'
 
 /** What `resolveTurnModel` hands back: the provider, its credential and the effective model. */
 export interface EffectiveTurnModel {
@@ -1442,6 +1443,7 @@ export class AgentCore {
       console.warn('[session-summary] No conversation history available, returning Empty session.')
       return EMPTY_SUMMARY_TEXT
     }
+    if (skipPrivateMcpSession(this.db, sessionId, 'session summary')) return EMPTY_SUMMARY_TEXT
 
     console.log(`[session-summary] Generating summary for ${conversationHistory.length} chars of history`)
 

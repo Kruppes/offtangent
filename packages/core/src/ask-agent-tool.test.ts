@@ -54,6 +54,8 @@ describe('ask_agent', () => {
     fs.writeFileSync(path.join(builderMemory, 'MEMORY.md'), '# Builder memory\n- prefers small commits\n', 'utf-8')
     memoryDirs = { builder: builderMemory }
     db = initDatabase(path.join(dataDir, 'test.db'))
+    db.prepare("INSERT OR IGNORE INTO users (id, username, password_hash) VALUES (1, 'tester', 'not-a-password')").run()
+    db.prepare("INSERT INTO sessions (id, user_id, type) VALUES ('clean-strand', 1, 'interactive')").run()
     completeSimpleMock.mockReset()
   })
 
@@ -70,9 +72,42 @@ describe('ask_agent', () => {
       getModel: () => ({ id: 'test-model' }) as never,
       getApiKey: () => 'k',
       db,
+      // Review 3+4 / P2: a missing or non-existent strand id is refused; a
+      // real clean strand row (created in beforeEach) passes.
+      getCurrentSessionId: () => 'clean-strand',
       resolveMemoryDir: (id) => memoryDirs[id],
     })
   }
+
+  it('refuses in a strand with private MCP data before any model call', async () => {
+    db.prepare("INSERT OR IGNORE INTO users (id, username, password_hash) VALUES (1, 'tester', 'not-a-password')").run()
+    db.prepare("INSERT INTO sessions (id, user_id, agent_id, type) VALUES ('priv', 1, 'main', 'interactive')").run()
+    db.prepare("INSERT INTO chat_messages (session_id, user_id, role, content, metadata, agent_id) VALUES ('priv', 1, 'tool', 'Tool: mcp_x_read', ?, 'main')")
+      .run(JSON.stringify({ toolName: 'mcp_x_read', toolResult: { content: [{ type: 'text', text: 'PRIVATE_SYNTHETIC_3307' }], details: { mcpDataClass: 'local_only' } } }))
+    const gated = createAskAgentTool({
+      getCurrentAgentId: () => 'main',
+      getModel: () => ({ id: 'test-model' }) as never,
+      getApiKey: () => 'k',
+      db,
+      resolveMemoryDir: (id) => memoryDirs[id],
+      getCurrentSessionId: () => 'priv',
+    })
+    const result = await gated.execute('cp', { agent_id: 'builder', question: 'Quote: PRIVATE_SYNTHETIC_3307' }) as ToolResult
+    expect(result.content[0].text).toContain('MCP privacy gate')
+    expect(completeSimpleMock).not.toHaveBeenCalled()
+  })
+
+  it('review 3+4 / P2: without a strand id, a database or a real strand row the scope is unknown and the call is refused', async () => {
+    for (const opts of [{ db, getCurrentSessionId: () => undefined }, { db: undefined, getCurrentSessionId: () => 'clean-strand' }, { db, getCurrentSessionId: () => 'no-such-strand' }]) {
+      const t = createAskAgentTool({
+        getCurrentAgentId: () => 'main', getModel: () => ({ id: 'test-model' }) as never, getApiKey: () => 'k',
+        resolveMemoryDir: (id) => memoryDirs[id], ...opts,
+      })
+      const result = await t.execute('cu', { agent_id: 'builder', question: 'q' }) as ToolResult
+      expect(result.content[0].text).toContain('MCP privacy gate')
+    }
+    expect(completeSimpleMock).not.toHaveBeenCalled()
+  })
 
   it('frames the answer verbatim with the plain judgment label and logs the call', async () => {
     const answer = 'Ich würde **zuerst** testen.\n\n- Punkt A\n- Punkt B'

@@ -93,6 +93,7 @@ import { initDatabase } from './database.js'
 import type { Database } from './database.js'
 import { completeSimple } from './pi-models.js'
 import { appendToDailyFile } from './memory.js'
+import { markPrivateMcpSession } from './mcp-egress.js'
 
 const mockCompleteSimple = vi.mocked(completeSimple)
 const mockAppendToDailyFile = vi.mocked(appendToDailyFile)
@@ -138,7 +139,24 @@ describe('generateSessionSummary (schema delta, SPEC 11.2)', () => {
     generateSessionSummary: (userId: string, history?: string, sessionId?: string) => Promise<string>
   }
 
-  function makeAgent() {
+  /**
+   * Production contract (session-manager.ts: onSummarize(row.id | oldSessionId
+   * | session.id)): the summary always runs for a strand that has a real
+   * `sessions` row. The MCP gate treats a strand without such a row as an
+   * unknown scope (fail closed, review 3+4 / P2), so the fixture provides the
+   * real row, exactly like production, instead of an id out of nowhere.
+   */
+  function withRealSession(agent: SummaryAccess): SummaryAccess {
+    return {
+      generateSessionSummary: (userId, history, sessionId = 'sess-default') => {
+        db.prepare("INSERT OR IGNORE INTO users (id, username, password_hash) VALUES (1, 'u', 'not-a-password')").run()
+        db.prepare("INSERT OR IGNORE INTO sessions (id, user_id, agent_id) VALUES (?, 1, 'main')").run(sessionId)
+        return agent.generateSessionSummary(userId, history, sessionId)
+      },
+    }
+  }
+
+  function makeRawAgent() {
     return new AgentCore({
       model: makeModel(),
       apiKey: 'sk-test',
@@ -146,6 +164,10 @@ describe('generateSessionSummary (schema delta, SPEC 11.2)', () => {
       tools: [],
       memoryDir,
     }) as unknown as SummaryAccess
+  }
+
+  function makeAgent() {
+    return withRealSession(makeRawAgent())
   }
 
   beforeEach(() => {
@@ -327,6 +349,35 @@ describe('generateSessionSummary (schema delta, SPEC 11.2)', () => {
     expect(mockAppendToDailyFile).not.toHaveBeenCalled()
   })
 
+  it('MCP privacy: a clean strand with MCP off is summarized; ON -> private -> OFF and unknown strands stay out of the summary model', async () => {
+    const settings = path.join(process.env.DATA_DIR as string, 'config', 'settings.json')
+    fs.mkdirSync(path.dirname(settings), { recursive: true })
+    const previous = fs.existsSync(settings) ? fs.readFileSync(settings, 'utf-8') : null
+    try {
+      db.prepare("INSERT OR IGNORE INTO users (id, username, password_hash) VALUES (1, 'u', 'not-a-password')").run()
+      db.prepare("INSERT INTO sessions (id, user_id, agent_id) VALUES ('priv-strand', 1, 'main')").run()
+      db.prepare("INSERT INTO sessions (id, user_id, agent_id) VALUES ('clean-strand', 1, 'main')").run()
+      fs.writeFileSync(settings, JSON.stringify({ mcp: { enabled: true, servers: {} } }))
+      expect(markPrivateMcpSession(db, 'priv-strand')).toBe(true)
+      // MCP switched off afterwards: the persisted marker keeps the strand private.
+      fs.writeFileSync(settings, JSON.stringify({ mcp: { enabled: false } }))
+      mockCompleteSimple.mockResolvedValue(makeCompleteSimpleResponse('{"goal":"Clean goal."}'))
+      const agent = makeRawAgent()
+      expect(await agent.generateSessionSummary('1', 'User: private\nAssistant: data', 'priv-strand')).toBe('Empty session.')
+      expect(await agent.generateSessionSummary('1', 'User: other\nAssistant: text', 'sess-without-row')).toBe('Empty session.')
+      expect(await agent.generateSessionSummary('1', 'User: other\nAssistant: text', undefined)).toBe('Empty session.')
+      expect(mockCompleteSimple).not.toHaveBeenCalled()
+      // Clean MCP OFF: a real clean strand is summarized normally.
+      const clean = await agent.generateSessionSummary('1', 'User: hi\nAssistant: hello', 'clean-strand')
+      expect(mockCompleteSimple).toHaveBeenCalledOnce()
+      expect(clean).toContain('Clean goal.')
+      expect(JSON.stringify(mockCompleteSimple.mock.calls[0][1])).not.toContain('private')
+    } finally {
+      if (previous === null) fs.rmSync(settings, { force: true })
+      else fs.writeFileSync(settings, previous)
+    }
+  })
+
   it('uses a single completeSimple call', async () => {
     mockCompleteSimple.mockResolvedValue(makeCompleteSimpleResponse('{"add":{"decisions":["Task started."],"open":["Something open"]}}'))
     await makeAgent().generateSessionSummary('user1', 'User: Start a task\nAssistant: Task started.')
@@ -336,7 +387,7 @@ describe('generateSessionSummary (schema delta, SPEC 11.2)', () => {
   describe('H5 guard: summary vs. a native turn on the same local server+model', () => {
     const LOCAL = { ...makeModel(), id: 'qwen-local', provider: 'ollama', baseUrl: 'http://127.0.0.1:11434/v1' }
     function makeLocalAgent() {
-      return new AgentCore({ model: LOCAL, apiKey: 'k', db, tools: [], memoryDir }) as unknown as SummaryAccess
+      return withRealSession(new AgentCore({ model: LOCAL, apiKey: 'k', db, tools: [], memoryDir }) as unknown as SummaryAccess)
     }
     const response = () => makeCompleteSimpleResponse('{"add":{"decisions":["ok"]}}')
 

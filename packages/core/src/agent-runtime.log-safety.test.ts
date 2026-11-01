@@ -53,6 +53,11 @@ function standIn(options: { fail: () => Error; midStream?: boolean; providerMana
     refreshAskUserOffer: () => {},
     refreshSystemPrompt: () => {},
     refreshCodemodeTool: () => {},
+    // MCP (feat/mcp-client): executePromptWithRetry refreshes the MCP tool
+    // offer before every attempt; this stand-in has no MCP configuration.
+    // (Review 2 / D: the committed 77292ef9 lacked this member; an equivalent
+    // uncommitted two-line patch of unknown origin was found in the worktree.)
+    refreshMcpTools: async () => {},
     processEvent: (event: { type: string }) => (event.type === 'agent_start' ? [{ type: 'text', text: '' }] : []),
     sanitizeInMemoryHistory: () => false,
     clearMessages: () => {},

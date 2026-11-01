@@ -49,6 +49,9 @@ import { withSecretBoundary, redactMessages, sealSystemText, sealToolText } from
 import { commandInvokesVaultCli } from './secret-vault-cli.js'
 import { spillToolOutput } from './tool-output-spill.js'
 import { isNestedCodemodeCallId, loadCodemodeSettings, withCodemodeTool } from './codemode-tool.js'
+import { getSharedMcpManager, mcpToolDataClass, withholdLocalOnlyMcpOutput } from './mcp-client.js'
+import { findPrivateMcpEvidence, isPrivateMcpSession, isToolAllowedInPrivateMcpScope, markPrivateMcpSession, MCP_PRIVATE_CONTEXT_ERROR, MCP_PRIVATE_TOOL_BLOCKED, McpPrivateContextError, runInMcpPrivacyTurn, currentMcpPrivacyTurn } from './mcp-egress.js'
+import { isStrictlyLocalModel } from './data-policy.js'
 import { SHELL_EMPTY_OUTPUT_TEXT, SHELL_FAILED_OUTPUT_TEXT } from './secret-index-filter.js'
 import { createSealingScope, finishSealingScope, runInSealingScope } from './secret-sealing-stats.js'
 import type { QuotaServiceLike } from './quota-tool.js'
@@ -74,6 +77,12 @@ const PREVIOUS_RUN_BUSY_NOTICE = '⚠️ Es läuft noch eine vorherige, länger 
  */
 export interface BaseAgentToolsOptions {
   db: Database
+  /**
+   * MCP egress gate (review 2 / B): true only while the calling turn runs on a
+   * strictly local model. History tools withhold rows of strands with private
+   * MCP material otherwise. Absent (background tasks) = not allowed.
+   */
+  allowPrivateMcp?: () => boolean
   builtinToolsConfig?: BuiltinToolsConfigSource
   sttEnabled?: boolean
   /** Called by search_memories to scope results to the current user. */
@@ -112,12 +121,13 @@ export function createBaseAgentTools(options: BaseAgentToolsOptions): AgentTool[
   return [
     ...guardScopedWrites(createYoloTools(), getScope, options.memoryRoot),
     ...createBuiltinWebTools(options.builtinToolsConfig),
-    createReadChatHistoryTool({ db: options.db, getCurrentAgentId: options.getCurrentAgentId }),
+    createReadChatHistoryTool({ db: options.db, getCurrentAgentId: options.getCurrentAgentId, allowPrivateMcp: options.allowPrivateMcp }),
     createRecallMessageTool({
       db: options.db,
       getCurrentAgentId: options.getCurrentAgentId,
       getCurrentUserId: options.getCurrentUserId,
       getCurrentSessionId: options.getCurrentSessionId,
+      allowPrivateMcp: options.allowPrivateMcp,
     }),
     createSearchMemoriesTool({
       db: options.db,
@@ -784,6 +794,10 @@ class PiAgentRuntime implements AgentRuntimeBoundary, AgentRuntimePiAgentAccess 
   private agent: PiAgent
   /** Boundary-wrapped tools without `codemode`; codemode is derived per turn (plan 2026-10-08-codemode). */
   private baseTools: AgentTool[] = []
+  /** MCP tools for this persona, re-derived per turn start (settings.json › mcp; empty when off). */
+  private mcpTools: AgentTool[] = []
+  /** Aborts a running MCP discovery when the turn is aborted. */
+  private mcpDiscoveryAbort: AbortController | null = null
   private model: Model<Api>
   private apiKey: string
   private db: Database
@@ -815,6 +829,7 @@ class PiAgentRuntime implements AgentRuntimeBoundary, AgentRuntimePiAgentAccess 
 
   constructor(options: AgentRuntimeOptions) {
     this.model = options.model
+    this.registerModelOrigin(options.model, options.providerConfig)
     this.apiKey = options.apiKey
     this.db = options.db
     this.memoryDir = options.memoryDir
@@ -887,6 +902,7 @@ class PiAgentRuntime implements AgentRuntimeBoundary, AgentRuntimePiAgentAccess 
         // Each runtime is permanently bound to one persona — scope its
         // history/memory tools to that persona (main stays unscoped).
         getCurrentAgentId: () => this.agentId,
+        allowPrivateMcp: () => this.isModelStrictlyLocal(),
         // A strand runtime serves one session at a time; recall_message
         // checks raw Eco originals against this session's trusted owner.
         getCurrentSessionId: () => this.currentSessionId ?? undefined,
@@ -906,7 +922,10 @@ class PiAgentRuntime implements AgentRuntimeBoundary, AgentRuntimePiAgentAccess 
         tools: this.toolsWithCodemode(),
         thinkingLevel: effectiveThinkingLevel,
       },
-      streamFn: buildStreamFn(
+      // Review 3 / P1-1: the MCP privacy gate is bound to the model object
+      // the SDK loop actually sends THIS request to (the loop keeps the model
+      // snapshot of its start; a swapProvider mid-turn does not change it).
+      streamFn: this.gateRequestTarget(buildStreamFn(
         {
           textVerbosity: this.providerConfig?.textVerbosity,
           transport: this.providerConfig?.transport,
@@ -926,7 +945,7 @@ class PiAgentRuntime implements AgentRuntimeBoundary, AgentRuntimePiAgentAccess 
           // exactly that and a later parent toggle never leaks in.
           getContextWindowChoice: () => readStrandContextWindow(this.db, this.currentSessionId ?? null),
         },
-      ),
+      )),
       // Ebene B (last net before send): enforce the tool_use/tool_result
       // boundary invariant on EVERY LLM call, right before pi-ai converts the
       // AgentMessage history to provider messages. pi-ai's transformMessages
@@ -956,14 +975,28 @@ class PiAgentRuntime implements AgentRuntimeBoundary, AgentRuntimePiAgentAccess 
         // env, provider keys, credential-looking process env) is replaced by
         // its handle in every text part. Fail open — a redaction bug must not
         // kill a turn, the earlier boundaries already did the real work.
+        // MCP egress gate (review P1-3): local_only MCP output never reaches
+        // a model that is not strictly local, even later in the strand.
+        // Fail closed: a policy error withholds all MCP output.
+        // Review 2 / B: the decision is taken on the ACTUAL target model of
+        // THIS request (a provider swap mid-turn included). A non-local target
+        // with private MCP material anywhere in the context — results, call
+        // arguments, assistant text after them, tool declarations, recalled
+        // history, or persisted MCP rows of the strand — is refused whole.
+        const targetLocal = this.isModelStrictlyLocal()
+        if (!targetLocal) this.assertNoPrivateMcpContext(cleaned)
+        let gated = cleaned
+        if (cleaned.some(m => (m as { role?: string; toolName?: unknown }).role === 'toolResult' && typeof (m as { toolName?: unknown }).toolName === 'string' && ((m as { toolName: string }).toolName).startsWith('mcp_'))) {
+          gated = withholdLocalOnlyMcpOutput(cleaned, targetLocal)
+        }
         try {
-          const outgoing = redactMessages(cleaned)
+          const outgoing = redactMessages(gated)
           this.recordManifest(outgoing)
           return outgoing
         } catch (err) {
           console.error(`[agent-runtime] redactKnown failed on the outgoing context: ${errorClass(err)}`)
-          this.recordManifest(cleaned)
-          return cleaned
+          this.recordManifest(gated)
+          return gated
         }
       },
       ...(this.providerConfig?.transport && this.providerConfig.transport !== 'sse'
@@ -975,6 +1008,7 @@ class PiAgentRuntime implements AgentRuntimeBoundary, AgentRuntimePiAgentAccess 
       // on/off, restart, resume). Already-sent context is never touched; off
       // (the default) this returns undefined and the result stays as is.
       afterToolCall: async (ctx) => this.freezeEcoToolResult(ctx),
+      beforeToolCall: async (ctx) => this.guardPrivateMcpToolCall(ctx.toolCall.name),
       // S1-B turn-end rule: pi-agent-core only stops on its own when EVERY
       // call of a batch sets `terminate`. A batch with a blocking ask_user
       // ran its other calls normally; the turn ends here, without a further
@@ -1023,12 +1057,16 @@ class PiAgentRuntime implements AgentRuntimeBoundary, AgentRuntimePiAgentAccess 
 
   /** `baseTools` plus `codemode` when the setting and the current model allow it. Fails closed to `baseTools`. */
   private toolsWithCodemode(): AgentTool[] {
-    const base = this.askUserOffered ? this.baseTools : this.baseTools.filter(t => t.name !== ASK_USER_TOOL_NAME)
+    const own = this.askUserOffered ? this.baseTools : this.baseTools.filter(t => t.name !== ASK_USER_TOOL_NAME)
+    // Review 4: codemode never wraps MCP tools. Inside one codemode run an MCP
+    // result could feed shell/web/file calls without any model request, so
+    // neither the request gate nor the private-strand call guard would see it.
+    const withMcp = (list: AgentTool[]) => (this.mcpTools.length > 0 ? [...list, ...this.mcpTools] : list)
     try {
-      return withCodemodeTool(base, loadCodemodeSettings(), this.model.id, () => this.agent)
+      return withMcp(withCodemodeTool(own, loadCodemodeSettings(), this.model.id, () => this.agent))
     } catch (err) {
       console.error(`[agent-runtime] codemode tool assembly failed, continuing without it: ${errorClass(err)}`)
-      return base
+      return withMcp(own)
     }
   }
 
@@ -1040,6 +1078,179 @@ class PiAgentRuntime implements AgentRuntimeBoundary, AgentRuntimePiAgentAccess 
    */
   private refreshAskUserOffer(): void {
     this.askUserOffered = isAskUserOfferedFor(this.agentId, this.promptChannel)
+  }
+
+  /**
+   * MCP (settings.json › mcp): re-discover the tools this persona may use at
+   * turn start. Off by default; never throws, a failing server only
+   * contributes no tools. The tools go through the same secret boundary as
+   * every other tool, so results are sealed before the model sees them.
+   */
+  private async refreshMcpTools(sessionId: string): Promise<void> {
+    const userIdOrUndefined = (id: number | undefined) => (id === undefined ? undefined : String(id))
+    const abort = new AbortController()
+    this.mcpDiscoveryAbort = abort
+    try {
+      const reserved = new Set(this.baseTools.map(t => t.name))
+      const scope = {
+        agentId: this.agentId,
+        userId: userIdOrUndefined(this.getCurrentToolUserId()),
+        // One MCP session per strand: nothing is shared across strands, users or personas.
+        sessionId,
+        // Re-evaluated at every call: the model of the strand may change.
+        modelIsLocal: () => this.isModelStrictlyLocal(),
+      }
+      const tools = await getSharedMcpManager().getToolsFor(scope, reserved, abort.signal)
+      this.mcpTools = tools.length > 0 ? withSecretBoundary(tools) : []
+    } catch (err) {
+      console.error(`[agent-runtime] MCP tool discovery failed, continuing without MCP tools: ${errorClass(err)}`)
+      this.mcpTools = []
+    } finally {
+      if (this.mcpDiscoveryAbort === abort) this.mcpDiscoveryAbort = null
+    }
+  }
+
+  /**
+   * Review 2 / B: throws McpPrivateContextError when the outgoing context or
+   * the persisted strand carries private MCP material. Only called for a
+   * non-local target. Fails closed: an evaluation error refuses the request.
+   */
+  private assertNoPrivateMcpContext(messages: readonly unknown[]): void {
+    let reason: string | null
+    try {
+      const cloudOk = new Set(this.mcpTools.filter(t => mcpToolDataClass(t) === 'cloud_ok').map(t => t.name))
+      reason = findPrivateMcpEvidence(messages, cloudOk)
+        ?? (isPrivateMcpSession(this.db, this.currentSessionId) ? 'persisted_strand' : null)
+    } catch {
+      reason = 'policy_error'
+    }
+    if (reason === null) return
+    console.warn(`[agent-runtime] MCP privacy gate refused a non-local request (agent ${this.agentId}): ${reason}`)
+    throw new McpPrivateContextError()
+  }
+
+  /** Re-gate the offered MCP tools against the current model (review 2 / B). */
+  private regateMcpTools(): void {
+    if (this.mcpTools.length === 0 || this.isModelStrictlyLocal()) return
+    this.mcpTools = this.mcpTools.filter(t => mcpToolDataClass(t) === 'cloud_ok')
+  }
+
+  /**
+   * Review 3 / P1-1: provider config id of every model object this runtime
+   * built or received. The request gate resolves locality from the model the
+   * SDK loop ACTUALLY sends to, not from the mutable `this.model`.
+   */
+  private readonly modelOrigins = new WeakMap<object, string>()
+
+  private registerModelOrigin(model: unknown, provider: ProviderConfig | undefined): void {
+    if (model && typeof model === 'object' && provider?.id) this.modelOrigins.set(model, provider.id)
+  }
+
+  /** Strictly local request target; an unknown model object counts as remote. */
+  private isRequestTargetStrictlyLocal(model: unknown): boolean {
+    try {
+      const providerId = model && typeof model === 'object' ? this.modelOrigins.get(model) : undefined
+      const modelId = (model as { id?: unknown } | null)?.id
+      if (!providerId || typeof modelId !== 'string') return false
+      return isStrictlyLocalModel(providerId, modelId)
+    } catch {
+      return false
+    }
+  }
+
+  /**
+   * Review 3 / P1-1: last check immediately before EVERY wire request. The
+   * `model` argument is the request target the SDK loop uses (its snapshot
+   * from the start of the run). When that target is not strictly local, the
+   * exact outgoing context (tool results, calls, declarations, recalled
+   * history) and the persisted strand are checked; private material refuses
+   * the request before any byte leaves the process. Fail closed.
+   */
+  private gateRequestTarget(inner: ReturnType<typeof buildStreamFn>): ReturnType<typeof buildStreamFn> {
+    return ((model, context, options) => {
+      const messages = (context as { messages?: unknown[] } | null)?.messages ?? []
+      const tools = (context as { tools?: Array<{ name?: unknown }> } | null)?.tools
+      const cloudOk = new Set(this.mcpTools.filter(t => mcpToolDataClass(t) === 'cloud_ok').map(t => t.name))
+      const privateTools = Array.isArray(tools) && tools.some(t => typeof t?.name === 'string' && t.name.startsWith('mcp_') && !cloudOk.has(t.name))
+      if (!this.isRequestTargetStrictlyLocal(model)) {
+        this.assertNoPrivateMcpContext(messages)
+        if (privateTools) {
+          console.warn(`[agent-runtime] MCP privacy gate refused a non-local request (agent ${this.agentId}): tool_definition`)
+          throw new McpPrivateContextError()
+        }
+      } else {
+        // Review 3 / P1-2: private MCP material (results, calls, tool
+        // declarations and their metadata) is about to reach the local model.
+        // Taint the turn in memory and the strand persistently FIRST, so no
+        // side path (voice, ask_agent, create_task, summaries, facts) can
+        // forward what the model learned, also after a reload or in parallel.
+        let evidence: string | null
+        try { evidence = privateTools ? 'tool_definition' : findPrivateMcpEvidence(messages, cloudOk) } catch { evidence = 'policy_error' }
+        if (evidence !== null) {
+          const turn = currentMcpPrivacyTurn()
+          if (turn) turn.private = true
+          if (!markPrivateMcpSession(this.db, this.currentSessionId)) {
+            console.warn(`[agent-runtime] MCP privacy gate refused a request: the private marker of the strand could not be persisted (agent ${this.agentId})`)
+            throw new McpPrivateContextError()
+          }
+        }
+      }
+      return inner(model, context, options)
+    }) as ReturnType<typeof buildStreamFn>
+  }
+
+  /**
+   * Review 4: one call guard for every tool the SDK loop executes, decided
+   * per call (a tool offered before the strand turned private is caught
+   * too). A strand with private MCP material runs only the read-only/local
+   * allowlist plus the MCP tools its server policy offers right now. Clean
+   * and cloud_ok strands are untouched. A strand id is required for any MCP
+   * material to reach a model (the request gate refuses otherwise), so a
+   * turn without one is private only through its in-memory flag.
+   */
+  private async guardPrivateMcpToolCall(toolName: string): Promise<{ block: true; reason: string } | undefined> {
+    let isPrivate: boolean
+    try {
+      isPrivate = currentMcpPrivacyTurn()?.private === true
+        || (!!this.currentSessionId && isPrivateMcpSession(this.db, this.currentSessionId))
+    } catch {
+      isPrivate = true
+    }
+    if (!isPrivate) return undefined
+    // Only MCP tools the server policy explicitly declares local_only: a
+    // cloud_ok server is a remote service, and model-written arguments in a
+    // private strand may quote private data (no hidden egress grant).
+    const offeredMcp = new Set(this.mcpTools.filter(t => mcpToolDataClass(t) === 'local_only').map(t => t.name))
+    if (isToolAllowedInPrivateMcpScope(toolName, offeredMcp) && this.resolvesToTrustedTool(toolName)) return undefined
+    console.warn(`[agent-runtime] MCP privacy gate refused a tool call in a private strand (agent ${this.agentId}): ${toolName.startsWith('mcp_') ? 'mcp tool not offered' : toolName}`)
+    return { block: true, reason: MCP_PRIVATE_TOOL_BLOCKED }
+  }
+
+  /**
+   * Review 5: the allowlist is keyed by name, so an allowed name must resolve
+   * to exactly one tool instance that was assembled at construction (core
+   * factories plus the host's exclusive tools) or, for an MCP name, to the
+   * MCP tool discovered for this turn. A duplicate or a later, foreign tool
+   * under an allowed name is refused.
+   */
+  private resolvesToTrustedTool(toolName: string): boolean {
+    try {
+      const resolved = this.agent.state.tools.filter(t => t.name === toolName)
+      if (resolved.length !== 1) return false
+      const trusted: readonly AgentTool[] = toolName.startsWith('mcp_') ? this.mcpTools : this.baseTools
+      return trusted.includes(resolved[0])
+    } catch {
+      return false
+    }
+  }
+
+  /** Strictly local current model (data-policy). Any doubt counts as remote. */
+  private isModelStrictlyLocal(): boolean {
+    try {
+      return isStrictlyLocalModel(this.providerConfig?.id ?? '', this.model.id)
+    } catch {
+      return false
+    }
   }
 
   /**
@@ -1214,9 +1425,13 @@ class PiAgentRuntime implements AgentRuntimeBoundary, AgentRuntimePiAgentAccess 
 
   swapProvider(provider: ProviderConfig, apiKey: string, modelId?: string): void {
     this.model = buildModel(provider, modelId)
+    this.registerModelOrigin(this.model, provider)
     this.apiKey = apiKey
     this.providerConfig = provider
     this.agent.state.model = this.model
+    // Review 2 / B: local_only MCP tools leave the offer at once when the new
+    // model is not strictly local (before any further request is built).
+    this.regateMcpTools()
     // The codemode tool is gated by a model allowlist: a fallback to a model
     // outside it must lose the tool at once, not only on the next turn.
     this.refreshCodemodeTool()
@@ -1277,6 +1492,7 @@ class PiAgentRuntime implements AgentRuntimeBoundary, AgentRuntimePiAgentAccess 
 
   abort(scope?: AbortScope): void {
     if (scope?.sessionId !== undefined && this.currentSessionId !== scope.sessionId) return
+    this.mcpDiscoveryAbort?.abort()
     this.agent.abort()
   }
 
@@ -1511,8 +1727,12 @@ class PiAgentRuntime implements AgentRuntimeBoundary, AgentRuntimePiAgentAccess 
     const sealingScope = createSealingScope(`agent=${this.agentId} session=${sessionId}`)
     // Scope must be resolved at every turn, including runtime reuse and global refresh.
     runInSealingScope(sealingScope, () => this.refreshSystemPrompt(this.promptChannel, this.promptUser, this.agentId, sessionId))
+    await this.refreshMcpTools(sessionId)
     this.refreshCodemodeTool()
-    const started = runInSealingScope(sealingScope, () => (continueTranscript ? this.agent.continue() : this.agent.prompt(text, images)))
+    // Review 3 / P1-2: the in-memory privacy state of this turn; every tool
+    // the loop executes inherits it. Starts private when the strand already is.
+    const privacyTurn = { sessionId: sessionId ?? null, private: isPrivateMcpSession(this.db, sessionId) }
+    const started = runInMcpPrivacyTurn(privacyTurn, () => runInSealingScope(sealingScope, () => (continueTranscript ? this.agent.continue() : this.agent.prompt(text, images))))
     const promptPromise = started.then(() => {
       done = true
       if (resolveWaiting) {
@@ -1861,7 +2081,9 @@ class PiAgentRuntime implements AgentRuntimeBoundary, AgentRuntimePiAgentAccess 
             // `error` and `text` are what leaves the process (client, error
             // row, logs) and carry a fixed text plus class only, because the
             // provider message can echo the prompt (review K0-K2-4 #2).
-            const publicError = publicProviderError(errText)
+            // Review 2 / B: the MCP privacy gate's own fixed sentence (no remote
+            // text) is shown as is, so the user learns why nothing was sent.
+            const publicError = errText === MCP_PRIVATE_CONTEXT_ERROR ? MCP_PRIVATE_CONTEXT_ERROR : publicProviderError(errText)
             chunks.push(withRawError<ResponseChunk>({ type: 'error', error: publicError, text: `Modellfehler: ${publicError}` }, errText))
           }
         }

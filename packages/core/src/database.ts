@@ -116,6 +116,12 @@ CREATE INDEX IF NOT EXISTS idx_health_checks_timestamp ON health_checks(timestam
 CREATE INDEX IF NOT EXISTS idx_health_checks_provider ON health_checks(provider);
 CREATE INDEX IF NOT EXISTS idx_health_checks_status ON health_checks(status);
 
+-- Review 3 / P1-2: strands whose model saw private (local_only) MCP material.
+CREATE TABLE IF NOT EXISTS mcp_private_sessions (
+  session_id TEXT PRIMARY KEY,
+  marked_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
 CREATE TABLE IF NOT EXISTS chat_messages (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   session_id TEXT NOT NULL,

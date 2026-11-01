@@ -8,7 +8,8 @@ import type { Database } from './database.js'
 import { TaskRunner } from './task-runner.js'
 import type { TaskRunnerOptions } from './task-runner.js'
 import { SessionManager } from './session-manager.js'
-import { createTaskTool } from './task-tools.js'
+import { createTaskTool as createTaskToolUnscoped } from './task-tools.js'
+import { runInMcpPrivacyTurn } from './mcp-egress.js'
 import type { ProviderConfig } from './provider-config.js'
 import type { Task, CreateTaskInput, UpdateTaskInput, TaskListFilters } from './task-store.js'
 import type { TaskRuntimeTaskBoundary } from './task-runtime.js'
@@ -92,11 +93,22 @@ describe('createTaskTool', () => {
     }
   }
 
+  // Review 3 / P2: create_task refuses an unknown privacy scope. In
+  // production every tool call runs inside the runtime's MCP privacy turn
+  // (a clean strand here) with the database wired; the fixture mirrors that.
+  function createTaskTool(o: Parameters<typeof createTaskToolUnscoped>[0]): ReturnType<typeof createTaskToolUnscoped> {
+    const tool = createTaskToolUnscoped({ db, ...o })
+    return { ...tool, execute: (...args: Parameters<typeof tool.execute>) => runInMcpPrivacyTurn({ sessionId: 'test-clean-turn', private: false }, () => tool.execute(...args)) }
+  }
+
   beforeEach(() => {
     // The thin brief gate (SPEC 10.8) is exercised in its own block below;
     // the legacy cases use one line prompts.
     setHeuristicsOverrideForTests({ delegation: { minBriefChars: 0 } })
     db = initDatabase(tmpDbPath())
+    // Review 4 / P2: the clean turn strand is a real sessions row.
+    // (no owner row: the cases below insert their own users)
+    db.prepare("INSERT INTO sessions (id, type) VALUES ('test-clean-turn', 'interactive')").run()
     sessionManager = new SessionManager({ db })
 
     const options: TaskRunnerOptions = {
@@ -726,6 +738,23 @@ describe('createTaskTool', () => {
       const taskId = (result.details as { taskId: string }).taskId
       expect(runner.getStore().getById(taskId)!.prompt).toContain('Shipped the parser, docs are open.')
       runner.abortTask(taskId, 'cleanup')
+    })
+
+    // Review 5: a predecessor whose task session descends from a private
+    // (local_only MCP) strand is never copied into a new task.
+    it('refuses continuation_of a task from a private MCP strand', async () => {
+      const { markPrivateMcpSession } = await import('./mcp-egress.js')
+      db.prepare("INSERT INTO sessions (id, user_id, source, type) VALUES ('strand-priv', 1, 'web', 'interactive')").run()
+      db.prepare("INSERT INTO sessions (id, user_id, source, type, parent_session_id) VALUES ('task-sess-priv', 1, 'task', 'task', 'strand-priv')").run()
+      expect(markPrivateMcpSession(db, 'strand-priv')).toBe(true)
+      const store = runner.getStore()
+      const predecessor = store.create({ name: 'Private run', prompt: 'p', triggerType: 'agent' })
+      store.update(predecessor.id, { sessionId: 'task-sess-priv', status: 'completed', resultStatus: 'completed', resultSummary: 'Synthetic private result 90210' })
+      const before = store.list().length
+      const denied = await tool().execute('c', { prompt: 'continue', name: 'No', continuation_of: predecessor.id })
+      expect(JSON.stringify(denied.content)).toContain('MCP privacy gate')
+      expect(JSON.stringify(denied.content)).not.toContain('90210')
+      expect(store.list()).toHaveLength(before)
     })
 
     it('does not disclose another user or persona\'s predecessor prompt and result', async () => {
