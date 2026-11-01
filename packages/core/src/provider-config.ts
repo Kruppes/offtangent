@@ -2361,6 +2361,97 @@ const lastResolvedModelAuth = new Map<string, ModelAuth>()
  */
 const inFlightOAuthRefresh = new Map<string, Promise<OAuthCredential>>()
 
+/**
+ * Running `refresh()` calls keyed by the identity of the refresh token they
+ * present (SHA-256, never the token itself), across ALL provider entries. The
+ * per-provider lock above does not cover two entries that hold the same stored
+ * credential (a duplicated provider, or the same account added twice): both
+ * would present the same rotating refresh token, and the second presentation
+ * is a reuse that revokes the token family (review 2026-11, blocker). A second
+ * caller with the same refresh token joins the running call instead.
+ */
+const inFlightRefreshByToken = new Map<string, Promise<OAuthCredential>>()
+
+function refreshTokenKey(refreshToken: string): string {
+  return crypto.createHash('sha256').update(refreshToken).digest('hex')
+}
+
+/**
+ * Present `base.refresh` to the issuer at most once per process: join a
+ * running refresh of the same token, otherwise run it and, on success, hand
+ * the successor to every other entry that still stores the consumed token
+ * (`propagateRotatedOAuthCredentials`), so none of them presents it later.
+ * A joined result that is already expired is refreshed with ITS refresh token.
+ */
+async function refreshOncePerToken(
+  oauthAuth: OAuthAuth,
+  base: OAuthCredential,
+  ownProviderId: string,
+  force: boolean,
+): Promise<OAuthCredential> {
+  let current = base
+  for (let hop = 0; hop < 4; hop++) {
+    const key = refreshTokenKey(current.refresh)
+    const pending = inFlightRefreshByToken.get(key)
+    if (pending) {
+      const joined = await pending
+      // `force`: the caller's access token was rejected; the joined result is
+      // a different, fresh one. A non-rotating issuer (same refresh token
+      // back) may be asked again; a rotated, already expired result continues
+      // the chain with its own refresh token.
+      if (force || Date.now() < joined.expires) return joined
+      if (joined.refresh !== current.refresh) {
+        current = joined
+        continue
+      }
+    }
+    const presented = current
+    const run = oauthAuth.refresh(presented, AbortSignal.timeout(30_000))
+    inFlightRefreshByToken.set(key, run)
+    try {
+      const rotated = await run
+      propagateRotatedOAuthCredentials(presented.refresh, rotated, ownProviderId)
+      return rotated
+    } finally {
+      if (inFlightRefreshByToken.get(key) === run) inFlightRefreshByToken.delete(key)
+    }
+  }
+  throw new Error('OAuth refresh did not converge (refresh token chain too long)')
+}
+
+/**
+ * After `consumedRefresh` was presented and `rotated` came back: store the
+ * successor in every OTHER OAuth entry that still holds the consumed refresh
+ * token. Load, compare and save run synchronously (no await gap). Entries of
+ * another region (Kimi) or with unreadable credentials are left alone. The
+ * generation is not bumped: the entries keep the same sign-in, only rotated.
+ */
+function propagateRotatedOAuthCredentials(consumedRefresh: string, rotated: OAuthCredential, ownProviderId: string): void {
+  try {
+    const file = loadProviders()
+    const { type: _type, ...toStore } = rotated
+    let changed = false
+    for (const entry of file.providers) {
+      if (entry.id === ownProviderId || entry.authMethod !== 'oauth' || !entry.oauthCredentials) continue
+      let stored: OAuthCredentials
+      try {
+        stored = storedToOAuthCredentials(decryptOAuthCredentials(entry.oauthCredentials))
+      } catch {
+        continue
+      }
+      if (stored.refresh !== consumedRefresh) continue
+      const entryRegion = kimiRegionOfEntry(entry)
+      if (entryRegion !== null && kimiCodingRegionOfCredential(rotated as { region?: unknown }) !== entryRegion) continue
+      entry.oauthCredentials = encryptOAuthCredentials(toStore as OAuthCredentials)
+      lastResolvedModelAuth.delete(entry.id)
+      changed = true
+    }
+    if (changed) saveProviders(file)
+  } catch (err) {
+    console.warn(`[axiom] Could not hand the rotated OAuth token to entries sharing it: ${(err as Error).message}`)
+  }
+}
+
 /** Error whose message no longer contains any access/refresh token of `creds`. */
 function redactOAuthError(err: unknown, creds: ReadonlyArray<Partial<OAuthCredential> | undefined>): Error {
   const secrets = creds.flatMap(c => [c?.access, c?.refresh])
@@ -2394,6 +2485,15 @@ function invalidateOAuthCredentialState(providerId: string): void {
   oauthCredentialGeneration.set(providerId, (oauthCredentialGeneration.get(providerId) ?? 0) + 1)
   lastResolvedModelAuth.delete(providerId)
   inFlightOAuthRefresh.delete(providerId)
+}
+
+/**
+ * Current generation of the stored OAuth sign-in of a provider (bumped on new
+ * sign-in, type change, region change that drops the token, deletion — not on
+ * a plain token rotation). Lets callers bind work to one sign-in.
+ */
+export function getOAuthCredentialGeneration(providerId: string): number {
+  return oauthCredentialGeneration.get(providerId) ?? 0
 }
 
 /** Thrown when the provider entry changed while its OAuth token was refreshed. */
@@ -2467,6 +2567,16 @@ function oauthSnapshotMismatch(expected: OAuthRefreshSnapshot, current: OAuthRef
  * credential and generation). Load, compare and save run synchronously, so no
  * other write can interleave. The base URL is never touched here.
  */
+function storedMatches(entry: ProviderConfig, credential: OAuthCredentials): boolean {
+  if (!entry.oauthCredentials) return false
+  try {
+    const stored = storedToOAuthCredentials(decryptOAuthCredentials(entry.oauthCredentials))
+    return stored.access === credential.access && stored.refresh === credential.refresh && stored.expires === credential.expires
+  } catch {
+    return false
+  }
+}
+
 function persistRefreshedOAuthCredentials(
   providerId: string,
   expected: OAuthRefreshSnapshot | null,
@@ -2506,6 +2616,10 @@ function persistRefreshedOAuthCredentials(
       credentialFingerprint: oauthCredentialFingerprint(stored),
     }
   }
+  // The entry already holds exactly this credential: another entry sharing
+  // the refresh token rotated it and handed the successor over
+  // (`propagateRotatedOAuthCredentials`). Nothing to write.
+  if (current && current.generation === expected.generation && storedMatches(entry, rotated)) return
   const mismatch = oauthSnapshotMismatch(expected, current)
   if (mismatch) throw new OAuthCredentialsChangedError(providerId, mismatch)
   // A Kimi token is bound to its region: never store one whose region is not
@@ -2561,7 +2675,9 @@ export async function refreshOAuthCredentialsLocked(
     // 30s cap mirrors upstream pi-oauth.ts; a hung refresh must not wedge the turn.
     let rotated: OAuthCredential
     try {
-      rotated = await oauthAuth.refresh(base, AbortSignal.timeout(30_000))
+      // One presentation per refresh token across all entries (see
+      // `inFlightRefreshByToken`), not only per provider id.
+      rotated = await refreshOncePerToken(oauthAuth, base, providerId, options?.force === true)
     } catch (err) {
       // The message may end up in logs, the chat or the quota panel: strip any
       // token a transport layer may have echoed into it.
@@ -2799,8 +2915,16 @@ function buildModelFromSources(provider: ProviderConfig, modelId?: string): Mode
 
       // Live-discovered model (Kimi Code `/coding/v1/models`) without a catalog
       // entry: build it from the live metadata on a catalog wire template.
-      // Precedence: user override in provider.models (generic path below) →
-      // catalog → live data.
+      // Precedence (deliberately NOT "override beats everything"):
+      // - id in the pi-ai catalog: the catalog entry is used as is; a
+      //   provider.models entry for the same id (name, context, …) is ignored
+      //   on this path (long-standing behaviour, kept for all providers). The
+      //   only exception are the wire fields `thinkingLevelMap` / `compat` of
+      //   the local override table (`findOverrideModel`, applied below), plus
+      //   the thinking-only guard at the end of buildModel().
+      // - id NOT in the catalog: a provider.models entry wins (generic path
+      //   below), so a hand-made entry also wins over the live data;
+      // - otherwise the live data.
       if (!piModel && preset.liveModels && !provider.models?.some(m => m.id === id)) {
         const info = getLiveModelInfo(provider.id, id)
         const template = models.find(m => m.id === LIVE_MODEL_TEMPLATE[preset.liveModels!]) ?? models[0]

@@ -8,17 +8,20 @@
  * and leaves both the cached list and providers.json untouched.
  *
  * Token handling: the access token comes ONLY from `getApiKeyForProvider`,
- * whose refresh is serialized per provider. Never refresh here — a rotated
+ * whose refresh is serialized per provider and per refresh token. Never refresh here — a rotated
  * refresh token presented twice revokes the whole token family (incident
  * 2026-07-22).
  */
+import crypto from 'node:crypto'
 import {
   buildModel,
   getApiKeyForProvider,
   getAvailableModels,
+  getOAuthCredentialGeneration,
   loadProviders,
   loadProvidersDecrypted,
   PROVIDER_TYPE_PRESETS,
+  resolveEffectiveBaseUrl,
   saveProviders,
 } from './provider-config.js'
 import type { AvailableModel, ProviderConfig, ProviderType } from './provider-config.js'
@@ -96,10 +99,20 @@ export async function fetchKimiCodeLiveModels(
  *   shrinks) and to the END of `enabledModels` (index 0 stays the default).
  * Ids already known (also hand-made entries) are left exactly as they are.
  */
-export function syncLiveModelIds(providerId: string, liveIds: string[]): { newlyKnown: string[], enabled: string[] } {
+export function syncLiveModelIds(
+  providerId: string,
+  liveIds: string[],
+  expectedSource?: string,
+): { newlyKnown: string[], enabled: string[] } {
+  // Fresh load, compare and save without any await in between: no other write
+  // of this process can interleave, and the answer is only applied to the
+  // entry it was fetched for (`expectedSource`).
   const file = loadProviders()
   const provider = file.providers.find(p => p.id === providerId)
   if (!provider || liveIds.length === 0) return { newlyKnown: [], enabled: [] }
+  if (expectedSource !== undefined && liveModelSourceKey(provider) !== expectedSource) {
+    throw new StaleLiveModelAnswerError()
+  }
 
   if (!provider.knownModels) {
     const catalogIds = getAvailableModels(provider.providerType).map(m => m.id)
@@ -120,44 +133,105 @@ export function syncLiveModelIds(providerId: string, liveIds: string[]): { newly
   return { newlyKnown: fresh, enabled: toEnable }
 }
 
-const inflight = new Map<string, Promise<LiveModelRefreshResult>>()
+/**
+ * Identity of what a live list answer belongs to: provider type, auth method,
+ * effective base URL (Kimi region) and the credential generation — the stored
+ * API key (its ciphertext hash, never the key) or the OAuth sign-in generation.
+ * A plain OAuth token rotation keeps the key; a new key, a new sign-in, a
+ * region or type switch changes it. Built from the raw (encrypted) entry, so
+ * it never needs to decrypt anything.
+ */
+export function liveModelSourceKey(provider: Pick<ProviderConfig, 'id' | 'providerType' | 'authMethod' | 'baseUrl' | 'apiKey' | 'oauthCredentials'>): string {
+  const credential = provider.authMethod === 'oauth'
+    ? `oauth:${provider.oauthCredentials ? getOAuthCredentialGeneration(provider.id) : 'none'}`
+    : `key:${crypto.createHash('sha256').update(provider.apiKey ?? '').digest('hex')}`
+  return JSON.stringify([provider.providerType, provider.authMethod ?? '', resolveEffectiveBaseUrl(provider.providerType, provider.baseUrl), credential])
+}
+
+/** The provider changed (type, region, key, sign-in) while its list was fetched. */
+export class StaleLiveModelAnswerError extends Error {
+  constructor() {
+    super('provider changed during the request (type, region, key or sign-in); answer discarded')
+    this.name = 'StaleLiveModelAnswerError'
+  }
+}
+
+/** Running refresh per provider id, bound to the source it was started for. */
+const inflight = new Map<string, { source: string, job: Promise<LiveModelRefreshResult> }>()
+
+function failedResult(providerId: string, providerName: string, error: string): LiveModelRefreshResult {
+  return { providerId, providerName, ok: false, listed: [], newlyKnown: [], enabled: [], missing: [], error }
+}
+
+function firstLine(err: unknown): string {
+  return ((err as Error)?.message ?? String(err)).split('\n')[0]
+}
 
 /**
  * Fetch, cache and sync the live list of one provider. Concurrent calls for
- * the same provider share one request. Never throws.
+ * the same provider AND the same source (type, region, credential generation)
+ * share one request; after a key / region / sign-in change a new request
+ * starts instead of joining the old one, whose answer is then discarded.
+ * Never throws.
  */
 export function refreshProviderLiveModels(
   providerId: string,
   options: LiveModelRefreshOptions = {},
 ): Promise<LiveModelRefreshResult> {
+  let raw: ProviderConfig | undefined
+  try {
+    raw = loadProviders().providers.find(p => p.id === providerId)
+  } catch (err) {
+    const message = firstLine(err)
+    options.logger?.warn(`[axiom] Live model refresh for provider ${providerId} could not read the providers, keeping the current list: ${message}`)
+    return Promise.resolve(failedResult(providerId, providerId, message))
+  }
+  if (!raw || !hasLiveModels(raw.providerType)) {
+    return Promise.resolve(failedResult(providerId, raw?.name ?? providerId, 'provider has no live model list'))
+  }
+  const source = liveModelSourceKey(raw)
   const running = inflight.get(providerId)
-  if (running) return running
-  const job = runRefresh(providerId, options).finally(() => inflight.delete(providerId))
-  inflight.set(providerId, job)
+  if (running && running.source === source) return running.job
+  const job: Promise<LiveModelRefreshResult> = runRefresh(providerId, source, raw.name, options).finally(() => {
+    if (inflight.get(providerId)?.job === job) inflight.delete(providerId)
+  })
+  inflight.set(providerId, { source, job })
   return job
 }
 
-async function runRefresh(providerId: string, options: LiveModelRefreshOptions): Promise<LiveModelRefreshResult> {
-  const provider = loadProvidersDecrypted().providers.find(p => p.id === providerId)
-  const base = { providerId, providerName: provider?.name ?? providerId, listed: [], newlyKnown: [], enabled: [], missing: [] }
-  if (!provider || !hasLiveModels(provider.providerType)) {
-    return { ...base, ok: false, error: 'provider has no live model list' }
-  }
+async function runRefresh(
+  providerId: string,
+  source: string,
+  providerName: string,
+  options: LiveModelRefreshOptions,
+): Promise<LiveModelRefreshResult> {
+  const base = { providerId, providerName, listed: [], newlyKnown: [], enabled: [], missing: [] }
   try {
+    // Inside the try: an unreadable providers.json is one warning, not a
+    // rejected promise.
+    const provider = loadProvidersDecrypted().providers.find(p => p.id === providerId)
+    if (!provider || !hasLiveModels(provider.providerType)) {
+      return { ...base, ok: false, error: 'provider has no live model list' }
+    }
     const models = await fetchKimiCodeLiveModels(provider, options)
     const listed = models.map(m => m.id)
+    // Re-check the source right before writing (no await from here on): an
+    // answer for an old type / region / key / sign-in is discarded and
+    // touches neither the cache nor providers.json.
+    const current = loadProviders().providers.find(p => p.id === providerId)
+    if (!current || liveModelSourceKey(current) !== source) throw new StaleLiveModelAnswerError()
+    const { newlyKnown, enabled } = syncLiveModelIds(providerId, listed, source)
     const missing = setLiveModels(providerId, models, options.now)
-    const { newlyKnown, enabled } = syncLiveModelIds(providerId, listed)
     if (newlyKnown.length > 0) {
-      options.logger?.log(`[axiom] Provider "${provider.name}": new live models ${newlyKnown.join(', ')}${enabled.length > 0 ? ` (auto-enabled: ${enabled.join(', ')})` : ''}`)
+      options.logger?.log(`[axiom] Provider "${providerName}": new live models ${newlyKnown.join(', ')}${enabled.length > 0 ? ` (auto-enabled: ${enabled.join(', ')})` : ''}`)
     }
     if (missing.length > 0) {
-      options.logger?.warn(`[axiom] Provider "${provider.name}": no longer listed by the provider (kept): ${missing.join(', ')}`)
+      options.logger?.warn(`[axiom] Provider "${providerName}": no longer listed by the provider (kept): ${missing.join(', ')}`)
     }
     return { ...base, ok: true, listed, newlyKnown, enabled, missing }
   } catch (err) {
-    const message = ((err as Error)?.message ?? String(err)).split('\n')[0]
-    options.logger?.warn(`[axiom] Live model refresh for provider "${provider.name}" failed, keeping the current list: ${message}`)
+    const message = firstLine(err)
+    options.logger?.warn(`[axiom] Live model refresh for provider "${providerName}" failed, keeping the current list: ${message}`)
     return { ...base, ok: false, error: message }
   }
 }

@@ -14,6 +14,7 @@ import {
   loadProviders,
   loadProvidersDecrypted,
   saveProviders,
+  updateProvider,
 } from './provider-config.js'
 import type { ProviderConfig } from './provider-config.js'
 import { encrypt } from './encryption.js'
@@ -392,5 +393,161 @@ describe('Add Model dialog list and the periodic refresher', () => {
     expect(results.map(r => r.providerId)).toEqual([created.id])
     expect(fetchImpl).toHaveBeenCalledTimes(1)
     refresher.stop()
+  })
+})
+
+/** fetch mock whose answers wait until `release()`; records every call. */
+function deferredModelsFetch() {
+  const releases: Array<() => void> = []
+  let calls = 0
+  let notify: (() => void) | null = null
+  const fetchImpl = vi.fn(async (_url: unknown, _init?: RequestInit) => {
+    calls += 1
+    notify?.()
+    await new Promise<void>(resolve => releases.push(resolve))
+    return jsonResponse(200, LIVE_ANSWER)
+  })
+  const called = (n: number) => new Promise<void>(resolve => {
+    const check = () => { if (calls >= n) resolve(); else notify = check }
+    check()
+  })
+  return { fetchImpl, called, releaseAll: () => releases.splice(0).forEach(r => r()) }
+}
+
+let keyProviderSeq = 0
+function addKimiKey(apiKey: string, baseUrl = CN): string {
+  const id = `kc-key-${++keyProviderSeq}`
+  const file = loadProviders()
+  file.providers.push({
+    id, name: `Kimi Code ${id}`, type: 'anthropic-messages', providerType: 'kimi-coding', provider: 'kimi-coding',
+    baseUrl, apiKey: encrypt(apiKey), enabledModels: ['k3'], knownModels: ['k3'], degradedThresholdMs: 5000, status: 'untested', authMethod: 'api-key',
+  } as ProviderConfig)
+  saveProviders(file)
+  return id
+}
+
+describe('review 2026-11: stale answers, generations, shared refresh tokens', () => {
+  it('two Kimi providers with the same stored sign-in, refreshed in parallel, present the refresh token once', async () => {
+    const creds = { access: 'twin-old-access', refresh: 'twin-refresh-0', expires: Date.now() - 1000, region: 'intl' as const }
+    const a = addOAuthProvider({ name: 'Kimi A', providerType: 'kimi-coding-oauth', enabledModels: ['k3'], baseUrl: INTL, oauthCredentials: { ...creds } })
+    const b = addOAuthProvider({ name: 'Kimi B', providerType: 'kimi-coding-oauth', enabledModels: ['k3'], baseUrl: INTL, oauthCredentials: { ...creds } })
+    const presented: string[] = []
+    let n = 0
+    vi.stubGlobal('fetch', vi.fn(async (_url: unknown, init?: RequestInit) => {
+      const body = String(init?.body ?? '')
+      const token = new URLSearchParams(body).get('refresh_token') ?? (body.includes('twin-refresh-0') ? 'twin-refresh-0' : body)
+      presented.push(token)
+      await new Promise(resolve => setTimeout(resolve, 5))
+      n += 1
+      return jsonResponse(200, { access_token: `twin-new-access-${n}`, refresh_token: `twin-refresh-${n}`, expires_in: 3600, token_type: 'Bearer' })
+    }))
+    const fetchImpl = modelsFetch()
+    const [ra, rb] = await Promise.all([
+      refreshProviderLiveModels(a.id, { fetchImpl, logger: silentLogger() }),
+      refreshProviderLiveModels(b.id, { fetchImpl, logger: silentLogger() }),
+    ])
+    expect(ra.ok).toBe(true)
+    expect(rb.ok).toBe(true)
+    expect(presented).toEqual(['twin-refresh-0'])
+    expect(stored(a.id).oauthCredentials?.refresh).toBe('twin-refresh-1')
+    expect(stored(b.id).oauthCredentials?.refresh).toBe('twin-refresh-1')
+    const auths = fetchImpl.mock.calls.map(c => (c[1]?.headers as Record<string, string>).Authorization)
+    expect(auths).toEqual(['Bearer twin-new-access-1', 'Bearer twin-new-access-1'])
+  })
+
+  it('a type switch to anthropic during the request discards the answer (no k3.1-pro in knownModels/enabledModels, no cache)', async () => {
+    const created = addKimiOAuth({ knownModels: ['k3'] })
+    const deferred = deferredModelsFetch()
+    const logger = silentLogger()
+    const running = refreshProviderLiveModels(created.id, { fetchImpl: deferred.fetchImpl, logger })
+    await deferred.called(1)
+    updateProvider(created.id, { providerType: 'anthropic', apiKey: 'sk-ant-test' })
+    deferred.releaseAll()
+    const result = await running
+    expect(result.ok).toBe(false)
+    expect(result.error).toMatch(/changed during the request/)
+    const after = stored(created.id)
+    expect(after.providerType).toBe('anthropic')
+    expect(after.knownModels ?? []).not.toContain('k3.1-pro')
+    expect(after.enabledModels).not.toContain('k3.1-pro')
+    expect(getLiveModelEntry(created.id)).toBeUndefined()
+    expect(logger.warn).toHaveBeenCalledTimes(1)
+  })
+
+  it('a key change during a running request starts a new request with the new key; the old answer is discarded', async () => {
+    const id = addKimiKey('sk-old-key')
+    const deferred = deferredModelsFetch()
+    const first = refreshProviderLiveModels(id, { fetchImpl: deferred.fetchImpl, logger: silentLogger() })
+    await deferred.called(1)
+    updateProvider(id, { apiKey: 'sk-new-key' })
+    const second = refreshProviderLiveModels(id, { fetchImpl: deferred.fetchImpl, logger: silentLogger() })
+    expect(second).not.toBe(first)
+    await deferred.called(2)
+    deferred.releaseAll()
+    const [r1, r2] = await Promise.all([first, second])
+    const auths = deferred.fetchImpl.mock.calls.map(c => (c[1]?.headers as Record<string, string>).Authorization)
+    expect(auths).toEqual(['Bearer sk-old-key', 'Bearer sk-new-key'])
+    expect(r1.ok).toBe(false)
+    expect(r2.ok).toBe(true)
+    expect(stored(id).knownModels).toContain('k3.1-pro')
+  })
+
+  it('a region change during a running request asks the new region instead of joining the old request', async () => {
+    const id = addKimiKey('sk-plan-key', CN)
+    const deferred = deferredModelsFetch()
+    const first = refreshProviderLiveModels(id, { fetchImpl: deferred.fetchImpl, logger: silentLogger() })
+    await deferred.called(1)
+    updateProvider(id, { baseUrl: INTL, apiKey: 'sk-plan-key' })
+    const second = refreshProviderLiveModels(id, { fetchImpl: deferred.fetchImpl, logger: silentLogger() })
+    await deferred.called(2)
+    deferred.releaseAll()
+    const [r1, r2] = await Promise.all([first, second])
+    expect(deferred.fetchImpl.mock.calls.map(c => c[0])).toEqual([`${CN}/v1/models`, `${INTL}/v1/models`])
+    expect(r1.ok).toBe(false)
+    expect(r2.ok).toBe(true)
+  })
+
+  it('the same source still shares one request (no regression of the coalescing)', async () => {
+    const id = addKimiKey('sk-plan-key')
+    const deferred = deferredModelsFetch()
+    const first = refreshProviderLiveModels(id, { fetchImpl: deferred.fetchImpl, logger: silentLogger() })
+    const second = refreshProviderLiveModels(id, { fetchImpl: deferred.fetchImpl, logger: silentLogger() })
+    expect(second).toBe(first)
+    await deferred.called(1)
+    deferred.releaseAll()
+    expect((await first).ok).toBe(true)
+    expect(deferred.fetchImpl).toHaveBeenCalledTimes(1)
+  })
+
+  it('an unreadable providers.json resolves with one warning instead of rejecting', async () => {
+    fs.writeFileSync(path.join(tmpDir, 'config', 'providers.json'), '{ not json', 'utf-8')
+    const logger = silentLogger()
+    const fetchImpl = modelsFetch()
+    const result = await refreshProviderLiveModels('whatever', { fetchImpl, logger })
+    expect(result.ok).toBe(false)
+    expect(logger.warn).toHaveBeenCalledTimes(1)
+    expect(fetchImpl).not.toHaveBeenCalled()
+  })
+})
+
+describe('metadata precedence contract (docs/guide/models.md "Metadata precedence")', () => {
+  it('provider.models is ignored for the catalog id k3 but wins over the live data for the live-only k3.1-pro', async () => {
+    const created = addKimiOAuth({
+      knownModels: ['k3'],
+      models: [
+        { id: 'k3', name: 'My K3', contextWindow: 4096 },
+        { id: 'k3.1-pro', name: 'My K3.1 Pro', contextWindow: 8192, reasoning: true },
+      ],
+    } as Partial<ProviderConfig>)
+    const result = await refreshProviderLiveModels(created.id, { fetchImpl: modelsFetch(), logger: silentLogger() })
+    expect(result.ok).toBe(true)
+    const provider = stored(created.id)
+    const k3 = buildModel(provider, 'k3')
+    expect(k3.name).not.toBe('My K3')
+    expect(k3.contextWindow).not.toBe(4096)
+    const pro = buildModel(provider, 'k3.1-pro')
+    expect(pro.name).toBe('My K3.1 Pro')
+    expect(pro.contextWindow).toBe(8192)
+    expect(pro.thinkingLevelMap?.off).toBeNull()
   })
 })
