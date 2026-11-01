@@ -133,6 +133,65 @@ describe('getLiveModels (dynamic catalog)', () => {
   })
 })
 
+describe('getLiveModels (Kimi Code live model list)', () => {
+  const INTL = 'https://api.kimi.ai/coding'
+  const liveAnswer = {
+    data: [
+      { id: 'k3', display_name: 'Kimi K3', context_length: 1048576, supports_reasoning: true, think_efforts: { valid_efforts: ['low', 'high', 'max'] } },
+      {
+        id: 'k3.1-pro', display_name: 'Kimi K3.1 Pro', context_length: 1048576, supports_reasoning: true,
+        supports_thinking_type: 'only', think_efforts: { valid_efforts: ['low', 'high', 'max'], default_effort: 'high' },
+        modalities: { input: ['text', 'image'] }, supports_image_in: true,
+      },
+    ],
+  }
+
+  function createKimiOAuthProvider() {
+    return addOAuthProvider({
+      name: 'Kimi_Subscription', providerType: 'kimi-coding-oauth', enabledModels: ['k3'], baseUrl: INTL,
+      oauthCredentials: { access: 'kimi-access', refresh: 'kimi-refresh', expires: Date.now() + 3_600_000, region: 'intl' },
+    })
+  }
+
+  it('refreshes the live list with the stored token and returns catalog + live-only models', async () => {
+    const provider = createKimiOAuthProvider()
+    vi.spyOn(console, 'log').mockImplementation(() => {})
+    const fetchSpy = vi.spyOn(globalThis, 'fetch').mockResolvedValue(
+      new Response(JSON.stringify(liveAnswer), { status: 200, headers: { 'Content-Type': 'application/json' } }),
+    )
+
+    const models = await createProvidersService().getLiveModels(provider.id)
+
+    expect(fetchSpy).toHaveBeenCalledTimes(1)
+    expect(String(fetchSpy.mock.calls[0][0])).toBe(`${INTL}/v1/models`)
+    const ids = models.map(m => m.id)
+    expect(ids).toEqual(expect.arrayContaining([...getAvailableModels('kimi-coding-oauth').map(m => m.id), 'k3.1-pro']))
+    expect(new Set(ids).size).toBe(ids.length)
+    expect(models.find(m => m.id === 'k3.1-pro')).toMatchObject({ name: 'Kimi K3.1 Pro', contextWindow: 1048576 })
+    expect(loadProvidersDecrypted().providers[0].knownModels).toContain('k3.1-pro')
+  })
+
+  it('a failing live request keeps the catalog list and does not throw', async () => {
+    const provider = createKimiOAuthProvider()
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
+    vi.spyOn(globalThis, 'fetch').mockResolvedValue(new Response('down', { status: 502 }))
+
+    const models = await createProvidersService().getLiveModels(provider.id)
+
+    expect(models.map(m => m.id)).toEqual(getAvailableModels('kimi-coding-oauth').map(m => m.id))
+    expect(warn).toHaveBeenCalledTimes(1)
+    expect(loadProvidersDecrypted().providers[0].knownModels).toBeUndefined()
+  })
+
+  it('the providers list marks the Kimi Code presets as live-model presets', () => {
+    const empty = { providers: [], activeProvider: null, activeModel: null } as never
+    const response = mapProvidersListResponse(empty, empty)
+    expect(response.presets?.['kimi-coding-oauth']?.liveModels).toBe('kimi-coding')
+    expect(response.presets?.['kimi-coding']?.liveModels).toBe('kimi-coding')
+    expect(response.presets?.['kimi']?.liveModels).toBeUndefined()
+  })
+})
+
 // GPT-6.1 Sol is newer than the pinned pi-ai catalog and reaches the picker
 // through PROVIDER_TYPE_MODEL_OVERRIDES (openai + openai-codex).
 describe('GPT-6.1 Sol in the model picker', () => {

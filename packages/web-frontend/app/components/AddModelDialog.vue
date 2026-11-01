@@ -107,6 +107,17 @@
         <p v-if="selected.size > 0" class="text-xs text-muted-foreground">
           {{ $t('providers.addModelSelected', { count: selected.size }) }}
         </p>
+
+        <!-- Live model list (Kimi Code): opening the dialog already refreshes
+             it; this re-asks the provider without closing the dialog. -->
+        <button
+          v-if="usesLiveModels && !loading && !loadError"
+          type="button"
+          class="self-start text-xs text-muted-foreground hover:underline"
+          @click="loadCatalog"
+        >
+          {{ $t('providers.modelsRefreshLive') }}
+        </button>
       </div>
 
       <DialogFooter>
@@ -187,6 +198,10 @@ function toggleSelected(modelId: string) {
   selected.value = next
 }
 
+const usesLiveModels = computed(() =>
+  !!props.provider && !!presets.value[props.provider.providerType]?.liveModels,
+)
+
 async function loadCatalog() {
   if (!props.provider) return
   loading.value = true
@@ -194,8 +209,11 @@ async function loadCatalog() {
   try {
     // Dynamic-catalog providers (e.g. OpenRouter) serve their model list live
     // from the provider's own /models endpoint; the backend falls back to the
-    // curated catalog if that fetch fails.
-    catalog.value = presets.value[props.provider.providerType]?.dynamicCatalog
+    // curated catalog if that fetch fails. Live-model providers (Kimi Code)
+    // use the same route: the backend refreshes the provider's live list and
+    // returns the bundled catalog plus every live model it lacks.
+    const preset = presets.value[props.provider.providerType]
+    catalog.value = preset?.dynamicCatalog || preset?.liveModels
       ? await fetchLiveModels(props.provider.id)
       : await fetchModels(props.provider.providerType)
   } catch {

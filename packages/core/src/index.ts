@@ -186,6 +186,18 @@ export {
   resolvePromptProfileOptions,
 } from './provider-config.js'
 export type { StreamCacheOptions } from './provider-config.js'
+// Live model discovery (Kimi Code plan `/coding/v1/models`).
+export {
+  createLiveModelRefresher,
+  hasLiveModels,
+  listCatalogWithLiveModels,
+  LIVE_MODEL_REFRESH_INTERVAL_MS,
+  refreshProviderLiveModels,
+  scheduleLiveModelRefreshForProvider,
+} from './live-model-refresh.js'
+export type { LiveModelRefresher, LiveModelRefreshResult } from './live-model-refresh.js'
+export { deleteLiveModels, getLiveModelEntry, parseKimiModelsResponse } from './kimi-live-models.js'
+export type { LiveModelInfo } from './kimi-live-models.js'
 export type { ProviderConfig, MaskedProviderConfig, MaskedProvidersFile, ProviderModelConfig, ProvidersFile, ProviderType, ProviderTypePreset, ProviderExtraFieldDef, AuthMethod, TextVerbosity, ProviderTransport, PromptProfile, PromptProfileOptions, AvailableModel, OAuthCredentialsStored, TokenPriceTable } from './provider-config.js'
 // Replacements for the deprecated @earendil-works/pi-ai/compat free functions.
 // Re-exported so packages outside core (web-backend) can reach them, since

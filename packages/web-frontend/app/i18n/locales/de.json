@@ -321,6 +321,7 @@
     "loadingModels": "Modelle werden geladen...",
     "modelsLoadError": "Modelle konnten nicht geladen werden",
     "modelsRetry": "↻ Modelle erneut laden",
+    "modelsRefreshLive": "↻ Modellliste beim Anbieter aktualisieren",
     "region": "Region",
     "regionHint": "Wähle die Region, zu der dein Konto und API-Key gehören. Ein Key funktioniert nur in der Region, für die er ausgestellt wurde.",
     "regionHintOAuth": "Wähle vor der Anmeldung die Region deines Kimi-Kontos. Anmelde-Host und API-Endpunkt nutzen immer dieselbe Region; zum Wechseln einen neuen Provider anlegen.",

@@ -2,6 +2,16 @@
 
 Notable behavior changes. Newest first.
 
+## Unreleased — feat/kimi-live-models
+
+### Kimi Code: live model list from `/coding/v1/models`
+
+- `kimi-coding-oauth` and `kimi-coding` (preset flag `liveModels: 'kimi-coding'`) read `GET {region}/coding/v1/models` with the provider's own credential. The token comes only from `getApiKeyForProvider` (locked OAuth refresh); there is no separate refresh path. Triggers: once after start (deferred services), every 6 h, after create/save/sign-in of the provider, and when the Add Model dialog opens (plus a *Refresh model list from provider* button there).
+- New ids go into `knownModels` and are enabled with the same rule as `syncNewCatalogModels` (appended to `enabledModels`; first run without `knownModels` only records the baseline). Vanished ids are logged once and kept everywhere.
+- The answer is cached in `config/live-models.json` (next to `providers.json`). `buildModel()` precedence: `provider.models` override → pi-ai catalog → live data (live-only models inherit the wire contract of catalog `k3`, price 0).
+- Thinking-only models (`supports_thinking_type: "only"`, documented ids `k3.1-pro*`) always get `thinkingLevelMap.off = null`, from every source, so `thinking=off` sends no `thinking` field instead of `{type: "disabled"}` (HTTP 400 on K3.1 Pro).
+- A failed refresh logs one line and changes nothing. `kimi` (Moonshot API) is unchanged (catalog only).
+
 ## Unreleased — fix/image-only-voice-coalesce
 
 ### Photos without text always reach the model; photos + voice note become one turn

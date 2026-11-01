@@ -8,8 +8,13 @@ import {
   addProvider as addProviderConfig,
   clearFallbackProvider,
   deleteProvider as deleteProviderConfig,
+  deleteLiveModels,
   getAvailableModels,
+  hasLiveModels,
   isDynamicCatalogProvider,
+  listCatalogWithLiveModels,
+  refreshProviderLiveModels,
+  scheduleLiveModelRefreshForProvider,
   getFallbackModelId,
   getProviderDefaultModel,
   loadProviders,
@@ -199,6 +204,13 @@ export function createProvidersService(options: ProvidersRouterOptions = {}): Pr
 
   async function getLiveModels(providerId: string): Promise<AvailableModel[]> {
     const provider = requireProvider(providerId)
+    if (hasLiveModels(provider.providerType)) {
+      // Kimi Code: refresh the live list (token via getApiKeyForProvider and
+      // its locked refresh), then show catalog + live models. A failed refresh
+      // is logged in one line and the last known list is shown.
+      await refreshProviderLiveModels(provider.id, { logger: console })
+      return listCatalogWithLiveModels(provider)
+    }
     if (!isDynamicCatalogProvider(provider.providerType)) {
       throw new ProvidersValidationError('Provider type does not use a dynamic catalog')
     }
@@ -456,6 +468,7 @@ export function createProvidersService(options: ProvidersRouterOptions = {}): Pr
       if (!saved) {
         throw new ProvidersNotFoundError('Provider not found')
       }
+      scheduleLiveModelRefreshForProvider(saved, console)
       return saved
     }
     const beforeActiveProvider = loadProviders().activeProvider ?? null
@@ -472,6 +485,7 @@ export function createProvidersService(options: ProvidersRouterOptions = {}): Pr
     if (beforeActiveProvider !== afterActiveProvider) {
       options.onActiveProviderChanged?.()
     }
+    scheduleLiveModelRefreshForProvider(provider, console)
     return provider
   }
 
@@ -547,6 +561,7 @@ export function createProvidersService(options: ProvidersRouterOptions = {}): Pr
       // T1c: ask the new box for its `/api/tags` right away. Until the answer
       // is cached the gate treats its models as hosting-unverified.
       scheduleOllamaTagRefreshForProvider(provider, console)
+      scheduleLiveModelRefreshForProvider(provider, console)
 
       return provider
     } catch (err) {
@@ -579,6 +594,8 @@ export function createProvidersService(options: ProvidersRouterOptions = {}): Pr
       // T1c: a saved provider may point at a different box now, so the cached
       // answer for this id has to be replaced instead of waiting for the interval.
       scheduleOllamaTagRefreshForProvider(provider, console)
+      // New key / region: re-read the live model list (Kimi Code).
+      scheduleLiveModelRefreshForProvider(provider, console)
 
       return provider
     } catch (err) {
@@ -593,6 +610,7 @@ export function createProvidersService(options: ProvidersRouterOptions = {}): Pr
   function deleteProvider(id: string): void {
     try {
       deleteProviderConfig(id)
+      deleteLiveModels(id)
     } catch (err) {
       const message = (err as Error).message
       if (message.includes('not found')) {

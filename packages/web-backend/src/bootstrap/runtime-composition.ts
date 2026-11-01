@@ -88,7 +88,8 @@ import { createForkStrandTool, ForkBudget } from '@axiom/core'
 import type { StrandFork } from '@axiom/core'
 // T1c: the data-policy gate reads the cached Ollama `/api/tags` answers and
 // never fetches itself, so something has to keep them fresh.
-import { createOllamaTagWarmup, loadProviders as loadProviderConfigs } from '@axiom/core'
+import { createLiveModelRefresher, createOllamaTagWarmup, loadProviders as loadProviderConfigs } from '@axiom/core'
+import type { LiveModelRefresher } from '@axiom/core'
 import type { OllamaTagWarmup } from '@axiom/core'
 import { publishBoardUpdate } from '../board-publish.js'
 import { randomUUID } from 'node:crypto'
@@ -210,6 +211,7 @@ export interface RuntimeComposition {
   uploadCleanupService: UploadCleanupService
   /** Keeps the Ollama hosting metadata the data-policy gate reads fresh. */
   ollamaTagWarmupService: OllamaTagWarmup
+  liveModelRefreshService: LiveModelRefresher
   taskEventBus: TaskEventBus
   chatEventBus: ChatEventBus
   chatActions: ChatActionRegistry
@@ -2114,6 +2116,11 @@ export async function createRuntimeComposition(options: RuntimeCompositionOption
     logger,
   })
 
+  // Live model lists (Kimi Code `/coding/v1/models`): first run after
+  // `listen` in startDeferredServices(), then every 6 h; save, sign-in and the
+  // Add Model dialog refresh on demand. A failure keeps the last list.
+  const liveModelRefreshService = createLiveModelRefresher({ logger })
+
   // Only the events the turn runner does not already stream to every attached
   // channel; the assistant side of a Telegram turn reaches web clients through
   // their own runner subscription.
@@ -3013,6 +3020,7 @@ export async function createRuntimeComposition(options: RuntimeCompositionOption
     deferredServicesStarted = true
     homeAssistantMqtt.start()
     ollamaTagWarmupService.start()
+    liveModelRefreshService.start()
   }
 
   return {
@@ -3025,6 +3033,7 @@ export async function createRuntimeComposition(options: RuntimeCompositionOption
     agentHeartbeatService,
     uploadCleanupService,
     ollamaTagWarmupService,
+    liveModelRefreshService,
     taskEventBus,
     chatEventBus,
     chatActions,
@@ -3058,6 +3067,7 @@ export async function createRuntimeComposition(options: RuntimeCompositionOption
       // Synchronous timer stops first: nothing below the first await may
       // still fire the Ollama warm-up interval.
       ollamaTagWarmupService.stop()
+      liveModelRefreshService.stop()
       healthMonitorService.stop()
       quotaMonitorService.stop()
       await homeAssistantMqtt.stop()

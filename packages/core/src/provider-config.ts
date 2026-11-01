@@ -25,6 +25,7 @@ import {
   requireKimiCodingRegionOfCredential,
 } from './kimi-coding-oauth.js'
 import { getConfigDir, ensureConfigTemplates, loadConfig } from './config.js'
+import { buildLiveModel, enforceThinkingOnly, getLiveModelInfo } from './kimi-live-models.js'
 // Type-only: `data-policy.ts` reads providers.json through this module, so a
 // value import would be a runtime cycle.
 import type { DataPolicyInput } from './data-policy.js'
@@ -156,6 +157,15 @@ export interface ProviderTypePreset {
    * changes frequently and is authoritative at the source (e.g. OpenRouter).
    */
   dynamicCatalog?: boolean
+  /**
+   * Live model discovery on top of the bundled pi-ai catalog: the backend
+   * periodically reads the provider's own model list (`kimi-coding`:
+   * `GET {region}/coding/v1/models`), records new ids in `knownModels` and
+   * resolves ids without a catalog entry from the live metadata. Unlike
+   * `dynamicCatalog` the catalog stays authoritative for the models it knows;
+   * nothing is copied into `provider.models` (which stays the user override).
+   */
+  liveModels?: 'kimi-coding'
   /**
    * Closed list of official endpoints for a preset with a fixed URL
    * (`urlEditable: false`) that is served from more than one region, e.g.
@@ -346,6 +356,7 @@ export const PROVIDER_TYPE_PRESETS: Record<ProviderType, ProviderTypePreset> = {
     piAiProvider: 'kimi-coding',
     authMethod: 'api-key',
     resolveModelsFromCatalog: true,
+    liveModels: 'kimi-coding',
     subscription: true,
   },
   minimax: {
@@ -520,6 +531,7 @@ export const PROVIDER_TYPE_PRESETS: Record<ProviderType, ProviderTypePreset> = {
     piAiProvider: 'kimi-coding',
     authMethod: 'oauth',
     oauthProviderId: 'kimi-coding',
+    liveModels: 'kimi-coding',
     subscription: true,
   },
 }
@@ -2743,7 +2755,23 @@ function copilotBaseUrlFromToken(token: string): string | undefined {
   return proxyHost ? `https://${proxyHost.replace(/^proxy\./, 'api.')}` : undefined
 }
 
+/**
+ * Catalog model whose wire contract (api, compat flags, image limits) a
+ * live-discovered model of the same plan inherits. K3 carries the flags the
+ * Kimi coding endpoint needs (adaptive thinking, empty signatures).
+ */
+const LIVE_MODEL_TEMPLATE: Record<NonNullable<ProviderTypePreset['liveModels']>, string> = {
+  'kimi-coding': 'k3',
+}
+
 export function buildModel(provider: ProviderConfig, modelId?: string): Model<Api> {
+  const model = buildModelFromSources(provider, modelId)
+  // Thinking-only Kimi Code models (K3.1 Pro) answer HTTP 400 to "thinking
+  // disabled"; whatever source the metadata came from, `off` must stay null.
+  return PROVIDER_TYPE_PRESETS[provider.providerType]?.liveModels ? enforceThinkingOnly(model) : model
+}
+
+function buildModelFromSources(provider: ProviderConfig, modelId?: string): Model<Api> {
   const id = modelId ?? getProviderDefaultModel(provider)
   const preset = PROVIDER_TYPE_PRESETS[provider.providerType]
 
@@ -2768,6 +2796,16 @@ export function buildModel(provider: ProviderConfig, modelId?: string): Model<Ap
 
       // `let` (not const): the resolvedAuth.baseUrl override below reassigns it.
       let piModel = models.find(m => m.id === id)
+
+      // Live-discovered model (Kimi Code `/coding/v1/models`) without a catalog
+      // entry: build it from the live metadata on a catalog wire template.
+      // Precedence: user override in provider.models (generic path below) →
+      // catalog → live data.
+      if (!piModel && preset.liveModels && !provider.models?.some(m => m.id === id)) {
+        const info = getLiveModelInfo(provider.id, id)
+        const template = models.find(m => m.id === LIVE_MODEL_TEMPLATE[preset.liveModels!]) ?? models[0]
+        if (info && template) piModel = buildLiveModel(info, template)
+      }
 
       if (piModel && preset.baseUrlOptions?.length) {
         // Multi-region preset (Kimi coding plan): the catalog pins one region's

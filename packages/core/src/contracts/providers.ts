@@ -190,6 +190,12 @@ export interface ProviderTypePresetContract {
    * instead of the static catalog returned by `hasKnownModels`.
    */
   dynamicCatalog?: boolean
+  /**
+   * Set when the backend discovers this provider's models live on top of the
+   * bundled catalog (Kimi Code: `/coding/v1/models`). The Add Model dialog then
+   * loads `GET /api/providers/:id/live-models`, which refreshes the list first.
+   */
+  liveModels?: 'kimi-coding'
   /** Provider-specific extra fields the UI should render generically. */
   extraFields?: ProviderExtraFieldDefContract[]
 }
