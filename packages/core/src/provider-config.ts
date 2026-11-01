@@ -2362,36 +2362,98 @@ const lastResolvedModelAuth = new Map<string, ModelAuth>()
 const inFlightOAuthRefresh = new Map<string, Promise<OAuthCredential>>()
 
 /**
- * Running `refresh()` calls keyed by the identity of the refresh token they
- * present (SHA-256, never the token itself), across ALL provider entries. The
- * per-provider lock above does not cover two entries that hold the same stored
- * credential (a duplicated provider, or the same account added twice): both
- * would present the same rotating refresh token, and the second presentation
- * is a reuse that revokes the token family (review 2026-11, blocker). A second
- * caller with the same refresh token joins the running call instead.
+ * Running `refresh()` calls keyed by the ISSUER and the identity of the
+ * refresh token they present (SHA-256, never the token itself), across all
+ * provider entries. The per-provider lock above does not cover two entries
+ * that hold the same stored credential (a duplicated provider, or the same
+ * account added twice): both would present the same rotating refresh token,
+ * and the second presentation is a reuse that revokes the token family
+ * (review 2026-11, blocker). A second caller with the same issuer and refresh
+ * token joins the running call instead. The issuer is part of the key: the
+ * same token string at another issuer (another provider type, another Kimi
+ * region / base URL) is a different credential and must never be joined or
+ * handed over (review round 2, blocker).
  */
 const inFlightRefreshByToken = new Map<string, Promise<OAuthCredential>>()
 
-function refreshTokenKey(refreshToken: string): string {
-  return crypto.createHash('sha256').update(refreshToken).digest('hex')
+/**
+ * Hard deadline of one `refresh()` call. The AbortSignal handed to the issuer
+ * carries the same deadline, but a provider implementation that ignores the
+ * signal must not keep every waiter (and both lock maps) blocked forever, so
+ * the wait itself is raced against this timer as well.
+ */
+export const OAUTH_REFRESH_TIMEOUT_MS = 30_000
+
+/**
+ * Issuer identity of a stored OAuth entry: provider type plus effective API
+ * base URL (for Kimi Code: the region). Tokens are only ever shared between
+ * entries with the same issuer identity.
+ */
+function oauthIssuerKey(entry: Pick<ProviderConfig, 'providerType' | 'baseUrl'>): string {
+  return `${entry.providerType}\u0000${resolveEffectiveBaseUrl(entry.providerType, entry.baseUrl)}`
+}
+
+function refreshTokenKey(issuerKey: string, refreshToken: string): string {
+  return crypto.createHash('sha256').update(issuerKey).update('\u0000').update(refreshToken).digest('hex')
 }
 
 /**
- * Present `base.refresh` to the issuer at most once per process: join a
- * running refresh of the same token, otherwise run it and, on success, hand
- * the successor to every other entry that still stores the consumed token
+ * One `refresh()` call with a hard deadline (see `OAUTH_REFRESH_TIMEOUT_MS`).
+ * On expiry the signal is aborted and the returned promise rejects, whether
+ * or not the issuer honours the signal. Residual risk (documented, not
+ * solvable client-side): when the deadline hits after the issuer already
+ * rotated server-side, the successor is lost and the stored, now consumed
+ * refresh token is presented on the next attempt.
+ */
+function refreshWithDeadline(oauthAuth: OAuthAuth, credential: OAuthCredential): Promise<OAuthCredential> {
+  const controller = new AbortController()
+  let timer: ReturnType<typeof setTimeout> | undefined
+  const deadline = new Promise<never>((_, reject) => {
+    timer = setTimeout(() => {
+      const err = new Error(`OAuth token refresh timed out after ${Math.round(OAUTH_REFRESH_TIMEOUT_MS / 1000)}s`)
+      controller.abort(err)
+      reject(err)
+    }, OAUTH_REFRESH_TIMEOUT_MS)
+    ;(timer as { unref?: () => void }).unref?.()
+  })
+  let call: Promise<OAuthCredential>
+  try {
+    call = Promise.resolve(oauthAuth.refresh(credential, controller.signal))
+  } catch (err) {
+    call = Promise.reject(err)
+  }
+  return Promise.race([call, deadline]).finally(() => clearTimeout(timer))
+}
+
+/** Where a shared-token refresh comes from: the presenting entry and its issuer. */
+interface SharedRefreshOrigin {
+  ownProviderId: string
+  /** `null` for a caller-supplied credential without a stored entry: never shared. */
+  issuerKey: string | null
+}
+
+/**
+ * Present `base.refresh` to the issuer at most once per process and issuer:
+ * join a running refresh of the same token at the same issuer, otherwise run
+ * it and, on success, hand the successor to every other entry of the same
+ * issuer that still stores exactly the presented credential
  * (`propagateRotatedOAuthCredentials`), so none of them presents it later.
- * A joined result that is already expired is refreshed with ITS refresh token.
+ * A joined result that is already expired is refreshed with ITS refresh
+ * token. Every hop redacts its error against every credential presented so
+ * far in the chain, so a waiter never receives a token in message, stack or
+ * cause.
  */
 async function refreshOncePerToken(
   oauthAuth: OAuthAuth,
   base: OAuthCredential,
-  ownProviderId: string,
+  origin: SharedRefreshOrigin,
   force: boolean,
 ): Promise<OAuthCredential> {
+  const lockScope = origin.issuerKey ?? `unshared\u0000${origin.ownProviderId}`
+  const seen: OAuthCredential[] = [base]
   let current = base
   for (let hop = 0; hop < 4; hop++) {
-    const key = refreshTokenKey(current.refresh)
+    const key = refreshTokenKey(lockScope, current.refresh)
     const pending = inFlightRefreshByToken.get(key)
     if (pending) {
       const joined = await pending
@@ -2402,15 +2464,19 @@ async function refreshOncePerToken(
       if (force || Date.now() < joined.expires) return joined
       if (joined.refresh !== current.refresh) {
         current = joined
+        seen.push(joined)
         continue
       }
     }
     const presented = current
-    const run = oauthAuth.refresh(presented, AbortSignal.timeout(30_000))
+    const secrets = [...seen]
+    const run = refreshWithDeadline(oauthAuth, presented).catch((err: unknown) => {
+      throw redactOAuthError(err, secrets)
+    })
     inFlightRefreshByToken.set(key, run)
     try {
       const rotated = await run
-      propagateRotatedOAuthCredentials(presented.refresh, rotated, ownProviderId)
+      if (origin.issuerKey !== null) propagateRotatedOAuthCredentials(presented, rotated, origin.ownProviderId, origin.issuerKey)
       return rotated
     } finally {
       if (inFlightRefreshByToken.get(key) === run) inFlightRefreshByToken.delete(key)
@@ -2420,26 +2486,35 @@ async function refreshOncePerToken(
 }
 
 /**
- * After `consumedRefresh` was presented and `rotated` came back: store the
- * successor in every OTHER OAuth entry that still holds the consumed refresh
- * token. Load, compare and save run synchronously (no await gap). Entries of
- * another region (Kimi) or with unreadable credentials are left alone. The
- * generation is not bumped: the entries keep the same sign-in, only rotated.
+ * After `presented` was sent to the issuer and `rotated` came back: store the
+ * successor in every OTHER OAuth entry of the same issuer (provider type and
+ * effective base URL / region) whose stored credential is EXACTLY the
+ * presented one (access, refresh and expiry). An entry holding anything else
+ * — a newer access token of a non-rotating issuer, another expiry, another
+ * issuer's credential with the same token string — is left alone. Load,
+ * compare and save run synchronously (no await gap). The generation is not
+ * bumped: the entries keep the same sign-in, only rotated.
  */
-function propagateRotatedOAuthCredentials(consumedRefresh: string, rotated: OAuthCredential, ownProviderId: string): void {
+function propagateRotatedOAuthCredentials(
+  presented: OAuthCredential,
+  rotated: OAuthCredential,
+  ownProviderId: string,
+  issuerKey: string,
+): void {
   try {
     const file = loadProviders()
     const { type: _type, ...toStore } = rotated
     let changed = false
     for (const entry of file.providers) {
       if (entry.id === ownProviderId || entry.authMethod !== 'oauth' || !entry.oauthCredentials) continue
+      if (oauthIssuerKey(entry) !== issuerKey) continue
       let stored: OAuthCredentials
       try {
         stored = storedToOAuthCredentials(decryptOAuthCredentials(entry.oauthCredentials))
       } catch {
         continue
       }
-      if (stored.refresh !== consumedRefresh) continue
+      if (stored.refresh !== presented.refresh || stored.access !== presented.access || stored.expires !== presented.expires) continue
       const entryRegion = kimiRegionOfEntry(entry)
       if (entryRegion !== null && kimiCodingRegionOfCredential(rotated as { region?: unknown }) !== entryRegion) continue
       entry.oauthCredentials = encryptOAuthCredentials(toStore as OAuthCredentials)
@@ -2452,17 +2527,45 @@ function propagateRotatedOAuthCredentials(consumedRefresh: string, rotated: OAut
   }
 }
 
-/** Error whose message no longer contains any access/refresh token of `creds`. */
+/**
+ * Error whose message, stack and cause chain no longer contain any
+ * access/refresh token of `creds`. Mutates the error in place where possible
+ * (keeps its class); a frozen error is replaced by a plain one without cause.
+ */
 function redactOAuthError(err: unknown, creds: ReadonlyArray<Partial<OAuthCredential> | undefined>): Error {
   const secrets = creds.flatMap(c => [c?.access, c?.refresh])
-  const error = err instanceof Error ? err : new Error(String(err))
-  const redacted = redactSecrets(error.message, secrets)
-  if (redacted !== error.message) {
-    try {
-      error.message = redacted
-    } catch {
-      return new Error(redacted)
+  const error = err instanceof Error ? err : new Error(redactSecrets(String(err), secrets))
+  const scrub = (value: unknown, depth: number): unknown => {
+    if (typeof value === 'string') return redactSecrets(value, secrets)
+    if (depth > 5 || value === null || typeof value !== 'object') return value
+    if (!(value instanceof Error)) {
+      // A plain object cause (e.g. a response body): replace it by its
+      // redacted JSON when it carries a token.
+      let json: string
+      try {
+        json = JSON.stringify(value)
+      } catch {
+        return value
+      }
+      const redacted = redactSecrets(json, secrets)
+      return redacted === json ? value : redacted
     }
+    for (const field of ['message', 'stack'] as const) {
+      const text = value[field]
+      if (typeof text !== 'string') continue
+      const redacted = redactSecrets(text, secrets)
+      if (redacted !== text) value[field] = redacted
+    }
+    if (value.cause !== undefined) {
+      const cause = scrub(value.cause, depth + 1)
+      if (cause !== value.cause) value.cause = cause
+    }
+    return value
+  }
+  try {
+    scrub(error, 0)
+  } catch {
+    return new Error(redactSecrets(error.message, secrets))
   }
   return error
 }
@@ -2677,7 +2780,12 @@ export async function refreshOAuthCredentialsLocked(
     try {
       // One presentation per refresh token across all entries (see
       // `inFlightRefreshByToken`), not only per provider id.
-      rotated = await refreshOncePerToken(oauthAuth, base, providerId, options?.force === true)
+      rotated = await refreshOncePerToken(
+        oauthAuth,
+        base,
+        { ownProviderId: providerId, issuerKey: state ? oauthIssuerKey(state.entry) : null },
+        options?.force === true,
+      )
     } catch (err) {
       // The message may end up in logs, the chat or the quota panel: strip any
       // token a transport layer may have echoed into it.
