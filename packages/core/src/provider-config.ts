@@ -2436,7 +2436,7 @@ interface SharedRefreshOrigin {
  * Present `base.refresh` to the issuer at most once per process and issuer:
  * join a running refresh of the same token at the same issuer, otherwise run
  * it and, on success, hand the successor to every other entry of the same
- * issuer that still stores exactly the presented credential
+ * issuer that still stores the presented access and refresh token
  * (`propagateRotatedOAuthCredentials`), so none of them presents it later.
  * A joined result that is already expired is refreshed with ITS refresh
  * token. Every hop redacts its error against every credential presented so
@@ -2488,10 +2488,11 @@ async function refreshOncePerToken(
 /**
  * After `presented` was sent to the issuer and `rotated` came back: store the
  * successor in every OTHER OAuth entry of the same issuer (provider type and
- * effective base URL / region) whose stored credential is EXACTLY the
- * presented one (access, refresh and expiry). An entry holding anything else
- * — a newer access token of a non-rotating issuer, another expiry, another
- * issuer's credential with the same token string — is left alone. Load,
+ * effective base URL / region) whose stored access AND refresh token are the
+ * presented ones (the expiry is not compared: identical tokens are the same
+ * credential). An entry holding anything else — a newer access token of a
+ * non-rotating issuer, another issuer's credential with the same token
+ * string — is left alone. Load,
  * compare and save run synchronously (no await gap). The generation is not
  * bumped: the entries keep the same sign-in, only rotated.
  */
@@ -2514,7 +2515,12 @@ function propagateRotatedOAuthCredentials(
       } catch {
         continue
       }
-      if (stored.refresh !== presented.refresh || stored.access !== presented.access || stored.expires !== presented.expires) continue
+      // Identical access AND refresh token = the same credential; the stored
+      // expiry is metadata and may differ by a clock tick between entries
+      // signed in from one login (review round 4). Ignoring it keeps the
+      // successor flowing to every holder of the consumed refresh token,
+      // while a newer access token (non-rotating issuer) still differs.
+      if (stored.refresh !== presented.refresh || stored.access !== presented.access) continue
       const entryRegion = kimiRegionOfEntry(entry)
       if (entryRegion !== null && kimiCodingRegionOfCredential(rotated as { region?: unknown }) !== entryRegion) continue
       entry.oauthCredentials = encryptOAuthCredentials(toStore as OAuthCredentials)

@@ -242,11 +242,30 @@ describe('finding 3: the hand-over never overwrites a credential that differs fr
     expect(reload(b.id).oauthCredentials?.expires).toBe(bExpires)
   })
 
-  it('an entry with the same tokens but a different expiry is not touched either', async () => {
+  // Round 4 changed this rule: identical access AND refresh token are the same
+  // credential, whatever the stored expiry says. Leaving B alone (round 2) made
+  // B present the consumed refresh token again later. The overwrite guard is
+  // the access token (tests above and below), not the expiry.
+  it('an entry with the same tokens but a different expiry adopts the successor (same credential)', async () => {
     const a = add('anthropic-oauth', 'A', { access: 'SAME_ACCESS', refresh: 'SAME_REFRESH', expires: 0 })
     const b = add('anthropic-oauth', 'B', { access: 'SAME_ACCESS', refresh: 'SAME_REFRESH', expires: 1 })
+    const exp = issuer('exp')
+    await refreshOAuthCredentialsLocked(a.id, exp.auth, cred('SAME_ACCESS', 'SAME_REFRESH'))
+    expect(reload(b.id).oauthCredentials?.access).toBe('exp_ACCESS_1')
+    expect(reload(b.id).oauthCredentials?.refresh).toBe('exp_REFRESH_1')
+    await refreshOAuthCredentialsLocked(b.id, exp.auth, cred('SAME_ACCESS', 'SAME_REFRESH', 1))
+    expect(exp.presented.map(c => c.refresh)).toEqual(['SAME_REFRESH'])
+    expect(exp.reuses).toEqual([])
+  })
+
+  it('an entry with the same refresh token and the same expiry but another access token is not touched', async () => {
+    const expires = Date.now() + 2 * HOUR
+    const a = add('anthropic-oauth', 'A', { access: 'A_OLDER_ACCESS', refresh: 'NON_ROTATING_R2', expires })
+    const b = add('anthropic-oauth', 'B', { access: 'B_NEWER_ACCESS', refresh: 'NON_ROTATING_R2', expires })
     const bBefore = rawStored(b.id)
-    await refreshOAuthCredentialsLocked(a.id, issuer('exp').auth, cred('SAME_ACCESS', 'SAME_REFRESH'))
+    // Forced: A's access token was rejected although it has not expired on paper.
+    const ca = await refreshOAuthCredentialsLocked(a.id, issuer('nonrot2', { rotate: false }).auth, cred('A_OLDER_ACCESS', 'NON_ROTATING_R2', expires), { force: true })
+    expect(ca.access).toBe('nonrot2_ACCESS_1')
     expect(rawStored(b.id)).toBe(bBefore)
   })
 })

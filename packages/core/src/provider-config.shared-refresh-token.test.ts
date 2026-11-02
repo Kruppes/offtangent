@@ -170,3 +170,66 @@ describe('one refresh per refresh token across providers', () => {
     expect(reload(a.id).oauthCredentials?.access).not.toBe(reload(b.id).oauthCredentials?.access)
   })
 })
+
+/**
+ * Review round 4: two entries with the same issuer, access and refresh token
+ * whose stored expiry differs by 1 ms (two writes of one login across a clock
+ * tick). The hand-over compared the expiry too, so B did not adopt the
+ * successor and later presented the already consumed refresh token again.
+ */
+describe('round 4: same tokens, expiry 1 ms apart', () => {
+  for (const providerType of ['anthropic-oauth', 'openai-codex'] as const) {
+    it(`${providerType}: sequential — the old refresh token is presented once, both entries end on the successor`, async () => {
+      const a = addShared(providerType, 'A', 'TICK_ACCESS', 'TICK_SEQ_R0', 0)
+      const b = addShared(providerType, 'B', 'TICK_ACCESS', 'TICK_SEQ_R0', 1)
+      const issuer = rotatingIssuer('tickseq')
+      await refreshOAuthCredentialsLocked(a.id, issuer.authA, cred('TICK_ACCESS', 'TICK_SEQ_R0', 0))
+      const cb = await refreshOAuthCredentialsLocked(b.id, issuer.authB, cred('TICK_ACCESS', 'TICK_SEQ_R0', 1))
+
+      expect(issuer.presented).toEqual(['TICK_SEQ_R0'])
+      expect(issuer.reuses).toEqual([])
+      expect(cb.refresh).toBe('tickseq_REFRESH_1')
+      for (const id of [a.id, b.id]) {
+        expect(reload(id).oauthCredentials?.refresh).toBe('tickseq_REFRESH_1')
+        expect(reload(id).oauthCredentials?.access).toBe('tickseq_ACCESS_1')
+      }
+    })
+
+    it(`${providerType}: parallel — the old refresh token is presented once, both entries end on the successor`, async () => {
+      const a = addShared(providerType, 'A', 'TICK_ACCESS', 'TICK_PAR_R0', 0)
+      const b = addShared(providerType, 'B', 'TICK_ACCESS', 'TICK_PAR_R0', 1)
+      const issuer = rotatingIssuer('tickpar', { paused: true })
+      const pa = refreshOAuthCredentialsLocked(a.id, issuer.authA, cred('TICK_ACCESS', 'TICK_PAR_R0', 0))
+      const pb = refreshOAuthCredentialsLocked(b.id, issuer.authB, cred('TICK_ACCESS', 'TICK_PAR_R0', 1))
+      await issuer.started
+      issuer.release()
+      const [ca, cb] = await Promise.all([pa, pb])
+      // A later refresh of either entry must not fall back to the old token.
+      const again = await refreshOAuthCredentialsLocked(b.id, issuer.authB, cred('TICK_ACCESS', 'TICK_PAR_R0', 1))
+
+      expect(issuer.presented).toEqual(['TICK_PAR_R0'])
+      expect(issuer.reuses).toEqual([])
+      expect(ca.refresh).toBe('tickpar_REFRESH_1')
+      expect(cb.refresh).toBe('tickpar_REFRESH_1')
+      expect(again.refresh).toBe('tickpar_REFRESH_1')
+      for (const id of [a.id, b.id]) {
+        expect(reload(id).oauthCredentials?.refresh).toBe('tickpar_REFRESH_1')
+        expect(reload(id).oauthCredentials?.access).toBe('tickpar_ACCESS_1')
+      }
+    })
+  }
+
+  it('forced (token rejected), still-valid expiries 1 ms apart: one presentation, B adopts the successor', async () => {
+    const expires = Date.now() + HOUR
+    const a = addShared('openai-codex', 'A', 'TICK_ACCESS', 'TICK_FORCE_R0', expires)
+    const b = addShared('openai-codex', 'B', 'TICK_ACCESS', 'TICK_FORCE_R0', expires + 1)
+    const issuer = rotatingIssuer('tickforce')
+    await refreshOAuthCredentialsLocked(a.id, issuer.authA, cred('TICK_ACCESS', 'TICK_FORCE_R0', expires), { force: true })
+    const cb = await refreshOAuthCredentialsLocked(b.id, issuer.authB, cred('TICK_ACCESS', 'TICK_FORCE_R0', expires + 1), { force: true })
+
+    expect(issuer.presented).toEqual(['TICK_FORCE_R0'])
+    expect(issuer.reuses).toEqual([])
+    expect(cb.access).toBe('tickforce_ACCESS_1')
+    expect(reload(b.id).oauthCredentials?.refresh).toBe('tickforce_REFRESH_1')
+  })
+})
