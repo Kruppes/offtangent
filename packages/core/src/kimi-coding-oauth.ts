@@ -179,14 +179,36 @@ async function kimiFetch(
 
 /**
  * Defensive redaction: replaces every given secret (access/refresh token, API
- * key) inside a message. Secrets shorter than 8 characters are skipped so a
- * placeholder cannot shred unrelated text.
+ * key) inside a message. Secrets shorter than 8 characters (and empty values)
+ * are skipped so a placeholder cannot shred unrelated text. The secrets are
+ * deduplicated and matched longest first against the ORIGINAL message, and
+ * every covered range is replaced as a whole: a secret that is a prefix of,
+ * or overlaps, another one can never leave a fragment of the longer one
+ * behind (review round 3).
  */
 export function redactSecrets(message: string, secrets: ReadonlyArray<string | undefined | null>): string {
-  let out = message
-  for (const secret of secrets) {
-    if (typeof secret !== 'string' || secret.length < 8) continue
-    out = out.split(secret).join('[redacted]')
+  const unique = [...new Set(secrets.filter((s): s is string => typeof s === 'string' && s.length >= 8))]
+    .sort((a, b) => b.length - a.length)
+  if (unique.length === 0 || typeof message !== 'string' || message.length === 0) return message
+  const covered = new Uint8Array(message.length)
+  let any = false
+  for (const secret of unique) {
+    for (let at = message.indexOf(secret); at !== -1; at = message.indexOf(secret, at + 1)) {
+      covered.fill(1, at, at + secret.length)
+      any = true
+    }
+  }
+  if (!any) return message
+  let out = ''
+  for (let i = 0; i < message.length;) {
+    if (covered[i]) {
+      while (i < message.length && covered[i]) i++
+      out += '[redacted]'
+    } else {
+      const start = i
+      while (i < message.length && !covered[i]) i++
+      out += message.slice(start, i)
+    }
   }
   return out
 }

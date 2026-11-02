@@ -2527,26 +2527,43 @@ function propagateRotatedOAuthCredentials(
   }
 }
 
+/** Token-free stand-in for a cause that cannot be redacted safely. */
+const REDACTED_CAUSE = '[cause redacted]'
+
+/** Deepest cause level that is redacted in place; anything deeper is replaced. */
+const MAX_REDACTED_CAUSE_DEPTH = 5
+
 /**
  * Error whose message, stack and cause chain no longer contain any
  * access/refresh token of `creds`. Mutates the error in place where possible
  * (keeps its class); a frozen error is replaced by a plain one without cause.
+ * The chain is walked with a WeakSet (cycles are safe). A cause beyond
+ * `MAX_REDACTED_CAUSE_DEPTH`, or a non-Error object cause that cannot be
+ * serialised (e.g. cyclic), is replaced by `[cause redacted]` instead of
+ * being kept as is (review round 3).
  */
 function redactOAuthError(err: unknown, creds: ReadonlyArray<Partial<OAuthCredential> | undefined>): Error {
   const secrets = creds.flatMap(c => [c?.access, c?.refresh])
   const error = err instanceof Error ? err : new Error(redactSecrets(String(err), secrets))
+  const visited = new WeakSet<object>()
   const scrub = (value: unknown, depth: number): unknown => {
     if (typeof value === 'string') return redactSecrets(value, secrets)
-    if (depth > 5 || value === null || typeof value !== 'object') return value
+    if (value === null || typeof value !== 'object') return value
+    // Already being redacted further up the chain (cycle back to an error).
+    if (visited.has(value)) return value
+    if (depth > MAX_REDACTED_CAUSE_DEPTH) return REDACTED_CAUSE
+    visited.add(value)
     if (!(value instanceof Error)) {
       // A plain object cause (e.g. a response body): replace it by its
-      // redacted JSON when it carries a token.
+      // redacted JSON when it carries a token; an object that cannot be
+      // serialised (cycle, throwing getter) is replaced entirely.
       let json: string
       try {
         json = JSON.stringify(value)
       } catch {
-        return value
+        return REDACTED_CAUSE
       }
+      if (typeof json !== 'string') return REDACTED_CAUSE
       const redacted = redactSecrets(json, secrets)
       return redacted === json ? value : redacted
     }

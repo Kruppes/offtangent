@@ -134,11 +134,15 @@ describe('one refresh per refresh token across providers', () => {
   })
 
   it('a forced refresh (token rejected) of the second entry also adopts the successor', async () => {
-    const a = addShared('openai-codex', 'A', 'OLD_ACCESS', 'FORCE_R0', Date.now() + HOUR)
-    const b = addShared('openai-codex', 'B', 'OLD_ACCESS', 'FORCE_R0', Date.now() + HOUR)
+    // One expiry for both entries: the hand-over only targets an entry whose
+    // stored credential is EXACTLY the presented one (access, refresh, expiry),
+    // so separate Date.now() calls made this test flaky when the clock ticked.
+    const expires = Date.now() + HOUR
+    const a = addShared('openai-codex', 'A', 'OLD_ACCESS', 'FORCE_R0', expires)
+    const b = addShared('openai-codex', 'B', 'OLD_ACCESS', 'FORCE_R0', expires)
     const issuer = rotatingIssuer('force')
-    await refreshOAuthCredentialsLocked(a.id, issuer.authA, cred('OLD_ACCESS', 'FORCE_R0', Date.now() + HOUR), { force: true })
-    const cb = await refreshOAuthCredentialsLocked(b.id, issuer.authB, cred('OLD_ACCESS', 'FORCE_R0', Date.now() + HOUR), { force: true })
+    await refreshOAuthCredentialsLocked(a.id, issuer.authA, cred('OLD_ACCESS', 'FORCE_R0', expires), { force: true })
+    const cb = await refreshOAuthCredentialsLocked(b.id, issuer.authB, cred('OLD_ACCESS', 'FORCE_R0', expires), { force: true })
 
     expect(issuer.presented).toEqual(['FORCE_R0'])
     expect(cb.access).toBe('force_ACCESS_1')
