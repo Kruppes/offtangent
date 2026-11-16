@@ -31,6 +31,13 @@ These three must be set for any non-development deployment.
 | `DATA_DIR` | `/data` | Root directory for the database, config, memory, and skills. The Compose file maps the `axiom-data` volume here. |
 | `WORKSPACE_DIR` | `/workspace` | Agent's home / working directory. The Compose file maps the `axiom-workspace` volume here. If unset, falls back to `<DATA_DIR>/workspace` then to `/workspace`. |
 
+`OFFTANGENT_HANDOFF_PATH_ROOT` is optional. Set it to an absolute, nested mount
+root (for example `/mnt/volume/workspace`) only if abort HANDOFF summaries must
+show paths written there. Without it, paths outside the built-in roots are
+withheld. A root containing traversal segments, control characters or fewer
+than two path components is ignored. Treat this opt-in as a disclosure policy:
+the root and short paths below it may be shown in task summaries.
+
 ## Uploads / attachments
 
 Any file type may be attached — there is no MIME whitelist. What is capped is only what protects the host. Uploads stream to `<DATA_DIR>/uploads/.tmp` and are moved into `<DATA_DIR>/uploads/YYYY/MM/DD` under a generated name; nothing is buffered in memory.
