@@ -257,8 +257,12 @@ for c in "${new_commits[@]}"; do
   n=$((n + 1))
   d=$(printf '%s/%04d' "$scan" "$n")
   mkdir -p "$d"
-  git diff-tree -z -r --no-renames --diff-filter=AM --name-only "$c^" "$c" \
-    | xargs -0 -r git archive "$c" -- | tar -x -C "$d"
+  # a commit may only delete files: then there is nothing to extract (an empty
+  # stream would make tar fail)
+  git diff-tree -z -r --no-renames --diff-filter=AM --name-only "$c^" "$c" > "$work/names"
+  if [ -s "$work/names" ]; then
+    xargs -0 git archive "$c" -- < "$work/names" | tar -x -C "$d"
+  fi
   bad_files=$(git ls-tree -r --name-only "$c" \
     | grep -E '(^|/)\.env($|\.[^e])|\.(pem|key|p12|jks|keystore|apk|db|sqlite|sqlite3)$|(^|/)secrets?\.json$' || true)
   [ -z "$bad_files" ] || die "commit $n ($c) tracks files that must not be published:
