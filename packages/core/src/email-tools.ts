@@ -1,7 +1,7 @@
 import fs from 'node:fs'
 import path from 'node:path'
 import type { AgentTool } from '@earendil-works/pi-agent-core'
-import { Type } from '@earendil-works/pi-ai'
+import { Type } from 'typebox'
 import {
   DEFAULT_ATTACHMENT_DOWNLOAD_PATH,
   getEmailAccountDecrypted,

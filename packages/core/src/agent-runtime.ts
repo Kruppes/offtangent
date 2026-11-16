@@ -14,10 +14,10 @@ import nodePath from 'node:path'
 import { Agent as PiAgent } from '@earendil-works/pi-agent-core'
 import type { AgentEvent, AgentMessage, AgentTool } from '@earendil-works/pi-agent-core'
 import type { Api, AssistantMessage, Message, ImageContent, Model, SystemMessage } from '@earendil-works/pi-ai'
-import { Type } from '@earendil-works/pi-ai'
+import { Type } from 'typebox'
 import type { Database } from './database.js'
 import { logTokenUsage, logToolCall } from './token-logger.js'
-import { errorClass, errorTextClass, publicProviderError, withRawError } from './log-safe-error.js'
+import { errorClass, errorTextClass, formatProviderErrorDiagnostic, providerErrorDiagnostic, publicProviderError, withRawError } from './log-safe-error.js'
 import { estimateCost, getApiKeyForProvider, buildModel, buildStreamFn, loadProvidersDecrypted, parseProviderModelId, getProviderDefaultModel, resolvePromptProfileOptions } from './provider-config.js'
 import type { ProviderConfig } from './provider-config.js'
 import type { ProviderManager } from './provider-manager.js'
@@ -41,7 +41,7 @@ import { createSearchMemoriesTool } from './memories-tool.js'
 import { createReadChatHistoryTool } from './chat-history-tools.js'
 import { createRecallMessageTool } from './recall-message-tool.js'
 import { cacheReadRatio } from './cache-stats.js'
-import { sanitizeHistoryBoundaries, describeHistoryStructure } from './message-history.js'
+import { sanitizeHistoryBoundaries, describeHistoryStructure, openWindowOnUser } from './message-history.js'
 import { createEmailTools } from './email-tools.js'
 import { createAskConnectorTool } from './connectors/ask-connector-tool.js'
 import { createProviderQuotaTool } from './quota-tool.js'
@@ -816,6 +816,8 @@ class PiAgentRuntime implements AgentRuntimeBoundary, AgentRuntimePiAgentAccess 
    * by the turn source — never by the model). See {@link refreshAskUserOffer}.
    */
   private askUserOffered = false
+  /** `describeHistoryStructure` of the last context handed to the provider (diagnostics only). */
+  private lastSentStructure: string | null = null
   /** S1-B: a blocking ask_user was filed in the current tool batch (one per turn). */
   private askUserBlockingClaimed = false
   /**
@@ -956,12 +958,25 @@ class PiAgentRuntime implements AgentRuntimeBoundary, AgentRuntimePiAgentAccess 
       // mutation path slipped past — surfaced as console.error with a
       // secret-free structural dump.
       transformContext: async (messages) => {
-        const { messages: cleaned, dropped, drops } = sanitizeHistoryBoundaries(messages)
+        const { messages: bounded, dropped, drops } = sanitizeHistoryBoundaries(messages)
         if (dropped) {
           console.error(
             `[agent-runtime] tool_use/tool_result boundary violation caught before send (agent ${this.agentId}) — dropped ${drops.length} block(s): ${drops.join('; ')} | structure(before)=${describeHistoryStructure(messages)}`,
           )
         }
+        // http_400 incident 2026-11-12: the first non-system message must be
+        // a user message, or pi-ai flushes a deferred tool declaration to
+        // messages[0] and Anthropic rejects the request. The strand trim
+        // already repairs the stored window; this covers every path that
+        // skips it (task injections, retries, restored transcripts). A repair
+        // here means an upstream path slipped past.
+        const opened = openWindowOnUser(bounded)
+        if (opened.repaired) {
+          console.error(
+            `[agent-runtime] window opened on a non-user message, window opener inserted before send (agent ${this.agentId}) | structure(before)=${describeHistoryStructure(bounded)}`,
+          )
+        }
+        const cleaned = opened.messages
         // S1-D (REVIEW-S1-D-2, finding 2): the steer is only ARMED here, on
         // the sanitized outgoing context. It counts as delivered once the
         // provider stream of this request emits its first event
@@ -989,6 +1004,10 @@ class PiAgentRuntime implements AgentRuntimeBoundary, AgentRuntimePiAgentAccess 
         if (cleaned.some(m => (m as { role?: string; toolName?: unknown }).role === 'toolResult' && typeof (m as { toolName?: unknown }).toolName === 'string' && ((m as { toolName: string }).toolName).startsWith('mcp_'))) {
           gated = withholdLocalOnlyMcpOutput(cleaned, targetLocal)
         }
+        // http_400 incident 2026-11-12: remember the structure of the window
+        // that leaves the process, so a provider rejection can be logged and
+        // persisted with it (secret-free: roles, block types, ids, counts).
+        this.lastSentStructure = describeHistoryStructure(gated)
         try {
           const outgoing = redactMessages(gated)
           this.recordManifest(outgoing)
@@ -2084,7 +2103,17 @@ class PiAgentRuntime implements AgentRuntimeBoundary, AgentRuntimePiAgentAccess 
             // Review 2 / B: the MCP privacy gate's own fixed sentence (no remote
             // text) is shown as is, so the user learns why nothing was sent.
             const publicError = errText === MCP_PRIVATE_CONTEXT_ERROR ? MCP_PRIVATE_CONTEXT_ERROR : publicProviderError(errText)
-            chunks.push(withRawError<ResponseChunk>({ type: 'error', error: publicError, text: `Modellfehler: ${publicError}` }, errText))
+            // http_400 incident 2026-11-12: a 4xx rejection gets a secret-free
+            // structural record (status, provider error type, path, fixed
+            // phrases, hash, sent window) in the log and on the error chunk,
+            // which the runner persists with the turn_error row.
+            const diagnostic = providerErrorDiagnostic(errText)
+            if (diagnostic) {
+              const window = this.lastSentStructure
+              if (typeof window === 'string') diagnostic.window = window
+              console.error(`[agent-runtime] Provider rejected the request (session ${sessionId}): ${formatProviderErrorDiagnostic(diagnostic)}`)
+            }
+            chunks.push(withRawError<ResponseChunk>({ type: 'error', error: publicError, text: `Modellfehler: ${publicError}`, ...(diagnostic ? { diagnostic } : {}) }, errText))
           }
         }
         break

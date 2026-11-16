@@ -174,9 +174,9 @@ describe('guard: learned window, one retry, fail-fast', () => {
     expect(r2.errorMessage).toContain('Request not sent')
   })
 
-  it('gray zone (only chars/3 over, chars/4 under) is sent; the provider decides', async () => {
+  it('gray zone (only chars/3 over, SDK chars/3.5 under) is sent; the provider decides', async () => {
     learnContextLimit(oaModel(), 9000, 'synthetic')
-    await run(oaModel(), ctx(30000))   // chars/3 ≈ 10000+, chars/4 ≈ 7500+
+    await run(oaModel(), ctx(30000))   // chars/3 ≈ 10000+, SDK chars/3.5 ≈ 8600+ (chars/4 before pi-ai 1.5)
     expect(received).toHaveLength(1)
   })
 

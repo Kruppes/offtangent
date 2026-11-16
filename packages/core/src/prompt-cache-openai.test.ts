@@ -226,7 +226,10 @@ describe('real pi-ai request shape with the forwarded session id', () => {
     expect(captured[0]!.body.prompt_cache_key).toBeUndefined()
   })
 
-  it('openai-responses: prompt_cache_key and session_id header carry the session id, no retention field', async () => {
+  // pi-ai 1.5.2 (earendil-works/pi#11639, mirrors openai/codex#21757 + #22193):
+  // the plain Responses path sends the hyphenated `session-id` affinity header
+  // like the Codex path, and no longer the proxy-incompatible `session_id`.
+  it('openai-responses: prompt_cache_key and session-id header carry the session id, no retention field', async () => {
     const captured: Captured[] = []
     const model = {
       id: 'gpt-test', name: 'test', api: 'openai-responses', provider: 'openai',
@@ -242,7 +245,9 @@ describe('real pi-ai request shape with the forwarded session id', () => {
     await drain(stream as AsyncIterable<unknown>)
 
     expect(captured.length).toBeGreaterThanOrEqual(1)
-    expect(captured[0]!.headers.get('session_id')).toBe(SESSION)
+    expect(captured[0]!.headers.get('session-id')).toBe(SESSION)
+    expect(captured[0]!.headers.get('session_id')).toBeNull()
+    expect(captured[0]!.headers.get('x-client-request-id')).toBe(SESSION)
     expect(captured[0]!.body.prompt_cache_key).toBe(SESSION)
     expect(captured[0]!.body.prompt_cache_retention).toBeUndefined()
   })

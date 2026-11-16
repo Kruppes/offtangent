@@ -21,7 +21,7 @@
  * text in total, so paging through a long PDF cannot fill the local model's
  * context and block the shared runner.
  */
-import { Type } from '@earendil-works/pi-ai'
+import { Type } from 'typebox'
 import type { AgentTool } from '@earendil-works/pi-agent-core'
 import {
   ATTACHMENT_CALL_TOKENS,

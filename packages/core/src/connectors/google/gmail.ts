@@ -8,7 +8,7 @@
  * name, type and size only, so a tool result can never grow to a megabyte of
  * base64 and no file leaves the mailbox.
  */
-import { Type } from '@earendil-works/pi-ai'
+import { Type } from 'typebox'
 import type { AgentTool } from '@earendil-works/pi-agent-core'
 import { htmlToText } from '../../email-client.js'
 import type { ConnectorToolContext } from '../types.js'

@@ -1,7 +1,7 @@
 import { resolveContextScope, contextFactPredicate, type ContextScope } from './context-scope.js'
 import { getCurrentTaskExecutionContext } from './task-execution-context.js'
 import type { AgentTool } from '@earendil-works/pi-agent-core'
-import { Type } from '@earendil-works/pi-ai'
+import { Type } from 'typebox'
 import type { Database } from './database.js'
 import { searchMemories, getMemoryById } from './memories-store.js'
 import type { MemoryFact } from './memories-store.js'

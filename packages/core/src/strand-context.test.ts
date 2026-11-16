@@ -15,9 +15,11 @@ import {
   buildStrandContextBlock,
   assembleStrandContext,
   stripStrandContextFromLastUserMessage,
+  strandTrimLogLine,
   STRAND_CONTEXT_OPEN,
   STRAND_CONTEXT_CLOSE,
 } from './strand-context.js'
+import { isWindowOpener } from './message-history.js'
 
 function user(text: string): AgentMessage {
   return { role: 'user', content: [{ type: 'text', text }], timestamp: Date.now() } as unknown as AgentMessage
@@ -77,6 +79,89 @@ describe('trimMessagesToBudget', () => {
     const roles = r.messages.map(m => (m as { role: string }).role)
     expect(roles).not.toContain('toolResult')
     expect(roles[roles.length - 1]).toBe('assistant')
+  })
+
+  it('re-opens a window cut inside one long tool turn with the user message of that turn (http_400 2026-11-12)', () => {
+    // Shape of the in-memory transcript after a blocking ask_user: pinned
+    // system prompt, a deferred tool declaration (system message with
+    // toolsAdded), ONE user message, then a long tool chain. Without the
+    // opener, pi-ai flushed the ask_user declaration as messages[0] and
+    // Anthropic answered 400 on every following turn.
+    const system = { role: 'system', content: 'You are the persona.', timestamp: 0 } as unknown as AgentMessage
+    const deferred = { role: 'system', content: [], toolsAdded: [{ name: 'ask_user' }], timestamp: 0 } as unknown as AgentMessage
+    const opener = user('Bitte untersuche das gründlich.')
+    const msgs: AgentMessage[] = [system, deferred, opener]
+    for (let i = 0; i < 6; i++) msgs.push(assistant('step', `tc${i}`), toolResult(`tc${i}`, 'r'.repeat(800)))
+    msgs.push(assistant('ask', 'tc_ask'))
+    const r = trimMessagesToBudget(msgs, 500, { reopenWithTurnUser: true })
+    expect(r.droppedCount).toBeGreaterThan(0)
+    const roles = r.messages.map(m => (m as { role: string }).role)
+    expect(roles.slice(0, 3)).toEqual(['system', 'system', 'user'])
+    // Review B1: a bounded opener carrying a text excerpt, never the original message object.
+    expect(isWindowOpener(r.messages[2])).toBe(true)
+    expect(JSON.stringify(r.messages[2])).toContain('Bitte untersuche das gründlich.')
+    // The first non-system message is the user message, and no tool result lost its call.
+    expect(roles.find(role => role !== 'system')).toBe('user')
+    expect(roles[3]).toBe('assistant')
+    // startIndex still points at the budget cut (the task compactor uses only it).
+    expect(r.startIndex).toBeGreaterThan(3)
+  })
+
+  it('keeps the old cut without the option (task compactor path)', () => {
+    const msgs: AgentMessage[] = [user('start')]
+    for (let i = 0; i < 6; i++) msgs.push(assistant('step', `tc${i}`), toolResult(`tc${i}`, 'r'.repeat(800)))
+    const r = trimMessagesToBudget(msgs, 500)
+    expect((r.messages[0] as { role: string }).role).not.toBe('user')
+  })
+
+  it('opens a cut window with a placeholder user message when no earlier user message is in memory', () => {
+    const msgs = [assistant('a'.repeat(400)), assistant('b'.repeat(400)), assistant('c'.repeat(400))]
+    const r = trimMessagesToBudget(msgs, 150, { reopenWithTurnUser: true })
+    expect(r.messages.map(m => (m as { role: string }).role)).toEqual(['user', 'assistant'])
+    expect(isWindowOpener(r.messages[0])).toBe(true)
+    expect(r.droppedCount).toBe(2)
+    expect(r.repaired).toBe(true)
+  })
+
+  it('self-heals a wedged window under budget: assistant first after the system messages (http_400 2026-11-12)', () => {
+    // The window a strand stored with the old trim: pinned prompt, deferred
+    // ask_user declaration, then the middle of the tool chain. It fits the
+    // budget, so nothing is dropped, and it used to be re-sent unchanged.
+    const system = { role: 'system', content: 'You are the persona.', timestamp: 0 } as unknown as AgentMessage
+    const deferred = { role: 'system', content: [], toolsAdded: [{ name: 'ask_user' }], timestamp: 0 } as unknown as AgentMessage
+    const wedged: AgentMessage[] = [
+      system, deferred,
+      assistant('step', 'tc1'), toolResult('tc1', 'r'),
+      assistant('ask', 'tc_ask'), toolResult('tc_ask', 'Antwort des Nutzers'),
+      assistant('done'), user('weiter'),
+    ]
+    const r = trimMessagesToBudget(wedged, 100_000, { reopenWithTurnUser: true })
+    expect(r.droppedCount).toBe(0)
+    expect(r.repaired).toBe(true)
+    const roles = r.messages.map(m => (m as { role: string }).role)
+    expect(roles).toEqual(['system', 'system', 'user', 'assistant', 'toolResult', 'assistant', 'toolResult', 'assistant', 'user'])
+    expect(r.messages[0]).toBe(system)
+    expect(r.messages[1]).toBe(deferred)
+    expect(isWindowOpener(r.messages[2])).toBe(true)
+    // Every original message survives, the tool chain (with the ask_user answer) included.
+    expect(r.messages.slice(3)).toEqual(wedged.slice(2))
+    // The synthetic opener is not a user turn (strand_context retrieval split).
+    expect(countUserTurns(r.messages)).toBe(1)
+  })
+
+  it('leaves a healthy window under budget untouched (no repair flag)', () => {
+    const msgs = [user('a'), assistant('b', 'tc'), toolResult('tc', 'c')]
+    const r = trimMessagesToBudget(msgs, 100_000, { reopenWithTurnUser: true })
+    expect(r.repaired).toBeUndefined()
+    expect(r.droppedCount).toBe(0)
+    expect(r.messages).toEqual(msgs)
+  })
+
+  it('does not repair a wedged window without the option (task compactor adds its own digest opener)', () => {
+    const wedged = [assistant('step', 'tc1'), toolResult('tc1', 'r'), user('weiter')]
+    const r = trimMessagesToBudget(wedged, 100_000)
+    expect(r.repaired).toBeUndefined()
+    expect(r.messages).toEqual(wedged)
   })
 
   it('estimates tokens over text blocks', () => {
@@ -275,5 +360,24 @@ describe('stripStrandContextFromLastUserMessage', () => {
     const msg = { role: 'user', content: `${STRAND_CONTEXT_OPEN}\nx\n${STRAND_CONTEXT_CLOSE}\nq`, timestamp: 1 } as unknown as AgentMessage
     const out = stripStrandContextFromLastUserMessage([msg])!
     expect((out[0] as { content: string }).content).toBe('q')
+  })
+})
+
+describe('strand trim log line (review J2)', () => {
+  it('reports a window above its budget even when nothing was dropped or repaired', () => {
+    const big = { role: 'user', content: 'x'.repeat(8000), timestamp: 1 } as unknown as AgentMessage
+    const trimmed = trimMessagesToBudget([big], 1000, { reopenWithTurnUser: true })
+    expect(trimmed.droppedCount).toBe(0)
+    expect(trimmed.repaired).toBeUndefined()
+    expect(trimmed.overBudget).toBe(true)
+    const line = strandTrimLogLine(trimmed, 's1', 1000)
+    expect(line).toContain('OVER BUDGET')
+    expect(line).toContain('2000 tokens kept, budget 1000')
+  })
+
+  it('stays silent for a window within budget that needed nothing, and keeps the old line otherwise', () => {
+    expect(strandTrimLogLine({ messages: [], droppedCount: 0, keptTokens: 10, startIndex: 0 }, 's1', 1000)).toBeNull()
+    expect(strandTrimLogLine({ messages: [], droppedCount: 3, keptTokens: 900, startIndex: 3, repaired: true }, 's1', 1000))
+      .toBe('[strand] Trimmed 3 messages from the window of session s1 (900 tokens kept, budget 1000, re-opened on a user message)')
   })
 })

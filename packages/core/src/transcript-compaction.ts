@@ -30,7 +30,7 @@
 import type { AgentMessage } from '@earendil-works/pi-agent-core'
 import { estimateContextTokens, estimateMessageTokens, leadingSystemMessage, trimMessagesToBudget } from './strand-context.js'
 import { formatMessageDigest, RECALLED_MARKER } from './message-digest.js'
-import { sanitizeHistoryBoundaries } from './message-history.js'
+import { describeHistoryStructure, openWindowOnUser, sanitizeHistoryBoundaries } from './message-history.js'
 
 export interface TranscriptTrimEvent {
   /** Messages hidden from the model view after this trim, in total. */
@@ -186,10 +186,18 @@ export class TranscriptCompactor {
     // declarations) is pinned in front of whatever the window shows. The cut
     // position, the digest and the budget all refer to the body behind it.
     const head = leadingSystemMessage(messages)
-    if (head) {
-      return [head, ...this.compactBody(messages.slice(1), estimateMessageTokens(head, 'replay'))]
+    const view = head
+      ? [head, ...this.compactBody(messages.slice(1), estimateMessageTokens(head, 'replay'))]
+      : this.compactBody(messages)
+    // http_400 incident 2026-11-12: a view whose first non-system message is
+    // not a user message lets pi-ai flush a deferred tool declaration to
+    // messages[0], which Anthropic rejects. The digest opener normally rules
+    // this out; this is the net for transcripts that arrive already broken.
+    const opened = openWindowOnUser(view)
+    if (opened.repaired) {
+      console.error(`[transcript-compaction] view opened on a non-user message, window opener inserted | structure(before)=${describeHistoryStructure(view)}`)
     }
-    return this.compactBody(messages)
+    return opened.messages
   }
 
   private compactBody(messages: readonly AgentMessage[], pinnedTokens = 0): AgentMessage[] {

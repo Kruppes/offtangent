@@ -108,6 +108,20 @@ describe('tool_use/tool_result boundary invariant — runtime integration', () =
     expect(sent).toEqual(valid)
   })
 
+  it('opens a window that starts on an assistant message with a user message before send (http_400 2026-11-12)', async () => {
+    const agentCore = new AgentCore({ model: makeModel(), apiKey: 'sk', db, tools: [] })
+    const transform = getTransformContext(agentCore)
+    const system = { role: 'system', content: 'prompt', timestamp: 1 } as unknown as AgentMessage
+    const deferred = { role: 'system', content: '', toolsAdded: [{ name: 'ask_user', description: 'ask', parameters: {} }], timestamp: 1 } as unknown as AgentMessage
+    // The wedged window: a turn that skips the strand trim (task injection,
+    // restored transcript) must still never send an assistant message first.
+    const wedged: AgentMessage[] = [system, deferred, assistantWithCall('toolu_1'), toolResult('toolu_1'), user('weiter')]
+    const sent = await transform(wedged)
+    const roles = sent.map(m => (m as { role: string }).role)
+    expect(roles).toEqual(['system', 'system', 'user', 'assistant', 'toolResult', 'user'])
+    expect(JSON.stringify(sent[2])).toContain('[window_opener]')
+  })
+
   it('post-turn: clearMessages repairs nothing on empty and keeps snapshot count sane', () => {
     // Sanity: injecting an orphan into state.messages and running the runtime's
     // own snapshot path reflects the raw count; the transformContext net (not

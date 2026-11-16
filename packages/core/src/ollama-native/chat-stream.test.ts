@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest'
-import { normalizeContext, Type } from '@earendil-works/pi-ai'
+import { normalizeContext } from '@earendil-works/pi-ai'
+import { Type } from 'typebox'
 import type { AssistantMessageEvent, Context, Model, Tool } from '@earendil-works/pi-ai'
 import { buildOllamaChatBody, buildOllamaHeaders, OLLAMA_CHAT_API, resolveThink, streamOllamaChat } from './chat-stream.js'
 

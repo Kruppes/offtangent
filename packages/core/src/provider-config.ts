@@ -44,14 +44,15 @@ import type { PromptCacheSettings } from './prompt-cache.js'
  * Claude Code CLI version to advertise in the user-agent header for Anthropic
  * requests. This ensures Anthropic treats requests as coming from a Claude Code
  * client; the API rejects too-old versions with HTTP 400
- * `claude_code_version_too_old` (e.g. `claude-fable-5-1` requires >= 2.1.251).
+ * `claude_code_version_too_old` (e.g. `claude-fable-5-1` requires >= 2.1.251,
+ * `claude-fable-5-2` requires >= 2.1.290).
  *
  * MUST stay in sync with pi-ai's `dist/api/anthropic-messages.js`
  * `claudeCodeVersion` — pi-ai does not export the value, so we duplicate it
  * here and guard the duplication with a drift test
  * (provider-config.claude-version.test.ts). Re-check on every pi-ai bump.
  */
-export const CLAUDE_CODE_VERSION = '2.1.280'
+export const CLAUDE_CODE_VERSION = '2.1.322'
 
 /**
  * Supported provider types with presets
@@ -554,8 +555,11 @@ const ANTHROPIC_MODEL_OVERRIDES: ProviderModelConfig[] = [
   // Opus 5.5: `thinking: { type: "disabled" }` is rejected (hence `off`/`minimal`
   // map to null, i.e. no thinking field at all) and the `temperature` field is
   // rejected outright, so the request must be built without it.
+  // cacheRead follows the pi-ai catalog: 1.0.0 shipped 0.20, 1.5.2 ships 0.10
+  // for claude-sonnet-5-5 (claude-sonnet-5 stays 0.20). The override mirrors
+  // the catalog so cost accounting does not diverge from pi-ai.
   { id: 'claude-sonnet-5-5', name: 'Claude Sonnet 5.5', contextWindow: 1_000_000, maxTokens: 128_000, reasoning: true,
-    cost: { input: 2, output: 10, cacheRead: 0.20, cacheWrite: 2.50 },
+    cost: { input: 2, output: 10, cacheRead: 0.10, cacheWrite: 2.50 },
     thinkingLevelMap: { off: null, minimal: null, low: 'low', medium: 'medium', high: 'high', xhigh: 'xhigh', max: 'max' },
     compat: { forceAdaptiveThinking: true, supportsTemperature: false, supportsStrictTools: true } },
 ]
@@ -587,6 +591,20 @@ const OPENAI_MODEL_OVERRIDES: ProviderModelConfig[] = [
   { ...GPT_6_1_SOL_BASE,
     thinkingLevelMap: { off: null, minimal: null, low: 'low', medium: 'medium', high: 'high', xhigh: 'xhigh', max: 'max' } },
 ]
+
+/**
+ * Catalog context windows Offtangent deliberately keeps below a later pi-ai
+ * catalog value. Applied on the catalog path of buildModel (OAuth / catalog
+ * presets), which otherwise takes the pi-ai number verbatim.
+ *
+ * pi-ai 1.5.x raised `openai-codex/gpt-6.1-sol` from 272k to 500k (the
+ * `openai` api-key entry stays at 272k). Offtangent keeps 272k (compaction,
+ * overflow guard and the 272k long-context price tier line up there) until a
+ * reviewed change adopts the larger window.
+ */
+const CATALOG_CONTEXT_WINDOW_PINS: Partial<Record<ProviderType, Record<string, number>>> = {
+  'openai-codex': { 'gpt-6.1-sol': 272_000 },
+}
 
 /** ChatGPT subscription (Codex Responses API), pi-ai's `openai-codex` entry. */
 const OPENAI_CODEX_MODEL_OVERRIDES: ProviderModelConfig[] = [
@@ -3003,6 +3021,48 @@ function copilotBaseUrlFromToken(token: string): string | undefined {
 }
 
 /**
+ * Kimi coding plan wire, pinned to what the pi-ai 1.0.0 catalog shipped.
+ *
+ * pi-ai 1.5.0 moved the whole `kimi-coding` catalog from Anthropic Messages
+ * (`https://api.kimi.com/coding`) to OpenAI Chat Completions
+ * (`https://api.kimi.com/coding/v1`, Kimi-specific `reasoning_effort` /
+ * `reasoning_content` compat). Offtangent keeps the Anthropic Messages wire
+ * the presets (`apiType`), the region switch (China / international base
+ * without `/v1`), API-key auth (`x-api-key`) and the OAuth Bearer rewrite
+ * (`withBearerAuth`) are built for; a protocol migration is a separate,
+ * reviewed change and not part of the dependency bump.
+ *
+ * Per known model the 1.0.0 compat flags and thinking map are restored
+ * exactly (the 1.5.2 entries only carry OpenAI-completions compat). Models
+ * the catalog added later (e.g. `k3.1-pro`) get the common 1.0.0 baseline
+ * (`forceAdaptiveThinking`) and keep their catalog thinking map.
+ */
+const KIMI_CODING_ANTHROPIC_WIRE_API = 'anthropic-messages'
+const KIMI_CODING_THINKING_MAP_V1: NonNullable<Model<Api>['thinkingLevelMap']> = {
+  off: null, minimal: null, low: 'low', medium: null, high: 'high', xhigh: null, max: 'max',
+}
+const KIMI_CODING_ANTHROPIC_WIRE: Record<string, { compat: Record<string, unknown>; thinkingLevelMap?: Model<Api>['thinkingLevelMap'] }> = {
+  'k3': { compat: { allowEmptySignature: true, forceAdaptiveThinking: true }, thinkingLevelMap: KIMI_CODING_THINKING_MAP_V1 },
+  'k3-256k': { compat: { forceAdaptiveThinking: true }, thinkingLevelMap: KIMI_CODING_THINKING_MAP_V1 },
+  'kimi-for-coding': { compat: { allowEmptySignature: true, forceAdaptiveThinking: true }, thinkingLevelMap: KIMI_CODING_THINKING_MAP_V1 },
+  // 1.0.0 had no thinking map for HighSpeed (pi-ai default mapping applies).
+  'kimi-for-coding-highspeed': { compat: { forceAdaptiveThinking: true } },
+}
+
+/** Re-pin a `kimi-coding` catalog model to the Anthropic Messages wire. */
+function pinKimiCodingAnthropicWire(model: Model<Api>): Model<Api> {
+  const known = KIMI_CODING_ANTHROPIC_WIRE[model.id]
+  const { thinkingLevelMap: catalogThinkingMap, compat: _openAiCompat, ...rest } = model
+  const thinkingLevelMap = known ? known.thinkingLevelMap : catalogThinkingMap
+  return {
+    ...rest,
+    api: KIMI_CODING_ANTHROPIC_WIRE_API as Api,
+    compat: (known?.compat ?? { forceAdaptiveThinking: true }) as Model<Api>['compat'],
+    ...(thinkingLevelMap && { thinkingLevelMap }),
+  } as Model<Api>
+}
+
+/**
  * Catalog model whose wire contract (api, compat flags, image limits) a
  * live-discovered model of the same plan inherits. K3 carries the flags the
  * Kimi coding endpoint needs (adaptive thinking, empty signatures).
@@ -3044,6 +3104,10 @@ function buildModelFromSources(provider: ProviderConfig, modelId?: string): Mode
       // `let` (not const): the resolvedAuth.baseUrl override below reassigns it.
       let piModel = models.find(m => m.id === id)
 
+      if (piModel && preset.piAiProvider === 'kimi-coding') {
+        piModel = pinKimiCodingAnthropicWire(piModel)
+      }
+
       // Live-discovered model (Kimi Code `/coding/v1/models`) without a catalog
       // entry: build it from the live metadata on a catalog wire template.
       // Precedence (deliberately NOT "override beats everything"):
@@ -3059,7 +3123,12 @@ function buildModelFromSources(provider: ProviderConfig, modelId?: string): Mode
       if (!piModel && preset.liveModels && !provider.models?.some(m => m.id === id)) {
         const info = getLiveModelInfo(provider.id, id)
         const template = models.find(m => m.id === LIVE_MODEL_TEMPLATE[preset.liveModels!]) ?? models[0]
-        if (info && template) piModel = buildLiveModel(info, template)
+        // pi-ai >= 1.5 ships the catalog template on the OpenAI Completions
+        // wire; a live model inherits the same pinned Anthropic Messages wire
+        // (api + K3 compat) its catalog siblings get above.
+        if (info && template) {
+          piModel = buildLiveModel(info, preset.piAiProvider === 'kimi-coding' ? pinKimiCodingAnthropicWire(template) : template)
+        }
       }
 
       if (piModel && preset.baseUrlOptions?.length) {
@@ -3113,6 +3182,11 @@ function buildModelFromSources(provider: ProviderConfig, modelId?: string): Mode
             ...(wireOverride.thinkingLevelMap && { thinkingLevelMap: wireOverride.thinkingLevelMap }),
             ...(wireOverride.compat && { compat: wireOverride.compat as Model<Api>['compat'] }),
           }
+        }
+
+        const pinnedContextWindow = CATALOG_CONTEXT_WINDOW_PINS[provider.providerType]?.[id]
+        if (pinnedContextWindow !== undefined) {
+          piModel = { ...piModel, contextWindow: pinnedContextWindow }
         }
 
         // For Anthropic OAuth, inject the Claude Code CLI user-agent header

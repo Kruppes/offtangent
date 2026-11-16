@@ -1,3 +1,4 @@
+import type { ProviderErrorDiagnostic } from './log-safe-error.js'
 /**
  * `recovered` = output came back (for a native first-token wait: the first
  * real token). `aborted` = the watchdog (or the end of the turn) killed it.
@@ -87,6 +88,8 @@ export interface TurnErrorInfo {
   retryable: boolean
   /** ISO timestamp of the moment the turn failed. */
   occurredAt: string
+  /** Secret-free structure of a provider 4xx rejection (http_400 incident 2026-11-12). */
+  diagnostic?: ProviderErrorDiagnostic
 }
 
 export interface ResponseChunk {
@@ -107,6 +110,8 @@ export interface ResponseChunk {
    * (review K0-K2-4 #2).
    */
   rawError?: string
+  /** Secret-free structure of a provider 4xx rejection, set on `error` chunks only. */
+  diagnostic?: ProviderErrorDiagnostic
   /** Session ID associated with this chunk (used by task-injection streaming). */
   sessionId?: string
   /**

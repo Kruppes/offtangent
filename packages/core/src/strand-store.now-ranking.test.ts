@@ -177,6 +177,21 @@ describe('rankStrandsByActivity', () => {
     expect(db.prepare('SELECT count(*) c FROM now_set').get()).toEqual({ c: 1 })
   })
 
+  it('bounds the window on idx_chat_messages_timestamp instead of walking chat_messages via the session index', () => {
+    // Regression guard for the 12.11.2026 event-loop stalls: grouping by the
+    // bare session_id made the planner scan ALL rows through
+    // idx_chat_messages_session (2.49 s / 1311 MB per call on production).
+    const seen: string[] = []
+    const prepare = db.prepare.bind(db)
+    const spy = { prepare: (sql: string) => { seen.push(sql); return prepare(sql) } } as unknown as Database
+    rankStrandsByActivity(spy, '1', { max: 10, now: NOW })
+    expect(seen).toHaveLength(1)
+    const params = [daysAgo(0), daysAgo(NOW_SET_RANKING_WINDOW_DAYS), NOW_SET_RANKING_HALF_LIFE_DAYS, '1', '1', 10]
+    const plan = (db.prepare(`EXPLAIN QUERY PLAN ${seen[0]}`).all(...params) as { detail: string }[]).map(r => r.detail)
+    expect(plan.some(d => d.includes('USING INDEX idx_chat_messages_timestamp (timestamp>?)'))).toBe(true)
+    expect(plan.some(d => d.includes('idx_chat_messages_session'))).toBe(false)
+  })
+
   it('SQLite provides pow(), which the scoring relies on', () => {
     expect(db.prepare('SELECT pow(0.5, 2.0) AS p').get()).toEqual({ p: 0.25 })
   })

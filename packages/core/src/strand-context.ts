@@ -20,7 +20,7 @@ import { parseCapturePartRef, withCapturePartPrefix } from './capture-split.js'
 import { estimateTokens, extractTopicTags } from './session-store.js'
 import { formatMessageDigest, RECALLED_MARKER } from './message-digest.js'
 import type { DigestableMessage } from './message-digest.js'
-import { sanitizeHistoryBoundaries } from './message-history.js'
+import { isWindowOpener, isWireUser, makeWindowOpener, maxWindowOpener, openWindowOnUser, sanitizeHistoryBoundaries } from './message-history.js'
 import { getLatestSessionSummary } from './session-summary-store.js'
 import type { SessionSummary } from './session-summary-schema.js'
 import { loadHeuristics } from './heuristics.js'
@@ -139,6 +139,20 @@ export interface TrimResult {
    * applied to the task loop) need the position, not just the slice.
    */
   startIndex: number
+  /**
+   * True when an opener user message was put in front of the window
+   * (`reopenWithTurnUser` only). The caller must store `messages` even when
+   * nothing was dropped: a window under budget can still be wedged.
+   */
+  repaired?: boolean
+  /**
+   * True when `keptTokens` is above the budget after every fallback (review
+   * G1, J1). Only the newest message, which is never cut, and the opener
+   * without excerpt can cause it: `keptTokens <= max(budget, size(newest)) +
+   * size(makeWindowOpener())`. The caller must never report such a window
+   * as within budget.
+   */
+  overBudget?: boolean
 }
 
 /**
@@ -167,6 +181,29 @@ export interface TrimOptions {
    * message estimates of THIS view (never below the fallback).
    */
   measuredWindowTokens?: number
+  /**
+   * Interactive strand path only (agent.ts): the returned window always
+   * opens on a user message that survives the provider conversion
+   * (`isWireUser`) after its system messages (http_400 2026-11-12). A cut
+   * inside one tool turn, or a wedged window (stored before this fix, under
+   * budget), gets a bounded opener (`makeWindowOpener`, a text excerpt of the
+   * user message that started the turn when it is still in memory) and
+   * `repaired: true`; the opener's size is reserved so the window stays in
+   * budget (review B1). The task compactor keeps its own cut position, reads
+   * only `startIndex` and opens its view with its digest, so it leaves this
+   * off.
+   */
+  reopenWithTurnUser?: boolean
+}
+
+/**
+ * Log line of the interactive strand trim (agent.ts), or null when there is
+ * nothing to report. A window above its budget is always reported, also when
+ * nothing was dropped or repaired (review J2: one oversized user message).
+ */
+export function strandTrimLogLine(trimmed: TrimResult, sessionId: string, budget: number): string | null {
+  if (trimmed.droppedCount === 0 && !trimmed.repaired && !trimmed.overBudget) return null
+  return `[strand] Trimmed ${trimmed.droppedCount} messages from the window of session ${sessionId} (${trimmed.keptTokens} tokens kept, budget ${budget}${trimmed.repaired ? ', re-opened on a user message' : ''}${trimmed.overBudget ? ', OVER BUDGET: the newest message is never cut' : ''})`
 }
 
 export function trimMessagesToBudget(
@@ -184,6 +221,8 @@ export function trimMessagesToBudget(
       droppedCount: body.droppedCount,
       keptTokens: body.keptTokens,
       startIndex: body.startIndex + 1,
+      ...(body.repaired && { repaired: true }),
+      ...(body.overBudget && { overBudget: true }),
     }
   }
   // Allocate the measured window over its messages using their payload sizes.
@@ -195,30 +234,120 @@ export function trimMessagesToBudget(
     ? Math.max(1, measuredWindowTokens / heuristicTokens)
     : 1
   const size = (msg: AgentMessage) => Math.ceil(estimateMessageTokens(msg, estimate) * scale)
-  let tokens = 0
-  let start = messages.length
-  for (let i = messages.length - 1; i >= 0; i--) {
-    const t = size(messages[i])
-    if (tokens + t > budgetTokens && start < messages.length) break
-    tokens += t
-    start = i
+  const walk = (budget: number): number => {
+    let tokens = 0
+    let start = messages.length
+    for (let i = messages.length - 1; i >= 0; i--) {
+      const t = size(messages[i])
+      if (tokens + t > budget && start < messages.length) break
+      tokens += t
+      start = i
+    }
+    return start
   }
-  if (start === 0) return { messages: [...messages], droppedCount: 0, keptTokens: tokens, startIndex: 0 }
+  // Budget rule of the cut (review B1, G1, J1):
+  // 1. A window that needs no opener, or whose repaired window fits, keeps
+  //    exactly the first cut (healthy path, unchanged).
+  // 2. A repaired window above the budget is cut again with room reserved
+  //    for an opener: the opener that was actually built, then the largest
+  //    possible opener (`maxWindowOpener`), each with the opener built for
+  //    that cut; then the opener WITHOUT excerpt (`makeWindowOpener()`, the
+  //    fixed sentence only), reserved and used. A new cut is accepted only if
+  //    it fits the budget AND the newest message of the first cut's window is
+  //    still the last message of the new window. A new cut that splits the
+  //    newest tool call from its result orphans the result,
+  //    `sanitizeHistoryBoundaries` drops it, and the empty or shorter window
+  //    would pass the budget check while losing the newest turn (review J1).
+  // 3. If no new cut is accepted, the first cut stays and the opener without
+  //    excerpt is put first. No message content is ever shortened.
+  // 4. Bound: the first cut holds at most max(budget, size(newest)), because
+  //    the newest message is never cut (`walk`), and the opener adds at most
+  //    the opener without excerpt:
+  //    keptTokens <= max(budget, size(newest)) + size(opener without excerpt).
+  //    Whenever the first cut (the cut production makes) keeps the newest
+  //    message, the result keeps it as its last message.
+  // 5. A window above the budget carries `overBudget: true`, so no caller
+  //    reports it as within budget.
+  const result = settle()
+  return result.keptTokens > budgetTokens ? { ...result, overBudget: true } : result
 
-  // Prefer to open the window on a user message so the model never sees an
-  // assistant turn answering something that is not there.
-  let s = start
-  while (s < messages.length && (messages[s] as { role?: string }).role !== 'user') s++
-  if (s >= messages.length) s = start
+  function settle(): TrimResult {
+    const firstStart = walk(budgetTokens)
+    const first = windowFrom(firstStart)
+    if (!first.repaired || first.keptTokens <= budgetTokens) return first
+    const newest = first.messages[first.messages.length - 1]
+    const built = first.messages.find(m => isWindowOpener(m))
+    const tries: Array<[reserve: number, bareOpener: boolean]> = [
+      [built ? size(built) : 0, false],
+      [size(maxWindowOpener()), false],
+      [size(makeWindowOpener()), true],
+    ]
+    for (const [reserve, bareOpener] of tries) {
+      const next = windowFrom(walk(Math.max(0, budgetTokens - reserve)), bareOpener)
+      if (next.keptTokens <= budgetTokens && next.messages[next.messages.length - 1] === newest) return next
+    }
+    return windowFrom(firstStart, true)
+  }
 
-  const cut = messages.slice(s)
-  const sanitized = sanitizeHistoryBoundaries(cut)
-  const kept = sanitized.messages
-  return {
-    messages: kept,
-    droppedCount: messages.length - kept.length,
-    keptTokens: kept.reduce((n, m) => n + size(m), 0),
-    startIndex: s,
+  function windowFrom(start: number, bareOpener = false): TrimResult {
+    // Self-heal (http_400 2026-11-12): a window that fits the budget is not
+    // cut, but it may already be wedged — stored by an older trim, a failed
+    // turn or any other path with an assistant/tool message (or a blank user
+    // message) first. Repair the shape here as well, independent of whether
+    // anything is dropped.
+    if (start === 0) {
+      if (!options.reopenWithTurnUser) {
+        return { messages: [...messages], droppedCount: 0, keptTokens: messages.reduce((n, m) => n + size(m), 0), startIndex: 0 }
+      }
+      const opened = openWindowOnUser([...messages])
+      return {
+        messages: opened.messages,
+        droppedCount: 0,
+        keptTokens: opened.messages.reduce((n, m) => n + size(m), 0),
+        startIndex: 0,
+        ...(opened.repaired && { repaired: true }),
+      }
+    }
+
+    // Prefer to open the window on a user message so the model never sees an
+    // assistant turn answering something that is not there.
+    let s = start
+    while (s < messages.length && (messages[s] as { role?: string }).role !== 'user') s++
+    if (s >= messages.length) s = start
+
+    let kept = sanitizeHistoryBoundaries(messages.slice(s)).messages
+    let repaired = false
+    // http_400 incident 2026-11-06/10/12: when the kept range holds no user
+    // message at all (one long tool-heavy turn), the window used to open on an
+    // assistant message. pi-ai flushes a later system message (deferred tool
+    // declaration, e.g. `ask_user`) directly before the next assistant message,
+    // so it became `messages[0]` of the Anthropic request, which Anthropic
+    // rejects ("a system message that holds tool blocks cannot be the first
+    // message"), on every following turn. Re-open the window with a bounded
+    // opener that carries a text excerpt of the user message that started the
+    // turn (review B1: never that whole message; an opener left by an earlier
+    // trim is reused as is). The compactor reads only `startIndex` and adds
+    // its own digest opener.
+    if (options.reopenWithTurnUser) {
+      let turnUser: AgentMessage | undefined
+      // Budget rule step 3: no turn user, so the opener is the fixed sentence.
+      for (let j = bareOpener ? -1 : s - 1; j >= 0; j--) {
+        const m = messages[j]
+        if (isWindowOpener(m) || isWireUser(m)) { turnUser = m; break }
+      }
+      const opened = openWindowOnUser(kept, turnUser)
+      kept = opened.messages
+      repaired = opened.repaired
+    }
+
+    const keptOriginals = kept.length - (repaired ? 1 : 0)
+    return {
+      messages: kept,
+      droppedCount: messages.length - keptOriginals,
+      keptTokens: kept.reduce((n, m) => n + size(m), 0),
+      startIndex: s,
+      ...(repaired && { repaired: true }),
+    }
   }
 }
 
@@ -231,7 +360,8 @@ export function leadingSystemMessage(messages: readonly AgentMessage[]): AgentMe
 /** Number of user turns in an in memory transcript. */
 export function countUserTurns(messages: readonly AgentMessage[]): number {
   let n = 0
-  for (const m of messages) if ((m as { role?: string }).role === 'user') n++
+  // The synthetic window opener is not a turn of the user (http_400 fix).
+  for (const m of messages) if ((m as { role?: string }).role === 'user' && !isWindowOpener(m)) n++
   return n
 }
 

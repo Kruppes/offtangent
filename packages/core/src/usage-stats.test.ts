@@ -90,6 +90,23 @@ describe('usage-stats', () => {
     expect(result.availableModels).toEqual(['custom-model', 'gpt-4o'])
   })
 
+  it('skips the DISTINCT lists when includeAvailable is false and keeps the sums', () => {
+    const testDb = setup()
+    testDb.prepare('INSERT INTO token_usage (timestamp, provider, model, prompt_tokens, completion_tokens, estimated_cost) VALUES (?, ?, ?, ?, ?, ?)')
+      .run(createTimestamp(new Date('2026-03-20T10:00:00Z')), 'openai', 'gpt-4o', 1000, 500, 0.5)
+    const options = { groupBy: ['provider'] as const, dateFrom: '2026-03-20T00:00:00.000Z', dateTo: '2026-03-21T00:00:00.000Z' }
+    const seen: string[] = []
+    const prepare = testDb.prepare.bind(testDb)
+    const spy = { prepare: (sql: string) => { seen.push(sql); return prepare(sql) } } as unknown as Database
+    const full = queryUsageStats(testDb, { ...options, groupBy: [...options.groupBy] })
+    const lean = queryUsageStats(spy, { ...options, groupBy: [...options.groupBy], includeAvailable: false })
+    expect(seen).toHaveLength(2)
+    expect(lean.rows).toEqual(full.rows)
+    expect(lean.totals).toEqual(full.totals)
+    expect(lean.availableProviders).toEqual([])
+    expect(lean.availableModels).toEqual([])
+  })
+
   it('aggregates usage by day and hour with provider/model filters', () => {
     const testDb = setup()
 
@@ -190,5 +207,40 @@ describe('usage-stats', () => {
     expect(summary.allTime.totalTokens).toBe(15000)
     expect(summary.today.estimatedCost).toBeCloseTo(0.0075, 6)
     expect(summary.month.estimatedCost).toBeCloseTo(0.0159, 6)
+  })
+
+  it('bounds dated aggregates on idx_token_usage_timestamp and keeps the exact datetime() result', () => {
+    // Regression guard for the 12.11.2026 event-loop stalls: the bare
+    // `datetime(timestamp)` bounds made every dated aggregate scan all of
+    // token_usage (MQTT metrics, every 60 s).
+    const testDb = setup()
+    const insert = testDb.prepare('INSERT INTO token_usage (timestamp, provider, model, prompt_tokens, completion_tokens, estimated_cost) VALUES (?, ?, ?, ?, ?, 0)')
+    const stamps = [
+      '2026-03-19 23:59:59', '2026-03-20 00:00:00', '2026-03-20T00:00:00.000Z', '2026-03-20T01:30:00+02:00',
+      '2026-03-21 23:59:59', '2026-03-21T23:59:59.999Z', '2026-03-21T20:00:00-05:00', '2026-03-22 00:00:00',
+      // offsets that move a row across the calendar date of its text into the window
+      '2026-03-19T23:00:00-02:00', '2026-03-22T01:00:00+02:00', '2026-03-18T23:00:00-02:00',
+    ]
+    stamps.forEach((stamp, i) => insert.run(stamp, 'openai', 'gpt-4o', 1 << i, 0))
+    const dateFrom = '2026-03-20T00:00:00.000Z'
+    const dateTo = '2026-03-21T23:59:59.999Z'
+    const legacy = testDb.prepare('SELECT COALESCE(SUM(prompt_tokens), 0) AS t FROM token_usage WHERE datetime(timestamp) >= datetime(?) AND datetime(timestamp) <= datetime(?)')
+      .get(dateFrom, dateTo) as { t: number }
+    const seen: string[] = []
+    const prepare = testDb.prepare.bind(testDb)
+    const spy = { prepare: (sql: string) => { seen.push(sql); return prepare(sql) } } as unknown as Database
+
+    const result = queryUsageStats(spy, { groupBy: ['provider'], dateFrom, dateTo })
+
+    // Exactly the rows of the former predicate (bit mask of the matched rows).
+    expect(result.totals.promptTokens).toBe(legacy.t)
+    expect(result.rows[0]?.promptTokens).toBe(legacy.t)
+    expect(legacy.t.toString(2)).toBe('1100110110')
+    for (const sql of seen) {
+      const plan = (testDb.prepare(`EXPLAIN QUERY PLAN ${sql}`).all(dateFrom, dateFrom, dateTo, dateTo) as { detail: string }[]).map(r => r.detail)
+      expect(plan.some(d => /USING (COVERING )?INDEX idx_token_usage_timestamp \(timestamp>\? AND timestamp<\?\)/.test(d))).toBe(true)
+      expect(plan.some(d => /^SCAN token_usage/.test(d))).toBe(false)
+    }
+    expect(seen).toHaveLength(4)
   })
 })

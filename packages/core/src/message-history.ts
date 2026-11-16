@@ -194,29 +194,196 @@ export function sanitizeHistoryBoundaries(messages: readonly AgentMessage[]): Sa
   return { messages: result, dropped: drops.length > 0, drops }
 }
 
+/** Upper bound of a structure string in logs and `turn_error` metadata (review F3). */
+export const MAX_STRUCTURE_CHARS = 1500
+
 /**
- * Structural, secret-free summary of a message history for diagnostic logging.
- * Emits only roles, block types and tool ids — never any content text.
+ * Structural summary of a message history for diagnostic logging. Emits only
+ * roles, block types, stop reasons and tool-call ordinals — never content
+ * text and never a provider tool-call id (review F3: ids are model output and
+ * may echo anything). Each distinct id becomes `#n` in order of first
+ * appearance, so call/result pairs stay visible. The string is capped at
+ * `MAX_STRUCTURE_CHARS`: the newest messages are kept, the oldest are folded
+ * into a count.
  *
- * Example: `user | assistant[text,toolCall:toolu_1] | toolResult:toolu_1 | assistant[text]`
+ * Example: `user | assistant[text,toolCall#1] | toolResult#1 | assistant[text]`
  */
 export function describeHistoryStructure(messages: readonly AgentMessage[]): string {
-  return messages
-    .map(msg => {
-      const role = (msg as { role?: string }).role ?? 'unknown'
-      if (role === 'assistant' && Array.isArray((msg as AssistantMessage).content)) {
-        const blocks = (msg as AssistantMessage).content.map(block => {
-          const type = (block as { type?: string }).type ?? '?'
-          if (type === 'toolCall') return `toolCall:${(block as ToolCall).id}`
-          return type
-        })
-        const stop = (msg as AssistantMessage).stopReason
-        return `assistant[${blocks.join(',')}]${stop ? `(${stop})` : ''}`
-      }
-      if (role === 'toolResult') {
-        return `toolResult:${(msg as ToolResultMessage).toolCallId}`
-      }
-      return role
-    })
-    .join(' | ')
+  const ordinals = new Map<string, number>()
+  const ref = (id: unknown): string => {
+    if (typeof id !== 'string' || id.length === 0) return '#none'
+    let n = ordinals.get(id)
+    if (n === undefined) { n = ordinals.size + 1; ordinals.set(id, n) }
+    return `#${n}`
+  }
+  const safeWord = (s: unknown, fallback: string): string =>
+    typeof s === 'string' && /^[A-Za-z_]{1,24}$/.test(s) ? s : fallback
+  const parts = messages.map(msg => {
+    const role = safeWord((msg as { role?: string }).role, 'unknown')
+    if (role === 'assistant' && Array.isArray((msg as AssistantMessage).content)) {
+      const blocks = (msg as AssistantMessage).content.map(block => {
+        const type = safeWord((block as { type?: string }).type, '?')
+        if (type === 'toolCall') return `toolCall${ref((block as ToolCall).id)}`
+        return type
+      })
+      const stop = (msg as AssistantMessage).stopReason
+      return `assistant[${blocks.join(',')}]${stop ? `(${safeWord(stop, '?')})` : ''}`
+    }
+    if (role === 'toolResult') {
+      return `toolResult${ref((msg as ToolResultMessage).toolCallId)}`
+    }
+    if (role === 'user') {
+      if (isWindowOpener(msg)) return 'user(opener)'
+      return isWireUser(msg) ? 'user' : 'user(blank)'
+    }
+    if (role === 'system') {
+      // A mid-conversation system message that adds or removes tools becomes
+      // its own wire message on Anthropic; where it lands matters (http_400
+      // incident 2026-11-12). Counts only, no names or text.
+      const sys = msg as { toolsAdded?: unknown[]; toolsRemoved?: unknown[] }
+      const added = Array.isArray(sys.toolsAdded) ? sys.toolsAdded.length : 0
+      const removed = Array.isArray(sys.toolsRemoved) ? sys.toolsRemoved.length : 0
+      return added || removed ? `system[tools+${added}-${removed}]` : 'system'
+    }
+    return role
+  })
+  const full = parts.join(' | ')
+  if (full.length <= MAX_STRUCTURE_CHARS) return full
+  // Keep the newest messages (where the boundary problems live).
+  const tail: string[] = []
+  let used = 0
+  for (let i = parts.length - 1; i >= 0; i--) {
+    const p = parts[i].length > 200 ? `${parts[i].slice(0, 200)}…` : parts[i]
+    if (used + p.length + 3 > MAX_STRUCTURE_CHARS - 40) break
+    tail.unshift(p)
+    used += p.length + 3
+  }
+  return `…(${parts.length - tail.length} older messages) | ${tail.join(' | ')}`
+}
+
+/**
+ * True when the provider conversion keeps this user message on the wire.
+ * pi-ai 1.5.2 (`anthropic-messages.js` convertMessages) drops a user message
+ * whose string content is blank, and drops blank text blocks; a user message
+ * left with no block is dropped entirely (an empty content array as well).
+ * A window that "opens on a user
+ * message" only counts when that message survives (review B2).
+ */
+export function isWireUser(msg: AgentMessage | undefined): boolean {
+  const m = msg as { role?: string; content?: unknown } | undefined
+  if (!m || m.role !== 'user') return false
+  if (typeof m.content === 'string') return m.content.trim().length > 0
+  // Only shapes the conversion is known to drop count as missing. Any other
+  // content shape keeps the pre-fix behaviour (counts as a user message), so
+  // the repair never fabricates an opener for a shape it does not understand.
+  if (!Array.isArray(m.content)) return true
+  return m.content.some(block => {
+    if (!block || typeof block !== 'object') return false
+    const b = block as { type?: unknown; text?: unknown }
+    if (b.type === 'text') return typeof b.text === 'string' && b.text.trim().length > 0
+    return true // image and other non-text blocks are kept by the conversion
+  })
+}
+
+/**
+ * Fixed head of every fabricated window opener (http_400 incident
+ * 2026-11-12). A statement, no instruction (review F4).
+ */
+export const WINDOW_OPENER_TEXT =
+  '[window_opener] Earlier messages of this conversation are outside the model window.'
+
+/** Hard cap of the user text excerpt carried by an opener (review B1). */
+export const WINDOW_OPENER_EXCERPT_CHARS = 2000
+
+/**
+ * Private flag of a fabricated opener (review F5). It is a property of the
+ * in-memory message, never part of its text: no provider converter reads it
+ * (they all map role and content explicitly), and a real user message that
+ * happens to start with `[window_opener]` is not mistaken for one.
+ */
+const OPENER_FLAG = 'windowOpener'
+
+/** True for a fabricated opener inserted by `openWindowOnUser`. */
+export function isWindowOpener(msg: AgentMessage | undefined): boolean {
+  const m = msg as { role?: string; [OPENER_FLAG]?: unknown } | undefined
+  return !!m && m.role === 'user' && m[OPENER_FLAG] === true
+}
+
+function userText(msg: AgentMessage): string {
+  const content = (msg as { content?: unknown }).content
+  if (typeof content === 'string') return content
+  if (!Array.isArray(content)) return ''
+  return content
+    .filter(b => b && typeof b === 'object' && (b as { type?: unknown }).type === 'text' && typeof (b as { text?: unknown }).text === 'string')
+    .map(b => (b as { text: string }).text)
+    .join('\n')
+}
+
+/**
+ * Build a fabricated opener. With `turnUser` (the real user message that
+ * started the turn) it carries a text-only excerpt of that message, at most
+ * `WINDOW_OPENER_EXCERPT_CHARS` characters; images and attachments never
+ * travel. Pure: the same input gives the same bytes (prompt cache).
+ */
+export function makeWindowOpener(turnUser?: AgentMessage, timestamp = 0): AgentMessage {
+  let text = WINDOW_OPENER_TEXT
+  const raw = turnUser ? userText(turnUser).trim() : ''
+  if (raw.length > 0) {
+    let excerpt = raw.slice(0, WINDOW_OPENER_EXCERPT_CHARS)
+    // Never end on half of a surrogate pair.
+    if (excerpt.length > 0 && /[\uD800-\uDBFF]$/.test(excerpt)) excerpt = excerpt.slice(0, -1)
+    const scope = excerpt.length < raw.length
+      ? `its first ${excerpt.length} of ${raw.length} characters, text only`
+      : 'text only'
+    text = `${WINDOW_OPENER_TEXT} The turn below started with this user message (${scope}):\n\n${excerpt}`
+  }
+  return { role: 'user', content: [{ type: 'text', text }], timestamp, [OPENER_FLAG]: true } as unknown as AgentMessage
+}
+
+/** Largest opener `makeWindowOpener` can build; its size is reserved in the budget. */
+export function maxWindowOpener(): AgentMessage {
+  return makeWindowOpener({ role: 'user', content: 'x'.repeat(WINDOW_OPENER_EXCERPT_CHARS + 1), timestamp: 0 } as unknown as AgentMessage)
+}
+
+export interface OpenWindowResult {
+  messages: AgentMessage[]
+  /** True when an opener was inserted. */
+  repaired: boolean
+  /** The opener carries an excerpt of the real user message that started the turn. */
+  fromEarlierUser: boolean
+}
+
+/**
+ * Make the first non-system message of a provider window a user message
+ * that survives the provider conversion (`isWireUser`; http_400 incident
+ * 2026-11-12, review B2). Anthropic rejects a request whose first message is
+ * a system message that holds tool blocks, and pi-ai flushes a deferred tool
+ * declaration directly in front of the next assistant message — so a window
+ * that opens on an assistant or tool message, or on a blank user message
+ * that the conversion drops, wedges the strand on every turn.
+ *
+ * The opener goes directly in front of that first non-system message, so the
+ * leading system messages (prompt, tool declarations) keep their place. It is
+ * always a fabricated, bounded opener (`makeWindowOpener`): with `turnUser`
+ * it carries a capped text excerpt of it; when `turnUser` is itself an opener
+ * it is reused as is (same object, same bytes on every later trim). A window
+ * without any non-system message, or one that already opens on a wire user
+ * message, is returned unchanged (same array).
+ */
+export function openWindowOnUser(messages: AgentMessage[], turnUser?: AgentMessage): OpenWindowResult {
+  const first = messages.findIndex(m => (m as { role?: string }).role !== 'system')
+  if (first === -1 || isWireUser(messages[first])) {
+    return { messages, repaired: false, fromEarlierUser: false }
+  }
+  const timestamp = (messages[first] as { timestamp?: number }).timestamp
+    ?? (turnUser as { timestamp?: number } | undefined)?.timestamp
+    ?? 0
+  const opener = turnUser && isWindowOpener(turnUser)
+    ? turnUser
+    : makeWindowOpener(turnUser && isWireUser(turnUser) ? turnUser : undefined, timestamp)
+  return {
+    messages: [...messages.slice(0, first), opener, ...messages.slice(first)],
+    repaired: true,
+    fromEarlierUser: turnUser !== undefined && (isWindowOpener(turnUser) || isWireUser(turnUser)),
+  }
 }

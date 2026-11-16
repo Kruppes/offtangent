@@ -25,6 +25,12 @@ export interface UsageStatsQueryOptions {
    * as 'main').
    */
   sessionType?: 'main' | 'task' | 'heartbeat'
+  /**
+   * `false` skips the two DISTINCT queries behind `availableProviders` /
+   * `availableModels` (both then `[]`). Callers that only need the sums
+   * (the MQTT metrics) save two range reads; default keeps them.
+   */
+  includeAvailable?: boolean
 }
 
 export interface UsageTotals {
@@ -116,14 +122,22 @@ function buildWhereClause(options: UsageStatsQueryOptions, whereOptions: WhereOp
   const clauses = ['1=1']
   const params: unknown[] = []
 
+  // The exact bounds stay `datetime(timestamp) ...`: rows may carry other
+  // formats than the `datetime('now')` default (tests insert ISO `...T...Z`).
+  // That expression cannot use idx_token_usage_timestamp, so every bounded
+  // aggregate scanned the whole table (374k rows, 12.11.2026). The extra
+  // range on the bare column lets the index narrow the scan first. It only
+  // ever admits a superset: any text timestamp starting with its calendar
+  // date and a UTC offset of at most one day sorts between the day before
+  // `dateFrom` and two days after `dateTo`.
   if (options.dateFrom) {
-    clauses.push('datetime(timestamp) >= datetime(?)')
-    params.push(options.dateFrom)
+    clauses.push("timestamp >= date(?, '-1 day') AND datetime(timestamp) >= datetime(?)")
+    params.push(options.dateFrom, options.dateFrom)
   }
 
   if (options.dateTo) {
-    clauses.push('datetime(timestamp) <= datetime(?)')
-    params.push(options.dateTo)
+    clauses.push("timestamp < date(?, '+2 days') AND datetime(timestamp) <= datetime(?)")
+    params.push(options.dateTo, options.dateTo)
   }
 
   if (includeProvider && options.provider) {
@@ -244,6 +258,10 @@ export function queryUsageStats(db: Database, options: UsageStatsQueryOptions = 
     cacheWrite?: number | null
     estimatedCost?: number | null
   }>
+
+  if (options.includeAvailable === false) {
+    return { groupBy, rows: rows.map((row) => ({ provider: row.provider, model: row.model, day: row.day, hour: row.hour, ...normalizeTotals(row) })), totals, availableProviders: [], availableModels: [] }
+  }
 
   const providerWhere = buildWhereClause(options, { includeProvider: false })
   const modelWhere = buildWhereClause(options, { includeModel: false })

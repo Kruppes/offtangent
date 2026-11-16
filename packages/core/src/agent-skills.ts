@@ -4,7 +4,7 @@ import { contextMemoryDir, type ContextScope } from './context-scope.js'
 import { APPROVED_BUILTIN_SKILLS } from './approved-builtin-skills.js'
 import path from 'node:path'
 import type { AgentTool } from '@earendil-works/pi-agent-core'
-import { Type } from '@earendil-works/pi-ai'
+import { Type } from 'typebox'
 import { parseSkillMd } from './skill-parser.js'
 import type { SkillPromptEntry } from './memory.js'
 

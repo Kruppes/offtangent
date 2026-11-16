@@ -1,5 +1,5 @@
 import type { AgentTool } from '@earendil-works/pi-agent-core'
-import { Type } from '@earendil-works/pi-ai'
+import { Type } from 'typebox'
 import type { ProviderQuotaContract } from './contracts/providers.js'
 
 /** Minimum spacing between two tool-initiated live fetches of the same provider. */

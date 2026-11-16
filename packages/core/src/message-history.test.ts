@@ -197,17 +197,30 @@ describe('sanitizeHistoryBoundaries', () => {
 })
 
 describe('describeHistoryStructure', () => {
-  it('renders roles, block types and tool ids without any content text', () => {
+  it('renders roles, block types and tool-call ordinals without any content text or id', () => {
     const history: AgentMessage[] = [
       user('secret password is hunter2'),
       assistant([{ type: 'text', text: 'also secret' }, { type: 'toolCall', id: 'toolu_9' }], 'toolUse'),
       toolResult('toolu_9', 'sensitive output'),
     ]
     const s = describeHistoryStructure(history)
-    expect(s).toBe('user | assistant[text,toolCall:toolu_9](toolUse) | toolResult:toolu_9')
+    expect(s).toBe('user | assistant[text,toolCall#1](toolUse) | toolResult#1')
+    expect(s).not.toContain('toolu_9')
     // never leaks content
     expect(s).not.toContain('hunter2')
     expect(s).not.toContain('secret')
     expect(s).not.toContain('sensitive')
+  })
+
+  it('marks system messages that add or remove tools, by count only', () => {
+    const history = [
+      { role: 'system', content: [{ type: 'text', text: 'lead prompt secret' }] },
+      { role: 'system', content: [], toolsAdded: [{ name: 'ask_user' }], toolsRemoved: [] },
+      user('hello'),
+    ] as unknown as AgentMessage[]
+    const s = describeHistoryStructure(history)
+    expect(s).toBe('system | system[tools+1-0] | user')
+    expect(s).not.toContain('ask_user')
+    expect(s).not.toContain('secret')
   })
 })

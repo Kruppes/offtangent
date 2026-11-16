@@ -20,7 +20,7 @@ import http from 'node:http'
 import os from 'node:os'
 import path from 'node:path'
 import type { AddressInfo } from 'node:net'
-import { Type } from '@earendil-works/pi-ai'
+import { Type } from 'typebox'
 
 const root = fs.mkdtempSync(path.join(os.tmpdir(), 'mcp-guard-test-'))
 process.env.DATA_DIR = root

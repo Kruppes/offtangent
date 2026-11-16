@@ -46,7 +46,7 @@ describe('buildModel for Claude Sonnet 5.5', () => {
       expect(model.reasoning).toBe(true)
       expect(model.contextWindow).toBe(1_000_000)
       expect(model.maxTokens).toBe(128_000)
-      expect(model.cost).toMatchObject({ input: 2, output: 10, cacheRead: 0.20, cacheWrite: 2.50 })
+      expect(model.cost).toMatchObject({ input: 2, output: 10, cacheRead: 0.10, cacheWrite: 2.50 })
     })
 
     it(`maps thinking levels so an "off" request omits thinking on providerType ${providerType}`, () => {
@@ -93,7 +93,7 @@ describe('buildModel for Claude Sonnet 5.5', () => {
       models: [{ id: SONNET_55, name: 'Pinned Sonnet', cost: { input: 1, output: 2 } }],
     }), SONNET_55)
     expect(model.name).toBe('Claude Sonnet 5.5')
-    expect(model.cost).toMatchObject({ input: 2, output: 10, cacheRead: 0.20, cacheWrite: 2.50 })
+    expect(model.cost).toMatchObject({ input: 2, output: 10, cacheRead: 0.10, cacheWrite: 2.50 })
     // The catalog marks Sonnet 5.5 as managed-effort (adaptive thinking at
     // effort "high" even for off); the override keeps it off that path.
     expect(model.compat).toEqual({ forceAdaptiveThinking: true, supportsTemperature: false, supportsStrictTools: true })

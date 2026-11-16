@@ -41,7 +41,7 @@ import {
   type CodemodeJsonSchema,
   type CodemodeTool,
 } from '@earendil-works/pi-codemode'
-import { Type } from '@earendil-works/pi-ai'
+import { Type } from 'typebox'
 import { loadConfig, warnConfigReadFailed } from './config.js'
 import { sealToolText, withSecretBoundary } from './secret-boundary.js'
 import { spillToolOutput } from './tool-output-spill.js'

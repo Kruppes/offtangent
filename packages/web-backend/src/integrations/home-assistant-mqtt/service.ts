@@ -2,8 +2,8 @@ import fs from 'node:fs'
 import path from 'node:path'
 import mqtt from 'mqtt'
 import type { MqttClient } from 'mqtt'
-import { getConfigDir, getUsageSummary, queryUsageStats } from '@axiom/core'
-import type { Database } from '@axiom/core'
+import { getConfigDir, getConfiguredPriceTable, queryUsageStats } from '@axiom/core'
+import type { Database, TokenPriceTable, UsageStatsResult } from '@axiom/core'
 import type { ProviderQuotaContract } from '@axiom/core/contracts'
 import { applicationVersion, brokerPassword, readSettings } from './config.js'
 import type { MqttSettings } from './config.js'
@@ -17,30 +17,72 @@ export function connectionOptions(settings: MqttSettings) {
     will: { topic: `${settings.baseTopic}/status`, payload: 'offline', qos: 1 as const, retain: true },
   }
 }
+/** ISO instant -> `YYYY-MM-DD HH:MM:SS` UTC, the format `chat_messages.timestamp` carries. */
+export const toSqliteUtc = (iso: string): string => new Date(iso).toISOString().replace('T', ' ').slice(0, 19)
 const url = (s: MqttSettings) => `${s.tls ? 'mqtts' : 'mqtt'}://${s.host}:${s.port}`
+/** Fixed provider families published to Home Assistant (provider names may carry account IDs). */
+const PROVIDER_KINDS = ['anthropic', 'openai', 'openai-codex', 'gemini', 'google', 'ollama', 'mistral', 'zai', 'opencode-go', 'deepgram']
+type UsagePart = Pick<UsageStatsResult, 'rows' | 'totals'>
+/**
+ * Sums of the closed days of the current month (month start up to the last
+ * second before today), cached per database. token_usage rows are written
+ * with the current time and never updated or deleted by the app, so closed
+ * days only change with the price table, which is part of the key; the TTL
+ * is a safety net. Without the cache the month part read ~23k rows every
+ * minute (~250-400 ms on production, 12.11.2026).
+ */
+export const CLOSED_MONTH_TTL_MS = 60 * 60_000
+const closedMonthCache = new WeakMap<object, { key: string; at: number; part: UsagePart }>()
+const EMPTY_PART: UsagePart = { rows: [], totals: { requests: 0, promptTokens: 0, completionTokens: 0, totalTokens: 0, cacheRead: 0, cacheWrite: 0, estimatedCost: 0 } }
+function usagePart(db: Database, dateFrom: string, dateTo: string, priceTable: TokenPriceTable): UsagePart {
+  const { rows, totals } = queryUsageStats(db, { groupBy: ['provider'], dateFrom, dateTo, priceTable, includeAvailable: false })
+  return { rows, totals }
+}
+function closedMonthPart(db: Database, month: string, today: string, nowMs: number, priceTable: TokenPriceTable): UsagePart {
+  if (month === today) return EMPTY_PART
+  const key = `${month}|${today}|${JSON.stringify(priceTable)}`
+  const hit = closedMonthCache.get(db)
+  if (hit && hit.key === key && nowMs - hit.at < CLOSED_MONTH_TTL_MS) return hit.part
+  // datetime() compares whole seconds, so `<= today - 1 ms` (= the second
+  // before today) and today's `>= today` split the month without overlap.
+  const part = usagePart(db, month, new Date(new Date(today).getTime() - 1).toISOString(), priceTable)
+  closedMonthCache.set(db, { key, at: nowMs, part })
+  return part
+}
 export function collectMetrics(db: Database): Metrics {
   const now = new Date()
   const today = new Date(now.getFullYear(), now.getMonth(), now.getDate()).toISOString()
   const month = new Date(now.getFullYear(), now.getMonth(), 1).toISOString()
-  const summary = getUsageSummary(db, now)
   const usage: Metrics['usage'] = {}
-  for (const period of ['today', 'month'] as const) {
-    const totals = summary[period]
-    usage[`${period}_total`] = { tokens: totals.totalTokens, cost: totals.estimatedCost }
-    const rows = queryUsageStats(db, { groupBy: ['provider'], dateFrom: period === 'today' ? today : month, dateTo: now.toISOString() }).rows
-    // Provider names may be user-configured. Publish only fixed provider families (no account IDs).
-    for (const row of rows) {
-      const kind = (row.provider ?? '').toLowerCase()
-      if (!['anthropic', 'openai', 'openai-codex', 'gemini', 'google', 'ollama', 'mistral', 'zai', 'opencode-go', 'deepgram'].includes(kind)) continue
-      const key = `${period}_${kind}`
-      const old = usage[key] ?? { tokens: 0, cost: 0 }
-      usage[key] = { tokens: old.tokens + row.totalTokens, cost: old.cost + row.estimatedCost }
+  // Same bounds and price table as getUsageSummary(db, now).today/.month, but
+  // without its unused week and all-time sums (the latter a full token_usage
+  // scan every minute) and with the closed month days from the cache above.
+  const priceTable = getConfiguredPriceTable()
+  const todayPart = usagePart(db, today, now.toISOString(), priceTable)
+  const closed = closedMonthPart(db, month, today, now.getTime(), priceTable)
+  const add = (key: string, tokens: number, cost: number) => {
+    const old = usage[key] ?? { tokens: 0, cost: 0 }
+    usage[key] = { tokens: old.tokens + tokens, cost: old.cost + cost }
+  }
+  for (const [period, parts] of [['today', [todayPart]], ['month', [closed, todayPart]]] as const) {
+    usage[`${period}_total`] = { tokens: 0, cost: 0 }
+    for (const part of parts) {
+      add(`${period}_total`, part.totals.totalTokens, part.totals.estimatedCost)
+      for (const row of part.rows) {
+        const kind = (row.provider ?? '').toLowerCase()
+        if (PROVIDER_KINDS.includes(kind)) add(`${period}_${kind}`, row.totalTokens, row.estimatedCost)
+      }
     }
   }
   const scalar = (sql: string, ...params: string[]) => (db.prepare(sql).get(...params) as { n: number }).n
   const last = db.prepare('SELECT MAX(last_run_at) AS t FROM scheduled_tasks').get() as { t: string | null }
   return { usage, activity: {
-    messagesToday: scalar("SELECT COUNT(*) AS n FROM chat_messages WHERE role = 'user' AND datetime(timestamp) >= datetime(?)", today),
+    // `chat_messages.timestamp` is `YYYY-MM-DD HH:MM:SS` (UTC, CURRENT_TIMESTAMP),
+    // so a plain comparison against the same format equals the old
+    // `datetime(timestamp) >= datetime(?)` — and can use
+    // idx_chat_messages_timestamp instead of scanning the whole table
+    // (measured 12.11.2026: 1.25 s / 842 MB -> 0.01 s / 2 MB, every minute).
+    messagesToday: scalar("SELECT COUNT(*) AS n FROM chat_messages WHERE role = 'user' AND timestamp >= ?", toSqliteUtc(today)),
     runningTasks: scalar("SELECT COUNT(*) AS n FROM tasks WHERE status = 'running'"),
     failedTasksToday: scalar("SELECT COUNT(*) AS n FROM tasks WHERE status = 'failed' AND datetime(completed_at) >= datetime(?)", today),
     lastCronRun: last.t ? new Date(last.t.replace(' ', 'T') + (/[Z+-]\d{2}:?\d{2}$/.test(last.t) || last.t.endsWith('Z') ? '' : 'Z')).toISOString() : null,

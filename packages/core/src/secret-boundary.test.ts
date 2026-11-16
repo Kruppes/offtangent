@@ -2,7 +2,7 @@ import fs from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
 import { describe, it, expect, beforeEach, afterEach } from 'vitest'
-import { Type } from '@earendil-works/pi-ai'
+import { Type } from 'typebox'
 import type { AgentTool } from '@earendil-works/pi-agent-core'
 import {
   sealText,

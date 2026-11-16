@@ -356,6 +356,12 @@ export function rankStrandsByActivity(
   const nowStamp = toSqliteUtc(now)
   const windowStart = toSqliteUtc(new Date(now.getTime() - windowDays * 86_400_000))
 
+  // `+session_id` (unary plus = same value, no index) keeps the planner off
+  // idx_chat_messages_session: grouping by that index made it walk ALL of
+  // chat_messages to skip a sort, on every list/detail read of a strand
+  // (measured 12.11.2026 on 4.7 GB: 2.49 s / 1311 MB per call, blocking the
+  // event loop). With the window bound on idx_chat_messages_timestamp it is
+  // 0.20 s / 125 MB with an identical result.
   const rows = db.prepare(
     `WITH days AS (
        SELECT session_id,
@@ -363,7 +369,7 @@ export function rankStrandsByActivity(
               min(julianday(?) - julianday(timestamp)) AS age
        FROM chat_messages
        WHERE role = 'user' AND timestamp > ?
-       GROUP BY session_id, d
+       GROUP BY +session_id, d
      ),
      sc AS (
        SELECT session_id, sum(pow(0.5, age / ?)) AS score, min(age) AS rec

@@ -1,5 +1,5 @@
 import type { AgentTool } from '@earendil-works/pi-agent-core'
-import { Type } from '@earendil-works/pi-ai'
+import { Type } from 'typebox'
 import type { Database } from './database.js'
 import { logTokenUsage } from './token-logger.js'
 import type { SendFileToolOptions } from './send-file-tool.js'

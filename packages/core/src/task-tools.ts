@@ -1,5 +1,5 @@
 import type { AgentTool } from '@earendil-works/pi-agent-core'
-import { Type } from '@earendil-works/pi-ai'
+import { Type } from 'typebox'
 import type { TaskStatus, TaskTriggerType } from './task-store.js'
 import type { ProviderConfig } from './provider-config.js'
 import { resolveProviderModelInput, getProviderDefaultModel } from './provider-config.js'

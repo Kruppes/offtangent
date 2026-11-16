@@ -1,5 +1,5 @@
 import type { AgentTool } from '@earendil-works/pi-agent-core'
-import { Type } from '@earendil-works/pi-ai'
+import { Type } from 'typebox'
 import type { Database } from './database.js'
 import { normalizeFtsQuery } from './fts-utils.js'
 import { resolveAgentReadScope } from './agent-read-scope.js'

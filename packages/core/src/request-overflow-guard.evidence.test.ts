@@ -58,11 +58,19 @@ describe('M4 evidence matrix (computed upper bounds actually used)', () => {
   // Documented limitation: in the gray zone the SDK's own clamp can leave
   // almost no answer room (here max_tokens=1). The guard does not invent a
   // second minimum-answer budget; the provider decides / the reply stops on length.
-  it('gray zone (chars/3 over, chars/4 under) is sent', () => {
+  // pi-ai 1.5.x estimates message text at chars/3.5 (1.0.0: chars/4), so the
+  // gray zone is now chars/3 over and chars/3.5 under.
+  it('gray zone (chars/3 over, SDK chars/3.5 under) is sent', () => {
     learnContextLimit(oa(), 9500, 'synthetic')
-    const r = row('oa obs=9500 33k chars (gray)', oa(), ctx(33000))
+    const r = row('oa obs=9500 28k chars (gray)', oa(), ctx(28000))
     expect(r.estCons).toBeGreaterThan(9500); expect(r.estOpt).toBeLessThanOrEqual(9500)
     expect(r.decision).toBe('send')
+  })
+  it('33k chars at obs=9500 (gray under the chars/4 estimator) is refused now that both estimates are over', () => {
+    learnContextLimit(oa(), 9500, 'synthetic')
+    const r = row('oa obs=9500 33k chars (over with chars/3.5)', oa(), ctx(33000))
+    expect(r.estCons).toBeGreaterThan(9500); expect(r.estOpt).toBeGreaterThan(9500)
+    expect(r.decision).toBe('refuse:input_exceeds_window')
   })
   it('Anthropic thinking high, nothing learned: thinking/max values exactly as SDK computes; untouched', () => {
     const r = row('anthropic 200k/64k reasoning=high no-obs', an(), ctx(30000), { reasoning: 'high' })

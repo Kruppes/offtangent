@@ -7,7 +7,7 @@ import fs from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
-import { Type } from '@earendil-works/pi-ai'
+import { Type } from 'typebox'
 import type { AgentTool, AgentToolResult, AgentMessage, BeforeToolCallContext, AfterToolCallContext } from '@earendil-works/pi-agent-core'
 import {
   CODEMODE_CODING_EXTRA_TOOLS,

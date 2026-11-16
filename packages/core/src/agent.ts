@@ -36,7 +36,7 @@ import {
 import { getLatestSessionSummary, insertSessionSummary } from './session-summary-store.js'
 import { loadHeuristics } from './heuristics.js'
 import { getProviderConcurrencyLimiter } from './provider-concurrency.js'
-import { assembleStrandContextWithStats, trimMessagesToBudget, stripStrandContextFromLastUserMessage } from './strand-context.js'
+import { assembleStrandContextWithStats, trimMessagesToBudget, strandTrimLogLine, stripStrandContextFromLastUserMessage } from './strand-context.js'
 import type { EffectiveModel, ModelSelection } from './model-resolution.js'
 import type { TurnRuntimeOverrides } from './turn-overrides.js'
 import { voiceReplyHintFor } from './voice-note.js'
@@ -1210,19 +1210,18 @@ export class AgentCore {
       // had before the task compactor learned to count replayed signatures.
       // Counting them here shrank a Codex strand to a fraction of its turns
       // and made every turn trim (and break the prompt cache) sooner.
-      const trimmed = trimMessagesToBudget(runtime.getMessages(), budget, { estimate: 'visible' })
-      if (trimmed.droppedCount > 0) {
-        runtime.setMessages(trimmed.messages)
-        console.log(`[strand] Trimmed ${trimmed.droppedCount} messages from the window of session ${sessionId} (${trimmed.keptTokens} tokens kept, budget ${budget})`)
-      }
+      const trimmed = trimMessagesToBudget(runtime.getMessages(), budget, { estimate: 'visible', reopenWithTurnUser: true })
+      if (trimmed.droppedCount > 0 || trimmed.repaired) runtime.setMessages(trimmed.messages)
+      const trimLog = strandTrimLogLine(trimmed, sessionId, budget)
+      if (trimLog) console.log(trimLog)
       const { block, stats } = assembleStrandContextWithStats(this.db, sessionId, userText, trimmed.messages)
-      if (block || trimmed.droppedCount > 0) {
+      if (block || trimmed.droppedCount > 0 || trimmed.repaired) {
         // SPEC 12.2: strand window and retrieval metric, one row per turn
         // that actually used the mechanism.
         logToolCall(this.db, {
           sessionId,
           toolName: 'strand_context',
-          input: JSON.stringify({ budgetTokens: budget, keptTokens: trimmed.keptTokens, trimmed: trimmed.droppedCount }),
+          input: JSON.stringify({ budgetTokens: budget, keptTokens: trimmed.keptTokens, trimmed: trimmed.droppedCount, ...(trimmed.repaired && { reopened: true }) }),
           output: JSON.stringify(stats),
           durationMs: 0,
           status: 'success',

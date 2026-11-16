@@ -1,5 +1,6 @@
 import { TURN_ERROR_CAUSES } from './agent-runtime-types.js'
 import type { TurnErrorCause, TurnErrorInfo } from './agent-runtime-types.js'
+import type { ProviderErrorDiagnostic } from './log-safe-error.js'
 
 /** `chat_messages.metadata.kind` marking a persisted terminal turn error. */
 export const TURN_ERROR_KIND = 'turn_error'
@@ -24,6 +25,8 @@ export interface TurnErrorMetadata {
    * whether it still resolves (it does not survive a restart).
    */
   retryActionId?: string
+  /** Secret-free structure of a provider 4xx rejection (http_400 incident 2026-11-12). */
+  diagnostic?: ProviderErrorDiagnostic
 }
 
 export function buildTurnErrorMetadata(info: TurnErrorInfo): TurnErrorMetadata {
@@ -35,6 +38,7 @@ export function buildTurnErrorMetadata(info: TurnErrorInfo): TurnErrorMetadata {
     retryable: info.retryable,
     occurredAt: info.occurredAt,
     ...(info.retryActionId ? { retryActionId: info.retryActionId } : {}),
+    ...(info.diagnostic ? { diagnostic: info.diagnostic } : {}),
   }
 }
 

@@ -12,7 +12,8 @@ import type {
   TurnStreamChunk,
 } from './agent-runtime-types.js'
 import { buildTurnErrorMetadata, formatTurnErrorContent } from './turn-error.js'
-import { errorClass, errorTextClass, publicProviderError } from './log-safe-error.js'
+import { errorClass, errorTextClass, formatProviderErrorDiagnostic, publicProviderError } from './log-safe-error.js'
+import type { ProviderErrorDiagnostic } from './log-safe-error.js'
 import { newTurnRetryActionId } from './turn-retry-action.js'
 import { sealText } from './secret-boundary.js'
 import { classifyInteractionFences, extractAnswerableInteractionBlocks } from './contracts/interaction-blocks.js'
@@ -445,6 +446,8 @@ type AttemptResult =
     willRetry: boolean
     /** The retry is the one-shot credential recovery, not a policy retry. */
     authRetry?: boolean
+    /** Secret-free structure of a provider 4xx rejection, persisted with the error row. */
+    diagnostic?: ProviderErrorDiagnostic
   }
 
 const DEFAULT_WATCHDOG_INTERVAL_MS = 5_000
@@ -1305,6 +1308,7 @@ export class TurnRunner {
           error: result.publicError,
           attempts: attempt,
           retryable: result.retryable,
+          ...(result.diagnostic ? { diagnostic: result.diagnostic } : {}),
         }, errorTextClass(result.error))
         break
       }
@@ -1376,7 +1380,7 @@ export class TurnRunner {
       stall.error = error
       stall.retryable = retryable
     })
-    let failure: { error: string; publicError: string; retryable: boolean } | null = null
+    let failure: { error: string; publicError: string; retryable: boolean; diagnostic?: ProviderErrorDiagnostic } | null = null
 
     try {
       const continueTurn = attempt > 0 || input.continueFromTranscript === true
@@ -1432,6 +1436,7 @@ export class TurnRunner {
             error,
             publicError: chunk.rawError !== undefined ? (chunk.error ?? publicProviderError(chunk.rawError)) : publicProviderError(chunk.error),
             retryable: this.isRetryableFailure(turn, error),
+            ...(chunk.diagnostic ? { diagnostic: chunk.diagnostic } : {}),
           }
           break
         }
@@ -1493,7 +1498,7 @@ export class TurnRunner {
     if (willRetry) transcript.discard()
     else this.commitTranscript(turn, transcript)
 
-    return { status: 'failed', error: failure.error, publicError: failure.publicError, retryable: failure.retryable, willRetry, authRetry }
+    return { status: 'failed', error: failure.error, publicError: failure.publicError, retryable: failure.retryable, willRetry, authRetry, ...(failure.diagnostic ? { diagnostic: failure.diagnostic } : {}) }
   }
 
   /**
@@ -1539,7 +1544,8 @@ export class TurnRunner {
 
     console.error(
       `[turn-runner] Turn failed (user=${turn.userId}, session=${turn.sessionId}, `
-      + `cause=${info.cause}, attempts=${info.attempts}): ${logClass}`,
+      + `cause=${info.cause}, attempts=${info.attempts}): ${logClass}`
+      + (info.diagnostic ? ` | ${formatProviderErrorDiagnostic(info.diagnostic)}` : ''),
     )
 
     const errorInfo: TurnErrorInfo = { ...info, messageId: messageId ?? undefined }

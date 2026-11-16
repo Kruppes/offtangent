@@ -1,7 +1,7 @@
 import fs from 'node:fs'
 import path from 'node:path'
 import type { AgentTool } from '@earendil-works/pi-agent-core'
-import { Type } from '@earendil-works/pi-ai'
+import { Type } from 'typebox'
 import { normalizeViewKey } from './artifact-extract.js'
 import { saveUpload, type UploadDescriptor } from './uploads.js'
 import { getWorkspaceDir } from './workspace.js'

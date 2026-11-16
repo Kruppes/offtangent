@@ -41,6 +41,16 @@ function buildTranscript(rounds: number, resultChars = 4000): AgentMessage[] {
 }
 
 describe('TranscriptCompactor', () => {
+  it('opens a view that starts on an assistant message after the system messages with a user message (http_400 2026-11-12)', () => {
+    const c = new TranscriptCompactor({ windowTokens: 6000, targetTokens: 3000, indexLines: 60 })
+    const system = { role: 'system', content: 'prompt', timestamp: 0 } as unknown as AgentMessage
+    const deferred = { role: 'system', content: [], toolsAdded: [{ name: 'ask_user' }], timestamp: 0 } as unknown as AgentMessage
+    const broken = [system, deferred, assistant('step', 'tc1'), toolResult('tc1', 'r'), user('weiter')]
+    const view = c.compact(broken)
+    expect(view.map(roleOf)).toEqual(['system', 'system', 'user', 'assistant', 'toolResult', 'user'])
+    expect(textOf(view[2])).toContain('[window_opener]')
+  })
+
   it('returns short transcripts unchanged', () => {
     const c = new TranscriptCompactor({ windowTokens: 6000, targetTokens: 3000, indexLines: 60 })
     const msgs = buildTranscript(2)

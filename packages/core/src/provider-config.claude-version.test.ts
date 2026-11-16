@@ -61,4 +61,14 @@ describe('CLAUDE_CODE_VERSION sync with pi-ai', () => {
         'Bump CLAUDE_CODE_VERSION in provider-config.ts to match after a pi-ai upgrade.',
     ).toBe(piAiVersion)
   })
+
+  it('is at least the minimum Anthropic currently requires for Fable 5.2 (2.1.290)', () => {
+    // Live 2026-11-11: claude-fable-5-2 answered HTTP 400
+    // `claude_code_version_too_old` for 2.1.280 and requires >= 2.1.290.
+    // Guards against a pi-ai downgrade/pin that still matches the sync test above.
+    const parse = (v: string) => v.split('.').map((n) => Number.parseInt(n, 10))
+    const [maj, min, patch] = parse(CLAUDE_CODE_VERSION)
+    const atLeast = maj > 2 || (maj === 2 && (min > 1 || (min === 1 && patch >= 290)))
+    expect(atLeast, `CLAUDE_CODE_VERSION ${CLAUDE_CODE_VERSION} < 2.1.290 (Fable 5.2 floor)`).toBe(true)
+  })
 })

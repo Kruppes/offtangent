@@ -13,7 +13,8 @@
  *   exported option functions (clamp + thinking adjust), never a naive
  *   `model.maxTokens` subtraction (the SDK lowers max_tokens itself).
  * - Estimates are chars-based and honest about it: conservative chars/3 and
- *   the SDK's own optimistic estimate (measured usage + chars/4). A request is
+ *   the SDK's own optimistic estimate (measured usage + chars/3.5 since pi-ai
+ *   1.5.x, chars/4 before) plus chars/4 for system prompt/tools. A request is
  *   refused before sending only when BOTH say the pure input alone exceeds the
  *   operative window. The gray zone is sent; the provider decides.
  * - A provider overflow error teaches the window for the exact
@@ -343,7 +344,7 @@ export interface RequestEstimate {
   fixedConservative: number
   /** Everything, chars/3 + framing. Safety estimate, not a tokenizer. */
   conservative: number
-  /** The SDK's own estimate (measured last usage + chars/4 tail) + chars/4 system/tools when no usage. */
+  /** The SDK's own estimate (measured last usage + chars/3.5 tail, pi-ai >= 1.5) + chars/4 system/tools when no usage. */
   optimistic: number
   /** Tokens the provider measured for the prefix (last assistant usage), 0 if none. */
   measuredPrefix: number
@@ -426,7 +427,7 @@ export function decideRequest(model: AnyModel, context: Context, options?: Simpl
   const window = declared !== null && observed !== null ? Math.min(declared, observed) : (observed ?? declared)
   if (window === null) return { kind: 'send', model, overridden: false, window: null, estimate }
   const windowSource: 'declared' | 'observed' = observed !== null && (declared === null || observed < declared) ? 'observed' : 'declared'
-  const nums = `estimated input ${estimate.optimistic}–${estimate.conservative} tokens (chars/4 incl. ${estimate.measuredPrefix} measured prefix tokens … chars/3 safety estimate, not a tokenizer count) vs ${windowSource} context window ${window} tokens`
+  const nums = `estimated input ${estimate.optimistic}–${estimate.conservative} tokens (SDK estimate incl. ${estimate.measuredPrefix} measured prefix tokens … chars/3 safety estimate, not a tokenizer count) vs ${windowSource} context window ${window} tokens`
   if (estimate.optimistic > window && estimate.conservative > window) {
     return { kind: 'refuse', reason: 'input_exceeds_window', window, windowSource, estimate,
       message: `${CONTEXT_GUARD_MARKER} Request not sent: the conversation alone no longer fits the model's context window (${nums}). ${ADVICE}` }

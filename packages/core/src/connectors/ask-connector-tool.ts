@@ -18,7 +18,7 @@
  *    neutralised so the envelope cannot be closed early by injected text.
  */
 import type { AgentTool } from '@earendil-works/pi-agent-core'
-import { Type } from '@earendil-works/pi-ai'
+import { Type } from 'typebox'
 import { listConnectorManifests } from './registry.js'
 import { getConnectorRecord, resolveConnectorStatus } from './store.js'
 import { runConnectorSubAgent } from './sub-agent.js'

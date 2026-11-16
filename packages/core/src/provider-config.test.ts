@@ -1854,7 +1854,9 @@ describe('OpenCode Zen/Go catalog presets (sourced from pi-ai)', () => {
     const model = buildModel(makeProvider('opencode-go', 'glm-5.3'))
     expect(model.id).toBe('glm-5.3')
     expect(model.api).toBe('openai-completions')
-    expect(model.baseUrl).toBe('https://opencode.ai/zen/go/v1')
+    // pi-ai 1.5.x routes OpenCode to the documented protocol-specific
+    // endpoints (earendil-works/pi#11434) instead of the shared /zen base.
+    expect(model.baseUrl).toBe('https://opencode.ai/inference/go/openai/v1')
     expect(model.cost.input).toBeGreaterThan(0)
     expect(model.cost.output).toBeGreaterThan(0)
   })
@@ -1862,17 +1864,20 @@ describe('OpenCode Zen/Go catalog presets (sourced from pi-ai)', () => {
   it('buildModel resolves per-model api + baseUrl for OpenCode Zen models across wire APIs', () => {
     const claude = buildModel(makeProvider('opencode-zen', 'claude-opus-4-5'))
     expect(claude.api).toBe('anthropic-messages')
-    expect(claude.baseUrl).toContain('opencode.ai/zen')
+    expect(claude.baseUrl).toBe('https://opencode.ai/inference/anthropic')
     expect(claude.cost.input).toBeGreaterThan(0)
 
     const gemini = buildModel(makeProvider('opencode-zen', 'gemini-3.5-flash'))
     expect(gemini.api).toBe('google-generative-ai')
+    expect(gemini.baseUrl).toBe('https://opencode.ai/inference/google/v1beta')
 
     const gpt = buildModel(makeProvider('opencode-zen', 'gpt-5.5'))
     expect(gpt.api).toBe('openai-responses')
+    expect(gpt.baseUrl).toBe('https://opencode.ai/inference/openai/v1')
 
     const glm = buildModel(makeProvider('opencode-zen', 'glm-5.1'))
     expect(glm.api).toBe('openai-completions')
+    expect(glm.baseUrl).toBe('https://opencode.ai/inference/openai/v1')
   })
 
   it('does not change api-key providers without resolveModelsFromCatalog (openai stays single-api)', () => {
@@ -2123,13 +2128,23 @@ describe('GPT-6.1 Sol override (openai + openai-codex)', () => {
       expect(override).toBeDefined()
       expect(override).toMatchObject({
         name: catalog!.name,
-        contextWindow: catalog!.contextWindow,
         maxTokens: catalog!.maxTokens,
         reasoning: catalog!.reasoning,
         cost: catalog!.cost,
         thinkingLevelMap: catalog!.thinkingLevelMap,
       })
+      // Offtangent keeps 272k on both presets.
+      expect(override!.contextWindow).toBe(272_000)
     }
+  })
+
+  it('locks the known context-window drift: pi-ai 1.5.x Codex catalog says 500k, Offtangent pins 272k', () => {
+    // A further upstream move (or a revert to 272k) makes this fail, so the
+    // pin in CATALOG_CONTEXT_WINDOW_PINS is reviewed instead of going stale.
+    expect(getBuiltinModels('openai').find(m => m.id === 'gpt-6.1-sol')!.contextWindow).toBe(272_000)
+    expect(getBuiltinModels('openai-codex').find(m => m.id === 'gpt-6.1-sol')!.contextWindow).toBe(500_000)
+    expect(buildModel(codexProvider, 'gpt-6.1-sol').contextWindow).toBe(272_000)
+    expect(buildModel(openaiProvider, 'gpt-6.1-sol').contextWindow).toBe(272_000)
   })
 
   it.each(['openai', 'openai-codex'] as const)('appears in the %s model list next to GPT-6 Sol', (type) => {
@@ -2212,9 +2227,44 @@ describe('kimi-coding region (China / international endpoint)', () => {
   }
 
   it('the pi-ai catalog only carries the China URL (why buildModel must override it)', () => {
-    const catalog = getBuiltinModels('kimi-coding' as never) as Array<{ id: string; baseUrl: string }>
+    const catalog = getBuiltinModels('kimi-coding' as never) as Array<{ id: string; baseUrl: string; api: string }>
     expect(catalog.length).toBeGreaterThan(0)
-    expect(catalog.every(m => m.baseUrl === CN)).toBe(true)
+    // Since pi-ai 1.5.0 the catalog points at the OpenAI-completions route
+    // `${CN}/v1`; Offtangent pins the Anthropic Messages wire on the region
+    // base without `/v1` (pinKimiCodingAnthropicWire). Locking the drift here
+    // makes a further upstream move visible instead of silently re-routing.
+    expect(catalog.every(m => m.baseUrl === `${CN}/v1`)).toBe(true)
+    expect(catalog.every(m => m.api === 'openai-completions')).toBe(true)
+    expect(catalog.some(m => m.baseUrl.startsWith(INTL))).toBe(false)
+  })
+
+  it('buildModel keeps the pi-ai 1.0.0 Anthropic Messages wire (api, base, compat, thinking map) for every catalog model', () => {
+    const p = { id: 'kc', name: 'Kimi Code', type: 'anthropic-messages', providerType: 'kimi-coding', provider: 'kimi-coding',
+      baseUrl: CN, apiKey: 'sk-test', enabledModels: ['k3'] } as unknown as Parameters<typeof buildModel>[0]
+    const v1Map = { off: null, minimal: null, low: 'low', medium: null, high: 'high', xhigh: null, max: 'max' }
+    const expected: Record<string, { compat: Record<string, unknown>; thinkingLevelMap?: unknown }> = {
+      'k3': { compat: { allowEmptySignature: true, forceAdaptiveThinking: true }, thinkingLevelMap: v1Map },
+      'k3-256k': { compat: { forceAdaptiveThinking: true }, thinkingLevelMap: v1Map },
+      'kimi-for-coding': { compat: { allowEmptySignature: true, forceAdaptiveThinking: true }, thinkingLevelMap: v1Map },
+      'kimi-for-coding-highspeed': { compat: { forceAdaptiveThinking: true }, thinkingLevelMap: undefined },
+    }
+    for (const [id, wire] of Object.entries(expected)) {
+      const model = buildModel(p, id)
+      expect(model.api).toBe('anthropic-messages')
+      expect(model.provider).toBe('kimi-coding')
+      expect(model.baseUrl).toBe(CN)
+      expect(model.compat).toEqual(wire.compat)
+      expect(model.thinkingLevelMap).toEqual(wire.thinkingLevelMap)
+    }
+    // Models added to the catalog after 1.0.0 stay on the same wire with the
+    // common baseline flag and no OpenAI-completions compat leaking through.
+    const catalogIds = (getBuiltinModels('kimi-coding' as never) as Array<{ id: string }>).map(m => m.id)
+    for (const id of catalogIds.filter(i => !(i in expected))) {
+      const model = buildModel(p, id)
+      expect(model.api).toBe('anthropic-messages')
+      expect(model.baseUrl).toBe(CN)
+      expect(model.compat).toEqual({ forceAdaptiveThinking: true })
+    }
   })
 
   it('exposes exactly the two official endpoints, China as default', () => {

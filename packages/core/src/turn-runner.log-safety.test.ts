@@ -104,6 +104,50 @@ describe('turn runner provider-error safety (review K0-K2-4 #2/#3)', () => {
     expect(logged()).toContain('cause=non_retryable, attempts=0): auth')
   })
 
+  it('provider 4xx: the turn_error row and the log carry a structural diagnostic, never the echoed text', async () => {
+    const db = freshDb()
+    const raw = `400 {"type":"error","error":{"type":"invalid_request_error","message":"messages.0: a system message that holds tool blocks cannot be the first message ${MARKER}"}}`
+    const chunk = runtimeErrorChunk(db, raw)
+    expect(chunk.diagnostic).toMatchObject({ status: 400, type: 'invalid_request_error', path: 'messages.0' })
+    const agent: TurnAgentLike = { sendMessage: async function* () { yield chunk }, abort: vi.fn() }
+    const runner = new TurnRunner({ db, getAgent: () => agent })
+    const events: TurnEvent[] = []
+    runner.subscribe(USER_ID, e => { events.push(e) })
+    runner.startTurn({ userId: USER_ID, sessionId: SESSION_ID, text: `diktat ${MARKER}`, source: 'clock' } as never)
+    await settle(runner)
+
+    const row = db.prepare("SELECT metadata FROM chat_messages WHERE metadata LIKE '%turn_error%'").get() as { metadata: string }
+    const meta = JSON.parse(row.metadata) as { diagnostic?: { status?: number; type?: string; path?: string; phrases?: string[] } }
+    expect(meta.diagnostic).toMatchObject({ status: 400, type: 'invalid_request_error', path: 'messages.0' })
+    expect(meta.diagnostic!.phrases).toContain('system message')
+    expect(JSON.stringify(events)).not.toContain(MARKER)
+    expect(everythingPersisted(db)).not.toContain(MARKER)
+    expect(logged()).not.toContain(MARKER)
+    expect(logged()).toContain('type=invalid_request_error path=messages.0')
+  })
+
+  it('H1: an identifier-shaped echo in the provider path or error.type reaches neither the turn_error row nor the log', async () => {
+    const WORD = 'PRIVATE_CLOCK_ACCESS_TOKEN'
+    const TYPE_WORD = 'private_clock_access_token'
+    const db = freshDb()
+    const raw = `400 {"type":"error","error":{"type":"${TYPE_WORD}","message":"invalid argument messages.${WORD}: unexpected value"}}`
+    const chunk = runtimeErrorChunk(db, raw)
+    const agent: TurnAgentLike = { sendMessage: async function* () { yield chunk }, abort: vi.fn() }
+    const runner = new TurnRunner({ db, getAgent: () => agent })
+    const events: TurnEvent[] = []
+    runner.subscribe(USER_ID, e => { events.push(e) })
+    runner.startTurn({ userId: USER_ID, sessionId: SESSION_ID, text: 'diktat', source: 'clock' } as never)
+    await settle(runner)
+
+    const row = db.prepare("SELECT metadata FROM chat_messages WHERE metadata LIKE '%turn_error%'").get() as { metadata: string }
+    const meta = JSON.parse(row.metadata) as { diagnostic?: { status?: number; type?: string; path?: string } }
+    expect(meta.diagnostic).toMatchObject({ status: 400, type: 'other', path: 'messages.<cut>' })
+    for (const text of [row.metadata, everythingPersisted(db), JSON.stringify(events), logged()]) {
+      expect(text.toLowerCase()).not.toContain(TYPE_WORD)
+    }
+    expect(logged()).toContain('type=other path=messages.<cut>')
+  })
+
   it('retryable error: retry notice, retry log and the final error carry the class only', async () => {
     vi.useFakeTimers()
     try {

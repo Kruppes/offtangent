@@ -8,6 +8,8 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import fs from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
+import type { Api, Model } from '@earendil-works/pi-ai'
+import { getBuiltinModels } from '@earendil-works/pi-ai/providers/all'
 import {
   addOAuthProvider,
   buildModel,
@@ -64,6 +66,37 @@ const LIVE_ANSWER = {
     liveEntry('k3.1-pro', 'Kimi K3.1 Pro', 1_048_576, { only: true }),
     liveEntry('k3.1-pro-highspeed', 'Kimi K3.1 Pro Highspeed', 1_048_576, { only: true }),
   ],
+}
+
+/**
+ * Ids for the live-only path (live list yes, bundled pi-ai catalog no).
+ * `k3.1-pro*` were live-only under pi-ai 1.0.0, but pi-ai 1.5.x lists them in
+ * the `kimi-coding` catalog, which sends them down the catalog path. These ids
+ * are deliberately artificial so no catalog update can ever contain them;
+ * `expectNotInCatalog` checks the premise against the real catalog.
+ */
+const LIVE_ONLY = 'k9-live-only-test'
+const LIVE_ONLY_HS = 'k9-live-only-test-highspeed'
+
+/** LIVE_ANSWER plus two thinking-only models that are not in the catalog. */
+const LIVE_ANSWER_WITH_LIVE_ONLY = {
+  object: 'list',
+  data: [
+    ...LIVE_ANSWER.data,
+    liveEntry(LIVE_ONLY, 'Kimi K9 Live Only', 1_048_576, { only: true }),
+    liveEntry(LIVE_ONLY_HS, 'Kimi K9 Live Only Highspeed', 1_048_576, { only: true }),
+  ],
+}
+
+/** The bundled pi-ai `kimi-coding` catalog (the one buildModel() resolves against). */
+function kimiCatalog(): Model<Api>[] {
+  return getBuiltinModels('kimi-coding') as Model<Api>[]
+}
+
+function expectNotInCatalog(...ids: string[]): void {
+  const catalogIds = kimiCatalog().map(m => m.id)
+  expect(catalogIds.length).toBeGreaterThan(0)
+  for (const id of ids) expect(catalogIds).not.toContain(id)
 }
 
 let tmpDir: string
@@ -194,20 +227,21 @@ describe('refreshProviderLiveModels (kimi-coding-oauth)', () => {
   })
 
   it('hand-made entries (models + enabledModels + knownModels) stay user overrides, no duplicates', async () => {
+    expectNotInCatalog(LIVE_ONLY, LIVE_ONLY_HS)
     const override = {
-      id: 'k3.1-pro', name: 'K3.1 Pro (manual)', reasoning: true, contextWindow: 1_048_576, maxTokens: 131072,
+      id: LIVE_ONLY, name: 'K9 Live Only (manual)', reasoning: true, contextWindow: 1_048_576, maxTokens: 131072,
       compat: { allowEmptySignature: true, forceAdaptiveThinking: true },
       thinkingLevelMap: { off: null, minimal: null, low: 'low', medium: null, high: 'high', xhigh: null, max: 'max' },
       cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
     }
     const created = addKimiOAuth({
-      enabledModels: ['kimi-for-coding', 'k3.1-pro', 'k3.1-pro-highspeed'],
-      knownModels: ['k3', 'k3-256k', 'kimi-for-coding', 'kimi-for-coding-highspeed', 'k3.1-pro', 'k3.1-pro-highspeed'],
-      models: [override, { ...override, id: 'k3.1-pro-highspeed', name: 'K3.1 Pro HS (manual)' }],
+      enabledModels: ['kimi-for-coding', LIVE_ONLY, LIVE_ONLY_HS],
+      knownModels: ['k3', 'k3-256k', 'kimi-for-coding', 'kimi-for-coding-highspeed', 'k3.1-pro', 'k3.1-pro-highspeed', LIVE_ONLY, LIVE_ONLY_HS],
+      models: [override, { ...override, id: LIVE_ONLY_HS, name: 'K9 Live Only HS (manual)' }],
     } as Partial<ProviderConfig>)
     const before = stored(created.id)
 
-    const result = await refreshProviderLiveModels(created.id, { fetchImpl: modelsFetch(), logger: silentLogger() })
+    const result = await refreshProviderLiveModels(created.id, { fetchImpl: modelsFetch(LIVE_ANSWER_WITH_LIVE_ONLY), logger: silentLogger() })
     expect(result.ok).toBe(true)
     expect(result.newlyKnown).toEqual([])
 
@@ -216,8 +250,8 @@ describe('refreshProviderLiveModels (kimi-coding-oauth)', () => {
     expect(provider.knownModels).toEqual(before.knownModels)
     expect(provider.models).toEqual(before.models)
     // The override wins over the live metadata.
-    const model = buildModel(provider, 'k3.1-pro')
-    expect(model.name).toBe('K3.1 Pro (manual)')
+    const model = buildModel(provider, LIVE_ONLY)
+    expect(model.name).toBe('K9 Live Only (manual)')
     expect(model.provider).toBe(KIMI_CODING_OAUTH_MODEL_PROVIDER)
     expect(model.baseUrl).toBe(INTL)
     expect((model as { thinkingLevelMap?: Record<string, unknown> }).thinkingLevelMap?.off).toBeNull()
@@ -373,13 +407,22 @@ describe('thinking=off on the wire', () => {
 
 describe('Add Model dialog list and the periodic refresher', () => {
   it('lists the catalog plus live-only models with their live name and context', async () => {
+    expectNotInCatalog(LIVE_ONLY, LIVE_ONLY_HS)
     const created = addKimiOAuth({ knownModels: ['k3'] })
-    await refreshProviderLiveModels(created.id, { fetchImpl: modelsFetch(), logger: silentLogger() })
+    await refreshProviderLiveModels(created.id, { fetchImpl: modelsFetch(LIVE_ANSWER_WITH_LIVE_ONLY), logger: silentLogger() })
     const list = listCatalogWithLiveModels(stored(created.id))
     const ids = list.map(m => m.id)
     expect(new Set(ids).size).toBe(ids.length)
-    expect(list.find(m => m.id === 'k3.1-pro')).toEqual({ id: 'k3.1-pro', name: 'Kimi K3.1 Pro', contextWindow: 1_048_576 })
+    expect(list.find(m => m.id === LIVE_ONLY)).toEqual({ id: LIVE_ONLY, name: 'Kimi K9 Live Only', contextWindow: 1_048_576 })
+    expect(list.find(m => m.id === LIVE_ONLY_HS)).toEqual({ id: LIVE_ONLY_HS, name: 'Kimi K9 Live Only Highspeed', contextWindow: 1_048_576 })
     expect(list.find(m => m.id === 'k3')?.name).toBe('Kimi K3')
+    // Every catalog model is listed exactly once, as its real catalog entry.
+    for (const m of kimiCatalog()) {
+      expect(list.filter(x => x.id === m.id)).toEqual([
+        { id: m.id, name: m.name, contextWindow: m.contextWindow, cost: { input: m.cost.input, output: m.cost.output } },
+      ])
+    }
+    expect(list).toHaveLength(kimiCatalog().length + 2)
   })
 
   it('refreshNow walks every live-model provider and skips the others', async () => {
@@ -531,23 +574,82 @@ describe('review 2026-11: stale answers, generations, shared refresh tokens', ()
 })
 
 describe('metadata precedence contract (docs/guide/models.md "Metadata precedence")', () => {
-  it('provider.models is ignored for the catalog id k3 but wins over the live data for the live-only k3.1-pro', async () => {
+  it('provider.models is ignored for the catalog id k3 but wins over the live data for the live-only k9-live-only-test', async () => {
+    expectNotInCatalog(LIVE_ONLY)
     const created = addKimiOAuth({
       knownModels: ['k3'],
       models: [
         { id: 'k3', name: 'My K3', contextWindow: 4096 },
-        { id: 'k3.1-pro', name: 'My K3.1 Pro', contextWindow: 8192, reasoning: true },
+        { id: LIVE_ONLY, name: 'My K9 Live Only', contextWindow: 8192, reasoning: true },
       ],
     } as Partial<ProviderConfig>)
-    const result = await refreshProviderLiveModels(created.id, { fetchImpl: modelsFetch(), logger: silentLogger() })
+    const result = await refreshProviderLiveModels(created.id, { fetchImpl: modelsFetch(LIVE_ANSWER_WITH_LIVE_ONLY), logger: silentLogger() })
     expect(result.ok).toBe(true)
     const provider = stored(created.id)
     const k3 = buildModel(provider, 'k3')
     expect(k3.name).not.toBe('My K3')
     expect(k3.contextWindow).not.toBe(4096)
-    const pro = buildModel(provider, 'k3.1-pro')
-    expect(pro.name).toBe('My K3.1 Pro')
+    const pro = buildModel(provider, LIVE_ONLY)
+    expect(pro.name).toBe('My K9 Live Only')
     expect(pro.contextWindow).toBe(8192)
     expect(pro.thinkingLevelMap?.off).toBeNull()
+  })
+
+  it('a live-only model inherits the pinned Anthropic Messages wire of k3, not the raw catalog template wire', async () => {
+    expectNotInCatalog(LIVE_ONLY)
+    const created = addKimiOAuth({ knownModels: ['k3'] })
+    const result = await refreshProviderLiveModels(created.id, { fetchImpl: modelsFetch(LIVE_ANSWER_WITH_LIVE_ONLY), logger: silentLogger() })
+    expect(result.ok).toBe(true)
+    const provider = stored(created.id)
+    // Premise: the raw catalog template is on a different wire than the pin,
+    // so this test can tell the pinned template from the raw one.
+    const rawTemplate = kimiCatalog().find(m => m.id === 'k3')!
+    expect(rawTemplate).toBeDefined()
+    expect(rawTemplate.api).not.toBe('anthropic-messages')
+
+    const live = buildModel(provider, LIVE_ONLY)
+    expect(live.id).toBe(LIVE_ONLY)
+    expect(live.name).toBe('Kimi K9 Live Only')
+    expect(live.api).toBe('anthropic-messages')
+    // K3 compat of the pinned template (the same flags the catalog k3 gets).
+    expect(live.compat).toEqual({ allowEmptySignature: true, forceAdaptiveThinking: true })
+    expect(live.compat).toEqual(buildModel(provider, 'k3').compat)
+    expect(live.api).toBe(buildModel(provider, 'k3').api)
+    expect(live.provider).toBe(KIMI_CODING_OAUTH_MODEL_PROVIDER)
+    expect(live.baseUrl).toBe(INTL)
+    // Live metadata on top of the template: thinking-only, live efforts.
+    expect(live.thinkingLevelMap).toEqual({ off: null, minimal: null, low: 'low', medium: null, high: 'high', xhigh: null, max: 'max' })
+  })
+
+  it('for the catalog id k3.1-pro the catalog entry wins over a hand-made provider.models entry; off stays null', async () => {
+    // Premise (pi-ai >= 1.5): k3.1-pro is a catalog model.
+    const catalogPro = kimiCatalog().find(m => m.id === 'k3.1-pro')
+    expect(catalogPro).toBeDefined()
+    const created = addKimiOAuth({
+      knownModels: ['k3'],
+      models: [
+        // No thinkingLevelMap: the thinking-only guard has to supply off = null.
+        { id: 'k3.1-pro', name: 'My K3.1 Pro', contextWindow: 8192, reasoning: true },
+      ],
+    } as Partial<ProviderConfig>)
+    // Before any live refresh the id rule alone keeps off = null.
+    const beforeRefresh = buildModel(stored(created.id), 'k3.1-pro')
+    expect(beforeRefresh.name).toBe(catalogPro!.name)
+    expect(beforeRefresh.thinkingLevelMap!.off).toBeNull()
+
+    const result = await refreshProviderLiveModels(created.id, { fetchImpl: modelsFetch(), logger: silentLogger() })
+    expect(result.ok).toBe(true)
+    const provider = stored(created.id)
+    expect(provider.models?.find(m => m.id === 'k3.1-pro')?.name).toBe('My K3.1 Pro')
+
+    const pro = buildModel(provider, 'k3.1-pro')
+    expect(pro.id).toBe('k3.1-pro')
+    expect(pro.name).toBe(catalogPro!.name)
+    expect(pro.name).not.toBe('My K3.1 Pro')
+    expect(pro.contextWindow).toBe(catalogPro!.contextWindow)
+    expect(pro.contextWindow).not.toBe(8192)
+    expect(pro.api).toBe('anthropic-messages')
+    expect(pro.thinkingLevelMap).toBeDefined()
+    expect(pro.thinkingLevelMap!.off).toBeNull()
   })
 })

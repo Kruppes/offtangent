@@ -83,9 +83,13 @@ beforeEach(async () => {
   script = []
   defaultReply = res => anthropicSse(res, [{ text: 'synthetic ok' }])
   server = http.createServer((req, res) => {
-    let raw = ''
-    req.on('data', (c: Buffer) => { raw += c.toString('utf8') })
+    // Decode the whole body once: per-chunk toString() corrupts a multi-byte
+    // character (the ✓ in the shell log) that straddles a TCP chunk boundary,
+    // which pi-ai 1.5.x's request bodies hit intermittently.
+    const chunks: Buffer[] = []
+    req.on('data', (c: Buffer) => { chunks.push(c) })
     req.on('end', () => {
+      const raw = Buffer.concat(chunks).toString('utf8')
       try { received.push(JSON.parse(raw) as Body) } catch { received.push({ messages: [] }) }
       const next = script.shift()
       if (next) next(res)

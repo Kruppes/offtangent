@@ -1,6 +1,6 @@
 import type { AgentTool } from '@earendil-works/pi-agent-core'
 import { isPrivateMcpSession, MCP_PRIVATE_HISTORY_NOTICE } from './mcp-egress.js'
-import { Type } from '@earendil-works/pi-ai'
+import { Type } from 'typebox'
 import type { Database } from './database.js'
 import { resolveAgentReadScope } from './agent-read-scope.js'
 import { RECALLED_MARKER } from './message-digest.js'

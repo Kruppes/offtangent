@@ -19,7 +19,7 @@
  *    what the database and the app have to carry.
  */
 import type { AgentTool } from '@earendil-works/pi-agent-core'
-import { Type } from '@earendil-works/pi-ai'
+import { Type } from 'typebox'
 import type { Database } from './database.js'
 import { upsertBoard, upsertBoardSeries, type BoardSeriesInput } from './board-store.js'
 import { HTML_VIEW_KIND, HTML_VIEW_PAYLOAD_MAX_BYTES, validateHtmlViewPayload } from './board-html-view.js'

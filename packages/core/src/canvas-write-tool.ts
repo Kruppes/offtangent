@@ -30,7 +30,7 @@
 import fs from 'node:fs'
 import path from 'node:path'
 import type { AgentTool } from '@earendil-works/pi-agent-core'
-import { Type } from '@earendil-works/pi-ai'
+import { Type } from 'typebox'
 import { MAX_VIEW_NOTE_CHARS, normalizeViewKey, normalizeViewNote, sanitizeArtifactTitle } from './artifact-extract.js'
 import { artifactViewEvents, type CanvasViewUpdate } from './artifact-view-events.js'
 import type { SendFileDeliveryResult, SendFileToolOptions } from './send-file-tool.js'

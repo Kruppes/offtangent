@@ -1,7 +1,7 @@
 import type { AgentTool } from '@earendil-works/pi-agent-core'
 import type { Api, Model } from '@earendil-works/pi-ai'
 import { skipPrivateMcpSession } from './mcp-egress.js'
-import { Type } from '@earendil-works/pi-ai'
+import { Type } from 'typebox'
 import { completeSimple } from './pi-models.js'
 import { loadPersona, getPersonaDir } from './persona-loader.js'
 // resolveBackgroundReasoning import removed — cross-persona calls explicitly disable reasoning

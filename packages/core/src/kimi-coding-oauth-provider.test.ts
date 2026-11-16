@@ -255,3 +255,56 @@ describe('API-key kimi-coding providers are untouched', () => {
     expect(p.baseUrl).toBe(CN)
   })
 })
+
+describe('captured Kimi coding request (pi-ai 1.5.2 keeps the 1.0.0 Anthropic Messages wire)', () => {
+  // No network: the request is captured by an injected fetch and answered
+  // with a 400, so nothing reaches api.kimi.com / api.kimi.ai.
+  type Captured = { url: string; headers: Headers; body: Record<string, unknown> }
+  function capturingFetch(captured: Captured[]): typeof fetch {
+    return (async (url: string | URL | Request, init?: RequestInit) => {
+      const raw = init?.body
+      const text = typeof raw === 'string' ? raw : new TextDecoder().decode(raw as Uint8Array)
+      captured.push({ url: String(url), headers: new Headers(init?.headers), body: JSON.parse(text) })
+      return new Response('{"type":"error","error":{"type":"invalid_request_error","message":"capture stop"}}', { status: 400 })
+    }) as typeof fetch
+  }
+  async function capture(model: ReturnType<typeof buildModel>, apiKey: string): Promise<Captured> {
+    const { streamSimple } = await import('./pi-models.js')
+    const captured: Captured[] = []
+    const stream = streamSimple(model, { messages: [{ role: 'user', content: 'hi', timestamp: 0 }] } as never,
+      { apiKey, maxRetries: 0, reasoning: 'high', fetch: capturingFetch(captured) } as never)
+    for await (const _e of stream as AsyncIterable<unknown>) { /* drain until error */ }
+    expect(captured).toHaveLength(1)
+    return captured[0]!
+  }
+
+  it.each([CN, INTL])('API key %s: POST <region>/v1/messages with x-api-key, adaptive thinking, no OpenAI fields', async (baseUrl) => {
+    setup([{
+      id: 'kc-key', name: 'Kimi Code', type: 'anthropic-messages', providerType: 'kimi-coding', provider: 'kimi-coding',
+      baseUrl, apiKey: encrypt('sk-plan-key'), enabledModels: ['k3'], degradedThresholdMs: 5000, status: 'untested', authMethod: 'api-key',
+    }])
+    const model = buildModel(loadProvidersDecrypted().providers[0], 'k3')
+    const req = await capture(model, 'sk-plan-key')
+    // `?beta=true` comes from pi-ai's client.beta.messages.create (1.0.0 and 1.5.2 alike).
+    expect(req.url).toBe(`${baseUrl}/v1/messages?beta=true`)
+    expect(req.headers.get('x-api-key')).toBe('sk-plan-key')
+    expect(req.headers.get('authorization')).toBeNull()
+    expect(req.body.model).toBe('k3')
+    expect((req.body.thinking as { type?: string } | undefined)?.type).toBe('adaptive')
+    expect(req.body).not.toHaveProperty('reasoning_effort')
+    expect(req.body).not.toHaveProperty('max_completion_tokens')
+  })
+
+  it.each([['cn', CN], ['intl', INTL]] as const)('OAuth %s: POST <credential region>/v1/messages with Bearer, no x-api-key', async (region, apiBase) => {
+    addOAuthProvider({
+      name: `Kimi Code ${region}`, providerType: 'kimi-coding-oauth', enabledModels: ['k3'], baseUrl: apiBase,
+      oauthCredentials: { access: ACCESS, refresh: REFRESH, expires: Date.now() + 3_600_000, region },
+    })
+    const model = buildModel(loadProvidersDecrypted().providers[0], 'k3')
+    const req = await capture(model, ACCESS)
+    expect(req.url).toBe(`${apiBase}/v1/messages?beta=true`)
+    expect(req.headers.get('authorization')).toBe(`Bearer ${ACCESS}`)
+    expect(req.headers.get('x-api-key')).toBeNull()
+    expect((req.body.thinking as { type?: string } | undefined)?.type).toBe('adaptive')
+  })
+})

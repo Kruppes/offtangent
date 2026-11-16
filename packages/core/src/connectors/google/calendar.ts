@@ -6,7 +6,7 @@
  * a small local model cannot unfold, and `orderBy=startTime` is only legal
  * together with the expansion.
  */
-import { Type } from '@earendil-works/pi-ai'
+import { Type } from 'typebox'
 import type { AgentTool } from '@earendil-works/pi-agent-core'
 import type { ConnectorToolContext } from '../types.js'
 import { buildUrl, googleGetJson } from './api.js'
