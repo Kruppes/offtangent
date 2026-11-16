@@ -118,7 +118,7 @@ Follow [Semantic Versioning](https://semver.org/) (while < 1.0.0, minor = breaki
 
 ## Publishing to the public mirror
 
-The GitHub repository is a **public mirror of `main`, one commit per commit**. It starts with a single root commit `Offtangent 0.29.0`; after it every first-parent commit of `main` appears as its own commit with its original message and dates, without the instance-private paths in `PUBLISH_EXCLUDE` (default `.forgejo .github/workflows`). Each public commit ends with a `Source-Commit: <sha>` trailer that tells the next run where to continue. Branches, side commits of merges (a merge becomes one commit listing the merged subjects) and the history before 0.29.0 never go there. The only sanctioned path is
+The GitHub repository is a **public mirror of `main`, one commit per commit**. It starts with a single root commit `Offtangent 0.29.0`; after it every first-parent commit of `main` appears as its own commit with its original message and dates, without the instance-private paths in `PUBLISH_EXCLUDE` (default: the private CI `.forgejo .github/workflows`, the root work documents `TESTLOG.md` and `REVIEW-BRIEF.md`, and two internal operations notes under `docs/reference/` that main has since deleted; see the script header). Each public commit ends with a `Source-Commit: <sha>` trailer that tells the next run where to continue. Branches, side commits of merges (a merge becomes one commit listing the merged subjects) and the history before 0.29.0 never go there. The only sanctioned path is
 
 ```
 scripts/publish-commits.sh                    # dry run: builds the commits and runs the gates
