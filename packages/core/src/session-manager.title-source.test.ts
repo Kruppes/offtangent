@@ -72,7 +72,7 @@ describe('SessionManager title source', () => {
     it('derives a title for an untitled strand and marks it derived', () => {
       const sm = manager()
       const thread = sm.createThread('1', 'main')
-      sm.ensureThreadTitle(thread.id, 'Wie plane ich den Hausordnung für das Erdgeschoss?')
+      sm.ensureThreadTitle(thread.id, 'Wie plane ich die Hausordnung für das Erdgeschoss?')
       const row = raw(thread.id)
       expect(row.title).toBeTruthy()
       expect(row.title_source).toBe('derived')

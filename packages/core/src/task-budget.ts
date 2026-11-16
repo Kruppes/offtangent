@@ -106,7 +106,16 @@ const WRITE_TOOLS = new Set(['write_file', 'edit_file'])
  * Roots under which a written path may appear in the abort HANDOFF (S0-A,
  * second review, decision by main). Anything outside is withheld entirely.
  */
-export const HANDOFF_PATH_ROOTS: readonly string[] = ['/workspace', '/mnt/workspace', '/data/memory']
+// Installations needing an additional storage root may opt in without baking
+// a private mount into the public source. Never accept a filesystem root.
+const additionalHandoffRoot = process.env.OFFTANGENT_HANDOFF_PATH_ROOT
+const configuredHandoffRoot = additionalHandoffRoot && /^\/(?:[A-Za-z0-9._-]+\/)+[A-Za-z0-9._-]+$/.test(additionalHandoffRoot)
+  && !additionalHandoffRoot.split('/').some(segment => segment === '..' || segment === '.')
+  ? additionalHandoffRoot : null
+export const HANDOFF_PATH_ROOTS: readonly string[] = [
+  '/workspace', '/mnt/workspace', '/data/memory',
+  ...(configuredHandoffRoot ? [configuredHandoffRoot] : []),
+]
 
 /** 16 or more alphanumerics without a separator: may be a token, never published. */
 const TOKEN_RUN_RE = /[A-Za-z0-9]{16,}/

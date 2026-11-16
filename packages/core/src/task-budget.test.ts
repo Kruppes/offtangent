@@ -150,7 +150,7 @@ describe('TaskActivityLog + buildAbortHandoff', () => {
 describe('handoffPath / handoffToolName (S0-A second review: only value-free metadata)', () => {
   it('shows paths under the three roots and withholds everything else', () => {
     expect(handoffPath('/workspace/proj/notes.md')).toBe('/workspace/proj/notes.md')
-    expect(handoffPath('/mnt/workspace/x/report.md')).toBe('/mnt/workspace/x/report.md')
+    expect(handoffPath('/mnt/workspace')).toBe('/mnt/workspace')
     expect(handoffPath('/data/memory/MEMORY.md')).toBe('/data/memory/MEMORY.md')
     expect(handoffPath('/tmp/a.txt')).toBeNull()
     expect(handoffPath('/workspacefoo/a.txt')).toBeNull()
