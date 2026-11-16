@@ -159,6 +159,9 @@ if [ "$expect_tree" != "$remote_tree" ]; then
   # differences are acceptable only where the replacement map explains them
   unexplained=0
   while IFS= read -r -d '' p; do
+    # Paths newly excluded since the previous publication may still be present
+    # in its tip. Remove them in the first new commit, not at the remote gate.
+    is_excluded "$p" && continue
     want=$(git rev-parse -q --verify "$remote_tree:$p" || true)
     have=$(git rev-parse -q --verify "$expect_tree:$p" || true)
     if [ -n "$want" ] && [ -n "$have" ] && [ "$(replace_blob "$have")" = "$want" ]; then
@@ -187,6 +190,12 @@ idx="$work/index"
 for c in "${todo[@]}"; do
   rm -f "$idx"
   GIT_INDEX_FILE="$idx" git read-tree "$parent_tree"
+  # A newly excluded path can survive in the old public parent. Removing it
+  # before applying this commit's delta makes the first new public commit
+  # delete it even when the source commit never touches that path.
+  for e in $PUBLISH_EXCLUDE; do
+    GIT_INDEX_FILE="$idx" git rm -q -r -f --cached --ignore-unmatch -- "$e" >/dev/null
+  done
   : > "$work/info"
   while IFS= read -r -d '' meta && IFS= read -r -d '' path; do
     is_excluded "$path" && continue
