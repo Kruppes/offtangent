@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
 import {
   buildAbortHandoff,
   buildBudgetWarningMessage,
@@ -144,6 +144,32 @@ describe('TaskActivityLog + buildAbortHandoff', () => {
     for (let i = 0; i < 400; i++) log.record('write_file', { path: `/workspace/${'d'.repeat(15)}/${i}.md` }, 'ok', false)
     const text = buildAbortHandoff({ errorClass: 'tool_call_budget', taskId: 'big', toolCalls: 400, activity: log, warned: false })
     expect(text.length).toBeLessThanOrEqual(MAX_ABORT_HANDOFF_CHARS + 1)
+  })
+})
+
+describe('additional handoff root configuration', () => {
+  it('allows an explicit, nested storage root without exposing it in source', async () => {
+    vi.stubEnv('OFFTANGENT_HANDOFF_PATH_ROOT', '/mnt/volume/workspace')
+    vi.resetModules()
+    try {
+      const budget = await import('./task-budget.js')
+      expect(budget.HANDOFF_PATH_ROOTS).toContain('/mnt/volume/workspace')
+      expect(budget.handoffPath('/mnt/volume/workspace/proj/notes.md')).toBe('/mnt/volume/workspace/proj/notes.md')
+    } finally {
+      vi.unstubAllEnvs()
+      vi.resetModules()
+    }
+  })
+
+  it('rejects top-level and traversing root configuration', async () => {
+    for (const root of ['/', '/mnt', '/mnt/../secrets']) {
+      vi.stubEnv('OFFTANGENT_HANDOFF_PATH_ROOT', root)
+      vi.resetModules()
+      const budget = await import('./task-budget.js')
+      expect(budget.HANDOFF_PATH_ROOTS).not.toContain(root)
+    }
+    vi.unstubAllEnvs()
+    vi.resetModules()
   })
 })
 
