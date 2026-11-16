@@ -43,9 +43,10 @@
 #   PUBLISH_BRANCH        branch on the remote      (default: main)
 #   PUBLISH_EXCLUDE       private paths, space separated, exact paths or directories
 #                         (default: private CI, the root work documents TESTLOG.md
-#                         and REVIEW-BRIEF.md, and the HA relay operations notes that
-#                         were committed and later deleted on main:
-#                         ".forgejo .github/workflows TESTLOG.md REVIEW-BRIEF.md docs/reference/ha-relay-ci-review.md docs/reference/ha-relay-deployment.md")
+#                         and REVIEW-BRIEF.md, the HA relay operations notes that
+#                         were committed and later deleted on main, and the
+#                         instance-specific HA turn log copy script:
+#                         ".forgejo .github/workflows TESTLOG.md REVIEW-BRIEF.md docs/reference/ha-relay-ci-review.md docs/reference/ha-relay-deployment.md integrations/home_assistant/tools/pull_turns.sh")
 #   BLOCKLIST_FILE        regex rules               (default: /data/secrets/publish-blocklist.txt)
 #   REPLACE_FILE          replacement map           (default: /data/secrets/publish-replacements.txt, optional)
 #   MESSAGE_GREP_FILE     extra message rules       (default: /data/secrets/publish-message-grep.txt, optional)
@@ -62,7 +63,7 @@ shopt -s inherit_errexit
 SOURCE_REF="${SOURCE_REF:-origin/main}"
 PUBLISH_URL="${PUBLISH_URL:-git@github.com:Kruppes/offtangent.git}"
 PUBLISH_BRANCH="${PUBLISH_BRANCH:-main}"
-PUBLISH_EXCLUDE="${PUBLISH_EXCLUDE:-.forgejo .github/workflows TESTLOG.md REVIEW-BRIEF.md docs/reference/ha-relay-ci-review.md docs/reference/ha-relay-deployment.md}"
+PUBLISH_EXCLUDE="${PUBLISH_EXCLUDE:-.forgejo .github/workflows TESTLOG.md REVIEW-BRIEF.md docs/reference/ha-relay-ci-review.md docs/reference/ha-relay-deployment.md integrations/home_assistant/tools/pull_turns.sh}"
 BLOCKLIST_FILE="${BLOCKLIST_FILE:-/data/secrets/publish-blocklist.txt}"
 REPLACE_FILE="${REPLACE_FILE:-/data/secrets/publish-replacements.txt}"
 MESSAGE_GREP_FILE="${MESSAGE_GREP_FILE:-/data/secrets/publish-message-grep.txt}"
