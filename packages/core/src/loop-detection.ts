@@ -40,6 +40,19 @@ function hashValue(value: string): string {
 }
 
 /**
+ * Whether a finished tool call failed. Built-in tools report most failures by
+ * returning `details.error: true` instead of throwing, which leaves
+ * pi-agent-core's `isError` flag false, so all three signals count.
+ */
+export function isFailedToolResult(isErrorFlag: boolean | undefined, result: unknown): boolean {
+  if (isErrorFlag === true) return true
+  if (typeof result === 'string') return result.startsWith('Error')
+  if (typeof result !== 'object' || result === null) return false
+  const details = (result as { details?: unknown }).details
+  return typeof details === 'object' && details !== null && (details as { error?: unknown }).error === true
+}
+
+/**
  * Tracker for a single task's tool calls, used for systematic loop detection.
  */
 export class ToolCallTracker {

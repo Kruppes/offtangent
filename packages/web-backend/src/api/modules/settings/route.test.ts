@@ -156,7 +156,7 @@ describe('settings route module', () => {
     expect(body.healthMonitorIntervalMinutes).toBe(9)
     expect(body.telegram.enabled).toBe(true)
     expect(body.telegram.botToken).toBe('token-123')
-    expect(body.memoryConsolidation).toEqual({ enabled: true, runAtHour: 2, lookbackDays: 4, providerId: '' })
+    expect(body.memoryConsolidation).toEqual({ enabled: true, runAtHour: 2, lookbackDays: 4, providerId: '', backupRetention: 7 })
     expect(body.agentHeartbeat.enabled).toBe(true)
 
     expect(setTimeoutMinutes).toHaveBeenCalledWith(35)

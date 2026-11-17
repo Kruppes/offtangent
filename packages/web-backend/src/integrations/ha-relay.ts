@@ -2,7 +2,7 @@
 import fs from 'node:fs'
 import path from 'node:path'
 import express from 'express'
-import { createHaInferenceHandler, validateHaConfig } from '@axiom/core'
+import { createHaInferenceHandler, logBackgroundUsage, validateHaConfig } from '@axiom/core'
 export const HA_RELAY_MOUNT = '/ha-relay'
 export function createHaRelayRouter(): express.Router {
   const router = express.Router()
@@ -12,7 +12,9 @@ export function createHaRelayRouter(): express.Router {
   if (!stat.isFile() || (stat.mode & 0o077) !== 0) throw new Error('HA relay config must be a private regular file (0600)')
   const raw = JSON.parse(fs.readFileSync(file, 'utf8'))
   if (raw.enabled === false) return router
-  const handler = createHaInferenceHandler(validateHaConfig(raw))
+  const handler = createHaInferenceHandler(validateHaConfig(raw), undefined, message => {
+    logBackgroundUsage(null, message, { purpose: 'ha_relay' })
+  })
   router.use(async (incoming, outgoing) => {
     const abort = new AbortController()
     outgoing.on('close', () => { if (!outgoing.writableEnded) abort.abort() })

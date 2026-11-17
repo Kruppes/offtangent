@@ -45,6 +45,7 @@ import { Type } from 'typebox'
 import { loadConfig, warnConfigReadFailed } from './config.js'
 import { sealToolText, withSecretBoundary } from './secret-boundary.js'
 import { spillToolOutput } from './tool-output-spill.js'
+import { isFailedToolResult } from './loop-detection.js'
 
 export const CODEMODE_TOOL_NAME = 'codemode'
 
@@ -572,8 +573,9 @@ export function createCodemodeTool(options: CreateCodemodeToolOptions): AgentToo
             const text = textOf(outcome.result)
             entry.durationMs = Date.now() - t0
             entry.pending = false
-            entry.ok = !outcome.isError
-            if (outcome.isError) {
+            const failed = isFailedToolResult(outcome.isError, outcome.result)
+            entry.ok = !failed
+            if (failed) {
               const message = text || `Tool ${decl.name} failed`
               entry.error = cut(sealToolText(message, CODEMODE_TOOL_NAME), CODEMODE_MAX_LOGGED_ERROR_CHARS)
               throw new Error(message)

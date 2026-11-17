@@ -13,6 +13,7 @@ import {
   buildConsolidationTaskPrompt,
   listPersonaConsolidationTargets,
 } from './memory-consolidation-scheduler.js'
+import { computeStrandStats } from './api/modules/strands/stats.js'
 
 let tempDataDir: string
 let previousDataDir: string | undefined
@@ -100,6 +101,28 @@ describe('MemoryConsolidationScheduler', () => {
       scheduler.stop()
     })
 
+    it.each([0, null, 'invalid'])('falls back once for invalid backup retention (%s)', async value => {
+      writeConfig('settings.json', { memoryConsolidation: { backupRetention: value } })
+      const warning = vi.spyOn(console, 'warn').mockImplementation(() => {})
+      try {
+        const store = new TaskStore(db)
+        const runtime = createMockTaskRuntime(store)
+        runtime.start.mockImplementation(async task => {
+          store.update(task.id, { status: 'completed', resultStatus: 'silent' })
+          return task.id
+        })
+        const scheduler = new MemoryConsolidationScheduler({ db, taskRuntime: runtime, getDefaultProvider: () => makeProvider() })
+        scheduler.start()
+        const result = await scheduler.runNow()
+        expect(result.personaRuns?.[0].backupIssue).toBeUndefined()
+        expect(runtime.create).toHaveBeenCalledOnce()
+        expect(warning.mock.calls.filter(([message]) => String(message).includes('Invalid backup retention'))).toHaveLength(1)
+        scheduler.restart()
+        scheduler.stop()
+        expect(warning.mock.calls.filter(([message]) => String(message).includes('Invalid backup retention'))).toHaveLength(1)
+      } finally { warning.mockRestore() }
+    })
+
     it('restart reloads settings', () => {
       const scheduler = new MemoryConsolidationScheduler({ db })
       scheduler.start()
@@ -131,6 +154,62 @@ describe('MemoryConsolidationScheduler', () => {
   })
 
   describe('executeConsolidation via runNow', () => {
+    it('publishes a backup before task creation and any task write', async () => {
+      const taskStore = new TaskStore(db)
+      const taskRuntime = createMockTaskRuntime(taskStore)
+      const dir = contextMemoryDir(path.join(tempDataDir, 'memory'), resolveContextScope(db, 'owned-main')!)
+      fs.writeFileSync(path.join(dir, 'MEMORY.md'), 'synthetic original')
+      let backupWasPresentAtCreate = false
+      taskRuntime.create.mockImplementation(input => {
+        const backups = path.join(tempDataDir, 'memory-consolidation-backups')
+        backupWasPresentAtCreate = fs.existsSync(backups) &&
+          fs.readdirSync(backups, { recursive: true }).filter(name => String(name).endsWith('MEMORY.md')).length === 1
+        return taskStore.create(input)
+      })
+      taskRuntime.start.mockImplementation(async task => {
+        taskStore.update(task.id, { status: 'completed', resultStatus: 'silent' })
+        return task.id
+      })
+      const scheduler = new MemoryConsolidationScheduler({ db, taskRuntime, getDefaultProvider: () => makeProvider() })
+      await scheduler.runNow()
+      expect(taskRuntime.create).toHaveBeenCalledOnce()
+      expect(backupWasPresentAtCreate).toBe(true)
+    })
+
+    it('does not report a backup issue merely because a model reason mentions backup', async () => {
+      const store = new TaskStore(db)
+      const runtime = createMockTaskRuntime(store)
+      runtime.start.mockImplementation(async task => {
+        store.update(task.id, { status: 'completed', resultStatus: 'silent', resultSummary: 'backup discussed' })
+        return task.id
+      })
+      const result = await new MemoryConsolidationScheduler({ db, taskRuntime: runtime, getDefaultProvider: () => makeProvider() }).runNow()
+      expect(result.reason).toBe('Scoped roots only; legacy archives untouched')
+      expect(result.personaRuns?.[0].backupIssue).toBeUndefined()
+    })
+
+    it('reports backup failure and does not start the task', async () => {
+      const taskStore = new TaskStore(db)
+      const taskRuntime = createMockTaskRuntime(taskStore)
+      const dir = contextMemoryDir(path.join(tempDataDir, 'memory'), resolveContextScope(db, 'owned-main')!)
+      fs.symlinkSync(os.tmpdir(), path.join(dir, 'wiki'))
+      const scheduler = new MemoryConsolidationScheduler({ db, taskRuntime, getDefaultProvider: () => makeProvider() })
+      const result = await scheduler.runNow()
+      expect(result.reason).toContain('backups failed')
+      expect(result.personaRuns?.[0]).toMatchObject({ backupIssue: 'failed', reason: expect.stringContaining('code=symlink') })
+      expect(result.personaRuns?.[0].scopeId).toMatch(/^[0-9a-f]{8}$/)
+      expect(taskRuntime.create).not.toHaveBeenCalled()
+      expect(taskRuntime.start).not.toHaveBeenCalled()
+      const entry = db.prepare("SELECT tc.output, tc.session_id AS sessionId, s.type FROM tool_calls tc JOIN sessions s ON s.id=tc.session_id WHERE tc.tool_name='memory_consolidation' ORDER BY tc.id DESC LIMIT 1").get() as { output: string; sessionId: string; type: string } | undefined
+      expect(entry?.output).toContain('symlink')
+      expect(entry?.type).toBe('consolidation')
+      expect(entry?.sessionId).not.toBe('owned-main')
+      expect(db.prepare("SELECT COUNT(*) AS n FROM tool_calls WHERE session_id='owned-main' AND status='error'").get()).toEqual({ n: 0 })
+      expect(computeStrandStats(db, 'owned-main').tools.errors).toBe(0)
+      expect(new MemoryConsolidationScheduler({ db }).getSnapshot().lastResult).toBeNull()
+      expect(db.prepare('SELECT output FROM tool_calls WHERE session_id=?').get(entry!.sessionId)).toBeTruthy()
+    })
+
     it('returns error result when task runtime is not available', async () => {
       const scheduler = new MemoryConsolidationScheduler({ db })
 
@@ -582,9 +661,9 @@ describe('MemoryConsolidationScheduler', () => {
         .get(analystRun.task.sessionId) as { agent_id: string }
       expect(sessionRow.agent_id).toBe('analyst')
 
-      expect(result.personaRuns).toEqual([
-        { agentId: 'main', updated: false, reason: 'Nothing to report.' },
-        { agentId: 'analyst', updated: false, reason: 'Nothing to report.' },
+      expect(result.personaRuns).toMatchObject([
+        { agentId: 'main', updated: false, reason: 'Scoped consolidation completed without updates' },
+        { agentId: 'analyst', updated: false, reason: 'Scoped consolidation completed without updates' },
       ])
     }, 30_000)
 
@@ -616,7 +695,7 @@ describe('MemoryConsolidationScheduler', () => {
       const result = await scheduler.runNow()
 
       expect(taskRuntime.create).toHaveBeenCalledTimes(1)
-      expect(result.personaRuns).toEqual([{ agentId: 'main', updated: false, reason: 'Nothing to report.' }])
+      expect(result.personaRuns).toMatchObject([{ agentId: 'main', updated: false, reason: 'Scoped consolidation completed without updates' }])
       // The new data boundary is mandatory even if the old persona toggle is off.
       expect(taskRuntime.startedTasks[0].task.prompt).toContain('Strict data scope')
     }, 30_000)

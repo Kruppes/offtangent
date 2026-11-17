@@ -9,6 +9,7 @@
  * for), never the persona's model.
  */
 import { completeSimple } from './pi-models.js'
+import { logBackgroundUsage } from './background-usage.js'
 import { buildRouterModel, resolveRouterChain } from './router-model.js'
 import { redactKnown } from './secret-boundary.js'
 import type { ResolvedRouterModel } from './router-model.js'
@@ -36,6 +37,7 @@ async function defaultCompletion(chain: ResolvedRouterModel[], systemPrompt: str
       systemPrompt,
       messages: [{ role: 'user' as const, content: userPrompt, timestamp: Date.now() }],
     }, { apiKey: handle.apiKey })
+    logBackgroundUsage(handle.model, response, { purpose: 'voice_shorten' })
     if (response.stopReason === 'error' || response.stopReason === 'aborted') {
       throw new Error(response.errorMessage ?? response.stopReason)
     }

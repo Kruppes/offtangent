@@ -1,3 +1,4 @@
+import path from 'node:path'
 import type { Database } from '@axiom/core'
 import type { ConsolidationResult } from '@axiom/core'
 import type { AgentCore } from '@axiom/core'
@@ -6,6 +7,9 @@ import type { ProviderConfig } from '@axiom/core'
 import type { SessionManager } from '@axiom/core'
 import { generateSessionId } from '@axiom/core'
 import {
+  createConsolidationBackup,
+  consolidationBackupScopeId,
+  ConsolidationBackupError,
   purgeContextManifests,
   resolveContextScope,
   contextScopePin,
@@ -36,6 +40,8 @@ export interface ConsolidationSettings {
   lookbackDays: number
   /** Provider ID to use. Empty string or 'default' = use active provider */
   providerId: string
+  /** Completed backups to retain per scope. */
+  backupRetention: number
 }
 
 export const DEFAULT_CONSOLIDATION_SETTINGS: ConsolidationSettings = {
@@ -43,6 +49,7 @@ export const DEFAULT_CONSOLIDATION_SETTINGS: ConsolidationSettings = {
   runAtHour: 3,
   lookbackDays: 3,
   providerId: '',
+  backupRetention: 7,
 }
 
 export interface ConsolidationPromptOptions {
@@ -271,6 +278,7 @@ export class MemoryConsolidationScheduler {
   private timer: ReturnType<typeof setTimeout> | null = null
   private running = false
   private settings: ConsolidationSettings = { ...DEFAULT_CONSOLIDATION_SETTINGS }
+  private invalidRetentionWarned = false
   private lastRun: string | null = null
   private lastResult: ConsolidationResult | null = null
   private consolidationInFlight: Promise<ConsolidationResult> | null = null
@@ -421,7 +429,15 @@ export class MemoryConsolidationScheduler {
       if (!dailyFiles.length) continue
       if (runs.length >= 20) break // Bound maintenance cost per run; newest active scopes first.
       const start = Date.now()
+      let backupReady = false
+      let backupCleanupFailed = false
+      const scopeId = consolidationBackupScopeId(dir)
       try {
+        const backup = createConsolidationBackup(dir, this.settings.backupRetention)
+        console.info(`[consolidation] Backup completed: scope=${scopeId}; ${backup.files} files, ${backup.bytes} bytes; ${backup.pruned} pruned; reused=${Boolean(backup.reused)}; empty=${Boolean(backup.empty)}`)
+        if (backup.cleanupError) console.warn(`[consolidation] Backup cleanup failed: scope=${scopeId}`)
+        backupCleanupFailed = Boolean(backup.cleanupError)
+        backupReady = true
         const originPin = contextScopePin(scope)
         const sessionId = this.sessionManager
           ? this.sessionManager.createSession({ type: 'consolidation', source: 'system', agentId: scope.agentId, parentSessionId: row.id, userId: String(scope.userId), contextOriginScope: originPin }).id
@@ -439,15 +455,31 @@ export class MemoryConsolidationScheduler {
         dailyFilesReviewed += dailyFiles.length
         usage.input += result.usage?.input ?? 0
         usage.output += result.usage?.output ?? 0
-        runs.push({ agentId: scope.agentId, updated: result.updated, reason: result.reason })
+        runs.push({ agentId: scope.agentId, scopeId, updated: result.updated, reason: result.updated ? 'Scoped consolidation completed' : 'Scoped consolidation completed without updates',
+          ...(backup.relativeDir ? { backupId: path.basename(backup.relativeDir) } : {}),
+          ...(backup.cleanupError ? { backupIssue: 'cleanup' as const } : {}) })
         logToolCall(this.db, { sessionId, toolName: 'memory_consolidation', input: JSON.stringify({ policy: 'project-isolated', taskId: task.id }), output: JSON.stringify({ updated: result.updated }), durationMs: Date.now() - start, status: 'success' })
-      } catch {
-        // Do not log provider prompts/response bodies or filesystem paths.
-        runs.push({ agentId: scope.agentId, updated: false, reason: 'Scoped consolidation failed' })
+      } catch (error) {
+        // Only fixed codes and opaque scope IDs leave this boundary.
+        const code = error instanceof ConsolidationBackupError ? error.code : 'unknown'
+        const reason = backupReady ? 'Scoped consolidation failed' : `Memory backup failed (code=${code}, scope=${scopeId}); consolidation not started`
+        console.error(`[consolidation] ${reason}`)
+        if (!backupReady) {
+          // A dedicated system session keeps errors out of the interactive strand and survives restart.
+          const sessionId = this.sessionManager
+            ? this.sessionManager.createSession({ type: 'consolidation', source: 'system', agentId: scope.agentId, parentSessionId: row.id, userId: String(scope.userId), contextOriginScope: contextScopePin(scope) }).id
+            : generateSessionId()
+          if (!this.sessionManager) this.db.prepare(
+            "INSERT INTO sessions (id, user_id, source, type, agent_id, parent_session_id, context_origin_scope) VALUES (?, ?, 'system', 'consolidation', ?, ?, ?)",
+          ).run(sessionId, scope.userId, scope.agentId, row.id, contextScopePin(scope))
+          logToolCall(this.db, { sessionId, toolName: 'memory_consolidation', input: '{}', output: JSON.stringify({ code, scopeId }), durationMs: Date.now() - start, status: 'error' })
+        }
+        runs.push({ agentId: scope.agentId, scopeId, updated: false, reason,
+          ...(!backupReady ? { backupIssue: 'failed' as const } : backupCleanupFailed ? { backupIssue: 'cleanup' as const } : {}) })
       }
     }
     const result: ConsolidationResult = { updated: runs.some(r => r.updated), dailyFilesReviewed, personaRuns: runs, usage,
-      reason: runs.length ? 'Scoped roots only; legacy archives untouched' : 'No scoped daily files to consolidate' }
+      reason: runs.some(r => r.backupIssue) ? 'One or more scoped backups failed or need cleanup' : runs.length ? 'Scoped roots only; legacy archives untouched' : 'No scoped daily files to consolidate' }
     this.lastRun = new Date().toISOString()
     this.lastResult = result
     try { this.agentCore?.refreshSystemPrompt() } catch { /* next interactive turn refreshes its own scope */ }
@@ -562,10 +594,13 @@ export class MemoryConsolidationScheduler {
     try {
       ensureConfigTemplates()
       const settings = loadConfig<{ memoryConsolidation?: Partial<ConsolidationSettings> }>('settings.json')
-      return {
-        ...DEFAULT_CONSOLIDATION_SETTINGS,
-        ...(settings.memoryConsolidation ?? {}),
+      const merged = { ...DEFAULT_CONSOLIDATION_SETTINGS, ...(settings.memoryConsolidation ?? {}) }
+      if (!Number.isInteger(merged.backupRetention) || merged.backupRetention < 1 || merged.backupRetention > 365) {
+        if (!this.invalidRetentionWarned) console.warn('[consolidation] Invalid backup retention; using default')
+        this.invalidRetentionWarned = true
+        merged.backupRetention = DEFAULT_CONSOLIDATION_SETTINGS.backupRetention
       }
+      return merged
     } catch {
       return { ...DEFAULT_CONSOLIDATION_SETTINGS }
     }

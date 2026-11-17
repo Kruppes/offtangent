@@ -26,6 +26,7 @@
  */
 import type { Database } from './database.js'
 import { completeSimple } from './pi-models.js'
+import { logBackgroundUsage } from './background-usage.js'
 import { resolveBackgroundReasoning } from './thinking-level.js'
 import { getLatestSessionSummary } from './session-summary-store.js'
 import { buildRouterModel, parseRouterChain, resolveRouterChain } from './router-model.js'
@@ -450,6 +451,7 @@ async function defaultCompletion(entry: ResolvedRouterModel, systemPrompt: strin
     apiKey: handle.apiKey,
     reasoning: resolveBackgroundReasoning(),
   })
+  logBackgroundUsage(handle.model, response, { purpose: 'auto_title' })
   if (response.stopReason === 'error' || response.stopReason === 'aborted') {
     throw new Error(response.errorMessage ?? response.stopReason)
   }

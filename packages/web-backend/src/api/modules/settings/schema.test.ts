@@ -23,6 +23,13 @@ import {
 } from './schema.js'
 
 describe('settings schema', () => {
+  it('validates backup retention independently of lookback', () => {
+    const settings: Record<string, unknown> = {}
+    expect(mergeConsolidation({ memoryConsolidation: { backupRetention: 0 } }, settings).error).toContain('1-365')
+    expect(mergeConsolidation({ memoryConsolidation: { backupRetention: 8 } }, settings).error).toBeNull()
+    expect((settings.memoryConsolidation as Record<string, unknown>).backupRetention).toBe(8)
+  })
+
   it('supports legacy healthMonitor interval payloads', () => {
     expect(normalizeSettingsPayload({
       healthMonitor: {

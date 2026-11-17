@@ -19,6 +19,13 @@ import crypto from 'node:crypto'
 const TOKEN_SCOPE = 'https://www.googleapis.com/auth/firebase.messaging'
 /** Google issues one hour tokens; refresh a minute early to avoid a race with the clock. */
 const TOKEN_SKEW_MS = 60_000
+/**
+ * Upper bound for one HTTP exchange with Google (token exchange or send),
+ * body included. Without it a peer that accepts the connection and never
+ * answers keeps the doorbell, its retry and the socket pending forever.
+ * Ten seconds also bounds retries so one unresponsive exchange cannot stall a send indefinitely.
+ */
+export const FCM_REQUEST_TIMEOUT_MS = 10_000
 
 export interface ServiceAccount {
   project_id: string
@@ -54,6 +61,8 @@ export interface FcmClientOptions {
   /** Injected in tests. Defaults to the global fetch. */
   fetchImpl?: typeof fetch
   now?: () => number
+  /** Per request limit in ms, response body included. Defaults to {@link FCM_REQUEST_TIMEOUT_MS}. */
+  requestTimeoutMs?: number
 }
 
 export class FcmConfigError extends Error {}
@@ -62,6 +71,7 @@ export class FcmClient {
   private readonly serviceAccountFile: string
   private readonly fetchImpl: typeof fetch
   private readonly now: () => number
+  private readonly requestTimeoutMs: number
   private account: ServiceAccount | null = null
   private accessToken: { value: string; expiresAtMs: number } | null = null
   private pendingToken: Promise<string> | null = null
@@ -70,6 +80,7 @@ export class FcmClient {
     this.serviceAccountFile = options.serviceAccountFile
     this.fetchImpl = options.fetchImpl ?? ((input, init) => fetch(input, init))
     this.now = options.now ?? Date.now
+    this.requestTimeoutMs = options.requestTimeoutMs ?? FCM_REQUEST_TIMEOUT_MS
   }
 
   /** True when the configured service account file exists and parses. */
@@ -100,7 +111,8 @@ export class FcmClient {
         data: message.data,
       },
     }
-    const response = await this.fetchImpl(
+    const { response, text } = await this.request(
+      'FCM send',
       `https://fcm.googleapis.com/v1/projects/${account.project_id}/messages:send`,
       {
         method: 'POST',
@@ -111,7 +123,6 @@ export class FcmClient {
         body: JSON.stringify(body),
       },
     )
-    const text = await response.text()
     let parsed: unknown = null
     try {
       parsed = text ? JSON.parse(text) : null
@@ -172,7 +183,7 @@ export class FcmClient {
     const account = this.loadAccount()
     const tokenUri = account.token_uri ?? 'https://oauth2.googleapis.com/token'
     const assertion = this.buildAssertion(account, tokenUri)
-    const response = await this.fetchImpl(tokenUri, {
+    const { response, text } = await this.request('OAuth token exchange', tokenUri, {
       method: 'POST',
       headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
       body: new URLSearchParams({
@@ -180,7 +191,6 @@ export class FcmClient {
         assertion,
       }).toString(),
     })
-    const text = await response.text()
     if (!response.ok) {
       throw new Error(`OAuth token exchange failed (${response.status}): ${text.slice(0, 300)}`)
     }
@@ -189,6 +199,35 @@ export class FcmClient {
     const lifetimeMs = (parsed.expires_in ?? 3600) * 1000
     this.accessToken = { value: parsed.access_token, expiresAtMs: this.now() + lifetimeMs }
     return parsed.access_token
+  }
+
+  /**
+   * One fetch plus body read under {@link requestTimeoutMs}. The signal stops
+   * a real fetch; the race also ends the wait when an injected or misbehaving
+   * fetch ignores the signal, so the caller always gets control back.
+   */
+  private async request(label: string, url: string, init: RequestInit): Promise<{ response: Response; text: string }> {
+    const controller = new AbortController()
+    let timer: ReturnType<typeof setTimeout> | undefined
+    const timedOut = new Promise<never>((_, reject) => {
+      timer = setTimeout(() => {
+        const error = new Error(`${label} timed out after ${this.requestTimeoutMs} ms`)
+        controller.abort(error)
+        reject(error)
+      }, this.requestTimeoutMs)
+    })
+    try {
+      return await Promise.race([
+        (async () => {
+          const response = await this.fetchImpl(url, { ...init, signal: controller.signal })
+          const text = await response.text()
+          return { response, text }
+        })(),
+        timedOut,
+      ])
+    } finally {
+      clearTimeout(timer)
+    }
   }
 
   private buildAssertion(account: ServiceAccount, tokenUri: string): string {

@@ -12,6 +12,7 @@
 import type { Database } from './database.js'
 import { errorClass } from './log-safe-error.js'
 import { completeSimple } from './pi-models.js'
+import { logBackgroundUsage } from './background-usage.js'
 import { resolveBackgroundReasoning } from './thinking-level.js'
 import { getLatestSessionSummary } from './session-summary-store.js'
 import { renderSummaryMarkdown } from './session-summary-schema.js'
@@ -891,6 +892,7 @@ async function defaultCompletion(entry: ResolvedRouterModel, userPrompt: string)
     apiKey: handle.apiKey,
     reasoning: resolveBackgroundReasoning(),
   })
+  logBackgroundUsage(handle.model, response, { purpose: 'capture_router' })
   if (response.stopReason === 'error' || response.stopReason === 'aborted') {
     throw new Error(response.errorMessage ?? response.stopReason)
   }

@@ -1,4 +1,5 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
+import { setStrandEcoEnabled } from './eco-mode-store.js'
 import { initDatabase } from './database.js'
 import { TaskStore } from './task-store.js'
 import { TaskRunner, TASK_PROGRESS_FRAME_INTERVAL_MS, formatTaskInjection, parseTaskTimestampMs } from './task-runner.js'
@@ -21,6 +22,7 @@ vi.mock('./provider-config.js', async (importOriginal) => {
 
 interface CapturedAgentOptions {
   getApiKey?: () => unknown
+  afterToolCall?: (ctx: unknown) => Promise<unknown>
   initialState?: { tools: TaskRunnerOptions['tools']; systemPrompt: string }
 }
 interface AgentOptionsBox {
@@ -1832,6 +1834,148 @@ describe('TaskRunner', () => {
       expect(finalRow.promptTokens).toBe(250)
       expect(finalRow.completionTokens).toBe(90)
       expect(finalRow.toolCallCount).toBe(1)
+    })
+  })
+
+  // A tool that reports its failure via
+  // `details.error: true` (isError false) must reach loop detection, the event
+  // bus and the tool_calls log as a failure.
+  describe('details.error tool failures', () => {
+    it.each(['successful wait', 'different failure output'])('does not abort a details.error task after %s', async (variation) => {
+      const { Agent } = await import('@earendil-works/pi-agent-core')
+      const MockAgent = Agent as unknown as ReturnType<typeof vi.fn>
+      let emit: ((event: unknown) => void) | undefined
+      const abort = vi.fn()
+      MockAgent.mockImplementationOnce(() => ({
+        subscribe: vi.fn((fn: (event: unknown) => void) => { emit = fn; return () => { emit = undefined } }),
+        prompt: vi.fn(() => new Promise<void>(() => {})), abort,
+        state: { messages: [] },
+      }))
+      runner.dispose()
+      runner = new TaskRunner({ db, sessionManager, tools: [],
+        buildModel: () => ({} as ReturnType<TaskRunnerOptions['buildModel']>),
+        getApiKey: async () => 'test-key', onTaskComplete: () => {},
+        loopDetection: { enabled: true, method: 'systematic', maxConsecutiveFailures: 3 },
+      })
+      const task = store.create({ name: 'Waiting', prompt: 'work', triggerType: 'agent', sessionId: 'waiting-session' })
+      await runner.startTask(task, mockProvider)
+      await new Promise(resolve => setTimeout(resolve, 20))
+      const call = (id: number, toolName: string, text: string, error: boolean) => {
+        const args = toolName === 'shell' ? { command: 'sleep 1' } : { path: 'pending.txt' }
+        emit!({ type: 'tool_execution_start', toolCallId: `wait-${id}`, toolName, args })
+        emit!({ type: 'tool_execution_end', toolCallId: `wait-${id}`, toolName,
+          result: { content: [{ type: 'text', text }], details: error ? { error: true } : {} }, isError: false })
+      }
+      call(1, 'read_file', 'File not found', true)
+      call(2, 'read_file', variation === 'successful wait' ? 'File not found' : 'File not found (second output)', true)
+      if (variation === 'successful wait') call(3, 'shell', 'waited', false)
+      call(4, 'read_file', variation === 'successful wait' ? 'File not found' : 'File not found (third output)', true)
+      expect(abort).not.toHaveBeenCalled()
+      expect(store.getById(task.id)?.status).toBe('running')
+    })
+
+    it('freezes a long details.error result with consistent task metadata, projection, log and event', async () => {
+      const { Agent } = await import('@earendil-works/pi-agent-core')
+      const { TaskEventBus } = await import('./task-event-bus.js')
+      const MockAgent = Agent as unknown as ReturnType<typeof vi.fn>
+      let emit: ((event: unknown) => void) | undefined
+      MockAgent.mockImplementationOnce((options: CapturedAgentOptions) => {
+        recordAgentOptions(options)
+        return {
+          subscribe: vi.fn((fn: (event: unknown) => void) => { emit = fn; return () => { emit = undefined } }),
+          prompt: vi.fn(() => new Promise<void>(() => {})),
+          abort: vi.fn(),
+          state: { messages: [] },
+        }
+      })
+      const bus = new TaskEventBus()
+      runner.dispose()
+      runner = new TaskRunner({ db, sessionManager, tools: [], taskEventBus: bus,
+        buildModel: () => ({} as ReturnType<TaskRunnerOptions['buildModel']>),
+        getApiKey: async () => 'test-key', onTaskComplete: () => {} })
+      db.prepare("INSERT INTO users(id,username,password_hash) VALUES (1,'fixture','x')").run()
+      db.prepare("INSERT INTO sessions(id,user_id,agent_id) VALUES ('eco-task-parent',1,'main')").run()
+      const task = store.create({ name: 'Eco error', prompt: 'work', triggerType: 'agent', sessionId: 'eco-task-parent' })
+      const flags: boolean[] = []
+      bus.subscribeToTask(task.id, (event) => {
+        if (event.type === 'tool_call_end') flags.push((event as { toolIsError?: boolean }).toolIsError === true)
+      })
+      await runner.startTask(task, mockProvider)
+      await new Promise(resolve => setTimeout(resolve, 20))
+      const sessionId = store.getById(task.id)!.sessionId!
+      setStrandEcoEnabled(db, sessionId, true)
+      const result = { content: [{ type: 'text', text: `FAIL test\n${'  passed test\n'.repeat(700)}` }], details: { error: true } }
+      const toolCall = { id: 'task-eco-call', name: 'shell' }
+      const args = { command: 'npm test' }
+      emit!({ type: 'tool_execution_start', toolCallId: toolCall.id, toolName: toolCall.name, args })
+      const frozen = await getCapturedAgentOptions().afterToolCall!({ toolCall, args, result, isError: false }) as { content: typeof result.content; details: unknown }
+      expect(frozen).toBeDefined()
+      emit!({ type: 'tool_execution_end', toolCallId: toolCall.id, toolName: toolCall.name, result: frozen, isError: false })
+      expect(flags).toEqual([true])
+      const row = db.prepare('SELECT metadata FROM chat_messages WHERE session_id = ? AND eco_original IS NOT NULL').get(sessionId) as { metadata: string }
+      expect(JSON.parse(row.metadata).toolIsError).toBe(true)
+      expect(JSON.parse(row.metadata).toolResult.content[0].text).toContain('Status: error')
+      const status = db.prepare("SELECT status FROM tool_calls WHERE session_id = ? AND tool_name = 'shell'").get(sessionId) as { status: string }
+      expect(status.status).toBe('error')
+    })
+
+    it('counts details.error results as failures for loop detection, event bus and tool_calls', async () => {
+      const { Agent } = await import('@earendil-works/pi-agent-core')
+      const { TaskEventBus } = await import('./task-event-bus.js')
+      const MockAgent = Agent as unknown as ReturnType<typeof vi.fn>
+
+      let subscribeFn: ((event: unknown) => void) | null = null
+      let resolvePrompt: (() => void) | null = null
+      const abort = vi.fn(() => { resolvePrompt?.() })
+      MockAgent.mockImplementationOnce(() => ({
+        subscribe: vi.fn((fn: (event: unknown) => void) => {
+          subscribeFn = fn
+          return () => { subscribeFn = null }
+        }),
+        prompt: vi.fn(() => new Promise<void>((resolve) => { resolvePrompt = resolve })),
+        abort,
+        state: { messages: [] },
+      }))
+
+      const bus = new TaskEventBus()
+      runner.dispose()
+      runner = new TaskRunner({
+        db,
+        buildModel: () => ({} as ReturnType<TaskRunnerOptions['buildModel']>),
+        getApiKey: async () => 'test-key',
+        tools: [],
+        onTaskComplete: (taskId: string, injection: string) => { onTaskCompleteCalls.push({ taskId, injection }) },
+        onTaskPaused: (taskId: string, injection: string) => { onTaskPausedCalls.push({ taskId, injection }) },
+        sessionManager,
+        taskEventBus: bus,
+        loopDetection: { enabled: true, method: 'systematic', maxConsecutiveFailures: 3 },
+      })
+
+      const task = store.create({ name: 'Edit loop', prompt: 'work', triggerType: 'agent', sessionId: 'details-error-session' })
+      const flags: boolean[] = []
+      bus.subscribeToTask(task.id, (event) => {
+        if (event.type === 'tool_call_end') flags.push((event as { toolIsError?: boolean }).toolIsError === true)
+      })
+
+      await runner.startTask(task, mockProvider)
+      await new Promise(resolve => setTimeout(resolve, 20))
+      expect(subscribeFn).not.toBeNull()
+
+      const failed = { content: [{ type: 'text', text: 'Could not find edits[0].oldText in a.ts' }], details: { error: true } }
+      for (let i = 1; i <= 3; i++) {
+        const emit = subscribeFn!
+        emit({ type: 'tool_execution_start', toolCallId: `call-${i}`, toolName: 'edit_file', args: { path: 'a.ts' } })
+        emit({ type: 'tool_execution_end', toolCallId: `call-${i}`, toolName: 'edit_file', result: failed, isError: false })
+      }
+      await new Promise(resolve => setTimeout(resolve, 50))
+
+      expect(flags).toEqual([true, true, true])
+      const statuses = db.prepare("SELECT status FROM tool_calls WHERE tool_name = 'edit_file' ORDER BY id").all() as Array<{ status: string }>
+      expect(statuses.map(r => r.status)).toEqual(['error', 'error', 'error'])
+      expect(abort).toHaveBeenCalled()
+      const row = store.getById(task.id)!
+      expect(row.status).toBe('failed')
+      expect(row.errorMessage).toContain('Loop detected (systematic)')
     })
   })
 

@@ -6,6 +6,7 @@ import { AsyncLocalStorage } from 'node:async_hooks'
 import type { AgentMessage, Agent as PiAgent } from '@earendil-works/pi-agent-core'
 import type { Api, Model } from '@earendil-works/pi-ai'
 import { completeSimple } from './pi-models.js'
+import { logBackgroundUsage } from './background-usage.js'
 import { beginLocalTurn, isLocalInferenceBusy, waitForLocalInferenceIdle } from './local-inference-activity.js'
 import type { Database } from './database.js'
 import { getApiKeyForProvider, buildModel } from './provider-config.js'
@@ -1215,6 +1216,15 @@ export class AgentCore {
       const trimLog = strandTrimLogLine(trimmed, sessionId, budget)
       if (trimLog) console.log(trimLog)
       const { block, stats } = assembleStrandContextWithStats(this.db, sessionId, userText, trimmed.messages)
+      // Request probe: counters only, for the cache-cause probe of this turn.
+      runtime.setRequestProbeHint?.({
+        turnKind: 'interactive',
+        trimDropped: trimmed.droppedCount,
+        trimRepaired: trimmed.repaired === true,
+        trimBudgetTokens: budget,
+        trimKeptTokens: trimmed.keptTokens,
+        digestChars: block ? block.length : 0,
+      })
       if (block || trimmed.droppedCount > 0 || trimmed.repaired) {
         // SPEC 12.2: strand window and retrieval metric, one row per turn
         // that actually used the mechanism.
@@ -1317,6 +1327,7 @@ export class AgentCore {
     // account over its parallel-call budget.
     const releaseSlot = await this.acquireProviderSlot(resolvedModel, runtime, agentId, sessionId, targetUserId)
     const endLocalTurn = beginLocalTurn(sessionId)
+    runtime.setRequestProbeHint?.({ turnKind: 'task_injection' })
     try {
       for await (const chunk of this.bindToolTurn(runtime.streamPrompt(injectionText, sessionId), turn)) {
         // Tag task-injection chunks with the actual session used AND the
@@ -1525,6 +1536,7 @@ export class AgentCore {
         reasoning: resolveBackgroundReasoning(),
       }), 180_000, 'Session summary')
 
+      logBackgroundUsage(summaryModel, response, { purpose: 'session_summary', sessionId, db: this.db })
       assertLlmResponseOk(response, '[session-summary] Provider rejected the summary request')
 
       const textContent = response.content.filter(c => c.type === 'text')

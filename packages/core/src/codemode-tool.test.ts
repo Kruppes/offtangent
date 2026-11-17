@@ -453,6 +453,30 @@ describe('codemode execution', () => {
     expect(details.calls[0].error).toContain('synthetic: file not found')
   })
 
+  // Built-in tools can return failures as
+  // `details.error: true` instead of throwing; codemode must see them as failed.
+  it('a nested tool that reports details.error fails the call like a thrown error', async () => {
+    const softFail: AgentTool = {
+      name: 'edit_file',
+      label: 'edit_file',
+      description: 'Synthetic edit_file tool.',
+      parameters: Type.Object({ path: Type.Optional(Type.String()) }),
+      execute: async (): Promise<AgentToolResult<unknown>> => ({
+        content: [{ type: 'text', text: 'Could not find edits[0].oldText in a.ts' }],
+        details: { error: true },
+      }),
+    }
+    const { tool } = build([softFail])
+    const { text, details, result } = await run(tool, 'await tools.edit_file({ path: "a.ts" }); return "unreachable"')
+    expect(result.isError).toBe(true)
+    expect(details.ok).toBe(false)
+    expect(details.errorKind).toBe('script')
+    expect(text).toContain('Could not find edits[0].oldText')
+    expect(text).not.toContain('unreachable')
+    expect(details.calls[0]).toMatchObject({ name: 'edit_file', ok: false })
+    expect(details.calls[0].error).toContain('Could not find edits[0].oldText')
+  })
+
   it('a script can catch a tool error and continue', async () => {
     const { tool } = build([failingTool('read_file', 'boom')])
     const { text, details } = await run(tool, 'try { await tools.read_file({}) } catch (e) { return "caught " + e.message }')

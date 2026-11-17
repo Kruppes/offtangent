@@ -649,6 +649,9 @@ export interface IsolatedCompletionInput {
 export type IsolatedCompletion = (input: IsolatedCompletionInput) => Promise<AssistantMessage>
 
 async function defaultCompletion(input: IsolatedCompletionInput): Promise<AssistantMessage> {
+  // background-usage: exempt here. This module must not reach the database
+  // (isolation pinned by isolated-inference.test.ts); the caller books the
+  // usage through `RunIsolatedInferenceOptions.onUsage`.
   return completeSimple(
     input.model,
     {
@@ -718,6 +721,12 @@ export interface RunIsolatedInferenceOptions {
   audit?: AuditSink
   /** Correlation id; generated when the caller does not supply one. */
   requestId?: string
+  /**
+   * Usage sink for the finished provider call (Background usage). The web route books
+   * it into `token_usage`; the module itself stays free of the database. A
+   * throwing sink is ignored, it never changes the result.
+   */
+  onUsage?: (model: Model<Api>, message: AssistantMessage) => void
 }
 
 /**
@@ -846,6 +855,7 @@ async function runOnce(
       // the provider layer, never forwarded to the caller.
       return fail(new IsolatedInferenceError('upstream_failed', 502, 'inference failed'), model)
     }
+    try { options.onUsage?.(handle.model, message) } catch { /* bookkeeping never changes the result */ }
     if (message.stopReason === 'error' || message.stopReason === 'aborted') {
       return fail(new IsolatedInferenceError('upstream_failed', 502, 'inference failed'), model)
     }

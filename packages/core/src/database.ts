@@ -233,6 +233,11 @@ export function initDatabase(dbPath?: string): Database {
   if (!tokenUsageCols.find(c => c.name === 'kind')) {
     db.exec("ALTER TABLE token_usage ADD COLUMN kind TEXT NOT NULL DEFAULT 'request'")
   }
+  // Migration (Background usage): what a `kind = 'background'` row was for. Nullable,
+  // every older row and every conversation request keeps NULL.
+  if (!tokenUsageCols.find(c => c.name === 'purpose')) {
+    db.exec('ALTER TABLE token_usage ADD COLUMN purpose TEXT')
+  }
 
   // Migration: add metadata column and tool role to chat_messages if missing
   const chatCols = db.prepare("PRAGMA table_info(chat_messages)").all() as { name: string }[]

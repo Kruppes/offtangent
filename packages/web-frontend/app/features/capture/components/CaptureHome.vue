@@ -1,5 +1,6 @@
 <script setup lang="ts">
-import { computed, nextTick, onMounted, ref } from 'vue'
+import { computed, nextTick, onActivated, onBeforeUnmount, onMounted, ref, shallowRef } from 'vue'
+import type { SettingsThinkingLevel } from '@axiom/core/contracts'
 import { takeComposerHandoff } from '~/composables/useComposerHandoff'
 import { namedPasteFile, pasteIntent } from '~/composables/chat/useFileDrop'
 import { useCapturesApi, type CaptureResult, type CaptureInput, type ApplyCaptureInput, type UploadDescriptor, type ClientPersona, initialCapturePersona, captureClientKey } from '~/api/captures'
@@ -12,10 +13,49 @@ import CaptureParts from './CaptureParts.vue'
 import { daysSince, isSplit, trayItems, trayTotal, TRAY_PAGE_SIZE, TRAY_STATUSES } from '../captureParts'
 import { dictationFields } from '../captureDictation'
 import { useCaptureDictation } from '../useCaptureDictation'
+import { useThinkingLevel } from '~/composables/chat/useThinkingLevel'
 const api = useCapturesApi()
 const nowApi = useNowApi()
 const modelsApi = useModelsApi()
 const resurfaceApi = useResurfaceApi()
+/**
+ * Thinking level: the same state and logic as the strand composer
+ * (`useThinkingLevel`), admin only. It is the global setting, so the label
+ * says "all strands" — unlike the model select next to it, which only
+ * applies to this one message. Read fresh on every visit and whenever the
+ * tab comes back, so a change made in a strand shows up here.
+ */
+const { user } = useAuth()
+const isAdmin = computed(() => user?.value?.role === 'admin')
+const {
+  levels: thinkingLevels, current: thinkingCurrent, known: thinkingKnown, loadError: thinkingLoadError,
+  saveError: thinkingSaveError, saveUnclear: thinkingSaveUnclear, saving: thinkingSaving, load: loadThinking, change: changeThinking,
+  readyNow: thinkingReadyNow, readyToSend: thinkingReadyToSend,
+} = useThinkingLevel(isAdmin, undefined, computed(() => user?.value?.id ?? user?.value?.username ?? null))
+const thinkingSavedLevel = ref<SettingsThinkingLevel | ''>('')
+const thinkingSelect = shallowRef<HTMLSelectElement | null>(null)
+/** The select describes itself by the hint plus whichever thinking error is shown. */
+const thinkingDescribedBy = computed(() => [
+  'capture-thinking-hint',
+  ...(thinkingSaveError.value ? ['capture-thinking-save-error'] : []),
+  ...(thinkingSaveUnclear.value ? ['capture-thinking-save-unclear'] : []),
+  ...(thinkingLoadError.value && !thinkingKnown.value ? ['capture-thinking-load-error'] : []),
+].join(' '))
+async function onThinkingChange(event: Event) {
+  const level = (event.target as HTMLSelectElement).value as SettingsThinkingLevel
+  if (!thinkingLevels.includes(level)) return
+  // The select is disabled while saving, which drops keyboard focus; give it back afterwards.
+  const hadFocus = typeof document !== 'undefined' && !!thinkingSelect.value && document.activeElement === thinkingSelect.value
+  thinkingSavedLevel.value = ''
+  if (await changeThinking(level)) thinkingSavedLevel.value = level
+  if (!hadFocus) return
+  await nextTick()
+  const select = thinkingSelect.value
+  if (select && !select.disabled && document.activeElement !== select) select.focus()
+}
+function refreshThinkingOnReturn() {
+  if (typeof document !== 'undefined' && document.visibilityState === 'visible') void loadThinking()
+}
 
 const text = ref('')
 const textarea = ref<HTMLTextAreaElement | null>(null)
@@ -148,17 +188,47 @@ async function load() {
  * would promise too much here.
  */
 const DICTATION_ERROR_KEYS = { transcribe_error: 'capture.dictation.errors.transcribe_error', offline: 'capture.dictation.errors.offline' } as const
+/** Z8: Home was left (unmount); a send still waiting for the thinking level is dropped. */
+let left = false
+/** The abort of the send waiting for the thinking level, if one waits. */
+let sendWait: AbortController | null = null
+/** Who sends: a change (logout, other user, admin role gone) drops a waiting send (Z8). */
+const sendIdentity = () => `${user?.value?.id ?? user?.value?.username ?? ''}:${isAdmin.value}`
 async function send() {
   if (!canSend.value) return
   busy.value = true; sending.value = true; error.value = ''; errorDetail.value = ''; notice.value = ''
+  const identity = sendIdentity()
+  // Z1 to Z4 (see useThinkingLevel): an admin waits for an own save of the level
+  // (max 45 s) and sends only when the server confirmed the level shown. A
+  // failed save or an unresolved own change holds this one send, the text stays;
+  // the next send goes out with the server's level. An unknown level alone never
+  // holds. Non-admins have no control and send without any hold.
+  if (isAdmin.value && !thinkingReadyNow()) {
+    notice.value = 'capture.thinking.sendHeld'
+    const wait = new AbortController()
+    sendWait = wait
+    const ready = await thinkingReadyToSend(wait.signal)
+    if (sendWait === wait) sendWait = null
+    notice.value = ''
+    // Z8: left Home or another identity while waiting: drop this send, nothing goes out.
+    if (ready === 'cancelled' || left || sendIdentity() !== identity) { busy.value = false; sending.value = false; return }
+    if (ready !== 'ready') {
+      error.value = ready === 'timeout' ? 'capture.thinking.waitTimeout' : thinkingKnown.value ? 'capture.thinking.notSent' : 'capture.thinking.notSentUnknown'
+      busy.value = false; sending.value = false; return
+    }
+  }
   const model = models.value.find(m => JSON.stringify([m.providerId, m.modelId]) === modelKey.value)
   const draft = { text: text.value.trim(), source: 'web' as const, attachments: attachments.value, ...dictationFields(dictated.value), ...(agentId.value ? { agentId: agentId.value } : {}), ...(model ? { modelProviderId: model.providerId, modelId: model.modelId } : {}), ...(forceNewStrand.value ? { forceNewStrand: true } : {}), ...(handoffTarget.value ? { destination: 'new_strand' as const, ...(handoffTarget.value.title ? { strandTitle: handoffTarget.value.title } : {}) } : {}) }
   const signature = JSON.stringify(draft)
+  // Z8, right before the POST: a send of a left Home or an earlier identity never goes out.
+  if (left || sendIdentity() !== identity) { busy.value = false; sending.value = false; return }
   try {
     if (pending?.signature !== signature) pending = { signature, key: captureClientKey() }
     latest.value = await api.create({ ...draft, clientMessageId: pending.key } satisfies CaptureInput)
     sending.value = false; refreshing.value = true
     text.value = ''; attachments.value = []; fileAnnouncement.value = 0; pending = null; handoffTarget.value = null; forceNewStrand.value = false
+    // Sent with the active level: an earlier failed switch is no longer news.
+    thinkingSaveError.value = false
     if (latest.value?.code === 'routing_pending') notice.value = 'capture.routingPending'
     await load()
     await resolveTitles()
@@ -266,9 +336,18 @@ function applyHandoff() {
   })
 }
 onMounted(() => {
-  void load(); void loadOptions(); void fetchSttSettings()
+  void load(); void loadOptions(); void fetchSttSettings(); void loadThinking()
+  if (typeof document !== 'undefined' && typeof document.addEventListener === 'function') document.addEventListener('visibilitychange', refreshThinkingOnReturn)
   applyHandoff()
   if (!text.value && typeof window !== 'undefined' && window.matchMedia?.('(min-width: 768px) and (pointer: fine)').matches) textarea.value?.focus()
+})
+// A kept-alive Home that comes back reads the level again (the first activation is the mount).
+let activatedOnce = false
+onActivated(() => { if (activatedOnce) void loadThinking(); activatedOnce = true })
+onBeforeUnmount(() => {
+  left = true
+  sendWait?.abort()
+  if (typeof document !== 'undefined' && typeof document.removeEventListener === 'function') document.removeEventListener('visibilitychange', refreshThinkingOnReturn)
 })
 </script>
 <template>
@@ -299,9 +378,31 @@ onMounted(() => {
       <p class="sr-only" aria-live="polite">{{ fileAnnouncement ? $t('capture.filesAttached', { count: fileAnnouncement }) : '' }}</p>
       <p class="measure text-sm text-muted-foreground">{{ $t('capture.textLimit', { count: text.length }) }}</p>
       <div class="flex flex-wrap gap-3">
-        <label class="flex min-w-0 flex-1 flex-col gap-1">{{ $t('capture.persona') }}<select v-model="agentId" :disabled="busy" class="focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 min-h-11 max-w-full rounded-md border border-input bg-background px-2"><option value="">{{ $t('capture.automatic') }}</option><option v-for="p in personas" :key="p.id" :value="p.id">{{ p.displayName }}</option></select></label>
-        <label class="flex min-w-0 flex-1 flex-col gap-1">{{ $t('capture.model') }}<select v-model="modelKey" :disabled="busy" class="focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 min-h-11 max-w-full rounded-md border border-input bg-background px-2"><option value="">{{ $t('capture.automatic') }}</option><option v-for="m in models" :key="JSON.stringify([m.providerId, m.modelId])" :value="JSON.stringify([m.providerId, m.modelId])" :disabled="!m.selectable">{{ m.providerName }} · {{ m.displayName }}</option></select></label>
+        <label class="flex min-w-0 flex-1 basis-40 flex-col gap-1">{{ $t('capture.persona') }}<select v-model="agentId" :disabled="busy" class="focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 min-h-11 max-w-full rounded-md border border-input bg-background px-2"><option value="">{{ $t('capture.automatic') }}</option><option v-for="p in personas" :key="p.id" :value="p.id">{{ p.displayName }}</option></select></label>
+        <label class="flex min-w-0 flex-1 basis-40 flex-col gap-1">{{ $t('capture.model') }}<select v-model="modelKey" :disabled="busy" class="focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 min-h-11 max-w-full rounded-md border border-input bg-background px-2"><option value="">{{ $t('capture.automatic') }}</option><option v-for="m in models" :key="JSON.stringify([m.providerId, m.modelId])" :value="JSON.stringify([m.providerId, m.modelId])" :disabled="!m.selectable">{{ m.providerName }} · {{ m.displayName }}</option></select></label>
+        <div v-if="isAdmin" class="flex min-w-0 flex-1 basis-40 flex-col gap-1" data-testid="capture-thinking">
+          <label for="capture-thinking-level">{{ $t('capture.thinking.label') }}</label>
+          <select
+            id="capture-thinking-level"
+            ref="thinkingSelect"
+            data-testid="capture-thinking-select"
+            :aria-describedby="thinkingDescribedBy"
+            :value="thinkingKnown || thinkingSaving ? thinkingCurrent : ''"
+            :disabled="busy || thinkingSaving"
+            :aria-busy="thinkingSaving"
+            class="focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 min-h-11 max-w-full rounded-md border border-input bg-background px-2"
+            @change="onThinkingChange"
+          >
+            <option v-if="!thinkingKnown && !thinkingSaving" value="" disabled>{{ $t(thinkingLoadError ? 'capture.thinking.unknown' : 'capture.thinking.loading') }}</option>
+            <option v-for="lvl in thinkingLevels" :key="lvl" :value="lvl">{{ $t(`chat.thinkingLevelMenu.${lvl}`) }}</option>
+          </select>
+          <p id="capture-thinking-hint" data-testid="capture-thinking-hint" class="text-xs text-muted-foreground">{{ $t(thinkingSaving ? 'capture.thinking.saving' : 'capture.thinking.global') }}</p>
+        </div>
       </div>
+      <p v-if="isAdmin && thinkingSaveError" id="capture-thinking-save-error" role="alert" data-testid="capture-thinking-save-error" class="text-sm text-destructive">{{ thinkingKnown ? $t('capture.thinking.saveError', { level: $t(`chat.thinkingLevelMenu.${thinkingCurrent}`) }) : $t('capture.thinking.saveErrorUnknown') }}</p>
+      <p v-if="isAdmin && thinkingSaveUnclear" id="capture-thinking-save-unclear" role="alert" data-testid="capture-thinking-save-unclear" class="text-sm text-destructive">{{ $t('capture.thinking.saveUnclear') }}</p>
+      <p v-if="isAdmin && thinkingLoadError && !thinkingKnown" id="capture-thinking-load-error" role="alert" data-testid="capture-thinking-load-error" class="text-sm">{{ $t('capture.thinking.loadError') }} <Button variant="outline" type="button" class="min-h-11 border rounded-md px-3" @click="loadThinking">{{ $t('common.retry') }}</Button></p>
+      <p v-if="isAdmin" class="sr-only" aria-live="polite">{{ thinkingSavedLevel ? $t('capture.thinking.saved', { level: $t(`chat.thinkingLevelMenu.${thinkingSavedLevel}`) }) : '' }}</p>
       <p v-if="optionsError" role="alert">{{ $t('capture.optionsError') }} <Button variant="outline" type="button" class="min-h-11 border rounded-md px-3" @click="loadOptions">{{ $t('common.retry') }}</Button></p>
       <ul v-if="attachments.length" class="flex flex-wrap gap-2"><li v-for="(file, i) in attachments" :key="file.relativePath" class="flex max-w-full items-center gap-2 rounded-md bg-muted pl-3"><span class="break-all">{{ file.originalName }}</span><Button variant="outline" type="button" class="min-h-11 min-w-11 px-3" :disabled="busy || uploading" :aria-label="$t('capture.removeFile', { name: file.originalName })" @click="attachments.splice(i, 1)">×</Button></li></ul>
       <label class="block">{{ $t('capture.attach') }}<input type="file" multiple class="focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 block min-h-11 w-full py-2 text-base sm:text-sm file:min-h-11 file:rounded-md file:border file:bg-muted file:px-3 file:text-foreground" :disabled="busy || uploading" @change="upload" /></label>

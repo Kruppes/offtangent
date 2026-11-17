@@ -179,6 +179,13 @@
             </dt><dd class="text-right tabular-nums">
               {{ formatUsd(s.tokens.voice.costUsd, locale) }}
             </dd>
+            <template v-if="s.tokens.background">
+              <dt class="text-muted-foreground">
+                {{ $t('context.stats.costBackground') }}
+              </dt><dd class="text-right tabular-nums">
+                {{ formatUsd(s.tokens.background.costUsd, locale) }}
+              </dd>
+            </template>
             <dt class="text-muted-foreground">
               <span class="rounded bg-primary-subtle px-1">{{ $t('context.stats.billing.subscription') }}</span>
             </dt><dd class="text-right tabular-nums">
@@ -535,6 +542,7 @@ const tokenRows = computed(() => [
   { key: 'main', label: t('context.stats.costChat'), b: s.value.tokens.main },
   { key: 'tasks', label: t('context.stats.costTasks'), b: s.value.tokens.tasks },
   { key: 'voice', label: t('context.stats.costVoice'), b: s.value.tokens.voice },
+  ...(s.value.tokens.background ? [{ key: 'background', label: t('context.stats.costBackground'), b: s.value.tokens.background }] : []),
 ])
 
 const maxModelTokens = computed(() => Math.max(1, ...s.value.models.map(m => m.tokensIn + m.tokensOut)))

@@ -3,7 +3,7 @@ import fs from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
 import crypto from 'node:crypto'
-import { FcmClient, FcmConfigError, resolveServiceAccountFile } from './fcm-client.js'
+import { FcmClient, FcmConfigError, FCM_REQUEST_TIMEOUT_MS, resolveServiceAccountFile } from './fcm-client.js'
 
 let tempDir: string
 let accountFile: string
@@ -122,6 +122,92 @@ describe('FcmClient', () => {
     expect(result.ok).toBe(false)
     expect(result.status).toBe(404)
     expect(result.errorCode).toBe('NOT_FOUND')
+  })
+})
+
+/** A fetch that never answers. `honourSignal` decides whether it reacts to an abort like the real fetch. */
+function hangingFetch(honourSignal: boolean, seen: Array<AbortSignal | undefined>): typeof fetch {
+  return ((_input: string | URL | Request, init?: RequestInit) => {
+    seen.push(init?.signal ?? undefined)
+    return new Promise<Response>((_resolve, reject) => {
+      if (honourSignal && init?.signal) {
+        init.signal.addEventListener('abort', () => reject(init.signal!.reason), { once: true })
+      }
+    })
+  }) as unknown as typeof fetch
+}
+
+describe('FcmClient request timeout', () => {
+  const message = { token: 'tok-a', data: { kind: 'turn_done' }, priority: 'normal' as const, ttlSeconds: 600 }
+
+  it('defaults to a ten second limit', () => {
+    expect(FCM_REQUEST_TIMEOUT_MS).toBe(10_000)
+  })
+
+  it('aborts a hanging send after the limit and passes the signal to fetch', async () => {
+    const seen: Array<AbortSignal | undefined> = []
+    const hang = hangingFetch(true, seen)
+    const fetchImpl = vi.fn(async (input: string | URL | Request, init?: RequestInit) => {
+      if (String(input).includes('oauth2.test')) return tokenResponse()
+      return hang(input, init)
+    }) as unknown as typeof fetch
+    const client = new FcmClient({ serviceAccountFile: accountFile, fetchImpl, requestTimeoutMs: 50 })
+
+    const started = Date.now()
+    await expect(client.send(message)).rejects.toThrow('FCM send timed out after 50 ms')
+    const elapsed = Date.now() - started
+    expect(elapsed).toBeGreaterThanOrEqual(40)
+    expect(elapsed).toBeLessThan(2_000)
+    expect(seen).toHaveLength(1)
+    expect(seen[0]?.aborted).toBe(true)
+  })
+
+  it('ends the wait even when fetch ignores the abort signal', async () => {
+    const seen: Array<AbortSignal | undefined> = []
+    const hang = hangingFetch(false, seen)
+    const fetchImpl = vi.fn(async (input: string | URL | Request, init?: RequestInit) => {
+      if (String(input).includes('oauth2.test')) return tokenResponse()
+      return hang(input, init)
+    }) as unknown as typeof fetch
+    const client = new FcmClient({ serviceAccountFile: accountFile, fetchImpl, requestTimeoutMs: 50 })
+
+    await expect(client.send(message)).rejects.toThrow('timed out')
+  })
+
+  it('times out a hanging token exchange and tries a fresh exchange on the next send', async () => {
+    const seen: Array<AbortSignal | undefined> = []
+    let tokenCalls = 0
+    const hang = hangingFetch(true, seen)
+    const fetchImpl = vi.fn(async (input: string | URL | Request, init?: RequestInit) => {
+      if (String(input).includes('oauth2.test')) {
+        tokenCalls += 1
+        if (tokenCalls === 1) return hang(input, init)
+        return tokenResponse('access-2')
+      }
+      return new Response(JSON.stringify({ name: 'projects/offtangent-test/messages/9' }), { status: 200 })
+    }) as unknown as typeof fetch
+    const client = new FcmClient({ serviceAccountFile: accountFile, fetchImpl, requestTimeoutMs: 50 })
+
+    await expect(client.send(message)).rejects.toThrow('OAuth token exchange timed out after 50 ms')
+    const result = await client.send(message)
+    expect(result.ok).toBe(true)
+    expect(tokenCalls).toBe(2)
+  })
+
+  it('also bounds a response body that never finishes', async () => {
+    const fetchImpl = vi.fn(async (input: string | URL | Request, init?: RequestInit) => {
+      if (String(input).includes('oauth2.test')) return tokenResponse()
+      const body = new ReadableStream<Uint8Array>({
+        start(controller) {
+          controller.enqueue(new TextEncoder().encode('{"name":'))
+          init?.signal?.addEventListener('abort', () => controller.error(init.signal!.reason), { once: true })
+        },
+      })
+      return new Response(body, { status: 200 })
+    }) as unknown as typeof fetch
+    const client = new FcmClient({ serviceAccountFile: accountFile, fetchImpl, requestTimeoutMs: 50 })
+
+    await expect(client.send(message)).rejects.toThrow('timed out')
   })
 })
 

@@ -31,11 +31,12 @@ vi.mock('node:fs', async (importOriginal) => {
       existsSync: vi.fn(),
       accessSync: vi.fn(),
       readFileSync: vi.fn(),
+      statSync: vi.fn(),
     },
   }
 })
 
-import { createTranscribeAudioTool } from './stt-tool.js'
+import { createTranscribeAudioTool, MAX_TRANSCRIBE_BYTES, OPENAI_STT_MAX_BYTES } from './stt-tool.js'
 import { loadSttSettings, transcribeAudio } from './stt.js'
 
 const mockLoadSttSettings = vi.mocked(loadSttSettings)
@@ -43,6 +44,11 @@ const mockTranscribeAudio = vi.mocked(transcribeAudio)
 const mockExistsSync = vi.mocked(fs.existsSync)
 const mockAccessSync = vi.mocked(fs.accessSync)
 const mockReadFileSync = vi.mocked(fs.readFileSync)
+const mockStatSync = vi.mocked(fs.statSync)
+
+function statWithSize(size: number): fs.Stats {
+  return { size } as fs.Stats
+}
 
 // ── Tool creation ────────────────────────────────────────────────────
 
@@ -74,6 +80,7 @@ describe('createTranscribeAudioTool', () => {
 describe('transcribe_audio execute', () => {
   beforeEach(() => {
     vi.clearAllMocks()
+    mockStatSync.mockReturnValue(statWithSize(1024))
   })
 
   it('transcribes a valid mp3 file', async () => {
@@ -242,6 +249,7 @@ describe('transcribe_audio execute', () => {
 describe('transcribe_audio error handling', () => {
   beforeEach(() => {
     vi.clearAllMocks()
+    mockStatSync.mockReturnValue(statWithSize(1024))
   })
 
   it('returns error when STT is not enabled', async () => {
@@ -409,5 +417,86 @@ describe('transcribe_audio error handling', () => {
     const text = (result.content[0] as { type: 'text'; text: string }).text
     expect(text).toBe('raw transcript')
     expect(result.details.rewrite).toBe(false)
+  })
+
+  function sttSettings(provider: 'whisper-url' | 'openai' | 'ollama' | 'deepgram') {
+    return {
+      enabled: true,
+      provider,
+      whisperUrl: 'http://localhost:8000/v1/audio/transcriptions',
+      providerId: provider === 'openai' || provider === 'ollama' ? 'p1' : '',
+      openaiModel: 'whisper-1',
+      ollamaModel: '',
+      deepgramModel: 'nova-3',
+      deepgramLanguage: '',
+      rewrite: { enabled: false, providerId: '' },
+    }
+  }
+
+  it('refuses a file above the limit without reading it', async () => {
+    mockLoadSttSettings.mockReturnValue(sttSettings('whisper-url'))
+    mockExistsSync.mockReturnValue(true)
+    mockAccessSync.mockReturnValue(undefined)
+    mockStatSync.mockReturnValue(statWithSize(MAX_TRANSCRIBE_BYTES + 1))
+
+    const tool = createTranscribeAudioTool()
+    const result = await tool.execute('test-id', { path: 'long-recording.mp3' })
+
+    const text = (result.content[0] as { type: 'text'; text: string }).text
+    expect(text).toContain('too large')
+    expect(text).toContain('limit 100.0 MiB')
+    expect(result.details).toEqual({ error: true })
+    expect(mockStatSync).toHaveBeenCalledWith(nodePath.resolve('/workspace', 'long-recording.mp3'))
+    expect(mockReadFileSync).not.toHaveBeenCalled()
+    expect(mockTranscribeAudio).not.toHaveBeenCalled()
+  })
+
+  it('accepts a file exactly at the limit', async () => {
+    mockLoadSttSettings.mockReturnValue(sttSettings('whisper-url'))
+    mockExistsSync.mockReturnValue(true)
+    mockAccessSync.mockReturnValue(undefined)
+    mockStatSync.mockReturnValue(statWithSize(MAX_TRANSCRIBE_BYTES))
+    mockReadFileSync.mockReturnValue(Buffer.from('audio'))
+    mockTranscribeAudio.mockResolvedValue({ transcript: 'ok' })
+
+    const tool = createTranscribeAudioTool()
+    const result = await tool.execute('test-id', { path: 'edge.mp3' })
+
+    expect((result.content[0] as { type: 'text'; text: string }).text).toBe('ok')
+    expect(mockReadFileSync).toHaveBeenCalledTimes(1)
+  })
+
+  it('applies the decimal-safe 23 MiB OpenAI upload bound for the openai provider', async () => {
+    mockLoadSttSettings.mockReturnValue(sttSettings('openai'))
+    mockExistsSync.mockReturnValue(true)
+    mockAccessSync.mockReturnValue(undefined)
+    mockStatSync.mockReturnValue(statWithSize(OPENAI_STT_MAX_BYTES + 1))
+
+    const tool = createTranscribeAudioTool()
+    const result = await tool.execute('test-id', { path: 'memo.m4a' })
+
+    const text = (result.content[0] as { type: 'text'; text: string }).text
+    expect(text).toContain('too large')
+    expect(OPENAI_STT_MAX_BYTES).toBe(24_117_248)
+    expect(OPENAI_STT_MAX_BYTES).toBeLessThan(25_000_000)
+    expect(text).toContain('limit 23.0 MiB')
+    expect(text).toContain('"openai"')
+    expect(result.details).toEqual({ error: true })
+    expect(mockReadFileSync).not.toHaveBeenCalled()
+  })
+
+  it('lets the same size through for a backend without the OpenAI bound', async () => {
+    mockLoadSttSettings.mockReturnValue(sttSettings('whisper-url'))
+    mockExistsSync.mockReturnValue(true)
+    mockAccessSync.mockReturnValue(undefined)
+    mockStatSync.mockReturnValue(statWithSize(OPENAI_STT_MAX_BYTES + 1))
+    mockReadFileSync.mockReturnValue(Buffer.from('audio'))
+    mockTranscribeAudio.mockResolvedValue({ transcript: 'long but fine' })
+
+    const tool = createTranscribeAudioTool()
+    const result = await tool.execute('test-id', { path: 'memo.m4a' })
+
+    expect((result.content[0] as { type: 'text'; text: string }).text).toBe('long but fine')
+    expect(mockReadFileSync).toHaveBeenCalledTimes(1)
   })
 })

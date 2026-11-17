@@ -12,8 +12,14 @@ import { NON_WORK_TOOL_NAMES } from './tool-names.js'
  * counts are a local ESTIMATE of spoken characters and say nothing about the
  * conversation's context. Readers that answer "how full is this strand?" MUST
  * restrict themselves to `request`.
+ *
+ * `background` is a one-shot model call outside the conversation (fact
+ * extraction, session summary, auto title, router, reviewer, ...), booked by
+ * `background-usage.ts` with a `purpose`. It does not count towards the
+ * session totals in `sessions` and is not attached to a strand turn, so cache
+ * ratios and turn activity keep describing the conversation alone.
  */
-export type TokenUsageKind = 'request' | 'voice_note' | 'image_generation'
+export type TokenUsageKind = 'request' | 'voice_note' | 'image_generation' | 'background'
 
 export interface TokenUsageRecord {
   provider: string
@@ -36,6 +42,8 @@ export interface TokenUsageRecord {
   billing?: BillingKind | null
   /** Turn the row belongs to; defaults to the active turn of `sessionId`. */
   turnId?: string | null
+  /** What a `background` row was for (fixed vocabulary, never free text). */
+  purpose?: string | null
 }
 
 export interface ToolCallRecord {
@@ -63,8 +71,37 @@ export { INTERNAL_METRIC_TOOL_NAMES, NON_WORK_TOOL_NAMES } from './tool-names.js
 /**
  * Log token usage to the SQLite database
  */
-export function logTokenUsage(db: Database, record: TokenUsageRecord): void {
-  db.prepare(
+/** Returns the id of the written `token_usage` row (Request probe links its probe row to it). */
+export function logTokenUsage(db: Database, record: TokenUsageRecord): number | null {
+  const kind = record.kind ?? 'request'
+  if (kind === 'background') {
+    // Own statement: the `purpose` column exists only for this kind, and the
+    // row neither joins the active turn nor the session totals (see
+    // TokenUsageKind).
+    const bg = db.prepare(
+      `INSERT INTO token_usage (provider, model, prompt_tokens, completion_tokens, cache_read, cache_write, estimated_cost, session_id, kind,
+         turn_id, billing, agent_id, context_window, error, purpose)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+    ).run(
+      record.provider,
+      record.model,
+      record.promptTokens,
+      record.completionTokens,
+      record.cacheRead,
+      record.cacheWrite,
+      record.estimatedCost,
+      record.sessionId ?? null,
+      kind,
+      record.turnId ?? null,
+      record.billing ?? billingForProvider(record.provider),
+      record.agentId ?? null,
+      typeof record.contextWindow === 'number' && Number.isFinite(record.contextWindow) ? record.contextWindow : null,
+      record.error ? record.error.slice(0, 500) : null,
+      record.purpose ?? null,
+    )
+    return rowId(bg)
+  }
+  const inserted = db.prepare(
     `INSERT INTO token_usage (provider, model, prompt_tokens, completion_tokens, cache_read, cache_write, estimated_cost, session_id, kind,
        turn_id, billing, agent_id, context_window, error)
      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
@@ -77,13 +114,14 @@ export function logTokenUsage(db: Database, record: TokenUsageRecord): void {
     record.cacheWrite,
     record.estimatedCost,
     record.sessionId ?? null,
-    record.kind ?? 'request',
+    kind,
     record.turnId ?? activeStrandTurnId(record.sessionId),
     record.billing ?? billingForProvider(record.provider),
     record.agentId ?? null,
     typeof record.contextWindow === 'number' && Number.isFinite(record.contextWindow) ? record.contextWindow : null,
     record.error ? record.error.slice(0, 500) : null,
   )
+  const usageId = rowId(inserted)
 
   if (record.sessionId) {
     db.prepare(
@@ -93,6 +131,14 @@ export function logTokenUsage(db: Database, record: TokenUsageRecord): void {
        WHERE id = ?`
     ).run(record.promptTokens, record.completionTokens, record.cacheRead, record.cacheWrite, record.sessionId)
   }
+  return usageId
+}
+
+function rowId(result: unknown): number | null {
+  const id = (result as { lastInsertRowid?: unknown } | null | undefined)?.lastInsertRowid
+  if (typeof id === 'number' && Number.isFinite(id)) return id
+  if (typeof id === 'bigint') return Number(id)
+  return null
 }
 
 /**

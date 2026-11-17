@@ -28,11 +28,11 @@ export function useSettingsApi() {
   const { t } = useI18n()
   const consentDialog = useModelConsentDialog()
 
-  const getSettings = () => apiFetch<Partial<SettingsContract>>('/api/settings')
+  const getSettings = (init: Pick<RequestInit, 'signal'> = {}) => apiFetch<Partial<SettingsContract>>('/api/settings', init)
 
-  const updateSettings = (updates: Partial<SettingsUpdateContract>) => saveWithModelConsent(
+  const updateSettings = (updates: Partial<SettingsUpdateContract>, init: Pick<RequestInit, 'signal'> = {}) => saveWithModelConsent(
     body => apiFetch<Partial<SettingsContract> & { message: string }>('/api/settings', {
-      method: 'PUT', body: JSON.stringify(body),
+      ...init, method: 'PUT', body: JSON.stringify(body),
     }),
     updates,
     warnings => {

@@ -25,6 +25,9 @@ export interface ConsolidationResult {
     agentId: string
     updated: boolean
     reason?: string
+    scopeId?: string
+    backupId?: string
+    backupIssue?: 'failed' | 'cleanup'
   }>
 }
 

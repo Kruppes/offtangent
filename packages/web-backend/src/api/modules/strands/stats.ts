@@ -132,7 +132,13 @@ export interface StrandStats {
   span: { firstAt: string; lastAt: string; wallSec: number }
   prompts: { total: number; typed: number; voice: number; answers: number }
   turns: { user: number; auto: number; source: 'recorded' | 'estimated' | 'mixed'; recorded: number; estimated: number; interrupted: number }
-  tokens: { main: TokenBucket; tasks: TokenBucket; voice: TokenBucket; total: TokenBucket }
+  /**
+   * `voice`: side accounting of the strand itself (voice notes, image
+   * renders). `background`: one-shot background calls booked on the strand
+   * (fact extraction, session summary, ...; kind `background`). `total`
+   * includes both.
+   */
+  tokens: { main: TokenBucket; tasks: TokenBucket; voice: TokenBucket; background: TokenBucket; total: TokenBucket }
   cost: { currency: 'USD'; basis: 'api_equivalent'; totalUsd: number; subscriptionUsd: number; meteredUsd: number; localUsd: number; subscriptionShare: number | null }
   models: StrandStatsModel[]
   local: { requests: number; requestShare: number; tokenShare: number }
@@ -385,7 +391,7 @@ export function computeStrandStats(db: Database, strandId: string, options: Stra
   const tree = taskTree(db, strandId)
   const taskSessions = [...tree.values()].map(r => r.session_id).filter((s): s is string => !!s)
   const internal = [...NON_WORK_TOOL_NAMES]
-  const tuPerSession = db.prepare(`SELECT count(*) n, coalesce(sum(prompt_tokens),0) p, coalesce(sum(completion_tokens),0) c,
+  const tuPerSession = db.prepare(`SELECT count(*) FILTER (WHERE kind != 'background') n, coalesce(sum(prompt_tokens),0) p, coalesce(sum(completion_tokens),0) c,
       coalesce(sum(cache_read),0) cr, coalesce(sum(cache_write),0) cw, coalesce(sum(estimated_cost),0) cost, max(timestamp) last
       FROM token_usage WHERE session_id = ?`)
   const tcPerSession = db.prepare(`SELECT count(*) n, coalesce(sum(status = 'error'),0) e FROM tool_calls
@@ -423,8 +429,9 @@ export function computeStrandStats(db: Database, strandId: string, options: Stra
   const mainRows = grouped([strandId])
   const taskRows = grouped(taskSessions)
   const main = bucket(mainRows.filter(r => r.kind === 'request'))
-  const voice = bucket(mainRows.filter(r => r.kind !== 'request'))
-  const tasksBucket = bucket(taskRows)
+  const voice = bucket(mainRows.filter(r => r.kind !== 'request' && r.kind !== 'background'))
+  const background = bucket(mainRows.filter(r => r.kind === 'background'))
+  const tasksBucket = { ...bucket(taskRows), requests: taskRows.filter(r => r.kind !== 'background').reduce((n, r) => n + r.n, 0) }
   const total = bucket([...mainRows, ...taskRows])
 
   const byModel = new Map<string, StrandStatsModel & { cr: number }>()
@@ -576,7 +583,7 @@ export function computeStrandStats(db: Database, strandId: string, options: Stra
       estimated: estimatedTurns,
       interrupted: interruptedTurns,
     },
-    tokens: { main, tasks: tasksBucket, voice, total },
+    tokens: { main, tasks: tasksBucket, voice, background, total },
     cost: {
       currency: 'USD', basis: 'api_equivalent',
       totalUsd: round4(costTotal),

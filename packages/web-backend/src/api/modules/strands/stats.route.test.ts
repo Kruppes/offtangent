@@ -138,6 +138,24 @@ describe('GET /api/strands/:id/stats', () => {
     expect(Array.isArray(s.series)).toBe(true)
   })
 
+  it('keeps task-review cost but does not count its background row as a task request', async () => {
+    const id = seedStrand()
+    // The shared fixture reuses task session ids across tests; reparent the root.
+    db.prepare("UPDATE sessions SET parent_session_id = ? WHERE id = 's-task-1'").run(id)
+    const before = (await api(`/api/strands/${id}/stats?include=tasks`)).body
+    const taskSession = db.prepare('SELECT session_id FROM tasks LIMIT 1').get() as { session_id: string }
+    db.prepare(`INSERT INTO token_usage (session_id, provider, model, kind, purpose, prompt_tokens, completion_tokens,
+      cache_read, cache_write, estimated_cost) VALUES (?, 'anthropic', 'claude-sonnet', 'background', 'task_review', 10, 3, 0, 0, 0.75)`)
+      .run(taskSession.session_id)
+    clearStrandStatsCache()
+    const after = (await api(`/api/strands/${id}/stats?include=tasks`)).body
+    expect(after.tasks?.find(t => t.id === 't-1')?.costUsd).toBeCloseTo(
+      (before.tasks?.find(t => t.id === 't-1')?.costUsd ?? 0) + 0.75,
+    )
+    expect(after.tokens.tasks.requests).toBe(before.tokens.tasks.requests)
+    expect(after.tokens.tasks.costUsd).toBeCloseTo(before.tokens.tasks.costUsd + 0.75)
+  })
+
   it('omits tasks and series unless requested', async () => {
     const id = seedStrand()
     const res = await api(`/api/strands/${id}/stats`)
@@ -216,6 +234,22 @@ describe('GET /api/strands/:id/stats', () => {
     expect(s.cost.subscriptionUsd).toBe(6)
     expect(s.cost.meteredUsd).toBe(1)
     expect(s.cost.subscriptionShare).toBeCloseTo(6 / 7, 5)
+  })
+
+  it('Background usage: background rows get their own bucket and leave main, voice and turns unchanged', () => {
+    const id = seedStrand()
+    clearStrandStatsCache()
+    const before = computeStrandStats(db, id)
+    db.prepare(`INSERT INTO token_usage (session_id, timestamp, provider, model, prompt_tokens, completion_tokens, cache_read, cache_write, estimated_cost, kind)
+      VALUES (?, '2026-10-01 10:20:25', 'anthropic', 'claude-haiku', 400, 20, 0, 0, 0.1, 'background')`).run(id)
+    clearStrandStatsCache()
+    const after = computeStrandStats(db, id)
+    expect(after.tokens.main).toEqual(before.tokens.main)
+    expect(after.tokens.voice).toEqual(before.tokens.voice)
+    expect(after.tokens.tasks).toEqual(before.tokens.tasks)
+    expect(after.turns).toEqual(before.turns)
+    expect(after.tokens.background.requests).toBe(1)
+    expect(after.tokens.total.requests).toBe(before.tokens.total.requests + 1)
   })
 
   it('caches for 60 s per strand', async () => {

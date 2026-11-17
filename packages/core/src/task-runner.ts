@@ -6,6 +6,7 @@ import type { AgentEvent, AgentMessage, AgentTool } from '@earendil-works/pi-age
 import type { AssistantMessage, Message, Model, Api } from '@earendil-works/pi-ai'
 import { cleanupSessionResources } from '@earendil-works/pi-ai'
 import { completeSimple } from './pi-models.js'
+import { logBackgroundUsage } from './background-usage.js'
 
 import type { Database } from './database.js'
 // attached_skills deduplicated onto the upstream module (0.27.0). The fork's
@@ -38,6 +39,7 @@ import {
   parseSmartDetectionResponse,
   resolveDetectionMethod,
   formatPeriodicStatusUpdate,
+  isFailedToolResult,
 } from './loop-detection.js'
 import type { LoopDetectionConfig, LoopDetectionResult } from './loop-detection.js'
 import type { TaskEventBus } from './task-event-bus.js'
@@ -1279,7 +1281,7 @@ export class TaskRunner {
             args: ctx.args,
             content: ctx.result.content,
             details: ctx.result.details,
-            isError: ctx.isError,
+            isError: isFailedToolResult(ctx.isError, ctx.result),
           })
           return frozen ? { content: frozen.content, details: frozen.details } : undefined
         },
@@ -1528,6 +1530,8 @@ export class TaskRunner {
           ? toPiAiReasoning(task.thinkingLevel)
           : resolveBackgroundReasoning(),
       }), 120_000, 'Task result verification')
+
+      logBackgroundUsage(model, response, { purpose: 'task_review', sessionId: task.sessionId ?? null, db: this.db })
 
       const verdictText = response.content
         .filter((item) => item.type === 'text')
@@ -2039,7 +2043,7 @@ export class TaskRunner {
         this.persistLiveMetrics(runningTask)
 
         const outputStr = JSON.stringify(event.result ?? {})
-        const isError = event.isError === true || (typeof event.result === 'string' && event.result.startsWith('Error'))
+        const isError = isFailedToolResult(event.isError, event.result)
 
         // Track for loop detection
         runningTask.toolCallTracker.record(event.toolName, args, outputStr, isError)

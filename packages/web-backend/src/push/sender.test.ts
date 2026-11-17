@@ -1,8 +1,13 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
+import fs from 'node:fs'
+import os from 'node:os'
+import path from 'node:path'
+import crypto from 'node:crypto'
 import { initDatabase } from '@axiom/core'
 import type { Database } from '@axiom/core'
 import { PushDeviceRegistry } from './device-registry.js'
-import type { FcmClient, FcmMessage, FcmSendResult } from './fcm-client.js'
+import { FcmClient } from './fcm-client.js'
+import type { FcmMessage, FcmSendResult } from './fcm-client.js'
 import {
   PushSender,
   buildPayload,
@@ -270,6 +275,46 @@ describe('push sender', () => {
     expect(() => sender.sendDetached({ userId: 1, kind: 'turn_done', strandId: 's-1', agentId: 'main' })).not.toThrow()
     await new Promise(resolve => setTimeout(resolve, 5))
     expect(error).toHaveBeenCalledTimes(1)
+  })
+
+  it('keeps going when FCM never answers: the request times out, the doorbell counts as failed', async () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'offtangent-push-timeout-'))
+    try {
+      const { privateKey } = crypto.generateKeyPairSync('rsa', { modulusLength: 2048 })
+      const accountFile = path.join(dir, 'service-account.json')
+      fs.writeFileSync(accountFile, JSON.stringify({
+        project_id: 'offtangent-test',
+        client_email: 'sender@offtangent-test.iam.gserviceaccount.com',
+        private_key: privateKey.export({ type: 'pkcs8', format: 'pem' }).toString(),
+        token_uri: 'https://oauth2.test/token',
+      }))
+      const fetchImpl = ((input: string | URL | Request, init?: RequestInit) => {
+        if (String(input).includes('oauth2.test')) {
+          return Promise.resolve(new Response(JSON.stringify({ access_token: 'a', expires_in: 3600 }), { status: 200 }))
+        }
+        return new Promise<Response>((_resolve, reject) => {
+          init?.signal?.addEventListener('abort', () => reject(init.signal!.reason), { once: true })
+        })
+      }) as unknown as typeof fetch
+      const client = new FcmClient({ serviceAccountFile: accountFile, fetchImpl, requestTimeoutMs: 30 })
+      registry.register(1, { token: 'tok-a' })
+      const sender = new PushSender({
+        registry,
+        client,
+        now: () => 1_000,
+        retryDelayMs: 0,
+        logger: { info: () => {}, warn: () => {}, error: () => {} },
+      })
+
+      const outcome = await sender.send({ userId: 1, kind: 'turn_done', strandId: 's-1', agentId: 'main' })
+      expect(outcome.failed).toBe(1)
+      expect(outcome.delivered).toBe(0)
+      // The caller is free again: a second doorbell for another strand runs through the same path.
+      const second = await sender.send({ userId: 1, kind: 'turn_done', strandId: 's-2', agentId: 'main' })
+      expect(second.failed).toBe(1)
+    } finally {
+      fs.rmSync(dir, { recursive: true, force: true })
+    }
   })
 
   it('survives a client that throws', async () => {

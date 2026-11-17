@@ -253,6 +253,29 @@ describe('the model call', () => {
     expect(call).not.toHaveProperty('tools')
   })
 
+  it('hands every finished provider call to onUsage, and a throwing sink changes nothing (Background usage)', async () => {
+    const seen: Array<{ model: unknown; output: number }> = []
+    const result = await runIsolatedInference(service(), request, {
+      complete: async () => assistant(okJson),
+      resolveModel: async () => resolved as never,
+      stillValid: () => true,
+      audit: () => {},
+      onUsage: (model, message) => { seen.push({ model, output: message.usage.output }) },
+    })
+    expect(result.json).toEqual({ nextQuestion: 'Was tut Ihr Team zuerst?', done: false })
+    expect(seen).toEqual([{ model: resolved.model, output: 22 }])
+
+    resetIsolatedInferenceState()
+    const again = await runIsolatedInference(service(), request, {
+      complete: async () => assistant(okJson),
+      resolveModel: async () => resolved as never,
+      stillValid: () => true,
+      audit: () => {},
+      onUsage: () => { throw new Error('booking failed') },
+    })
+    expect(again.json).toEqual(result.json)
+  })
+
   it('turns a provider error into upstream_failed without the provider message', async () => {
     await expect(runWithFakeModel(async () => {
       throw new Error('401 from https://api.example.com with key sk-live-abc')

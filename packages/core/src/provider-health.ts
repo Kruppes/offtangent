@@ -170,6 +170,9 @@ async function performPiAiHealthCheck(
     const timer = setTimeout(() => controller.abort(), timeoutMs)
 
     try {
+      // background-usage: exempt in both health-check paths (SDK and direct fetch). A reachability ping with a few output
+      // tokens, run on every provider check; booking it would bury the real
+      // background calls in noise.
       const response = await completeSimple(model, {
         messages: [{ role: 'user', content: [{ type: 'text', text: 'Respond with OK only.' }], timestamp: Date.now() }],
       }, {
@@ -248,7 +251,9 @@ export async function performProviderHealthCheck(
 
   try {
     // For OAuth providers or non-standard API types (e.g. mistral-conversations),
-    // use pi-ai's completeSimple for proper API-type-aware health check
+    // use pi-ai's completeSimple for proper API-type-aware health check.
+    // Both this SDK path and the direct-fetch path below are intentional
+    // background-usage exceptions: probe traffic is not product inference.
     const preset = PROVIDER_TYPE_PRESETS[provider.providerType as keyof typeof PROVIDER_TYPE_PRESETS]
     const hasCustomRequestBuilder = provider.type === 'anthropic-messages' || provider.type === 'openai-completions'
     if (preset?.authMethod === 'oauth' || preset?.resolveModelsFromCatalog || !hasCustomRequestBuilder) {

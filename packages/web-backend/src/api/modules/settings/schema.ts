@@ -171,6 +171,14 @@ export function mergeConsolidation(
     existing.lookbackDays = memoryConsolidation.lookbackDays
   }
 
+  if (memoryConsolidation.backupRetention !== undefined) {
+    const value = memoryConsolidation.backupRetention
+    if (typeof value !== 'number' || !Number.isInteger(value) || value < 1 || value > 365) {
+      return { error: 'memoryConsolidation.backupRetention must be an integer 1-365', changed: false }
+    }
+    existing.backupRetention = value
+  }
+
   if (memoryConsolidation.providerId !== undefined) {
     if (typeof memoryConsolidation.providerId !== 'string') {
       return { error: 'memoryConsolidation.providerId must be a string', changed: false }

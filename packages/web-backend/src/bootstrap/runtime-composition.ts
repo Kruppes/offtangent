@@ -74,7 +74,7 @@ import type {
   TaskRuntimeTaskBoundary,
 } from '@axiom/core'
 import type { AgentTool } from '@earendil-works/pi-agent-core'
-import { completeSimple, errorClass, publicProviderError } from '@axiom/core'
+import { completeSimple, errorClass, logBackgroundUsage, publicProviderError } from '@axiom/core'
 // W5/P3: close out feed-only outcomes that are too old to still announce.
 import { archivePendingTaskNotices } from '@axiom/core'
 import { getCurrentTaskAgentId, getCurrentTaskExecutionContext, resolveTaskDefaultProvider as resolveTaskDefaultProviderChain } from '@axiom/core'
@@ -1981,6 +1981,7 @@ export async function createRuntimeComposition(options: RuntimeCompositionOption
       apiKey,
       temperature: 0,
     }), 60_000, 'Task plan draft')
+    logBackgroundUsage(model, response, { purpose: 'task_plan_draft', agentId: input.agentId ?? null })
 
     const text = response.content
       .filter((item) => item.type === 'text')

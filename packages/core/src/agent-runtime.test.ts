@@ -3,9 +3,12 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import { createAgentRuntime } from './agent-runtime.js'
 import type { AgentRuntimePiAgentAccess } from './agent-runtime.js'
 import { initDatabase } from './database.js'
+import { setStrandEcoEnabled } from './eco-mode-store.js'
 import type { AgentTool } from '@earendil-works/pi-agent-core'
 import { assembleSystemPrompt } from './memory.js'
-import { logToolCall } from './token-logger.js'
+import { logTokenUsage, logToolCall } from './token-logger.js'
+import * as providerConfig from './provider-config.js'
+import { requestProbeDroppedCount, resetRequestProbeCounters } from './request-probe.js'
 import { loadConfig } from './config.js'
 import { closeSharedMcpManager } from './mcp-client.js'
 import { invalidateKnownValues } from './secret-boundary.js'
@@ -13,17 +16,21 @@ import { subscribeProviderPhase, STREAM_ACTIVITY_SIGNAL_INTERVAL_MS } from './pr
 import type { ProviderPhaseEvent } from './provider-phase.js'
 
 const runtimeHarness = vi.hoisted(() => ({
-  promptBehaviors: [] as Array<(agent: { emit: (event: unknown) => void }, text: string) => Promise<void>>,
+  promptBehaviors: [] as Array<(agent: { emit: (event: unknown) => void; request: (context: unknown) => void }, text: string) => Promise<void>>,
   promptCalls: [] as string[],
   continueCalls: 0,
+  afterToolCall: null as null | ((ctx: unknown) => Promise<unknown>),
 }))
 
 vi.mock('@earendil-works/pi-agent-core', () => {
   class MockAgent {
     public state: { systemPrompt: string; model: unknown; tools: AgentTool[]; messages: unknown[] }
     private listeners = new Set<(event: unknown) => void>()
+    private streamFn: (model: unknown, context: unknown, options: unknown) => unknown
 
-    constructor(options: { initialState: { systemPrompt: string; model: unknown; tools: AgentTool[] } }) {
+    constructor(options: { initialState: { systemPrompt: string; model: unknown; tools: AgentTool[] }; afterToolCall?: (ctx: unknown) => Promise<unknown>; streamFn: (model: unknown, context: unknown, options: unknown) => unknown }) {
+      runtimeHarness.afterToolCall = options.afterToolCall ?? null
+      this.streamFn = options.streamFn
       this.state = {
         ...options.initialState,
         messages: [],
@@ -56,6 +63,8 @@ vi.mock('@earendil-works/pi-agent-core', () => {
         listener(event)
       }
     }
+
+    request(context: unknown): void { void this.streamFn(this.state.model, context, {}) }
 
     abort(): void {}
   }
@@ -156,6 +165,42 @@ describe('AgentRuntime boundary', () => {
     runtimeHarness.continueCalls = 0
     vi.mocked(assembleSystemPrompt).mockClear()
     vi.mocked(logToolCall).mockClear()
+  })
+
+  it('joins usage through the real runtime gate across turns, tool loop and an aborted request', async () => {
+    resetRequestProbeCounters()
+    const stream = vi.spyOn(providerConfig, 'buildStreamFn').mockReturnValue((() => ({ })) as never)
+    try {
+      const db = initDatabase(':memory:')
+      db.prepare("INSERT INTO sessions (id, source, type) VALUES ('probe-integration', 'web', 'interactive')").run()
+      const actualLogger = await vi.importActual<typeof import('./token-logger.js')>('./token-logger.js')
+      vi.mocked(logTokenUsage).mockImplementation(actualLogger.logTokenUsage)
+      const runtime = createAgentRuntime({ model: makeModel(), apiKey: 'sk-primary', db, tools: [] })
+      const makeContext = (n: number) => ({ systemPrompt: 'runtime system prompt', tools: [], messages: [{ role: 'user', content: [{ type: 'text', text: `turn ${n}` }], timestamp: n }] })
+      const finish = (agent: { emit: (event: unknown) => void }, n: number) => agent.emit({ type: 'message_end', message: {
+        role: 'assistant', content: [{ type: 'text', text: 'ok' }], provider: 'openai', model: 'gpt-4o',
+        usage: { input: 100, output: 10, cacheRead: 0, cacheWrite: 50, cost: { total: 0.1 } }, stopReason: 'stop',
+      }, n })
+      runtimeHarness.promptBehaviors.push(async agent => {
+        agent.request(makeContext(1)); finish(agent, 1)
+        await new Promise(resolve => setTimeout(resolve, 0))
+        agent.request(makeContext(2)); finish(agent, 2)
+        agent.emit({ type: 'agent_end', messages: [] })
+      })
+      for await (const _ of runtime.streamPrompt('first', 'probe-integration')) { /* drain */ }
+      runtimeHarness.promptBehaviors.push(async agent => {
+        agent.request(makeContext(3)) // no message_end: aborted stream has no usage row
+        agent.request(makeContext(4)); finish(agent, 4)
+        agent.emit({ type: 'agent_end', messages: [] })
+      })
+      for await (const _ of runtime.streamPrompt('second', 'probe-integration')) { /* drain */ }
+      const rows = db.prepare('SELECT p.usage_id, p.session_id, p.turn_seq, u.session_id AS usage_session FROM request_probe p JOIN token_usage u ON u.id=p.usage_id ORDER BY p.id')
+        .all() as Array<{ usage_id: number; session_id: string; usage_session: string; turn_seq: number }>
+      expect(rows).toHaveLength(3)
+      expect(rows.map(r => r.turn_seq)).toEqual([0, 1, 1])
+      expect(rows.every(r => r.usage_id > 0 && r.session_id === 'probe-integration' && r.usage_session === r.session_id)).toBe(true)
+      expect(requestProbeDroppedCount()).toBe(1)
+    } finally { stream.mockRestore(); vi.mocked(logTokenUsage).mockReset() }
   })
 
   it('wires tools behind a single runtime boundary', () => {
@@ -315,6 +360,43 @@ describe('AgentRuntime boundary', () => {
     expect(logToolCall).toHaveBeenCalledTimes(1)
   })
 
+  // Built-in tools can report failures via
+  // `details.error: true` while pi-agent-core leaves `isError` false.
+  it('classifies tool results with details.error as failures in chunks and the tool_calls log', async () => {
+    const db = initDatabase(':memory:')
+    const runtime = createAgentRuntime({ model: makeModel(), apiKey: 'sk-primary', db, tools: [] })
+
+    runtimeHarness.promptBehaviors.push(async (agent) => {
+      agent.emit({ type: 'tool_execution_start', toolName: 'read_file', toolCallId: 'tool-err', args: { path: 'missing.txt' } })
+      agent.emit({
+        type: 'tool_execution_end',
+        toolName: 'read_file',
+        toolCallId: 'tool-err',
+        isError: false,
+        result: { content: [{ type: 'text', text: 'Error reading file: ENOENT' }], details: { error: true } },
+      })
+      agent.emit({ type: 'tool_execution_start', toolName: 'read_file', toolCallId: 'tool-ok', args: { path: 'a.txt' } })
+      agent.emit({
+        type: 'tool_execution_end',
+        toolName: 'read_file',
+        toolCallId: 'tool-ok',
+        isError: false,
+        result: { content: [{ type: 'text', text: 'hello' }], details: {} },
+      })
+      agent.emit({ type: 'agent_end', messages: [] })
+    })
+
+    const errorFlags: Array<boolean | undefined> = []
+    for await (const chunk of runtime.streamPrompt('read', 'session-1')) {
+      if (chunk.type === 'tool_call_end') errorFlags.push(chunk.toolIsError)
+    }
+
+    expect(errorFlags).toEqual([true, false])
+    const statuses = vi.mocked(logToolCall).mock.calls.slice(-2).map(call => call[1].status)
+    expect(statuses).toEqual(['error', 'success'])
+    db.close()
+  })
+
   it('forwards thinking_delta events as thinking response chunks', async () => {
     const db = initDatabase(':memory:')
     const runtime = createAgentRuntime({
@@ -349,6 +431,34 @@ describe('AgentRuntime boundary', () => {
     expect(chunks[0]!.thinking).toBe('Hmm,')
     expect(chunks[1]!.thinking).toBe(' weighing options.')
     expect(chunks[2]!.text).toBe('Done.')
+  })
+
+  it('freezes a long details.error result as an error in chat metadata, projection, tool log and event', async () => {
+    const db = initDatabase(':memory:')
+    db.prepare("INSERT INTO users(id, username, password_hash) VALUES (1, 'fixture', 'x')").run()
+    db.prepare("INSERT INTO sessions(id, user_id, agent_id) VALUES ('eco-chat', 1, 'main')").run()
+    setStrandEcoEnabled(db, 'eco-chat', true)
+    const realLogger = await vi.importActual<typeof import('./token-logger.js')>('./token-logger.js')
+    vi.mocked(logToolCall).mockImplementationOnce((database, record) => realLogger.logToolCall(database, record))
+    const runtime = createAgentRuntime({ model: makeModel(), apiKey: 'k', db, tools: [] })
+    const result = { content: [{ type: 'text', text: `FAIL test\n${'  passed test\n'.repeat(700)}` }], details: { error: true } }
+    runtimeHarness.promptBehaviors.push(async (agent) => {
+      const toolCall = { id: 'chat-eco-call', name: 'shell' }
+      agent.emit({ type: 'tool_execution_start', toolCallId: toolCall.id, toolName: toolCall.name, args: { command: 'npm test' } })
+      const frozen = await runtimeHarness.afterToolCall!({ toolCall, args: { command: 'npm test' }, result, isError: false }) as { content: typeof result.content; details: unknown }
+      expect(frozen).toBeDefined()
+      agent.emit({ type: 'tool_execution_end', toolCallId: toolCall.id, toolName: toolCall.name, result: frozen, isError: false })
+      agent.emit({ type: 'agent_end', messages: [] })
+    })
+    const chunks = [] as Array<{ type: string; toolIsError?: boolean }>
+    for await (const chunk of runtime.streamPrompt('test', 'eco-chat')) chunks.push(chunk)
+    expect(chunks.find(c => c.type === 'tool_call_end')?.toolIsError).toBe(true)
+    const row = db.prepare("SELECT metadata FROM chat_messages WHERE session_id = 'eco-chat' AND eco_original IS NOT NULL").get() as { metadata: string }
+    expect(JSON.parse(row.metadata).toolIsError).toBe(true)
+    expect(JSON.parse(row.metadata).toolResult.content[0].text).toContain('Status: error')
+    const statuses = db.prepare("SELECT status FROM tool_calls WHERE session_id = 'eco-chat'").all() as Array<{ status: string }>
+    expect(statuses.map(r => r.status)).toContain('error')
+    db.close()
   })
 
   it('surfaces a provider error message as an error chunk instead of ending silently', async () => {

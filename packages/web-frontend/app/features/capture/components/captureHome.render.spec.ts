@@ -13,6 +13,7 @@ import * as captureParts from '../captureParts'
 import * as captureDictation from '../captureDictation'
 import * as captureDictationUse from '../useCaptureDictation'
 import * as dictationUtils from '~/utils/dictation'
+import * as thinkingLevel from '~/composables/chat/useThinkingLevel'
 import { readFileSync } from 'node:fs'
 import { parse, compileScript } from '@vue/compiler-sfc'
 import { transpileModule, ModuleKind, ScriptTarget } from 'typescript'
@@ -21,7 +22,7 @@ function loadComponent(path: string): Component {
  const script = compileScript(descriptor, { id: path, inlineTemplate: true })
  const { outputText } = transpileModule(script.content, { compilerOptions: { module: ModuleKind.CommonJS, target: ScriptTarget.ES2022 } })
  const exports: { default?: Component } = {}
- const modules: Record<string, unknown> = { vue: { ...Vue, vModelText: { mounted: (el: Node, binding: { value: unknown }) => { el.props.value = binding.value }, updated: (el: Node, binding: { value: unknown }) => { el.props.value = binding.value } }, vModelSelect: {} }, '~/api/captures': captures, '~/api/now': now, '~/api/models': models, '~/api/personas': personas, '~/composables/useComposerHandoff': composerHandoff, '~/composables/chat/useFileDrop': fileDrop, '~/api/resurface': resurfaceApi, '../captureParts': captureParts, '../captureDictation': captureDictation, '../useCaptureDictation': captureDictationUse, '~/utils/dictation': dictationUtils }
+ const modules: Record<string, unknown> = { vue: { ...Vue, vModelText: { mounted: (el: Node, binding: { value: unknown }) => { el.props.value = binding.value }, updated: (el: Node, binding: { value: unknown }) => { el.props.value = binding.value } }, vModelSelect: {} }, '~/api/captures': captures, '~/api/now': now, '~/api/models': models, '~/api/personas': personas, '~/composables/useComposerHandoff': composerHandoff, '~/composables/chat/useFileDrop': fileDrop, '~/api/resurface': resurfaceApi, '../captureParts': captureParts, '../captureDictation': captureDictation, '../useCaptureDictation': captureDictationUse, '~/utils/dictation': dictationUtils, '~/composables/chat/useThinkingLevel': thinkingLevel }
  new Function('require', 'exports', outputText)((name: string) => name === './CaptureDecision.vue' || name === './CaptureParts.vue' ? { default: loadComponent(name) } : modules[name], exports)
  return exports.default!
 }
@@ -60,7 +61,7 @@ const trees: ReturnType<typeof mount>[] = []
 function mount(component: Component): { app: Vue.App; root: Node } {
   const root = node('root')
   const app = renderer.createApp(component)
-  app.config.globalProperties.$t = ((key: string, params?: unknown) => key + (params && typeof params === 'object' && 'count' in params ? `:${params.count}` : '')) as typeof app.config.globalProperties.$t
+  app.config.globalProperties.$t = ((key: string, params?: unknown) => (key === 'capture.thinking.saveError' && saveErrorParams.push(params), key) + (params && typeof params === 'object' && 'count' in params ? `:${params.count}` : '')) as typeof app.config.globalProperties.$t
   for (const [name, tag] of Object.entries({ PageHeader: 'header', Alert: 'section', AlertDescription: 'p', Button: 'button', AppIcon: 'i', NuxtLink: 'a' })) {
     app.component(name, defineComponent({ setup: (_, { slots }) => () => h(tag, slots.default?.()) }))
   }
@@ -78,7 +79,8 @@ async function flush() {
 }
 function setupFetch() {
   vi.stubGlobal('useApi', useApi)
-  vi.stubGlobal('useAuth', () => ({ getAccessToken: () => 'test-token' }))
+  vi.stubGlobal('useAuth', () => ({ getAccessToken: () => 'test-token', ...(authUser ? { user: authUser } : asAdmin ? { user: Vue.ref({ id: 1, role: 'admin' }) } : {}) }))
+  vi.stubGlobal('useModelConsentDialog', () => ({ request: async () => false }))
   vi.stubGlobal('useRuntimeConfig', () => ({ public: { apiBase: 'https://test.example' } }))
   const states = new Map<string, Vue.Ref<unknown>>()
   vi.stubGlobal('useState', <T>(key: string, init: () => T) => {
@@ -90,6 +92,8 @@ function setupFetch() {
 }
 afterEach(() => {
   trees.splice(0).forEach(({ app }) => app.unmount())
+  // The thinking level is shared page-wide; every test starts from an empty page.
+  thinkingLevel.resetThinkingLevelForTest()
   vi.unstubAllGlobals()
 })
 
@@ -112,6 +116,19 @@ let sttConfigured = false
 /** Synthetic transcription answer; `hold` keeps the request open (transcribing). */
 let transcribe: { status: number; body: unknown; hold?: boolean } = { status: 200, body: { transcript: 'Synthetic spoken words.' } }
 let latestKind: string | undefined
+/** Thinking level (global setting): admin session, stored level, read/save failures, held PUT. */
+let asAdmin = false
+/** Set to drive the signed-in user by hand (identity arriving after the mount). */
+let authUser: Vue.Ref<{ id: number; role: string } | null> | null = null
+let settingsLevel: string | undefined = 'high'
+let settingsReadFail = false
+let settingsPutFail = false
+/** The PUT gets no answer (network error): unclear whether it was stored. */
+let settingsPutLost = false
+/** Params passed to `capture.thinking.saveError`, to check the level it names. */
+const saveErrorParams: unknown[] = []
+let releasePut: (() => void) | null = null
+let holdPut = false
 let request: ReturnType<typeof vi.fn>
 function result(state = status) { return { capture: { id: 'c1', text: 'Roof note', ...(latestKind ? { kind: latestKind } : {}), createdAt: '2026-01-01T12:00:00Z', status: state, strandId: state === 'unsorted' ? null : 's1', attachments: [] }, decision: { id: 'd1', createdAt: '2026-01-01T12:00:01Z', captureId: 'c1', title: 'Roof', action: 'new_strand', confidence: state === 'filed' ? 0.9 : state === 'needs_review' ? 0.55 : 0.2, rationale: 'Related topic', state: state === 'unsorted' ? 'proposed' : 'applied', alternatives: [{ action: 'append', strandId: 's2', title: 'House', confidence: 0.3, reason: 'Possible match' }] } } }
 function splitResult() {
@@ -123,6 +140,7 @@ beforeEach(() => {
  status = 'filed'; max = 7; nowIds = []; nowMode = undefined; failLoad = false; holdLoad = false; saved = false
  resurfaceItems = []; resurfaceFail = false; splitLatest = false; routingPending = false
  sttConfigured = false; latestKind = undefined
+ asAdmin = false; authUser = null; settingsLevel = 'high'; settingsReadFail = false; settingsPutFail = false; settingsPutLost = false; saveErrorParams.length = 0; releasePut = null; holdPut = false
  transcribe = { status: 200, body: { transcript: 'Synthetic spoken words.' } }
  setupFetch()
  request = vi.fn(async (url: string, _options?: RequestInit) => {
@@ -131,6 +149,16 @@ beforeEach(() => {
   if (failLoad && path === '/api/now') return new Response('{}', { status: 500 })
   let data: unknown = {}
   if (path === '/api/stt/settings') return Response.json({ enabled: sttConfigured })
+  if (path === '/api/settings') {
+   if (_options?.method === 'PUT') {
+    if (settingsPutLost) throw new TypeError('Failed to fetch')
+    const finish = () => settingsPutFail ? new Response('{}', { status: 500 }) : (settingsLevel = JSON.parse(_options.body as string).thinkingLevel, new Response(JSON.stringify({ thinkingLevel: settingsLevel, message: 'ok' })))
+    if (holdPut) return new Promise<Response>(resolve => { releasePut = () => resolve(finish()) })
+    return finish()
+   }
+   if (settingsReadFail) return new Response('{}', { status: 500 })
+   return new Response(JSON.stringify(settingsLevel ? { thinkingLevel: settingsLevel } : {}))
+  }
   if (path.startsWith('/api/stt/transcribe')) {
    if (transcribe.hold) return new Promise(() => {})
    return { ok: transcribe.status < 400, status: transcribe.status, json: async () => transcribe.body } as Response
@@ -161,6 +189,22 @@ async function draft(root: Node, value = 'Roof note') {
  await nextTick()
 }
 async function send(root: Node) { (all(root).find(n => n.tag === 'form')!.props.onSubmit as (e: unknown) => void)({ preventDefault() {} }); await flush() }
+/**
+ * A real click on the send button (`data-testid="send"`), as the browser does
+ * it: a disabled button does nothing; an enabled `type="submit"` button runs its
+ * own click handler (none here) and then submits its form.
+ */
+async function clickSend(root: Node): Promise<boolean> {
+ const target = all(root).find(n => n.props['data-testid'] === 'send')!
+ expect(target.tag).toBe('button')
+ expect(target.props.type).toBe('submit')
+ if (target.props.disabled) return false
+ ;(target.props.onClick as ((e: unknown) => void) | undefined)?.({ preventDefault() {} })
+ let form = target.parent
+ while (form && form.tag !== 'form') form = form.parent
+ ;(form!.props.onSubmit as (e: unknown) => void)({ preventDefault() {} }); await flush()
+ return true
+}
 describe('Capture Home rendered', () => {
  it('says "saved, routing pending" on a 202 and clears the box (no retry of a stored capture)', async () => {
   routingPending = true
@@ -829,5 +873,315 @@ describe('Capture Home dictation', () => {
   latestKind = 'text'
   const { root } = mount(Home); await flush(); await draft(root); await send(root)
   expect(byTestId(root, 'capture-dictated-badge')).toHaveLength(0)
+ })
+})
+
+/**
+ * Thinking level on Home: the same global setting and logic as the strand
+ * composer (`useThinkingLevel`), shown as readable text to admins only.
+ */
+describe('Capture Home thinking level', () => {
+ const thinking = (root: Node) => byTestId(root, 'capture-thinking-select')[0]
+ const settingsCalls = () => request.mock.calls.filter(([url]) => url === 'https://test.example/api/settings')
+ const puts = () => settingsCalls().filter(([, init]) => (init as RequestInit | undefined)?.method === 'PUT')
+ async function pick(root: Node, level: string) { (thinking(root)!.props.onChange as (e: unknown) => void)({ target: { value: level } }); await flush() }
+ const selectedLabel = (root: Node) => {
+  const select = thinking(root)!
+  return text(select.children.find(o => o.tag === 'option' && o.props.value === select.props.value) ?? node('none'))
+ }
+
+ it('shows the current level as text to an admin, labelled as applying to all strands', async () => {
+  asAdmin = true; settingsLevel = 'high'
+  const { root } = mount(Home); await flush()
+  expect(thinking(root)).toBeTruthy()
+  expect(thinking(root)!.props.value).toBe('high')
+  expect(selectedLabel(root)).toContain('chat.thinkingLevelMenu.high')
+  expect(text(root)).toContain('capture.thinking.label')
+  expect(text(byTestId(root, 'capture-thinking-hint')[0]!)).toContain('capture.thinking.global')
+  expect(thinking(root)!.props['aria-describedby']).toBe('capture-thinking-hint')
+  expect(String(thinking(root)!.props.class)).toContain('min-h-11')
+  expect(String(thinking(root)!.props.class)).toContain('focus-visible:ring-2')
+  // All six levels are offered.
+  expect(thinking(root)!.children.filter(o => o.tag === 'option').map(o => o.props.value)).toEqual(['off', 'minimal', 'low', 'medium', 'high', 'xhigh'])
+ })
+
+ it('shows nothing and reads nothing for a non-admin', async () => {
+  asAdmin = false
+  const { root } = mount(Home); await flush()
+  expect(byTestId(root, 'capture-thinking')).toHaveLength(0)
+  expect(settingsCalls()).toHaveLength(0)
+ })
+
+ it('sends a PUT with only the thinking level when the admin switches it', async () => {
+  asAdmin = true; settingsLevel = 'high'
+  const { root } = mount(Home); await flush()
+  await pick(root, 'low')
+  expect(puts()).toHaveLength(1)
+  expect(JSON.parse((puts()[0]![1] as RequestInit).body as string)).toEqual({ thinkingLevel: 'low' })
+  expect(thinking(root)!.props.value).toBe('low')
+  expect(byTestId(root, 'capture-thinking-save-error')).toHaveLength(0)
+ })
+
+ it('rolls back and says so when saving fails', async () => {
+  asAdmin = true; settingsLevel = 'high'; settingsPutFail = true
+  const { root } = mount(Home); await flush()
+  await pick(root, 'off')
+  expect(puts()).toHaveLength(1)
+  expect(thinking(root)!.props.value).toBe('high')
+  const alert = byTestId(root, 'capture-thinking-save-error')[0]
+  expect(alert?.props.role).toBe('alert')
+  expect(text(alert!)).toContain('capture.thinking.saveError')
+ })
+
+ it('Z1 click: holds a send made right after a switch until the PUT is confirmed', async () => {
+  asAdmin = true; settingsLevel = 'xhigh'; holdPut = true
+  const { root } = mount(Home); await flush()
+  await draft(root, 'Kleine Frage')
+  await pick(root, 'minimal')
+  expect(thinking(root)!.props.disabled).toBe(true)
+  // The button stays usable while the own save runs: the tap reaches the wait.
+  expect(byTestId(root, 'send')[0]!.props.disabled).toBe(false)
+  expect(await clickSend(root)).toBe(true)
+  expect(captureBodies()).toHaveLength(0)
+  expect(text(root)).toContain('capture.thinking.sendHeld')
+  // While the send waits, Home takes no second send.
+  expect(await clickSend(root)).toBe(false)
+  releasePut!(); await flush()
+  expect(captureBodies()).toHaveLength(1)
+  expect(captureBodies()[0]).toMatchObject({ text: 'Kleine Frage' })
+  const order = request.mock.calls.map(([url, init]) => `${(init as RequestInit | undefined)?.method ?? 'GET'} ${url}`)
+  expect(order.indexOf('PUT https://test.example/api/settings')).toBeLessThan(order.indexOf('POST https://test.example/api/captures'))
+  expect(settingsLevel).toBe('minimal')
+ })
+
+ it('Z1 shortcut: Ctrl+Enter during an open save waits too and sends once after the confirmation', async () => {
+  asAdmin = true; settingsLevel = 'xhigh'; holdPut = true
+  const { root } = mount(Home); await flush()
+  await draft(root, 'Kleine Frage')
+  await pick(root, 'minimal')
+  await send(root)
+  expect(captureBodies()).toHaveLength(0)
+  expect(text(root)).toContain('capture.thinking.sendHeld')
+  releasePut!(); await flush()
+  expect(captureBodies()).toHaveLength(1)
+ })
+
+ it('Z2 click: sends nothing when the save behind a held send fails, says so and keeps the draft', async () => {
+  asAdmin = true; settingsLevel = 'xhigh'; holdPut = true; settingsPutFail = true
+  const { root } = mount(Home); await flush()
+  await draft(root, 'Kleine Frage')
+  await pick(root, 'minimal')
+  expect(await clickSend(root)).toBe(true)
+  expect(text(root)).toContain('capture.thinking.sendHeld')
+  releasePut!(); await flush()
+  expect(text(root)).toContain('capture.thinking.notSent')
+  expect(captureBodies()).toHaveLength(0)
+  expect(thinking(root)!.props.value).toBe('xhigh')
+  expect(text(byTestId(root, 'capture-thinking-save-error')[0]!)).toContain('capture.thinking.saveError')
+  expect(field(root).props.value).toBe('Kleine Frage')
+ })
+
+ it('does not invent a level when the setting cannot be read', async () => {
+  asAdmin = true; settingsReadFail = true
+  const { root } = mount(Home); await flush()
+  expect(thinking(root)!.props.value).toBe('')
+  expect(selectedLabel(root)).toContain('capture.thinking.unknown')
+  expect(selectedLabel(root)).not.toContain('chat.thinkingLevelMenu')
+  expect(text(byTestId(root, 'capture-thinking-load-error')[0]!)).toContain('capture.thinking.loadError')
+  // Retry reads again and then shows the real value.
+  settingsReadFail = false; settingsLevel = 'medium'
+  await click(byTestId(root, 'capture-thinking-load-error')[0]!, 'common.retry')
+  expect(thinking(root)!.props.value).toBe('medium')
+ })
+
+ it('reads the level again when the tab comes back, so a change made in a strand shows up', async () => {
+  const listeners: Record<string, () => void> = {}
+  vi.stubGlobal('document', { visibilityState: 'visible', addEventListener: (name: string, fn: () => void) => { listeners[name] = fn }, removeEventListener: () => {} })
+  asAdmin = true; settingsLevel = 'high'
+  const { root } = mount(Home); await flush()
+  expect(thinking(root)!.props.value).toBe('high')
+  settingsLevel = 'low'
+  listeners.visibilitychange!(); await flush()
+  expect(thinking(root)!.props.value).toBe('low')
+ })
+
+ it('holds a send on a Home opened again while the PUT of the previous Home is still open', async () => {
+  asAdmin = true; settingsLevel = 'xhigh'; holdPut = true
+  const first = mount(Home); await flush()
+  await pick(first.root, 'minimal')
+  first.app.unmount(); trees.splice(trees.indexOf(first), 1)
+  const { root } = mount(Home); await flush()
+  expect(thinking(root)!.props.disabled).toBe(true)
+  await draft(root, 'Kleine Frage')
+  await send(root)
+  expect(captureBodies()).toHaveLength(0)
+  expect(text(root)).toContain('capture.thinking.sendHeld')
+  releasePut!(); await flush()
+  expect(captureBodies()).toHaveLength(1)
+  const order = request.mock.calls.map(([url, init]) => `${(init as RequestInit | undefined)?.method ?? 'GET'} ${url}`)
+  expect(order.indexOf('PUT https://test.example/api/settings')).toBeLessThan(order.indexOf('POST https://test.example/api/captures'))
+  expect(settingsLevel).toBe('minimal')
+ })
+
+ it('says nothing was sent only for the held send, and clears both messages after a later send', async () => {
+  asAdmin = true; settingsLevel = 'xhigh'; holdPut = true; settingsPutFail = true
+  const { root } = mount(Home); await flush()
+  await draft(root, 'Kleine Frage')
+  await pick(root, 'minimal')
+  await send(root)
+  releasePut!(); await flush()
+  expect(text(root)).toContain('capture.thinking.notSent')
+  expect(text(byTestId(root, 'capture-thinking-save-error')[0]!)).not.toContain('capture.thinking.notSent')
+  // The draft is sent later with the active level: no stale "nothing was sent".
+  settingsPutFail = false; holdPut = false
+  await send(root)
+  expect(captureBodies()).toHaveLength(1)
+  expect(text(root)).not.toContain('capture.thinking.notSent')
+  expect(byTestId(root, 'capture-thinking-save-error')).toHaveLength(0)
+ })
+
+ it('links the shown thinking error to the select via aria-describedby', async () => {
+  asAdmin = true; settingsLevel = 'high'; settingsPutFail = true
+  const { root } = mount(Home); await flush()
+  await pick(root, 'off')
+  const error = byTestId(root, 'capture-thinking-save-error')[0]!
+  expect(error.props.id).toBe('capture-thinking-save-error')
+  expect(String(thinking(root)!.props['aria-describedby']).split(' ')).toEqual(['capture-thinking-hint', 'capture-thinking-save-error'])
+ })
+
+ it('links the read error to the select via aria-describedby', async () => {
+  asAdmin = true; settingsReadFail = true
+  const { root } = mount(Home); await flush()
+  expect(byTestId(root, 'capture-thinking-load-error')[0]!.props.id).toBe('capture-thinking-load-error')
+  expect(String(thinking(root)!.props['aria-describedby']).split(' ')).toEqual(['capture-thinking-hint', 'capture-thinking-load-error'])
+ })
+
+ it('gives keyboard focus back to the select once the save is done', async () => {
+  const doc: { activeElement: unknown; visibilityState: string; addEventListener: () => void; removeEventListener: () => void } = { activeElement: null, visibilityState: 'visible', addEventListener: () => {}, removeEventListener: () => {} }
+  vi.stubGlobal('document', doc)
+  asAdmin = true; settingsLevel = 'high'; holdPut = true
+  const { root } = mount(Home); await flush()
+  const select = thinking(root)! as Node & { focus: () => void }
+  select.focus = () => { doc.activeElement = select }
+  doc.activeElement = select
+  await pick(root, 'low')
+  // Disabling the select while saving drops the focus in a browser.
+  doc.activeElement = null
+  releasePut!(); await flush()
+  expect(thinking(root)!.props.disabled).toBe(false)
+  expect(doc.activeElement).toBe(select)
+ })
+ it('Z8: leaving Home while a send waits drops it: no capture, also after the save is confirmed', async () => {
+  asAdmin = true; settingsLevel = 'xhigh'; holdPut = true
+  const first = mount(Home); await flush()
+  await draft(first.root, 'Kleine Frage')
+  await pick(first.root, 'minimal')
+  expect(await clickSend(first.root)).toBe(true)
+  expect(text(first.root)).toContain('capture.thinking.sendHeld')
+  first.app.unmount(); trees.splice(trees.indexOf(first), 1)
+  releasePut!(); await flush()
+  await new Promise(resolve => setTimeout(resolve, 20)); await flush()
+  expect(captureBodies()).toHaveLength(0)
+  // The save itself went on.
+  expect(settingsLevel).toBe('minimal')
+ })
+
+ it('Z8: leave Home while a send waits, open Home again, send the same text: exactly one capture', async () => {
+  asAdmin = true; settingsLevel = 'xhigh'; holdPut = true
+  const first = mount(Home); await flush()
+  await draft(first.root, 'Kleine Frage')
+  await pick(first.root, 'minimal')
+  expect(await clickSend(first.root)).toBe(true)
+  first.app.unmount(); trees.splice(trees.indexOf(first), 1)
+  const { root } = mount(Home); await flush()
+  await draft(root, 'Kleine Frage')
+  expect(await clickSend(root)).toBe(true)
+  expect(captureBodies()).toHaveLength(0)
+  releasePut!(); await flush()
+  await new Promise(resolve => setTimeout(resolve, 20)); await flush()
+  expect(captureBodies()).toHaveLength(1)
+  expect(captureBodies()[0]).toMatchObject({ text: 'Kleine Frage' })
+ })
+
+ it.each([
+  ['another admin', { id: 2, role: 'admin' }],
+  ['logout', null],
+  ['admin role gone', { id: 1, role: 'user' }],
+ ] as const)('Z8: an identity change while a send waits drops it (%s): no capture', async (_name, next) => {
+  authUser = Vue.ref({ id: 1, role: 'admin' }); settingsLevel = 'xhigh'; holdPut = true
+  const { root } = mount(Home); await flush()
+  await draft(root, 'Kleine Frage')
+  await pick(root, 'minimal')
+  expect(await clickSend(root)).toBe(true)
+  expect(text(root)).toContain('capture.thinking.sendHeld')
+  authUser.value = next ? { ...next } : null; await flush()
+  releasePut!(); await flush()
+  await new Promise(resolve => setTimeout(resolve, 20)); await flush()
+  expect(captureBodies()).toHaveLength(0)
+  expect(text(root)).not.toContain('capture.thinking.sendHeld')
+  // The draft stays for a send of the new identity.
+  expect(field(root).props.value).toBe('Kleine Frage')
+ })
+
+ it('reads the level once the admin identity arrives after the mount (hard reload)', async () => {
+  authUser = Vue.ref(null)
+  settingsLevel = 'medium'
+  const { root } = mount(Home); await flush()
+  expect(settingsCalls()).toHaveLength(0)
+  authUser.value = { id: 1, role: 'admin' }; await flush()
+  expect(settingsCalls()).toHaveLength(1)
+  expect(thinking(root)!.props.value).toBe('medium')
+  expect(selectedLabel(root)).toContain('chat.thinkingLevelMenu.medium')
+ })
+
+ it('Z4: settings down for good and no own change: the first send goes out, the read error and Retry stay', async () => {
+  asAdmin = true; settingsReadFail = true; settingsLevel = 'low'
+  const { root } = mount(Home); await flush()
+  await draft(root, 'Kleine Frage')
+  await send(root)
+  expect(captureBodies()).toHaveLength(1)
+  expect(captureBodies()[0]).toMatchObject({ text: 'Kleine Frage' })
+  expect(text(root)).not.toContain('capture.thinking.notSent')
+  expect(byTestId(root, 'capture-thinking-load-error')).toHaveLength(1)
+  expect(text(byTestId(root, 'capture-thinking-load-error')[0]!)).toContain('common.retry')
+ })
+
+ it('Z3/Z4: settings down for good with an unresolved own change: held once with a message, the second send goes out', async () => {
+  asAdmin = true; settingsLevel = 'low'
+  const { root } = mount(Home); await flush()
+  settingsReadFail = true; settingsPutLost = true
+  await pick(root, 'high')
+  expect(text(byTestId(root, 'capture-thinking-save-unclear')[0] ?? root)).toContain('capture.thinking.saveUnclear')
+  await draft(root, 'Kleine Frage')
+  await send(root)
+  expect(captureBodies()).toHaveLength(0)
+  expect(text(root)).toContain('capture.thinking.notSentUnknown')
+  expect(field(root).props.value).toBe('Kleine Frage')
+  await send(root)
+  expect(captureBodies()).toHaveLength(1)
+  expect(captureBodies()[0]).toMatchObject({ text: 'Kleine Frage' })
+  expect(text(root)).not.toContain('capture.thinking.notSentUnknown')
+ })
+
+ it('saveError names the level read after an unclear save', async () => {
+  asAdmin = true; settingsLevel = 'low'
+  const { root } = mount(Home); await flush()
+  settingsPutLost = true
+  await pick(root, 'high')
+  const message = byTestId(root, 'capture-thinking-save-error')[0]!
+  expect(message).toBeDefined()
+  expect(text(message)).toContain('capture.thinking.saveError')
+  expect(text(message)).not.toContain('saveErrorUnknown')
+  expect(thinking(root)!.props.value).toBe('low')
+  expect(saveErrorParams.at(-1)).toEqual({ level: 'chat.thinkingLevelMenu.low' })
+ })
+
+ it('a non-admin sends at once and never reads the setting', async () => {
+  asAdmin = false
+  const { root } = mount(Home); await flush()
+  await draft(root, 'Kleine Frage')
+  await send(root)
+  expect(captureBodies()).toHaveLength(1)
+  expect(settingsCalls()).toHaveLength(0)
  })
 })

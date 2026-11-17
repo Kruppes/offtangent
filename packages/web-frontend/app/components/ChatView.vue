@@ -117,7 +117,12 @@ const boundToThread = computed(() => !!props.threadSessionId)
 const { t } = useI18n()
 const { user } = useAuth()
 const isAdmin = computed(() => user.value?.role === 'admin')
-const thinking = useThinkingLevel(isAdmin)
+// Shared page-wide with Home: a level saved there shows here at once.
+const thinking = useThinkingLevel(isAdmin, undefined, computed(() => user.value?.id ?? user.value?.username ?? null))
+/** Back in this browser tab: the level may have been changed in another one. */
+function refreshThinkingOnReturn() {
+  if (typeof document !== 'undefined' && document.visibilityState === 'visible') void thinking.load()
+}
 const avatar = useUserAvatar()
 
 // The markdown renderer is a module and cannot reach i18n itself, so the chip
@@ -244,11 +249,13 @@ provideChatView({
 // replayed tail. A failed history load must never keep the socket closed —
 // chatting still works, the transcript just starts empty.
 onMounted(async () => {
+  if (typeof document !== 'undefined' && typeof document.addEventListener === 'function') document.addEventListener('visibilitychange', refreshThinkingOnReturn)
   await reloadHistory()
   connect()
   await Promise.all([tts.fetchTtsSettings(), stt.fetchSttSettings(), thinking.load()])
 })
 onUnmounted(() => {
+  if (typeof document !== 'undefined' && typeof document.removeEventListener === 'function') document.removeEventListener('visibilitychange', refreshThinkingOnReturn)
   interactionTable.clearPendingVerify()
   disconnect()
   if (boundToThread.value) leaveThread(props.threadSessionId)

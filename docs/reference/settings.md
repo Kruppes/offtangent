@@ -558,6 +558,19 @@ The system prompt is assembled with the stable blocks (persona, rules, tools, wo
 
 A background task keeps its full transcript in memory; only the view sent to the model is trimmed, and every hidden message that has a `chat_messages` row stays reloadable with `recall_message`. `read_file` returns metadata instead of content for binary files (NUL bytes or non-UTF-8) and for files above 64 MB.
 
+### `requestProbe`
+
+Content-free cache-cause row per model request of a strand or persona runtime (table `request_probe`, linked to `token_usage` by `usage_id`). Stores only counters, lengths, timestamps, ids and keyed checksums (HMAC-SHA256 with a per-installation random key in `request_probe_key`) of the tool block and the system prompt before and after the cache marker. No prompt or message text, no tool names or arguments. Evaluation: `packages/core/src/request-probe-report.sql`.
+
+| Key                          | Type      | Default | Used by                                                        |
+|------------------------------|-----------|---------|----------------------------------------------------------------|
+| `requestProbe.enabled`       | `boolean` | `true`  | `false` measures and writes nothing (the table is not created) |
+| `requestProbe.retentionDays` | `number`  | `60`    | rows older than this are deleted (1 to 365)                    |
+
+`token_usage.kind = 'background'` records completed model calls outside the main chat or task request path, including their costs without counting them as ordinary requests. The nullable `token_usage.purpose` column identifies why a background call was made (for example, `fact_extraction` or `ha_relay`); existing rows keep `NULL`.
+
+In the evaluation query, `avg_history_kept_share` can exceed 1.0 (for example, 1.134). Its denominator is the previous history without the new message, but its retained-context numerator can include that new message; it is a character-based estimate, not a percentage capped at 100%.
+
 Metrics (SPEC 12.2) are written to `tool_calls` as system rows: `session_summary_delta`, `fact_extraction`, `strand_context`, `task_history`, `task_guard`, `task_usage`.
 
 Also under `tasks`: `tasks.contextBudgetTokens` (`number`, default `8000`) caps the `<delegation_context>` block a `create_task` with `context_mode` `selected` or `fork` prepends to the task prompt (SPEC 10.8).

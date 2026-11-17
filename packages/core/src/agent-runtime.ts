@@ -6,6 +6,7 @@ import { spawn } from 'node:child_process'
 import { readStrandContextWindow, readStrandEcoMode } from './eco-mode-store.js'
 import { resolveTurnEcoOwner, freezeEcoToolResult } from './eco-tool-freeze.js'
 import { ASK_USER_TOOL_NAME, redactAskUserArgs } from './contracts/ask-user.js'
+import { isFailedToolResult } from './loop-detection.js'
 import { SteerSlot, type SteerOffer, type SteerOfferOptions } from './steer.js'
 import { ASK_USER_SYSTEM_HINT, batchHasBlockingAskUser, claimInteractionContextNotes, createAskUserTool, isAskUserOfferedFor, markInteractionContextNotesDelivered, releaseInteractionContextNotes } from './ask-user-tool.js'
 import type { AfterToolCallContext, AfterToolCallResult } from '@earendil-works/pi-agent-core'
@@ -17,6 +18,7 @@ import type { Api, AssistantMessage, Message, ImageContent, Model, SystemMessage
 import { Type } from 'typebox'
 import type { Database } from './database.js'
 import { logTokenUsage, logToolCall } from './token-logger.js'
+import { RequestProbeRecorder, type RequestProbeHint } from './request-probe.js'
 import { errorClass, errorTextClass, formatProviderErrorDiagnostic, providerErrorDiagnostic, publicProviderError, withRawError } from './log-safe-error.js'
 import { estimateCost, getApiKeyForProvider, buildModel, buildStreamFn, loadProvidersDecrypted, parseProviderModelId, getProviderDefaultModel, resolvePromptProfileOptions } from './provider-config.js'
 import type { ProviderConfig } from './provider-config.js'
@@ -238,6 +240,8 @@ export interface AgentRuntimeBoundary {
    * doubles of this boundary stay valid; absent = steering unsupported.
    */
   offerSteer?(sessionId: string, text: string, messageId?: number | null, opts?: SteerOfferOptions): SteerOffer
+  /** Request probe: hint for the cache-cause probe of the next turn. Optional for test doubles. */
+  setRequestProbeHint?(hint: RequestProbeHint): void
   getCurrentModel(): Model<Api>
   getCurrentApiKey(): string
   /** The current provider config, if the runtime was initialized with one. */
@@ -826,6 +830,12 @@ class PiAgentRuntime implements AgentRuntimeBoundary, AgentRuntimePiAgentAccess 
    * abort is process-wide and hits foreign strands.
    */
   private currentSessionId: string | null = null
+  /**
+   * Request probe: content-free cache-cause row per model request (request-probe.ts).
+   * Every call site uses `?.`: tests build the runtime via Object.create without
+   * field initializers, and measuring must never break a turn.
+   */
+  private readonly requestProbe = new RequestProbeRecorder(() => this.db, () => this.agentId ?? null)
   /** S1-D: the one-per-batch user interjection slot of the current run. */
   private readonly steerSlot = new SteerSlot()
 
@@ -1177,6 +1187,11 @@ class PiAgentRuntime implements AgentRuntimeBoundary, AgentRuntimePiAgentAccess 
     }
   }
 
+  /** Request probe: what agent.ts knows about the next turn (trim, injection). Never throws. */
+  setRequestProbeHint(hint: RequestProbeHint): void {
+    this.requestProbe?.setHint(hint)
+  }
+
   /**
    * Review 3 / P1-1: last check immediately before EVERY wire request. The
    * `model` argument is the request target the SDK loop uses (its snapshot
@@ -1214,6 +1229,9 @@ class PiAgentRuntime implements AgentRuntimeBoundary, AgentRuntimePiAgentAccess 
           }
         }
       }
+      // Request probe: measure the request exactly as it leaves (after every gate
+      // check). Read only, never throws; see request-probe.ts.
+      this.requestProbe?.observe(this.currentSessionId, context)
       return inner(model, context, options)
     }) as ReturnType<typeof buildStreamFn>
   }
@@ -1308,7 +1326,7 @@ class PiAgentRuntime implements AgentRuntimeBoundary, AgentRuntimePiAgentAccess 
       args: ctx.args,
       content: ctx.result.content,
       details: ctx.result.details,
-      isError: ctx.isError,
+      isError: isFailedToolResult(ctx.isError, ctx.result),
     })
     return frozen ? { content: frozen.content, details: frozen.details } : undefined
   }
@@ -1739,6 +1757,7 @@ class PiAgentRuntime implements AgentRuntimeBoundary, AgentRuntimePiAgentAccess 
 
     // Start the prompt (non-blocking)
     this.currentSessionId = sessionId
+    this.requestProbe?.beginTurn(isRetry)
     this.askUserBlockingClaimed = false
     this.refreshAskUserOffer()
     // A2 (S0-A): every secret-boundary replacement made while this prompt
@@ -2055,7 +2074,7 @@ class PiAgentRuntime implements AgentRuntimeBoundary, AgentRuntimePiAgentAccess 
             ? assistantMsg.usage.cost.total
             : cost
 
-          logTokenUsage(this.db, {
+          const usageId = logTokenUsage(this.db, {
             provider: assistantMsg.provider,
             model: assistantMsg.model,
             promptTokens: assistantMsg.usage.input,
@@ -2072,6 +2091,7 @@ class PiAgentRuntime implements AgentRuntimeBoundary, AgentRuntimePiAgentAccess 
               ? errorTextClass((assistantMsg as { errorMessage?: string }).errorMessage)
               : ((assistantMsg as { stopReason?: string }).stopReason === 'error' ? 'Unknown model error' : null),
           })
+          this.requestProbe?.commit(usageId)
           // SPEC 11.5: one line per turn so a cache regression is visible in
           // the container log without a query.
           {
@@ -2141,6 +2161,7 @@ class PiAgentRuntime implements AgentRuntimeBoundary, AgentRuntimePiAgentAccess 
         const args = this.toolCallArgs.get(event.toolCallId) ?? {}
         this.toolCallTimers.delete(event.toolCallId)
         this.toolCallArgs.delete(event.toolCallId)
+        const isError = isFailedToolResult(event.isError, event.result)
 
         // Log tool call
         logToolCall(this.db, {
@@ -2153,7 +2174,7 @@ class PiAgentRuntime implements AgentRuntimeBoundary, AgentRuntimePiAgentAccess 
           // `success` (no status passed → token-logger default) although the
           // event carries `isError`; the error count was only recoverable
           // from chat_messages.metadata.toolIsError.
-          status: event.isError ? 'error' : 'success',
+          status: isError ? 'error' : 'success',
         })
 
         chunks.push({
@@ -2161,7 +2182,7 @@ class PiAgentRuntime implements AgentRuntimeBoundary, AgentRuntimePiAgentAccess 
           toolName: event.toolName,
           toolCallId: event.toolCallId,
           toolResult: event.result,
-          toolIsError: event.isError,
+          toolIsError: isError,
         })
         break
       }

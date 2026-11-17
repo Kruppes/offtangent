@@ -260,7 +260,7 @@ export const completeHaSubscription: HaComplete = async (c, context, signal) => 
 }
 function errorResponse(status: number, code: string) {return Response.json({error:{message:code,type:'ha_inference_error',code}},{status})}
 /** All output (including SSE) is buffered until upstream completed + validated. No partial actions. */
-export function createHaInferenceHandler(config: HaInferenceConfig, complete: HaComplete = completeHaSubscription) {
+export function createHaInferenceHandler(config: HaInferenceConfig, complete: HaComplete = completeHaSubscription, onUsage?: (message: AssistantMessage) => void) {
   const c=structuredClone(validateHaConfig(config)); let active=0; let hour=Date.now(); let calls=0
   // Ephemeral native transcript vault; thinking/signatures never leave this process.
   // One-use handles bind to the exact authenticated HA exchange. No persistence.
@@ -313,6 +313,8 @@ export function createHaInferenceHandler(config: HaInferenceConfig, complete: Ha
       }else if(b.ha_session!==undefined)fail('unsupported_field')
       calls++
       const result=await Promise.race([complete(c,context,signal),aborted])
+      // Detached bookkeeping: never participates in validation, output, or error handling.
+      if(onUsage) setImmediate(() => { try { onUsage(result.message) } catch { /* booking is best effort */ } })
       if(JSON.stringify(result.message).length>262144)throw new Fault(502,'native_output_limit')
       if(!result.completed || result.wireModel!==c.model || result.message.model!==c.model || (c.transport==='anthropic-oauth'&&result.message.api!=='anthropic-messages') || !['stop','toolUse'].includes(result.message.stopReason)) throw new Fault(502,'incomplete_or_wrong_model')
       if(outputCap!==undefined&&(!Number.isInteger(result.message.usage.output)||result.message.usage.output>outputCap))throw new Fault(502,'output_token_cap_exceeded')

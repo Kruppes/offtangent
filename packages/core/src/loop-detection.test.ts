@@ -5,6 +5,7 @@ import {
   parseSmartDetectionResponse,
   resolveDetectionMethod,
   formatPeriodicStatusUpdate,
+  isFailedToolResult,
 } from './loop-detection.js'
 import type { LoopDetectionConfig } from './loop-detection.js'
 
@@ -140,6 +141,42 @@ describe('ToolCallTracker', () => {
       expect(tracker.getHistory()).toHaveLength(5)
       expect(tracker.getCount()).toBe(5)
     })
+  })
+})
+
+// Use one failure classifier for task runner, chat
+// runtime and codemode, so `details.error` without `isError` counts as failed.
+describe('isFailedToolResult', () => {
+  it('treats the pi-agent-core isError flag as a failure', () => {
+    expect(isFailedToolResult(true, { content: [], details: {} })).toBe(true)
+  })
+
+  it('treats a result with details.error as a failure even when isError is false', () => {
+    expect(isFailedToolResult(false, { content: [{ type: 'text', text: 'Could not find edits[0].oldText' }], details: { error: true } })).toBe(true)
+    expect(isFailedToolResult(undefined, { content: [], details: { error: true, refused: true } })).toBe(true)
+  })
+
+  it('keeps the old text prefix rule for string results', () => {
+    expect(isFailedToolResult(undefined, 'Error: boom')).toBe(true)
+    expect(isFailedToolResult(false, 'ok')).toBe(false)
+  })
+
+  it('does not treat regular results as failures', () => {
+    expect(isFailedToolResult(false, { content: [{ type: 'text', text: 'ok' }], details: { exitCode: 0 } })).toBe(false)
+    expect(isFailedToolResult(false, { content: [], details: { error: 'not a boolean flag' } })).toBe(false)
+    expect(isFailedToolResult(false, { content: [], details: { error: false } })).toBe(false)
+    expect(isFailedToolResult(false, { content: [] })).toBe(false)
+    expect(isFailedToolResult(false, null)).toBe(false)
+    expect(isFailedToolResult(undefined, undefined)).toBe(false)
+  })
+
+  it('lets the tracker detect a loop of details.error results', () => {
+    const tracker = new ToolCallTracker()
+    const result = { content: [{ type: 'text', text: 'Could not find edits[0].oldText' }], details: { error: true } }
+    for (let i = 0; i < 3; i++) {
+      tracker.record('edit_file', { path: 'a.ts' }, JSON.stringify(result), isFailedToolResult(false, result))
+    }
+    expect(tracker.checkSystematicLoop(3).loopDetected).toBe(true)
   })
 })
 

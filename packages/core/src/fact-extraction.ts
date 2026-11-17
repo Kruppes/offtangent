@@ -1,6 +1,7 @@
 import { resolveFactWriteScope } from './context-scope.js'
 import type { Api, Model } from '@earendil-works/pi-ai'
 import { completeSimple } from './pi-models.js'
+import { logBackgroundUsage } from './background-usage.js'
 import type { Database } from './database.js'
 import type { ProviderConfig } from './provider-config.js'
 import { createMemory } from './memories-store.js'
@@ -345,6 +346,7 @@ export async function extractAndStoreFacts(
     reasoning: resolveBackgroundReasoning(),
   })
 
+  logBackgroundUsage(model, response, { purpose: 'fact_extraction', sessionId, db })
   assertLlmResponseOk(response, '[fact-extraction] Provider rejected the extraction request')
 
   const responseText = response.content

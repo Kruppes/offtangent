@@ -15,6 +15,7 @@ import {
   IsolatedInferenceError,
   authenticateIsolatedService,
   loadIsolatedInferenceConfig,
+  logBackgroundUsage,
   parseIsolatedRequest,
   runIsolatedInference,
   type IsolatedInferenceService,
@@ -155,7 +156,11 @@ async function handleInfer(req: Request, res: Response): Promise<void> {
     : null
   try {
     const request = parseIsolatedRequest(req.body, service)
-    const result = await runIsolatedInference(service, request, { idempotencyKey })
+    const result = await runIsolatedInference(service, request, {
+      idempotencyKey,
+      // Background usage: the isolated module has no database; usage is booked here.
+      onUsage: (model, message) => logBackgroundUsage(model, message, { purpose: 'isolated_inference' }),
+    })
     res.json(result)
   } catch (err) {
     if (err instanceof IsolatedInferenceError) {

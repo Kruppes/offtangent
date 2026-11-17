@@ -32,6 +32,7 @@ import type { Api, Model } from '@earendil-works/pi-ai'
 import { loadConfig, warnConfigReadFailed } from './config.js'
 import { checkAutomaticModelFor, type ProviderPolicyView } from './data-policy.js'
 import { completeSimple } from './pi-models.js'
+import { logBackgroundUsage } from './background-usage.js'
 import { withTimeout } from './promise-utils.js'
 import { errorClass } from './log-safe-error.js'
 import {
@@ -277,6 +278,7 @@ async function defaultCompletion(
     SPEECH_SUMMARY_TIMEOUT_MS,
     'Speech summary',
   )
+  logBackgroundUsage(choice.model, response, { purpose: 'speech_summary' })
   if (response.stopReason === 'error' || response.stopReason === 'aborted') {
     throw new SpeechSummaryUpstreamError(response.errorMessage ?? response.stopReason)
   }

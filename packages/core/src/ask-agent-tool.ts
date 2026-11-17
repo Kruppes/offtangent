@@ -3,6 +3,7 @@ import type { Api, Model } from '@earendil-works/pi-ai'
 import { skipPrivateMcpSession } from './mcp-egress.js'
 import { Type } from 'typebox'
 import { completeSimple } from './pi-models.js'
+import { logBackgroundUsage } from './background-usage.js'
 import { loadPersona, getPersonaDir } from './persona-loader.js'
 // resolveBackgroundReasoning import removed — cross-persona calls explicitly disable reasoning
 import fs from 'node:fs'
@@ -361,6 +362,7 @@ export function createAskAgentTool(options: AskAgentToolOptions): AgentTool {
           apiKey,
           reasoning: undefined, // explicitly disabled — no extended thinking for cross-persona calls
         })
+        logBackgroundUsage(model, response, { purpose: 'ask_agent', sessionId: options.getCurrentSessionId?.() ?? null, agentId: currentAgentId, db: options.db ?? undefined })
 
         // Surface provider errors directly instead of silently returning "empty response".
         // Without this, auth failures / 400s / rate limits were being masked as empty responses,

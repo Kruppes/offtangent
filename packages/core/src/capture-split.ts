@@ -30,6 +30,7 @@ import type { CaptureLanguage } from './capture-router.js'
 import { loadConfig, warnConfigReadFailed } from './config.js'
 import { errorClass } from './log-safe-error.js'
 import { completeSimple } from './pi-models.js'
+import { logBackgroundUsage } from './background-usage.js'
 import { buildRouterModel, resolveRouterChain } from './router-model.js'
 import type { ResolvedRouterModel } from './router-model.js'
 import { resolveBackgroundReasoning } from './thinking-level.js'
@@ -529,6 +530,7 @@ async function defaultCompletion(chain: ResolvedRouterModel[], systemPrompt: str
       apiKey: handle.apiKey,
       reasoning: resolveBackgroundReasoning(),
     })
+    logBackgroundUsage(handle.model, response, { purpose: 'capture_split' })
     if (response.stopReason === 'error' || response.stopReason === 'aborted') {
       throw new Error(response.errorMessage ?? response.stopReason)
     }

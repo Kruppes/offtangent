@@ -203,6 +203,7 @@ export type { ProviderConfig, MaskedProviderConfig, MaskedProvidersFile, Provide
 // Re-exported so packages outside core (web-backend) can reach them, since
 // core is only consumable through this index.
 export { streamSimple, completeSimple } from './pi-models.js'
+export { logBackgroundUsage, backgroundUsageErrorCount, type BackgroundUsagePurpose } from './background-usage.js'
 // Spoken output for the companion app: "summarize aloud" (POST /api/speech/summary).
 export {
   SPEECH_SOURCE_CAP,
@@ -1927,3 +1928,6 @@ export type {
 // S1-D: user interjection (steer) into a running turn.
 export { formatSteerBlock, markUserMessageSteerState, SteerSlot, STEER_DATA_HEADER } from './steer.js'
 export type { SteerOffer, SteerOfferOptions, SteerRejectReason } from './steer.js'
+
+export { createConsolidationBackup, consolidationBackupScopeId, ConsolidationBackupError } from "./memory-consolidation-backup.js"
+export type { ConsolidationBackupResult, ConsolidationBackupErrorCode } from "./memory-consolidation-backup.js"

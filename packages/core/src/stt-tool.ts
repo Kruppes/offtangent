@@ -18,6 +18,33 @@ const AUDIO_EXTENSIONS: Record<string, string> = {
 
 const SUPPORTED_EXTENSIONS = Object.keys(AUDIO_EXTENSIONS)
 
+// ── Size limits ───────────────────────────────────────────────────────
+
+/**
+ * OpenAI-compatible transcription endpoints reject uploads above 25 MB
+ * (documented API limit, potentially decimal: 25,000,000 bytes). Choose
+ * 23 MiB = 24,117,248 bytes, below that limit even with decimal counting.
+ * This fork does not re-encode, so oversized files are refused before reading.
+ */
+export const OPENAI_STT_MAX_BYTES = 23 * 1024 * 1024
+
+/**
+ * Upper bound for every other backend (whisper-url, Ollama, Deepgram). They
+ * have no fixed small limit, but the tool reads the whole file into memory
+ * (Ollama additionally base64-encodes it), so an unbounded size can push the
+ * process into memory pressure. 100 MiB covers well over an hour of
+ * compressed speech.
+ */
+export const MAX_TRANSCRIBE_BYTES = 100 * 1024 * 1024
+
+function transcribeLimitBytes(provider: string): number {
+  return provider === 'openai' ? OPENAI_STT_MAX_BYTES : MAX_TRANSCRIBE_BYTES
+}
+
+function formatMiB(bytes: number): string {
+  return `${(bytes / (1024 * 1024)).toFixed(1)} MiB`
+}
+
 /**
  * Resolve a path relative to the workspace directory.
  */
@@ -111,6 +138,19 @@ export function createTranscribeAudioTool(): AgentTool {
 
         const mimeType = AUDIO_EXTENSIONS[ext]
         const filename = nodePath.basename(resolved)
+
+        // Check the size before reading: the whole file goes into memory.
+        const limit = transcribeLimitBytes(settings.provider)
+        const size = fs.statSync(resolved).size
+        if (size > limit) {
+          return {
+            content: [{
+              type: 'text' as const,
+              text: `Error: Audio file is too large to transcribe (${formatMiB(size)}, limit ${formatMiB(limit)} for STT provider "${settings.provider}"). Split or compress the recording first.`,
+            }],
+            details: { error: true },
+          }
+        }
 
         // Read file
         const buffer = fs.readFileSync(resolved)

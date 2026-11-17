@@ -4,6 +4,7 @@ import { loadProvidersDecrypted, getApiKeyForProvider, buildModel, parseProvider
 import type { ProviderConfig } from './provider-config.js'
 import type { SttProvider } from './contracts/settings.js'
 import { completeSimple } from './pi-models.js'
+import { logBackgroundUsage } from './background-usage.js'
 import { errorClass } from './log-safe-error.js'
 import { transcribeDeepgram, decryptDeepgramApiKey, DEEPGRAM_DEFAULT_STT_MODEL } from './deepgram.js'
 
@@ -263,6 +264,8 @@ export async function rewriteTranscript(
       { role: 'user' as const, content: transcript, timestamp: Date.now() },
     ],
   }, { apiKey })
+
+  logBackgroundUsage(model, response, { purpose: 'stt_rewrite' })
 
   const text = response.content
     .filter(c => c.type === 'text')

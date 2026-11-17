@@ -31,6 +31,7 @@ import { useSkillAutocomplete } from '~/composables/useSkillAutocomplete'
 import { useSkillDetection } from '~/composables/useSkillDetection'
 import { useModelConsentDialog } from '~/composables/useModelConsentDialog'
 import { resetStrandCanvasForTest, useStrandCanvas } from '~/composables/useStrandCanvas'
+import { resetThinkingLevelForTest, useThinkingLevel } from '~/composables/chat/useThinkingLevel'
 import * as memoryFileDetection from '~/utils/memoryFileDetection'
 import * as toolNameFormat from '~/utils/toolNameFormat'
 
@@ -356,6 +357,8 @@ afterEach(() => {
   mounted.splice(0).forEach(app => app.unmount())
   useChat().disconnect()
   resetStrandCanvasForTest()
+  // The thinking level is shared page-wide; every test starts from an empty page.
+  resetThinkingLevelForTest()
   vi.unstubAllGlobals()
 })
 
@@ -913,6 +916,101 @@ describe('ChatView: composer', () => {
     await flush()
     const call = apiCalls.find(c => c.path === '/api/settings' && c.options?.method)!
     expect(JSON.parse(String(call.options?.body))).toEqual({ thinkingLevel: 'high' })
+  })
+
+  /** The level the strand picker marks as current (the option with the check icon). */
+  function pickedLevel(root: El): string | undefined {
+    const option = all(root).find(n => n.tag === 'button' && /chat\.thinkingLevelMenu\./.test(textOf(n)) && all(n).some(c => c.tag === 'app-icon' && c.props.name === 'check'))
+    return option ? /chat\.thinkingLevelMenu\.(\w+)/.exec(textOf(option))![1] : undefined
+  }
+
+  it('shows a level saved on Home in this tab at once, without reading again', async () => {
+    apiResponder = path => path === '/api/settings' ? { thinkingLevel: 'low' } : path === '/api/personas/client' ? { personas: [] } : {}
+    const { root } = await mountChat()
+    expect(pickedLevel(root)).toBe('low')
+    const reads = apiCalls.filter(c => c.path === '/api/settings' && !c.options?.method).length
+    // Home (same composable, same signed-in admin) switches the global level.
+    const scope = Vue.effectScope()
+    const home = scope.run(() => useThinkingLevel(ref(true), undefined, ref('tester')))!
+    expect(await home.change('high')).toBe(true)
+    await flush()
+    expect(pickedLevel(root)).toBe('high')
+    expect(apiCalls.filter(c => c.path === '/api/settings' && !c.options?.method)).toHaveLength(reads)
+    scope.stop()
+  })
+
+  it('reads the level again when the browser tab becomes visible', async () => {
+    const listeners: Record<string, Array<() => void>> = {}
+    const doc = { visibilityState: 'hidden', addEventListener: (name: string, fn: () => void) => { (listeners[name] ??= []).push(fn) }, removeEventListener: (name: string, fn: () => void) => { listeners[name] = (listeners[name] ?? []).filter(f => f !== fn) } }
+    vi.stubGlobal('document', doc)
+    let level = 'low'
+    apiResponder = path => path === '/api/settings' ? { thinkingLevel: level } : path === '/api/personas/client' ? { personas: [] } : {}
+    const { root } = await mountChat()
+    expect(pickedLevel(root)).toBe('low')
+    level = 'medium' // changed in another tab
+    doc.visibilityState = 'visible'
+    for (const fn of listeners.visibilitychange ?? []) fn()
+    await flush()
+    expect(pickedLevel(root)).toBe('medium')
+  })
+
+  it('Z5: shows the level as unknown when it cannot be read, announces it, reads again on the button and never holds a send', async () => {
+    let down = true
+    apiResponder = (path) => {
+      if (path === '/api/settings') { if (down) throw new Error('offline'); return { thinkingLevel: 'medium' } }
+      return path === '/api/personas/client' ? { personas: [] } : {}
+    }
+    const { root } = await mountChat()
+    const byTestId = (id: string) => all(root).filter(n => n.props['data-testid'] === id)
+    expect(byTestId('thinking-unknown-badge')).toHaveLength(1)
+    expect(byTestId('thinking-unknown-hint')).toHaveLength(1)
+    const live = byTestId('thinking-unknown-live')[0]!
+    expect(live.props['aria-live']).toBe('polite')
+    expect(textOf(live)).toContain('chat.thinkingLevelUnknown')
+    expect(pickedLevel(root)).toBeUndefined()
+    // The strand never holds: a message goes out while the level is unknown.
+    await typeInto(root, 'Hallo')
+    await submit(root)
+    expect(sentFrames().filter(f => f.type === 'message')).toHaveLength(1)
+    // Read again on the button.
+    down = false
+    const reads = apiCalls.filter(c => c.path === '/api/settings' && !c.options?.method).length
+    click(byTestId('thinking-reread')[0]!)
+    await flush()
+    expect(apiCalls.filter(c => c.path === '/api/settings' && !c.options?.method)).toHaveLength(reads + 1)
+    expect(byTestId('thinking-unknown-badge')).toHaveLength(0)
+    expect(byTestId('thinking-unknown-hint')).toHaveLength(0)
+    expect(textOf(byTestId('thinking-unknown-live')[0]!)).not.toContain('chat.thinkingLevelUnknown')
+    expect(pickedLevel(root)).toBe('medium')
+  })
+
+  it('Z5: shows the level as unknown after an unclear save whose read failed', async () => {
+    let down = false
+    apiResponder = (path, options) => {
+      if (path === '/api/settings') {
+        if (options?.method) { down = true; throw new TypeError('Failed to fetch') }
+        if (down) throw new TypeError('Failed to fetch')
+        return { thinkingLevel: 'low' }
+      }
+      return path === '/api/personas/client' ? { personas: [] } : {}
+    }
+    const { root } = await mountChat()
+    const byTestId = (id: string) => all(root).filter(n => n.props['data-testid'] === id)
+    expect(byTestId('thinking-unknown-hint')).toHaveLength(0)
+    click(buttonWithText(root, 'chat.thinkingLevelMenu.high'))
+    await flush(); await flush()
+    expect(byTestId('thinking-unknown-badge')).toHaveLength(1)
+    expect(byTestId('thinking-unknown-hint')).toHaveLength(1)
+    // The reread button is a full-size touch target (min 44 px).
+    expect(String(byTestId('thinking-reread')[0]!.props.class)).toContain('min-h-11')
+  })
+
+  it('P2: every level row of the strand menu is a full-size touch target (min 44 px)', async () => {
+    apiResponder = path => path === '/api/settings' ? { thinkingLevel: 'low' } : path === '/api/personas/client' ? { personas: [] } : {}
+    const { root } = await mountChat()
+    const rows = ['off', 'minimal', 'low', 'medium', 'high', 'xhigh'].map(l => buttonWithText(root, `chat.thinkingLevelMenu.${l}`))
+    expect(rows).toHaveLength(6)
+    for (const row of rows) expect(String(row!.props.class).split(/\s+/)).toContain('min-h-11')
   })
 })
 

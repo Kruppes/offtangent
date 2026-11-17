@@ -18,7 +18,8 @@ export interface StrandStatsView {
   span: { firstAt: string; lastAt: string; wallSec: number }
   prompts: { total: number; typed: number; voice: number; answers: number }
   turns: { user: number; auto: number; source: 'recorded' | 'estimated' | 'mixed' }
-  tokens: { main: StatsBucket; tasks: StatsBucket; voice: StatsBucket; total: StatsBucket }
+  /** `background`: one-shot background calls (fact extraction, summary, ...); absent on older backends. */
+  tokens: { main: StatsBucket; tasks: StatsBucket; voice: StatsBucket; background?: StatsBucket; total: StatsBucket }
   cost: { totalUsd: number; subscriptionUsd: number; meteredUsd: number; localUsd: number; subscriptionShare: number | null }
   models: Array<{ provider: string; model: string; billing: Billing; requests: number; tokensIn: number; tokensOut: number; cacheHitRatio: number | null; costUsd: number }>
   local: { requests: number; requestShare: number; tokenShare: number }
